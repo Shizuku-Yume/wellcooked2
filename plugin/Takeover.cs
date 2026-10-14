@@ -779,7 +779,8 @@ namespace WellCooked
                 {
                     Slot = owned.Slot,
                     Position = position,
-                    Held = chef == null ? "" : Kitchen.HeldSummary(chef)
+                    Held = chef == null ? "" : Kitchen.HeldSummary(chef),
+                    FacingName = chef == null ? "?" : Kitchen.FacingObjectName(chef)
                 });
             }
 

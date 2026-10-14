@@ -41,6 +41,7 @@ namespace WellCooked
         private static bool _warned;
         private static bool _arrivedLogged;
         private static ChefState _lastChef;
+        private static string _facingName = "?";
         private static bool _interacted;
         private static string _expectHeld = "";
         private static string _expectContents = "";
@@ -178,6 +179,7 @@ namespace WellCooked
                 _faceDirection = (chef.Position - _station).sqrMagnitude > 0.0001f
                     ? (_station - chef.Position).normalized
                     : Vector2.zero;
+                _facingName = chef.FacingName;
 
                 if (!_pressing && now >= _nextPress)
                 {
@@ -186,7 +188,7 @@ namespace WellCooked
                     _pressing = true;
                     _lastCheckAt = now + InteractHold + 0.2f;
                     _log.LogInfo("工序: " + _step + " 按交互（手上「" + heldNow + "」，距工位 "
-                                 + toStation.ToString("F2") + " 米）");
+                                 + toStation.ToString("F2") + " 米，面前是「" + _facingName + "」）");
                 }
 
                 if (_pressing && now >= _pressUntil)
@@ -488,6 +490,7 @@ namespace WellCooked
             public int Slot;
             public Vector2 Position;
             public string Held;
+            public string FacingName = "?";
         }
     }
 }
