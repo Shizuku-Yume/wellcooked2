@@ -145,9 +145,11 @@ namespace WellCooked
                 return Vector2.zero;
             }
 
-            if (agent.Path == null || now >= agent.NextRepath)
+            if (agent.Path == null)
             {
-                // 别重算太勤：每次重算都会把路点指针拨回 0，厨师会在原地上下来回。
+                // 只在"没有路"时重算。周期性重算会把路点指针拨回 0，
+                // 而重算起点是厨师当前所在格，路一变方向就变，厨师就在原地来回蹭
+                // （实测 x 在 20.0~20.4、13.0~13.5 之间反复）。卡住时由卡住分支清掉路径。
                 agent.NextRepath = now + 2f;
                 agent.Path = FindPath(position, agent.Target);
                 agent.Waypoint = 0;
@@ -329,7 +331,7 @@ namespace WellCooked
             foundZ = cz;
             int best = int.MaxValue;
             bool found = false;
-            for (int radius = 1; radius <= 8; radius++)
+            for (int radius = 1; radius <= 20; radius++)
             {
                 for (int dx = -radius; dx <= radius; dx++)
                 {

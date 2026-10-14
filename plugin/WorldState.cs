@@ -562,8 +562,10 @@ namespace WellCooked
             // 节点和边都用**厨师真实半径**：格子小一点会让路点落在厨师站不进去的地方，
             // 厨师走到跟前被台面顶住、又够不到路点，就在那儿来回蹭（实测 20.4,-1.8 附近）。
             // 一致性比"多留几格"重要：能站才算可走，能过才算一条边。
-            float nodeRadius = chefRadius;
-            float edgeRadius = chefRadius;
+            // 用 0.8×：碰撞体半径是"包住模型"的上界，用它会把窄通道整条判死，
+            // 上下两半厨房就断开、A* 一律报不可达（实测 79~90 次）。
+            float nodeRadius = chefRadius * 0.8f;
+            float edgeRadius = chefRadius * 0.8f;
 
             for (int i = 0; i < _cellsX; i++)
             {
