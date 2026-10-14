@@ -23,3 +23,112 @@
 
 **Progress:**
 Dirty at start: none
+
+## Findings（2026-10-14，分支 `game-bridge/08-navigation`）
+
+这一轮把"游戏在后台跑"和"自己进关卡"这两件调试前提解决了，过程里踩的坑都写在这里，
+任务 09/10 会直接受益。
+
+### 1. 游戏失焦就整个停摆（三个补丁，缺一不可）
+
+现象：人在终端时，4 名厨师坐标 12 秒一动不动、两张相隔 2.5 秒的截图 **0 个像素不同**。
+
+反编译 `Assembly-CSharp.dll`（`ilspycmd`）后看到游戏把**所有本地输入**卡在焦点上：
+
+| 位置 | 代码 |
+|---|---|
+| `PlayerControls.cs:455` | `if (!Application.isFocused) return;` |
+| `LogicalButtonBase.cs:76` | `CanProcessInput() => Application.isFocused` |
+| `LogicalPCEngagementButton.cs:23` | 失焦时 `Update(false); return false;` |
+| `LogicalPadValue.cs:26` | 同上 |
+
+所以 `Application.runInBackground = true` 远远不够。三个补丁：
+
+1. `Application.runInBackground = true`（Unity 层）；
+2. `InGamePauseMenu.OnApplicationFocus(false)` 前缀返回 false —— 失焦不再暂停游戏；
+3. **`Application.isFocused` 的 getter 前缀改成恒真** —— 这是关键，前两个只是让它继续跑，
+   不扳这个开关，游戏照样不认手柄、不认"按 A"。
+
+补完后：人在终端、游戏在后台，厨师照样按我们的输入走。
+
+### 2. 进关卡不能只 `GameUtils.LoadLevel`
+
+`GameUtils.LoadLevel(name)` 只是 `LoadScene`：场景换了、厨师和工位都在，
+但**关卡流程没起来**——实测订单为空、得分 `None`、计时全 0，厨师也不受控。
+
+暂停菜单的"重开"走的是另一条路（`InGamePauseMenu.OnRestartConfirmed`）：
+
+```
+MultiplayerController.StopSynchronisation();
+ServerMessenger.LoadLevel(场景名, GameState.LoadKitchen, true, GameState.RunKitchen);
+```
+
+照做之后订单/计时正常（订单=2、计时 left=150），这就是指令 `restart=1`。
+
+### 3. 前端可以完全由虚拟手柄走完
+
+标题画面 `StartScreenFlow.CheckForEngagement()` 靠 `PlayerManager.GetEngagementPad()` 找
+**"刚按下且还没占位"** 的 pad；我们如果提前用 `EngagePadToSlot` 把 4 个位占满，
+它就永远等不到，画面卡在标题页（之前"按 A 没反应"就是这个原因）。
+
+改成"前端不抢位、虚拟手柄自己按 A"之后，实测自动走完：
+`StartScreen → Loading → WorldMap → Loading → s_sushi_1_1`，无需人手。
+
+注意：A 必须**按下/松开交替**，一直按着只有第一次算边沿。
+
+### 4. 可走格采样要按高度和体积筛
+
+原来只判"向下射线打没打到 `GroundLayer(512)`"：台面顶面也被算成可走（850 格），
+于是路径穿台面、厨师贴着台面推墙（实测 x=20.6 处一动不动、剩余距离不降）。
+
+改成：地面高度取所有命中高度的众数（0.1 一档），偏离超过 0.25 米的不算地面；
+再加"中心与前后左右各偏 0.25 米都必须是地面"。采样降到 768 格。
+
+### 5. 到达判定不能用"离目标 ≤0.45 格"
+
+目标点是工位坐标（锅/出菜台/食材箱的台面中心），厨师根本站不上去，
+那个条件永远不成立——实测厨师在目标旁绕圈、0 次到达。
+改成**走到路径终点就算到达**（终点是目标附近最近的可走格）。
+
+### 6. 调试手段（不用截图、不用动鼠标）
+
+- `BepInEx/wellcooked-command.txt` 指令通道（`plugin/Commands.cs`，1 秒内执行并删文件）：
+  `load=<场景>`、`restart=1`、`continue=1`、`engage=1`、`session=1`、`dump=<类型>`、`pause=1`。
+- `scripts/dev-cycle.sh [观察秒数]`：重启游戏 → 等前端自己走完 → 打位置与走位日志。
+- 反编译：`DOTNET_ROLL_FORWARD=Major ilspycmd -o /tmp/gamecs -p <Assembly-CSharp.dll>`。
+
+## Progress（2026-10-14 第二轮：后台运行与自进关卡已通，走位仍未收敛）
+
+已提交在 `game-bridge/08-navigation`（12 个提交，见 `git log`）。
+
+**已达成、有日志证据：**
+
+1. **游戏在后台照常跑**：三个补丁（`runInBackground`、失焦不暂停、`Application.isFocused` 恒真）。
+   人在终端、游戏在后台时厨师照样按我们的输入走——这是答辩/评测的硬前提
+   （Supervisor 在终端，游戏必然在后台）。
+2. **进关卡不用人手**：虚拟手柄按 A 能自己走完 标题 → 继续 → 世界地图 → 关卡；
+   `restart=1` 指令能在 10 秒内确定性地把当前关卡按 `LoadKitchen → RunKitchen` 重开
+   （订单=2、计时 left=150 都正常起来）。
+3. **调试通道**：`BepInEx/wellcooked-command.txt` 支持
+   `load / restart / continue / engage / session / dump / pause / probe / path`，
+   配 `scripts/dev-cycle.sh`，全程只看日志，不截图、不动鼠标。
+4. **可走格**：物理采样（0.6 米格，节点与边都过厨师半径的物理检查，只留最大连通块），
+   日志会打 可走格/可走边 数量；`probe=x,z` 能看某点周围的碰撞体，`path=x1,z1,x2,z2` 能直接问一次 A*。
+
+**未达成（Check 还没过）：**
+
+- 厨师会走很远（实测 11.43 → 20.58 → 13.0 …），但**到达次数始终 0**，
+  且常出现"不可达"（几十次）：物理采样的网格与游戏真实碰撞仍对不齐——
+  地图说能站/能过的格子，厨师到了跟前被台面顶住；或者反过来，厨师走进的地方
+  在网格里属于被丢弃的连通块，于是到哪都报不可达。
+- 已加的缓解手段：局部绕行（喂出去的轴 0.35 秒推不动就换另一个轴）、
+  卡住判定（1.5 秒没动就清路径换目标）、不再周期性重算路径、探针半径 0.8×。
+  这些都让它不再永久卡死，但**没有解决到达**。
+
+**下一步（建议）：**
+
+- 别再抠网格：改成"**到路点即算推进 + 到不了就沿着当前轴的可行方向滑**"的局部避障为主，
+  A* 只当全局倾向；或者干脆用游戏自己的 `GridNavSpace.FindPath` 出路径，
+  我们只做路径跟随与到达判定——把"网格对不对"这件事交给游戏。
+- 到达判定与目标选取要跟着任务 09（订单工序）一起定：目标是工位，厨师本来也站不到台面上，
+  "到达"应该定义成"站到工位的可交互格上并能按交互键"。
