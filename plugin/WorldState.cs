@@ -1144,6 +1144,102 @@ namespace WellCooked
                       + string.Join(",", parts.ToArray()) + "]}");
         }
 
+        /// <summary>
+        /// 游戏自己的网格（1.2 米那套）：交互判定用的是它——
+        /// `InteractWithItemHelper.GetFacingGridOccupant` 取"厨师所在格的 4 个邻居里
+        /// 朝向最对齐的那一格的占位物体"，**不看距离**。所以"站到工位旁边 + 朝着它"才对。
+        /// </summary>
+        public static bool GameCellOf(Vector2 world, out int ix, out int iz)
+        {
+            ix = 0;
+            iz = 0;
+            var manager = GameGridManager();
+            var indexType = AccessTools.TypeByName("GridIndex");
+            if (manager == null || indexType == null)
+            {
+                return false;
+            }
+
+            var fromPos = AccessTools.Method(manager.GetType(), "GetUnclampedGridLocationFromPos", new[] { typeof(Vector3) });
+            if (fromPos == null)
+            {
+                return false;
+            }
+
+            object index = fromPos.Invoke(manager, new object[] { new Vector3(world.x, 0f, world.y) });
+            if (index == null)
+            {
+                return false;
+            }
+
+            ix = System.Convert.ToInt32(Get(index, "X"));
+            iz = System.Convert.ToInt32(Get(index, "Z"));
+            return true;
+        }
+
+        /// <summary>游戏网格上某一格的世界坐标（水平面）。</summary>
+        public static bool GameCellPosition(int ix, int iz, out Vector2 world)
+        {
+            world = Vector2.zero;
+            var manager = GameGridManager();
+            var indexType = AccessTools.TypeByName("GridIndex");
+            if (manager == null || indexType == null)
+            {
+                return false;
+            }
+
+            var ctor = indexType.GetConstructor(new[] { typeof(int), typeof(int), typeof(int) });
+            var toPos = AccessTools.Method(manager.GetType(), "GetPosFromGridLocation", new[] { indexType });
+            if (ctor == null || toPos == null)
+            {
+                return false;
+            }
+
+            var p = (Vector3)toPos.Invoke(manager, new[] { ctor.Invoke(new object[] { ix, 0, iz }) });
+            world = new Vector2(p.x, p.z);
+            return true;
+        }
+
+        /// <summary>游戏网格上某一格的占位物体（没有就是 null）。</summary>
+        public static UnityEngine.GameObject GameCellOccupant(int ix, int iz)
+        {
+            var manager = GameGridManager();
+            var indexType = AccessTools.TypeByName("GridIndex");
+            if (manager == null || indexType == null)
+            {
+                return null;
+            }
+
+            var ctor = indexType.GetConstructor(new[] { typeof(int), typeof(int), typeof(int) });
+            var getOccupant = AccessTools.Method(manager.GetType(), "GetGridOccupant", new[] { indexType });
+            if (ctor == null || getOccupant == null)
+            {
+                return null;
+            }
+
+            return getOccupant.Invoke(manager, new[] { ctor.Invoke(new object[] { ix, 0, iz }) }) as UnityEngine.GameObject;
+        }
+
+        private static object GameGridManager()
+        {
+            if (_gameGridManager != null)
+            {
+                return _gameGridManager;
+            }
+
+            var type = AccessTools.TypeByName("GridManager");
+            var getActive = type == null ? null : AccessTools.Method(type, "GetActive", new[] { typeof(int) });
+            if (getActive == null)
+            {
+                return null;
+            }
+
+            _gameGridManager = getActive.Invoke(null, new object[] { 0 });
+            return _gameGridManager;
+        }
+
+        private static object _gameGridManager;
+
         /// <summary>当前这一局的订单控制器（工序状态机用它读活跃订单与菜谱）。</summary>
         public static object FirstOrderController()
         {

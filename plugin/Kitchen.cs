@@ -13,6 +13,55 @@ namespace WellCooked
     /// </summary>
     public static class Kitchen
     {
+        /// <summary>
+        /// 站在工位旁边该去哪：工位所在游戏格的四个邻居里，挑一个我们网格里可走、
+        /// 且离当前位置最近的。
+        ///
+        /// 为什么不能直接走到工位本身：交互判定（`InteractWithItemHelper.GetFacingGridOccupant`）
+        /// 取的是"厨师所在格的邻居格里、朝向最对齐的那一格的占位物体"，**不看距离**；
+        /// 厨师站在工位格里或者隔两格都交互不到，必须站到相邻格并朝着它。
+        /// </summary>
+        public static bool ApproachPosition(Vector2 station, Vector2 from, out Vector2 approach)
+        {
+            approach = station;
+            int cx, cz;
+            if (!WorldState.GameCellOf(station, out cx, out cz))
+            {
+                return false;
+            }
+
+            var offsets = new[]
+            {
+                new[] { 1, 0 }, new[] { -1, 0 }, new[] { 0, 1 }, new[] { 0, -1 }
+            };
+
+            float best = float.MaxValue;
+            bool found = false;
+            foreach (var offset in offsets)
+            {
+                Vector2 candidate;
+                if (!WorldState.GameCellPosition(cx + offset[0], cz + offset[1], out candidate))
+                {
+                    continue;
+                }
+
+                if (!WorldState.IsWalkablePoint(candidate.x, candidate.y))
+                {
+                    continue;
+                }
+
+                float distance = Vector2.Distance(candidate, from);
+                if (distance < best)
+                {
+                    best = distance;
+                    approach = candidate;
+                    found = true;
+                }
+            }
+
+            return found;
+        }
+
         /// <summary>一个可用的工位：类型、物体名、水平面位置、以及（料箱才有）它给的料。</summary>
         public sealed class Station
         {

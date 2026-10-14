@@ -801,6 +801,14 @@ namespace WellCooked
                     continue;
                 }
 
+                Vector2 face;
+                if (WorkOrder.FaceFor(owned.Slot, out face))
+                {
+                    // 朝向阶段：直接喂方向让厨师转身（交互按的是"面前那一格"）
+                    owned.Pad.Want(false, false, face);
+                    continue;
+                }
+
                 Navigation.Assign(owned.Slot, target);
                 string status;
                 var direction = Navigation.Steer(owned.Slot, position, now, out status);
