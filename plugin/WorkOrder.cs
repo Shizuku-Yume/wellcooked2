@@ -142,13 +142,15 @@ namespace WellCooked
                     _log.LogInfo("工序: " + _step + " 到位（距目标 " + distance.ToString("F2") + " 米）");
                 }
 
-                // 边走边按：交互范围由游戏自己判，我们按到"效果出现"为止
-                if (now >= _nextPress)
+                // 按一次 → 等效果 → 没效果才再按。
+                // 不能按完就接着按：0.5 秒后又按一次会把刚拿到的东西放下
+                // （实测 手上在「」和「SushiFish」之间反复跳，永远判不出成功）。
+                if (!_pressing && now >= _nextPress)
                 {
                     _nextPress = now + PressInterval;
                     _pressUntil = now + InteractHold;
                     _pressing = true;
-                    _lastCheckAt = now + InteractHold + 0.15f;
+                    _lastCheckAt = now + InteractHold + 0.2f;
                     _log.LogInfo("工序: " + _step + " 按交互（手上「" + heldNow + "」）");
                 }
 
@@ -166,6 +168,12 @@ namespace WellCooked
                 {
                     Next(now);
                     return;
+                }
+
+                // 没效果：把下一次按往后推（等按键边沿真的被游戏消费掉）
+                if (now >= _lastCheckAt && _nextPress <= _lastCheckAt)
+                {
+                    _nextPress = now + PressInterval;
                 }
 
                 // 按了没效果：继续按（可能还没进交互范围），但不刷屏
@@ -206,7 +214,7 @@ namespace WellCooked
             _pressing = false;
             _interacted = false;
             _nextPress = 0f;
-            _lastCheckAt = 0f;
+            _lastCheckAt = float.MaxValue;
             _warned = false;
             _arrivedLogged = false;
             _hasTarget = false;
