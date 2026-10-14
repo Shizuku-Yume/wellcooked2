@@ -123,6 +123,12 @@ namespace WellCooked
             }
         }
 
+        /// <summary>
+        /// 进关卡。**不能**用 GameUtils.LoadLevel：它只换场景，关卡流程不会起来
+        /// （实测订单为空、得分 None、计时全 0）。暂停菜单里的"重开"用的是
+        /// `ServerMessenger.LoadLevel(场景, GameState.LoadKitchen, true, GameState.RunKitchen)`，
+        /// 状态机会把厨房流程带起来，这里照做。
+        /// </summary>
         private static void LoadLevel(string scene)
         {
             if (scene.Length == 0)
@@ -131,41 +137,68 @@ namespace WellCooked
                 return;
             }
 
-            var type = AccessTools.TypeByName("GameUtils");
-            if (type == null)
+            var messenger = AccessTools.TypeByName("ServerMessenger");
+            var stateType = AccessTools.TypeByName("GameState");
+            if (messenger == null || stateType == null)
             {
-                _log.LogWarning("指令: 找不到 GameUtils");
+                _log.LogWarning("指令: 找不到 ServerMessenger/GameState");
                 return;
             }
 
-            foreach (var method in type.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static))
+            var method = AccessTools.Method(messenger, "LoadLevel",
+                new[] { typeof(string), stateType, typeof(bool), stateType });
+            if (method == null)
             {
-                if (method.Name != "LoadLevel")
-                {
-                    continue;
-                }
-
-                var parameters = method.GetParameters();
-                _log.LogInfo("指令: GameUtils.LoadLevel(" + Describe(parameters) + ")");
-                if (parameters.Length != 1)
-                {
-                    continue;
-                }
-
-                object argument = Convert(scene, parameters[0].ParameterType);
-                if (argument == null)
-                {
-                    continue;
-                }
-
-                _log.LogInfo("指令: 加载 " + scene + " → " + argument);
-                method.Invoke(null, new[] { argument });
-                _log.LogInfo("指令: 加载调用返回（当前场景 " + UnityEngine.SceneManagement.SceneManager.GetActiveScene().name + "）");
+                _log.LogWarning("指令: 找不到 ServerMessenger.LoadLevel(string, GameState, bool, GameState)");
                 return;
             }
 
-            _log.LogWarning("指令: GameUtils 上没有单参数的 LoadLevel");
+            StopSynchronisation();
+
+            object begin = Enum.Parse(stateType, "LoadKitchen");
+            object run = Enum.Parse(stateType, "RunKitchen");
+            _log.LogInfo("指令: ServerMessenger.LoadLevel(" + scene + ", LoadKitchen, true, RunKitchen)");
+            method.Invoke(null, new[] { scene, begin, (object)true, run });
+            _log.LogInfo("指令: 已请求加载 " + scene);
         }
+
+        /// <summary>暂停菜单重开前会先停同步，照做，否则旧关卡的对象会跟着过来。</summary>
+        private static void StopSynchronisation()
+        {
+            try
+            {
+                var type = AccessTools.TypeByName("MultiplayerController");
+                var utils = AccessTools.TypeByName("GameUtils");
+                if (type == null || utils == null)
+                {
+                    return;
+                }
+
+                var require = AccessTools.Method(utils, "RequireManager");
+                object controller = null;
+                if (require != null && require.IsGenericMethodDefinition)
+                {
+                    controller = require.MakeGenericMethod(type).Invoke(null, null);
+                }
+
+                if (controller == null)
+                {
+                    return;
+                }
+
+                var stop = AccessTools.Method(type, "StopSynchronisation", Type.EmptyTypes);
+                if (stop != null)
+                {
+                    stop.Invoke(controller, null);
+                    _log.LogInfo("指令: 已停同步");
+                }
+            }
+            catch (Exception e)
+            {
+                _log.LogWarning("指令: 停同步失败: " + e.Message);
+            }
+        }
+
 
         /// <summary>
         /// 标题画面按 A 的效果：游戏内部是"某个手柄完成加入" → StartScreenFlow.OnEngagementFinished。
