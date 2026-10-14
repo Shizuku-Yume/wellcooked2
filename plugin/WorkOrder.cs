@@ -42,6 +42,7 @@ namespace WellCooked
         private static bool _arrivedLogged;
         private static bool _interacted;
         private static string _expectHeld = "";
+        private static string _expectContents = "";
         private static Vector2 _target;
         private static Vector2 _counter;
         private static bool _hasTarget;
@@ -197,7 +198,13 @@ namespace WellCooked
         /// <summary>手上状态是否符合这一步的预期。</summary>
         private static bool Matches(string held)
         {
-            return _expectHeld.Length == 0 ? held.Length == 0 : held.Contains(_expectHeld);
+            if (_expectHeld.Length == 0)
+            {
+                return held.Length == 0;
+            }
+
+            return held.Contains(_expectHeld)
+                   && (_expectContents.Length == 0 || held.Contains(_expectContents));
         }
 
         /// <summary>谁去做这一单：现在取第一个厨师位（替身，等 Scheduler 接管）。</summary>
@@ -234,6 +241,7 @@ namespace WellCooked
                     _target = crate.Position;
                     _hasTarget = true;
                     _expectHeld = want;
+                    _expectContents = "";
                     _log.LogInfo("工序: 1/5 去取料「" + want + "」（" + crate.Name + " "
                                  + _target.x.ToString("F1") + "," + _target.y.ToString("F1") + "）");
                     break;
@@ -252,6 +260,7 @@ namespace WellCooked
                     _target = counter.Position;
                     _hasTarget = true;
                     _expectHeld = ""; // 放下后空手
+                    _expectContents = "";
                     _log.LogInfo("工序: 2/5 把料放到台面（" + counter.Name + " "
                                  + _target.x.ToString("F1") + "," + _target.y.ToString("F1") + "）");
                     break;
@@ -269,6 +278,7 @@ namespace WellCooked
                     _target = stack.Position;
                     _hasTarget = true;
                     _expectHeld = "Plate";
+                    _expectContents = "";
                     _log.LogInfo("工序: 3/5 去拿盘子（" + stack.Name + " "
                                  + _target.x.ToString("F1") + "," + _target.y.ToString("F1") + "）");
                     break;
@@ -278,7 +288,8 @@ namespace WellCooked
                 {
                     _target = _counter;
                     _hasTarget = true;
-                    _expectHeld = WantedIngredient(); // 装盘后手上是"装着料的盘子"
+                    _expectHeld = "Plate";                  // 装盘后手上是"装着料的盘子"
+                    _expectContents = WantedIngredient();
                     _log.LogInfo("工序: 4/5 回去装盘（台面 "
                                  + _target.x.ToString("F1") + "," + _target.y.ToString("F1") + "）");
                     break;
@@ -296,6 +307,7 @@ namespace WellCooked
                     _target = station.Position;
                     _hasTarget = true;
                     _expectHeld = ""; // 交付后应该空手
+                    _expectContents = "";
                     _log.LogInfo("工序: 5/5 去交付（" + station.Name + " "
                                  + _target.x.ToString("F1") + "," + _target.y.ToString("F1") + "）");
                     break;

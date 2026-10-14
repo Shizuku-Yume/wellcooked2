@@ -779,7 +779,7 @@ namespace WellCooked
                 {
                     Slot = owned.Slot,
                     Position = position,
-                    Held = chef == null ? "" : Kitchen.HeldName(chef)
+                    Held = chef == null ? "" : Kitchen.HeldSummary(chef)
                 });
             }
 

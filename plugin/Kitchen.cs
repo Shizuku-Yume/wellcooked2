@@ -155,6 +155,53 @@ namespace WellCooked
             return null;
         }
 
+        /// <summary>
+        /// 厨师手上东西的摘要：盘子会把里面的东西带出来，如 `Plate 1 (4)[SushiFish]`。
+        /// 只报名字分不清"拿着生鱼"和"拿着装了鱼的盘子"（实测装盘那步就这么误判成成功）。
+        /// </summary>
+        public static string HeldSummary(PlayerControls chef)
+        {
+            var carrier = chef.GetComponent<ServerPlayerAttachmentCarrier>();
+            if (carrier == null)
+            {
+                return "";
+            }
+
+            var item = carrier.InspectCarriedItem() as UnityEngine.Object;
+            if (item == null)
+            {
+                return "";
+            }
+
+            var gameObject = item as GameObject;
+            if (gameObject == null)
+            {
+                var component = item as Component;
+                gameObject = component == null ? null : component.gameObject;
+            }
+
+            if (gameObject == null)
+            {
+                return "";
+            }
+
+            string name = gameObject.name;
+            var container = gameObject.GetComponent("ClientIngredientContainer");
+            if (container == null)
+            {
+                return name;
+            }
+
+            var contents = WorldState.Invoke(container, "GetContents") as Array;
+            if (contents == null || contents.Length == 0)
+            {
+                return name;
+            }
+
+            var first = contents.GetValue(0) as UnityEngine.Object;
+            return name + "[" + (first == null ? "?" : first.name) + "]";
+        }
+
         /// <summary>厨师手上拿的东西的名字（空手返回空串）。</summary>
         public static string HeldName(PlayerControls chef)
         {
