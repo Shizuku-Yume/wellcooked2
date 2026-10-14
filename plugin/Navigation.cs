@@ -37,6 +37,9 @@ namespace WellCooked
             public bool StuckReported;
             public float SkipAllowed;
             public int GiveUps;
+            public float StartDistance = -1f;
+            public float MinDistance = float.MaxValue;
+            public string Reason = "";
             public int LastAxis = -1;
             public int SlideAxis = -1;
             public float SlideSign = 1f;
@@ -46,6 +49,21 @@ namespace WellCooked
         private static readonly Dictionary<object, Agent> Agents = new Dictionary<object, Agent>();
 
         /// <summary>给某个执行体（手柄槽位或玩家）指定目标点；重复调用同一个目标不重算。</summary>
+        /// <summary>上一条目标的结果（走完/放弃时打日志用）。</summary>
+        public static string LastResult(object owner)
+        {
+            Agent agent;
+            if (!Agents.TryGetValue(owner, out agent) || agent.StartDistance < 0f)
+            {
+                return "";
+            }
+
+            return "目标=(" + agent.Target.x.ToString("F1") + "," + agent.Target.y.ToString("F1") + ")"
+                   + " 起始距离=" + agent.StartDistance.ToString("F1")
+                   + " 最近=" + agent.MinDistance.ToString("F1")
+                   + " 结束原因=" + (agent.Reason.Length > 0 ? agent.Reason : "换目标");
+        }
+
         public static void Assign(object owner, Vector2 target)
         {
             Agent agent;
@@ -67,6 +85,9 @@ namespace WellCooked
             agent.Arrived = false;
             agent.GiveUps = 0;
             agent.StuckReported = false;
+            agent.StartDistance = -1f;
+            agent.MinDistance = float.MaxValue;
+            agent.Reason = "";
         }
 
         public static void Release(object owner)
@@ -175,6 +196,7 @@ namespace WellCooked
                 {
                     // 同一个目标连续三次推不动，才算真做不到，换目标
                     agent.Arrived = true;
+                    agent.Reason = "卡住";
                     status = "卡住（" + (now - agent.LastMovedAt).ToString("F1") + " 秒没动），放弃这个目标";
                 }
                 else
@@ -186,9 +208,20 @@ namespace WellCooked
             }
 
             float toTarget = Vector2.Distance(position, agent.Target);
+            if (agent.StartDistance < 0f)
+            {
+                agent.StartDistance = toTarget;
+            }
+
+            if (toTarget < agent.MinDistance)
+            {
+                agent.MinDistance = toTarget;
+            }
+
             if (toTarget <= ArriveRadius)
             {
                 agent.Arrived = true;
+                agent.Reason = "到达";
                 status = "已到达";
                 return Vector2.zero;
             }
@@ -204,6 +237,7 @@ namespace WellCooked
                 if (agent.Path == null)
                 {
                     agent.Arrived = true; // 别每帧重算，让上层换目标
+                    agent.Reason = "不可达";
                     status = "不可达（目标 " + agent.Target.x.ToString("F1") + "," + agent.Target.y.ToString("F1") + "）";
                     return Vector2.zero;
                 }
@@ -222,6 +256,7 @@ namespace WellCooked
                 // 厨师根本站不上去，用"离目标 ≤0.45 格"判到达永远不成立——
                 // 实测厨师在目标旁边绕圈、剩余距离不降、0 次到达。
                 agent.Arrived = true;
+                agent.Reason = "路径终点";
                 status = "已到达（路径终点，距目标 " + toTarget.ToString("F1") + "）";
                 return Vector2.zero;
             }

@@ -877,6 +877,12 @@ namespace WellCooked
                 return;
             }
 
+            string last = Navigation.LastResult(owner);
+            if (last.Length > 0)
+            {
+                _log.LogInfo("takeover: 目标结束 " + last);
+            }
+
             TargetIndex[owner] = chosen;
             _retargets++;
             Navigation.Assign(owner, Targets[chosen]);
