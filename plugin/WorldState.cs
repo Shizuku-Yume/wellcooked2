@@ -323,14 +323,16 @@ namespace WellCooked
                     json.Append("{\"type\":\"").Append(typeName)
                         .Append("\",\"name\":\"").Append(Clean(unity.gameObject.name))
                         .Append("\",\"pos\":[").Append(p.x.ToString("F2")).Append(',').Append(p.y.ToString("F2"))
-                        .Append("],\"contents\":[");
+                        .Append(']');
 
                     if (typeName == "ClientPickupItemSpawner")
                     {
                         // 料箱给什么：PickupItemSpawner.m_itemPrefab 的名字就是料名（如 SushiFish）
                         var prefab = Invoke(component, "GetItemPrefab") as UnityEngine.Object;
-                        json.Append("\"gives\":\"" + Clean(prefab == null ? "" : prefab.name) + "\",");
+                        json.Append(",\"gives\":\"").Append(Clean(prefab == null ? "" : prefab.name)).Append('"');
                     }
+
+                    json.Append(",\"contents\":[");
 
                     var contents = AsEnumerable(Invoke(component, "GetContents"));
                     bool firstItem = true;
