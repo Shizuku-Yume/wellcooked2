@@ -156,4 +156,38 @@ user may overturn on sight. `Revisit when` of "never" is allowed but suspicious;
 - **Mine:** yes.
 - **Revisit when:** 实验需要逐单的到达时刻或时限（EDF/HRRN 对比需要），或换关卡/换玩家数后 `menu`
   索引不再适用。
+## 2026-10-14 - 插件把游戏伪装成"一直在前台"，后台也能跑
+
+- **Decided:** 插件加载时设 `Application.runInBackground = true`，并用 Harmony 打两个补丁：`InGamePauseMenu.OnApplicationFocus(false)` 前缀返回 false（失焦不暂停游戏）、`UnityEngine.Application.isFocused` 的 getter 前缀恒返回 true。
+- **Instead of:** 只设 `runInBackground`，或要求操作者把游戏窗口留在前台。
+- **Because:** 反编译 `Assembly-CSharp.dll` 看到游戏把所有本地输入都卡在 `Application.isFocused` 上（`PlayerControls.cs:455`、`LogicalButtonBase.cs:76`、`LogicalPCEngagementButton.cs:23`、`LogicalPadValue.cs:26` 都是 `if (!Application.isFocused) return`）。实测：游戏失焦时 4 名厨师 12 秒坐标完全不动、两张相隔 2.5 秒的截图 0 个像素不同；窗口一激活立刻恢复移动。答辩和评测时 Supervisor 在终端、游戏必然在后台，不补这个开关整个实验会停摆。
+- **Mine:** yes.
+- **Revisit when:** 游戏改版不再看 `Application.isFocused`，或补丁导致前端在失焦时行为异常（例如自己吞掉按键）。
+- **Effort:** game-bridge
+
+## 2026-10-14 - 可走格自己按 0.6 米格做物理采样，不用游戏的导航网格
+
+- **Decided:** 可走区域由插件自己采样：0.6 米一格，每格要求"脚下有地面 + 以厨师碰撞体半径在腰间查一圈没有东西"，相邻两格之间再过一次同样的检查（边），最后只保留最大连通块。
+- **Instead of:** 用 `PlayerControls.GroundLayer` 向下打射线采样（任务 08 原本的写法），或用游戏自己的 `GridNavSpace`/`GridManager.GetGridOccupant` 节点图。
+- **Because:** 两条路都实测失败。射线：台面碰撞体不在 `GroundLayer(512)` 上，射线从台面旁穿到台面底下的地板，台面被算成可走，厨师贴着台面推墙（x=20.6 处一动不动）。游戏节点图：它的格子是 1.2 米，而 `probe` 实测台面/工作台摆在 0.6 米的格子上（worktop 在 19.8/20.4/21.0），粗一半的网格表示不出中间障碍，厨师卡在两格正中间（A* 报不可达 560 次）。物理采样与厨师真实碰撞体一致，实测 169 条目标全部距离下降、0 次卡住。
+- **Mine:** yes.
+- **Revisit when:** 换到台面布局不同（多层、可推倒）的地图导致物理采样结果与游戏碰撞仍对不齐，或游戏给出官方的可行走 API。
+- **Effort:** game-bridge
+
+## 2026-10-14 - 进关卡走 ServerMessenger.LoadLevel(LoadKitchen → RunKitchen)
+
+- **Decided:** 插件用 `MultiplayerController.StopSynchronisation()` + `ServerMessenger.LoadLevel(场景名, GameState.LoadKitchen, true, GameState.RunKitchen)` 进关卡（与暂停菜单"重开"同一条路），而不是 `GameUtils.LoadLevel`。
+- **Instead of:** `GameUtils.LoadLevel(场景名)`。
+- **Because:** `GameUtils.LoadLevel` 只是 `LoadScene`：场景换了、厨师和工位都在，但关卡流程没起来——实测订单为空、得分 `None`、计时全 0，厨师也不受控。走 `ServerMessenger` 那条之后订单=2、计时 `left=150` 都正常。
+- **Mine:** yes.
+- **Revisit when:** 游戏改版换掉关卡加载入口，或需要联机房间才能起关卡。
+- **Effort:** game-bridge
+
+## 2026-10-14 - 调试走日志 + 指令文件，不截图、不手动进关卡
+
+- **Decided:** 插件读游戏目录的 `BepInEx/wellcooked-command.txt`（1 秒内执行并删文件），支持 `load/restart/continue/engage/dump/pause/probe/path`；配 `scripts/dev-cycle.sh`（重启 → 虚拟手柄自己走完前端进关卡 → 打位置与走位日志）。
+- **Instead of:** 每轮靠截图看画面、靠人手进关卡。
+- **Because:** 调试时人在终端、游戏在后台，截图既慢又要抢窗口焦点；而"进关卡"这一步原本每次都要人手点，一个验证循环要几分钟。有了指令通道，`restart=1` 10 秒内就能确定性地重开关卡，`path=x1,z1,x2,z2` 能直接问一次 A*、`probe=x,z` 能打出某点周围的碰撞体——都是可复现的证据，也留在日志里。
+- **Mine:** yes.
+- **Revisit when:** 指令通道被执行环境禁用（例如发布版不带调试文件），或调试改走单元测试不需要进游戏。
 - **Effort:** game-bridge
