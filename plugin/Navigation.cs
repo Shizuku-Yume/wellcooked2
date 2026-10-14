@@ -86,6 +86,12 @@ namespace WellCooked
             return false;
         }
 
+        /// <summary>有没有登记过目标。</summary>
+        public static bool HasTarget(object owner)
+        {
+            return Agents.ContainsKey(owner);
+        }
+
         public static bool HasArrived(object owner)
         {
             Agent agent;
