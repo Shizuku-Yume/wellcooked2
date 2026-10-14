@@ -162,6 +162,14 @@ namespace WellCooked
                     continue;
                 }
 
+                // 垃圾桶也挂着 ClientAttachStation，而且离料箱往往很近——实测"空台面"
+                // 挑中的就是它，结果把鱼扔进了垃圾桶（ClientRubbishBin）。
+                if (unity.GetComponent("ClientRubbishBin") != null
+                    || unity.name.IndexOf("Bin", System.StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    continue;
+                }
+
                 var p = unity.transform.position;
                 var position = new Vector2(p.x, p.z);
 
