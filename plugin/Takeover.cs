@@ -815,9 +815,10 @@ namespace WellCooked
                 var direction = Navigation.Steer(owned.Slot, position, now, out status);
                 owned.Pad.Want(interact, false, direction);
 
-                if (_trace)
+                if (_trace || interact)
                 {
                     _log.LogInfo("trace 工序 玩家位=" + (owned.Slot + 1)
+                                 + " 手柄=" + owned.Pad.State
                                  + " 交互=" + interact
                                  + " 方向=(" + direction.x.ToString("F2") + "," + direction.y.ToString("F2") + ")"
                                  + " 位置=(" + position.x.ToString("F2") + "," + position.y.ToString("F2") + ")"
