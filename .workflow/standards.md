@@ -9,20 +9,28 @@ WellCooked / KitchenOS：《胡闹厨房2》的订单、工序、厨具被当作
 
 ## Running it
 
-代码尚未开始，仓库里只有文档和汇报材料。目前唯一能跑的是汇报 deck 生成脚本：
-
 ```sh
-cd represent && python3 wellcooked_v2/build_deck.py   # 重建 WellCooked_课堂小组汇报_v2.pptx
+(cd represent && python3 wellcooked_v2/build_deck.py)   # 重建课堂汇报 pptx（子 shell，不改当前目录）
+
+export GAME_DIR="${GAME_DIR:-/run/media/shizuku/File/Steam/steamapps/common/Overcooked! 2}"  # 换机器改这一行
+bash scripts/install-bepinex.sh        # 把 BepInEx 装进游戏目录（按游戏 exe 的 PE 头选架构）
+bash scripts/set-winhttp-override.sh   # 让 Proton 加载游戏目录的 winhttp.dll（每台机器做一次）
+bash scripts/build-plugin.sh           # dotnet build plugin/ 并拷进 BepInEx/plugins/
+bash scripts/run-game.sh               # steam -applaunch 728880
+grep -E 'BepInEx 5|WellCooked\.Smoke|smoke patch alive' "$GAME_DIR/BepInEx/LogOutput.log"   # 验证
 ```
 
-OS 核心和游戏插件落地时必须同时补上构建、测试命令；在那之前，验证只能靠实际运行游戏。
+前置条件：.NET SDK（本机装在 `~/.dotnet`，`scripts/build-plugin.sh` 默认用它）、游戏目录
+（默认本机 Steam 库路径，其他机器用 `GAME_DIR` 覆盖）、Steam 在运行；改注册表和装 BepInEx 前先退出游戏。
+还没有测试命令：OS 核心和 Bridge 尚未开始，插件侧只能靠启动游戏看日志验证。
 
 ## Layout
 
 - `overcooked_os_course_project.md` — 课设方案：需求、调度模型、IPC、协议、排期
 - `1.txt` — 课堂汇报口播稿
 - `represent/` — 课堂汇报材料（pptx、生成脚本、SVG、UML、思维导图）
-- 代码落地后按方案第 6 章分层：supervisor / scheduler / worker / bridge / protocol / 监控面板
+- `plugin/` — BepInEx 插件（C#，net35）；`scripts/` — 部署、构建、启动、验证脚本
+- 尚未开始：`protocol/`（JSON 协议与 schema）、`bridge/`（Linux 侧 C11），之后是 Supervisor / Scheduler / Worker
 
 ## How code is written here
 
