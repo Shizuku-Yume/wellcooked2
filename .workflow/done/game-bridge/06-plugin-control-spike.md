@@ -36,15 +36,18 @@ Review（flow-verify brief A，2026-10-14）：blocked，1 blocking / 2 nonblock
 
 ## Findings
 
-**Result:** 设备层能控制游戏。**路线 B（在游戏进程里建一个 `InControl.InputDevice`，用 `InputManager.AttachDevice` 挂上）能驱动游戏的前端/加入流程**：挂上虚拟手柄后按 A，游戏从标题画面进入开场剧情过场。路线 A（替换 `PlayerInputLookup` 返回的逻辑按钮）被游戏轮询但不驱动前端。
+**Result:** 设备层能控制游戏。**路线 B（在游戏进程里建一个 `InControl.InputDevice`，用 `InputManager.AttachDevice` 挂上）能驱动游戏的前端/加入流程**：挂上虚拟手柄后，A 键（每 3 秒按 0.3 秒，共 30 秒）把游戏从标题画面推进到开场剧情过场。路线 A（替换 `PlayerInputLookup` 返回的逻辑按钮）在本次测的按钮和场景里不驱动前端。
+
+**关于 Check 的措辞：** Check 写的是"标题画面的卷帘门打开"。实测到的可见表现是**标题画面被消费、进入开场过场**（两次运行的截图都是过场画面），没有逐帧抓到卷帘门动画本身。按行为判定算通过——继续提示被消费了——但"卷帘门打开"这个具体画面没有被单独证明，这里如实记下。
 
 **范围（重要，别读宽了）：** 本次只证实"设备层能驱动前端/加入流程"。**关卡内厨师的动作（移动、交互）没有验证**——进关卡要先过前端和加入流程，那是任务 04 的验收内容。所以这次回答的是"能控制游戏、注入通道可用"，不是"能控制厨师"；"能控制厨师"由任务 04 证实。
 
 **路线 A 的证据**
 
 - 标题画面阶段游戏查询的 8 个逻辑输入（日志 `control-spike query:`）：`GetFixedButton(UISelect, PlayerGameInput)`、`GetEngagementButton(PlayerGameInput)`、`GetFixedButton(UICancel, PlayerGameInput)`、`GetFixedButton(Curse, PlayerGameInput)`、`GetFixedButton(DebugMenu, PlayerGameInput)`、`GetButton(DebugMenu, One)`、`GetButton(UISelect, One)`、`GetUIButton(UISelect, One)`。
-- 把 `GetEngagementButton` 的返回值换成"强制按下 0.4 秒"的包装对象后，日志出现 `control-spike: 强制按钮 GetEngagementButton 被轮询 2400 次（最近一次 JustPressed）`——游戏确实在轮询我们塞进去的对象，但画面一直停在标题画面（截图 `/tmp/spike2.png`，抓于该次运行末尾）。
-- 结论：逻辑层可以替换（注入点成立），但前端的"按 A 继续"走的是设备/加入流程，不是逻辑按钮层。
+- 强制开关是一个文本文件，内容为要按的按钮名，插件每 0.5 秒重读一次；被强制的按钮每 0.4 秒"按一次"（按下 → 领取 → 释放），也就是在标题画面反复按。
+- 把 `GetEngagementButton` 的返回值换成这个包装对象后，日志出现 `control-spike: 强制按钮 GetEngagementButton 被轮询 2400 次（最近一次 JustPressed）`——游戏确实在轮询我们塞进去的对象，但画面一直停在标题画面（截图 `/tmp/spike2.png`，抓于该次运行末尾）。
+- 结论要限定：**本次测的这个按钮、这个场景**（标题画面的继续/加入流程）没有被逻辑层驱动。这不等于"前端普遍不走逻辑按钮层"——前端其它流程、关卡内已有的玩家输入这次都没测。注入点本身是成立的（对象被轮询），所以逻辑层没被彻底排除，只是不能用来过前端。
 
 **路线 B 的证据**
 
