@@ -805,8 +805,20 @@ namespace WellCooked
                 Vector2 face;
                 if (WorkOrder.FaceFor(owned.Slot, out face))
                 {
-                    // 朝向阶段：直接喂方向让厨师转身（交互按的是"面前那一格"）
-                    owned.Pad.Want(false, false, face);
+                    // 朝向阶段：直接喂方向让厨师转身（交互按的是"面前那一格"），
+                    // 但交互键必须照样写下去——之前这里写死 false，导致 A 从来没到过手柄，
+                    // 表现就是"面前明明是料箱、日志一直说在按，游戏那边一点反应没有"。
+                    owned.Pad.Want(interact, false, face);
+
+                    if (_trace || interact)
+                    {
+                        _log.LogInfo("trace 工序 玩家位=" + (owned.Slot + 1)
+                                     + " 手柄=" + owned.Pad.State
+                                     + " 交互=" + interact
+                                     + " 朝向=(" + face.x.ToString("F2") + "," + face.y.ToString("F2") + ")"
+                                     + " 位置=(" + position.x.ToString("F2") + "," + position.y.ToString("F2") + ")");
+                    }
+
                     continue;
                 }
 
