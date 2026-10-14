@@ -111,6 +111,9 @@ namespace WellCooked
                 case "session":
                     StartSession(value);
                     break;
+                case "probe":
+                    Probe(value);
+                    break;
                 case "dump":
                     DumpType(value);
                     break;
@@ -401,6 +404,44 @@ namespace WellCooked
 
         private static void Noop()
         {
+        }
+
+        /// <summary>把某个点周围 2 米内的碰撞体全打出来：卡住时用它看物理布局，不靠猜。</summary>
+        private static void Probe(string value)
+        {
+            var parts = value.Split(',');
+            if (parts.Length < 2)
+            {
+                _log.LogWarning("指令: probe=x,z");
+                return;
+            }
+
+            float x, z;
+            if (!float.TryParse(parts[0], out x) || !float.TryParse(parts[1], out z))
+            {
+                _log.LogWarning("指令: probe 坐标看不懂: " + value);
+                return;
+            }
+
+            var center = new Vector3(x, 0.5f, z);
+            _log.LogInfo("指令: probe (" + x.ToString("F2") + "," + z.ToString("F2") + ") 半径 2 米内的碰撞体：");
+            foreach (var collider in UnityEngine.Object.FindObjectsOfType<Collider>())
+            {
+                var bounds = collider.bounds;
+                var closest = bounds.ClosestPoint(center);
+                float distance = Vector3.Distance(closest, center);
+                if (distance > 2f)
+                {
+                    continue;
+                }
+
+                var owner = collider.gameObject;
+                _log.LogInfo("     " + owner.name + " [" + LayerMask.LayerToName(owner.layer) + "]"
+                             + " 触发=" + collider.isTrigger
+                             + " 最近点=" + closest.x.ToString("F2") + "," + closest.z.ToString("F2")
+                             + " 距离=" + distance.ToString("F2")
+                             + " 尺寸=" + bounds.size.x.ToString("F2") + "×" + bounds.size.y.ToString("F2") + "×" + bounds.size.z.ToString("F2"));
+            }
         }
 
         private static void DumpType(string name)
