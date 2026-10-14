@@ -2,7 +2,9 @@
 
 **Effort:** game-bridge
 **Task type:** spike
-**Base commit:** <commit-sha>
+**Base commit:** fd300b8e0903ab31ba59564511940f495d5564f7
+**Started:** 2026-10-14T14:19:01+08:00
+**Status:** active
 
 **Question:** 插件能不能控制游戏里的厨师（至少做出一次可见的输入效果）？走哪条路线，代价是什么？
 **Time box:** 两条路线各试一次，先试补 `PlayerInputLookup`（游戏逻辑层），不成功再试进程内 `InControl.InputDevice`；不做完整动作集，不接 Bridge。
