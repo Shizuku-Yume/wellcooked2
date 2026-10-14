@@ -355,8 +355,68 @@ namespace WellCooked
         /// </summary>
         private static string _terrainScene;
 
-        private const float SampleStep = 0.5f;
+        public const float SampleStep = 0.5f;
         private const float SampleMargin = 6f;
+
+        // 采样出来的可走格，寻路直接查这张表
+        private static bool[,] _walkable;
+        private static float _originX;
+        private static float _originZ;
+        private static int _cellsX;
+        private static int _cellsZ;
+
+        public static bool HasTerrain
+        {
+            get { return _walkable != null; }
+        }
+
+        public static void WorldToCell(float x, float z, out int ix, out int iz)
+        {
+            ix = (int)Math.Round((x - _originX) / SampleStep);
+            iz = (int)Math.Round((z - _originZ) / SampleStep);
+        }
+
+        public static Vector2 CellCenter(int ix, int iz)
+        {
+            return new Vector2(_originX + ix * SampleStep, _originZ + iz * SampleStep);
+        }
+
+        public static bool IsWalkableCell(int ix, int iz)
+        {
+            return _walkable != null && ix >= 0 && iz >= 0 && ix < _cellsX && iz < _cellsZ && _walkable[ix, iz];
+        }
+
+        public static bool IsWalkablePoint(float x, float z)
+        {
+            int ix, iz;
+            WorldToCell(x, z, out ix, out iz);
+            return IsWalkableCell(ix, iz);
+        }
+
+        public static int WalkableCellCount
+        {
+            get
+            {
+                if (_walkable == null)
+                {
+                    return 0;
+                }
+
+                int count = 0;
+                for (int ix = 0; ix < _cellsX; ix++)
+                {
+                    for (int iz = 0; iz < _cellsZ; iz++)
+                    {
+                        if (_walkable[ix, iz])
+                        {
+                            count++;
+                        }
+                    }
+                }
+
+                return count;
+            }
+        }
 
         private static void DumpTerrainOnce()
         {
@@ -407,20 +467,29 @@ namespace WellCooked
                 minZ -= SampleMargin;
                 maxZ += SampleMargin;
 
+                _originX = minX;
+                _originZ = minZ;
+                _cellsX = (int)Math.Floor((maxX - minX) / SampleStep) + 1;
+                _cellsZ = (int)Math.Floor((maxZ - minZ) / SampleStep) + 1;
+                _walkable = new bool[_cellsX, _cellsZ];
+
                 var cells = new StringBuilder();
                 int count = 0;
                 float top = 5f;
                 float distance = 10f;
-                for (float x = minX; x <= maxX; x += SampleStep)
+                for (int ix = 0; ix < _cellsX; ix++)
                 {
-                    for (float z = minZ; z <= maxZ; z += SampleStep)
+                    for (int iz = 0; iz < _cellsZ; iz++)
                     {
+                        float x = _originX + ix * SampleStep;
+                        float z = _originZ + iz * SampleStep;
                         RaycastHit hit;
                         if (!Physics.Raycast(new Vector3(x, top, z), Vector3.down, out hit, distance, mask))
                         {
                             continue;
                         }
 
+                        _walkable[ix, iz] = true;
                         if (count > 0)
                         {
                             cells.Append(',');

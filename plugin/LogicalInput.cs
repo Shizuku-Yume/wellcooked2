@@ -28,6 +28,7 @@ namespace WellCooked
         {
             public bool Active;
             public float MoveX;
+            public float MoveY;
             public bool Action;
         }
 
@@ -92,7 +93,7 @@ namespace WellCooked
         }
 
         /// <summary>开始/停止驱动某个玩家：轴取 [-1,1]，按键按一次给一帧。</summary>
-        public static void Set(PlayerInputLookup.Player player, float moveX, bool action)
+        public static void Set(PlayerInputLookup.Player player, Vector2 move, bool action)
         {
             Drive drive;
             if (!Drives.TryGetValue(player, out drive))
@@ -102,7 +103,8 @@ namespace WellCooked
             }
 
             drive.Active = true;
-            drive.MoveX = moveX;
+            drive.MoveX = move.x;
+            drive.MoveY = move.y;
             drive.Action = action;
         }
 
@@ -112,6 +114,7 @@ namespace WellCooked
             {
                 drive.Active = false;
                 drive.MoveX = 0f;
+                drive.MoveY = 0f;
                 drive.Action = false;
             }
         }
@@ -141,7 +144,13 @@ namespace WellCooked
                 return;
             }
 
-            if (__args[0] == null || __args[0].ToString() != "MovementX")
+            if (__args[0] == null)
+            {
+                return;
+            }
+
+            var axis = __args[0].ToString();
+            if (axis != "MovementX" && axis != "MovementY")
             {
                 return;
             }
@@ -153,7 +162,7 @@ namespace WellCooked
                 return;
             }
 
-            __result = new DrivenValue(__result, drive);
+            __result = new DrivenValue(__result, drive, axis == "MovementX");
         }
 
         private static void AfterGetButton(object[] __args, ref ILogicalButton __result)
@@ -183,16 +192,23 @@ namespace WellCooked
         {
             private readonly ILogicalValue _inner;
             private readonly Drive _drive;
+            private readonly bool _horizontal;
 
-            public DrivenValue(ILogicalValue inner, Drive drive)
+            public DrivenValue(ILogicalValue inner, Drive drive, bool horizontal)
             {
                 _inner = inner;
                 _drive = drive;
+                _horizontal = horizontal;
             }
 
             public float GetValue()
             {
-                return _drive.Active ? _drive.MoveX : _inner.GetValue();
+                if (!_drive.Active)
+                {
+                    return _inner.GetValue();
+                }
+
+                return _horizontal ? _drive.MoveX : _drive.MoveY;
             }
 
             public void GetLogicTreeData(out AcyclicGraph<ILogicalElement, LogicalLinkInfo> graph,

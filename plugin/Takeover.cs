@@ -380,6 +380,7 @@ namespace WellCooked
             _drivingSince = now;
             _log.LogInfo("takeover: 检测到 " + chefCount + " 名厨师，开始接管驱动（我们占了 " + OwnedPads.Count + " 位）");
             ChooseLogicalPlayers(UnityEngine.Object.FindObjectsOfType<PlayerControls>());
+            CollectTargets();
             _log.LogInfo("takeover: 系统手柄槽位数=" + PlayerInputLookup.GetSystemControllerMaximum());
             LogDevices();
             LogPadInventory();
@@ -553,27 +554,61 @@ namespace WellCooked
         private static void Drive(float now)
         {
             float elapsed = now - _drivingSince;
-            bool forward = elapsed % (WalkHalfPeriod * 2f) < WalkHalfPeriod;
             bool action = elapsed % ActionPeriod < ActionLength;
+            ScanChefPositions(now);
 
-            // 每个厨师走自己的方向：全给同一个方向会让他们挤成一团互相堵死
             foreach (var owned in OwnedPads)
             {
-                var vector = DirectionFor(owned.Slot, forward);
-                owned.Pad.Want(action, false, vector);
+                Vector2 position;
+                if (!TryPosition(owned.Slot, out position))
+                {
+                    continue;
+                }
+
+                if (!Navigation.HasArrived(owned.Slot))
+                {
+                    string status;
+                    var direction = Navigation.Steer(owned.Slot, position, now, out status);
+                    owned.Pad.Want(action, false, direction);
+                    if (status.Length > 0 && now >= _nextDriveLog)
+                    {
+                        _log.LogInfo("takeover: 走位 玩家位=" + (owned.Slot + 1) + " " + status);
+                    }
+
+                    if (direction == Vector2.zero)
+                    {
+                        AssignNextTarget(owned.Slot, position, now);
+                    }
+                }
+                else
+                {
+                    AssignNextTarget(owned.Slot, position, now);
+                }
             }
 
             foreach (var player in LogicalPlayers)
             {
-                var vector = DirectionFor((int)player, forward);
-                LogicalInput.Set(player, vector.x, action);
+                Vector2 position;
+                if (!TryPosition((int)player, out position))
+                {
+                    continue;
+                }
+
+                string status;
+                var direction = Navigation.Steer(player, position, now, out status);
+                LogicalInput.Set(player, direction, action);
+                if (direction == Vector2.zero)
+                {
+                    AssignNextTarget(player, position, now);
+                }
             }
 
             if (now >= _nextDriveLog)
             {
                 _nextDriveLog = now + 2f;
-                _log.LogInfo("takeover: 驱动中 方向=" + (forward ? "正" : "反") + " 交互=" + action
-                             + " 设备层=" + OwnedPads.Count + " 逻辑层=" + LogicalPlayers.Count);
+                _log.LogInfo("takeover: 驱动中 交互=" + action
+                             + " 设备层=" + OwnedPads.Count + " 逻辑层=" + LogicalPlayers.Count
+                             + " 目标点=" + Targets.Count);
                 foreach (var owned in OwnedPads)
                 {
                     _log.LogInfo("takeover: 手柄 玩家位=" + (owned.Slot + 1) + " pad=" + owned.PadNumber
@@ -584,20 +619,98 @@ namespace WellCooked
             }
         }
 
-        /// <summary>
-        /// 每个玩家位一个固定方向，正反交替：0 号走 x、1 号走 -x、2 号走 y、3 号走 -y。
-        /// 这样一眼能看出"哪个厨师在动、动的是谁"，也不会互相挤。
-        /// </summary>
-        private static Vector2 DirectionFor(int index, bool forward)
+        // ---- 导航：目标点由这里挑，走位交给 Navigation ----
+
+        private static readonly List<Vector2> Targets = new List<Vector2>();
+        private static readonly Dictionary<object, int> TargetIndex = new Dictionary<object, int>();
+        private static readonly Dictionary<int, Vector3> ChefPositions = new Dictionary<int, Vector3>();
+        private static float _nextChefScan;
+        private static int _targetCursor;
+
+        /// <summary>目标点取真实工位的位置：食材箱、出菜台、灶、水槽。调度器以后会自己决定去哪，这里先轮着走。</summary>
+        private static void CollectTargets()
         {
-            float sign = forward ? 1f : -1f;
-            switch (((index % 4) + 4) % 4)
+            Targets.Clear();
+            foreach (var typeName in new[]
+                     {
+                         "ClientIngredientContainer", "ClientPlateStation", "ClientCookingStation",
+                         "ClientWashingStation", "ClientCookableContainer"
+                     })
             {
-                case 0: return new Vector2(sign, 0f);
-                case 1: return new Vector2(-sign, 0f);
-                case 2: return new Vector2(0f, sign);
-                default: return new Vector2(0f, -sign);
+                var type = AccessTools.TypeByName(typeName);
+                if (type == null)
+                {
+                    continue;
+                }
+
+                foreach (var found in UnityEngine.Object.FindObjectsOfType(type))
+                {
+                    var component = found as Component;
+                    if (component != null)
+                    {
+                        var p = component.transform.position;
+                        Targets.Add(new Vector2(p.x, p.z));
+                    }
+                }
             }
+
+            _log.LogInfo("takeover: 收集到 " + Targets.Count + " 个目标点（工位）");
+        }
+
+        private static void ScanChefPositions(float now)
+        {
+            if (now < _nextChefScan)
+            {
+                return;
+            }
+
+            _nextChefScan = now + 0.1f;
+            ChefPositions.Clear();
+            foreach (var chef in UnityEngine.Object.FindObjectsOfType<PlayerControls>())
+            {
+                var provider = chef.GetComponent<PlayerIDProvider>();
+                if (provider != null)
+                {
+                    ChefPositions[(int)provider.GetID()] = chef.transform.position;
+                }
+            }
+        }
+
+        private static bool TryPosition(int playerIndex, out Vector2 position)
+        {
+            Vector3 p;
+            if (ChefPositions.TryGetValue(playerIndex, out p))
+            {
+                position = new Vector2(p.x, p.z);
+                return true;
+            }
+
+            position = Vector2.zero;
+            return false;
+        }
+
+        /// <summary>给这个执行体排下一个目标点；到达后就换下一个，保持可见的移动。</summary>
+        private static void AssignNextTarget(object owner, Vector2 position, float now)
+        {
+            if (Targets.Count == 0)
+            {
+                return;
+            }
+
+            int index;
+            TargetIndex.TryGetValue(owner, out index);
+            // 挑一个离当前位置至少 3 格的目标，免得在脚边打转
+            for (int attempt = 0; attempt < Targets.Count; attempt++)
+            {
+                index = (index + 1) % Targets.Count;
+                if (Vector2.Distance(position, Targets[index]) > 3f)
+                {
+                    break;
+                }
+            }
+
+            TargetIndex[owner] = index;
+            Navigation.Assign(owner, Targets[index]);
         }
 
         /// <summary>

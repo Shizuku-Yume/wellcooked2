@@ -29,6 +29,7 @@ namespace WellCooked
             ApplySmokePatches();
             WorldState.Install(_log);
             LogicalInput.Install(_log);
+            Navigation.Install(_log);
             Takeover.Install(_log);
             DumpGameInventory();
         }
