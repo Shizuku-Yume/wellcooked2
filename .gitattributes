@@ -1,0 +1,4 @@
+# workflow:start
+.workflow/decisions.md merge=union
+.workflow/glossary.md merge=union
+# workflow:end

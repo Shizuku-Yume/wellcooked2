@@ -1,0 +1,48 @@
+{
+  "items": [
+    {
+      "filename": "overcooked_gameplay.jpg",
+      "slide": "",
+      "purpose": "",
+      "search_query": "",
+      "orientation": "",
+      "provider": "manual",
+      "title": "",
+      "author": "",
+      "source_page_url": "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/728880/ss_2f84a12e1fe82cca37848bf29d4b8b16e83db03b.1920x1080.jpg?t=1789548883",
+      "download_url": "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/728880/ss_2f84a12e1fe82cca37848bf29d4b8b16e83db03b.1920x1080.jpg?t=1789548883",
+      "license_name": "unverified — direct URL",
+      "license_url": "",
+      "license_tier": "manual",
+      "attribution_required": false,
+      "width": 1920,
+      "height": 1080,
+      "attribution_text": "",
+      "status": "manual",
+      "note": "Direct image URL; verifying usage rights is the user's responsibility."
+    },
+    {
+      "filename": "overcooked_kitchen.jpg",
+      "slide": "",
+      "purpose": "",
+      "search_query": "",
+      "orientation": "",
+      "provider": "manual",
+      "title": "",
+      "author": "",
+      "source_page_url": "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/728880/ss_7f290dccbdc3c0eb9ded951717bceba5d7455764.1920x1080.jpg?t=1789548883",
+      "download_url": "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/728880/ss_7f290dccbdc3c0eb9ded951717bceba5d7455764.1920x1080.jpg?t=1789548883",
+      "license_name": "unverified — direct URL",
+      "license_url": "",
+      "license_tier": "manual",
+      "attribution_required": false,
+      "width": 1920,
+      "height": 1080,
+      "attribution_text": "",
+      "status": "manual",
+      "note": "Direct image URL; verifying usage rights is the user's responsibility."
+    }
+  ],
+  "generated_at": "2026-09-30T04:27:45.938201Z",
+  "license_verification": "provider metadata used; manual review recommended for external delivery"
+}
