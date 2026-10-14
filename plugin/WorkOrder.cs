@@ -42,6 +42,8 @@ namespace WellCooked
         private static bool _arrivedLogged;
         private static ChefState _lastChef;
         private static string _facingName = "?";
+        private static float _closestDistance = float.MaxValue;
+        private static float _closestAt;
         private static bool _interacted;
         private static string _expectHeld = "";
         private static string _expectContents = "";
@@ -176,10 +178,20 @@ namespace WellCooked
                 }
 
                 _facing = true;
-                _faceDirection = (chef.Position - _station).sqrMagnitude > 0.0001f
-                    ? (_station - chef.Position).normalized
-                    : Vector2.zero;
                 _facingName = chef.FacingName;
+
+                // 先朝工位推，推到推不动（离工位最近距离 0.35 秒没再变近）就停下再按：
+                // 一边顶一边按，游戏那边不认（实测面前确实是料箱、按了很多次也拿不到料）。
+                if (toStation < _closestDistance - 0.02f)
+                {
+                    _closestDistance = toStation;
+                    _closestAt = now;
+                }
+
+                bool blocked = now - _closestAt > 0.35f;
+                _faceDirection = blocked || (chef.Position - _station).sqrMagnitude <= 0.0001f
+                    ? Vector2.zero
+                    : (_station - chef.Position).normalized;
 
                 if (!_pressing && now >= _nextPress)
                 {
@@ -342,6 +354,8 @@ namespace WellCooked
             _warned = false;
             _arrivedLogged = false;
             _facing = false;
+            _closestDistance = float.MaxValue;
+            _closestAt = now;
             _hasTarget = false;
 
             switch (step)
