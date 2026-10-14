@@ -21,8 +21,10 @@ namespace WellCooked
         private enum Step
         {
             Idle,
-            GetPlate,
             GetIngredient,
+            DropOnCounter,
+            GetPlate,
+            PlateIt,
             Deliver,
             Done
         }
@@ -41,6 +43,7 @@ namespace WellCooked
         private static bool _interacted;
         private static string _expectHeld = "";
         private static Vector2 _target;
+        private static Vector2 _counter;
         private static bool _hasTarget;
         private static int _completed;
         private static string _lastError = "";
@@ -109,7 +112,7 @@ namespace WellCooked
                 }
 
                 _log.LogInfo("工序: 接单 " + dish + "，交给厨师位 " + (_slot + 1));
-                Begin(Step.GetPlate, now);
+                Begin(Step.GetIngredient, now);
                 return;
             }
 
@@ -210,23 +213,6 @@ namespace WellCooked
 
             switch (step)
             {
-                case Step.GetPlate:
-                {
-                    var stack = Kitchen.PlateStack();
-                    if (stack == null)
-                    {
-                        Fail(now, "找不到盘子堆");
-                        return;
-                    }
-
-                    _target = stack.Position;
-                    _hasTarget = true;
-                    _expectHeld = "Plate";
-                    _log.LogInfo("工序: 1/3 去拿盘子（" + stack.Name + " "
-                                 + _target.x.ToString("F1") + "," + _target.y.ToString("F1") + "）");
-                    break;
-                }
-
                 case Step.GetIngredient:
                 {
                     string want = WantedIngredient();
@@ -240,7 +226,52 @@ namespace WellCooked
                     _target = crate.Position;
                     _hasTarget = true;
                     _expectHeld = want;
-                    _log.LogInfo("工序: 2/3 去取料「" + want + "」（" + crate.Name + " "
+                    _log.LogInfo("工序: 1/5 去取料「" + want + "」（" + crate.Name + " "
+                                 + _target.x.ToString("F1") + "," + _target.y.ToString("F1") + "）");
+                    break;
+                }
+
+                case Step.DropOnCounter:
+                {
+                    var counter = Kitchen.FreeCounter(_target);
+                    if (counter == null)
+                    {
+                        Fail(now, "找不到空台面放料");
+                        return;
+                    }
+
+                    _counter = counter.Position;
+                    _target = counter.Position;
+                    _hasTarget = true;
+                    _expectHeld = ""; // 放下后空手
+                    _log.LogInfo("工序: 2/5 把料放到台面（" + counter.Name + " "
+                                 + _target.x.ToString("F1") + "," + _target.y.ToString("F1") + "）");
+                    break;
+                }
+
+                case Step.GetPlate:
+                {
+                    var stack = Kitchen.PlateStack();
+                    if (stack == null)
+                    {
+                        Fail(now, "找不到盘子堆");
+                        return;
+                    }
+
+                    _target = stack.Position;
+                    _hasTarget = true;
+                    _expectHeld = "Plate";
+                    _log.LogInfo("工序: 3/5 去拿盘子（" + stack.Name + " "
+                                 + _target.x.ToString("F1") + "," + _target.y.ToString("F1") + "）");
+                    break;
+                }
+
+                case Step.PlateIt:
+                {
+                    _target = _counter;
+                    _hasTarget = true;
+                    _expectHeld = WantedIngredient(); // 装盘后手上是"装着料的盘子"
+                    _log.LogInfo("工序: 4/5 回去装盘（台面 "
                                  + _target.x.ToString("F1") + "," + _target.y.ToString("F1") + "）");
                     break;
                 }
@@ -257,7 +288,7 @@ namespace WellCooked
                     _target = station.Position;
                     _hasTarget = true;
                     _expectHeld = ""; // 交付后应该空手
-                    _log.LogInfo("工序: 3/3 去交付（" + station.Name + " "
+                    _log.LogInfo("工序: 5/5 去交付（" + station.Name + " "
                                  + _target.x.ToString("F1") + "," + _target.y.ToString("F1") + "）");
                     break;
                 }
@@ -268,10 +299,16 @@ namespace WellCooked
         {
             switch (_step)
             {
-                case Step.GetPlate:
-                    Begin(Step.GetIngredient, now);
-                    break;
                 case Step.GetIngredient:
+                    Begin(Step.DropOnCounter, now);
+                    break;
+                case Step.DropOnCounter:
+                    Begin(Step.GetPlate, now);
+                    break;
+                case Step.GetPlate:
+                    Begin(Step.PlateIt, now);
+                    break;
+                case Step.PlateIt:
                     Begin(Step.Deliver, now);
                     break;
                 case Step.Deliver:

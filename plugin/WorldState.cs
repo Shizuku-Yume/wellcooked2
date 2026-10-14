@@ -910,7 +910,7 @@ namespace WellCooked
             return result;
         }
 
-        private static object Get(object target, string name)
+        public static object Get(object target, string name)
         {
             return Invoke(target, name, null);
         }

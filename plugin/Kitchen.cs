@@ -77,6 +77,50 @@ namespace WellCooked
             return null;
         }
 
+        /// <summary>
+        /// 空台面（可以放东西的普通台面）。
+        ///
+        /// 为什么需要它：OC2 里**不能拿着盘子直接取料**——得先把料放在台面上，
+        /// 再拿盘子走过去"装盘"（实测：拿着盘子去料箱按 A，盘子被放下、只拿到生鱼，
+        /// 于是交付口不认，得分一直 0）。
+        /// </summary>
+        public static Station FreeCounter(Vector2 near)
+        {
+            Station best = null;
+            float bestDistance = float.MaxValue;
+            foreach (var component in WorldState.FindAll("ClientAttachStation"))
+            {
+                var unity = component as Component;
+                if (unity == null)
+                {
+                    continue;
+                }
+
+                var item = WorldState.Get(component, "m_item");
+                if (item != null)
+                {
+                    continue; // 台面上有东西
+                }
+
+                var p = unity.transform.position;
+                var position = new Vector2(p.x, p.z);
+                float distance = Vector2.Distance(position, near);
+                if (distance < bestDistance)
+                {
+                    bestDistance = distance;
+                    best = new Station
+                    {
+                        Type = "ClientAttachStation",
+                        Name = unity.gameObject.name,
+                        Position = position,
+                        Component = unity
+                    };
+                }
+            }
+
+            return best;
+        }
+
         /// <summary>出菜台（交付口）。</summary>
         public static Station DeliveryStation()
         {
