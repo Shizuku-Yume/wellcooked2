@@ -356,6 +356,12 @@ namespace WellCooked
         /// </summary>
         private static string _terrainScene;
 
+        /// <summary>
+        /// 关卡实例标识（用第一名厨师的实例号）：重进同一关时场景名一样，
+        /// 只看名字会复用上一关的旧网格（Unity 2017 的 Scene 没有 handle）。
+        /// </summary>
+        private static int _terrainChefId;
+
         // 可走格：直接来自游戏的 GridManager（occupant 为空的格子），不是自己打射线猜的
         private static bool[,] _walkable;
         private static float _originX;
@@ -451,18 +457,26 @@ namespace WellCooked
         private static void DumpTerrainOnce()
         {
             var scene = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
-            if (scene == _terrainScene || scene == "StartScreen" || scene == "Loading")
+            if (scene == "StartScreen" || scene == "Loading")
             {
                 return;
             }
 
-            var chefs = UnityEngine.Object.FindObjectsOfType<PlayerControls>();
-            if (chefs.Length == 0)
+            var found = UnityEngine.Object.FindObjectsOfType<PlayerControls>();
+            if (found.Length == 0)
             {
                 return;
             }
+
+            if (scene == _terrainScene && found[0].GetInstanceID() == _terrainChefId)
+            {
+                return;
+            }
+
+            var chefs = found;
 
             _terrainScene = scene;
+            _terrainChefId = found[0].GetInstanceID();
             try
             {
                 if (!SampleGameGrid())
@@ -619,7 +633,9 @@ namespace WellCooked
             File.WriteAllText(Path.Combine(Paths.BepInExRootPath, "wellcooked-terrain.json"), text.ToString());
             _log.LogInfo("state: 可走格 " + count + "/" + (_cellsX * _cellsZ) + "，可走边 " + edges
                          + "（物理采样，格距 " + _step.ToString("F2")
-                         + "，厨师半径 " + chefRadius.ToString("F2") + "，场景 " + ActiveScene() + "）");
+                         + "，厨师半径 " + chefRadius.ToString("F2")
+                         + "，厨师层 " + UnityEngine.LayerMask.LayerToName(PlayerLayer)
+                         + "，场景 " + ActiveScene() + "）");
             return true;
         }
 
@@ -627,6 +643,20 @@ namespace WellCooked
         private const float ObjectStep = 0.6f;
 
         private const float SampleMargin = 3f;
+
+        /// <summary>厨师所在的层：物理检查必须排掉它，否则"厨师站着的格子"自己就被判成不可走。</summary>
+        private static int PlayerLayer
+        {
+            get
+            {
+                foreach (var chef in UnityEngine.Object.FindObjectsOfType<PlayerControls>())
+                {
+                    return chef.gameObject.layer;
+                }
+
+                return 0;
+            }
+        }
 
         /// <summary>厨师体积半径：直接量他的碰撞体，别猜。</summary>
         private static float MeasureChefRadius()
@@ -668,7 +698,7 @@ namespace WellCooked
 
             // 必须排掉厨师自己的碰撞体：否则"厨师站着的这一格"会被判成走不通，
             // A* 的起点格不可走、一步都扩不出去，一律报"不可达"（实测 288 次）。
-            foreach (var hit in Physics.OverlapSphere(probe, radius, ~0, QueryTriggerInteraction.Ignore))
+            foreach (var hit in Physics.OverlapSphere(probe, radius, ~(1 << PlayerLayer), QueryTriggerInteraction.Ignore))
             {
                 if (hit.GetComponentInParent<PlayerControls>() != null)
                 {
