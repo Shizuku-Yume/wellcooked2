@@ -13,6 +13,7 @@
 - 游戏每帧上报世界状态：厨师位置与手持物、订单列表与剩余时间、厨具（锅、砧板、盘子）状态、当前得分。Bridge 解析后写日志。
 - Bridge 能下发动作指令（移动到坐标、交互、抓取/放下、投掷），游戏里对应厨师按指令行动。
 - 两名虚拟玩家能加入本地合作局，由指令驱动完成订单并正常得分。
+- 用户自己导航进关卡：插件在关卡加载前把空着的玩家位用虚拟手柄占上（用户占着的那位不动），进关卡后自动接管我们那几名厨师。第一条策略是最小策略（来回走 + 周期按交互键），调度算法接在同一个驱动点上。
 - 任一侧断开，另一侧靠心跳超时发现并记日志，不静默失效。
 
 ## How it is built
@@ -20,6 +21,7 @@
 四个部分，边界固定：
 
 - **游戏插件（C#，BepInEx 5.4.x + Harmony 2）** — 跑在游戏进程内，负责状态读取、输入注入、TCP 客户端。它不做任何调度决策，只执行"某厨师做某动作"。工程放 `plugin/`，构建产物拷进游戏目录的 `BepInEx/plugins/`。输入注入走**设备层**：进程内建一个 `InControl.InputDevice`（`AddControl` 注册控制项）用 `InputManager.AttachDevice` 挂上，每帧设置按键状态（spike game-bridge/06 实测，见 Notes）。
+- **接管时机** — 插件每 0.5 秒检查一次：玩家位空着就用虚拟手柄占上（`PCPlayerManager.EngagePadToSlot`，protected，反射调；pad 号靠 `PCPadInputProvider.GetActionSet` 反查），所以关卡是按多人加载的；场景里一出现本地厨师控制器（`PlayerControls`）就开始驱动，离开关卡就停止并清掉按键状态。用户自己占着的那一位不动。
 - **Bridge（C11，Linux）** — TCP 服务端，唯一连接游戏的进程。解析上报、写日志、回发控制指令；后续版本把世界状态写进共享内存供 Scheduler 和 Worker 读。源码放 `bridge/`。
 - **协议（`protocol/`）** — JSON 行协议，四种消息 `state_update`、`action`、`heartbeat`、`config`，字段按方案 §5.2。schema、示例和字段含义落在 `protocol/protocol.md`，两侧各自实现序列化（方案 §5.3）。
 - **部署脚本（`scripts/`）** — 安装 BepInEx 到游戏目录、构建插件、启动游戏和 Bridge 的可重复命令。游戏目录是外部依赖，仓库只放脚本和源码。
