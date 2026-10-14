@@ -412,14 +412,29 @@ namespace WellCooked
                 return false;
             }
 
-            if (dx != 0)
+            // 边表存在小下标那一侧：_passableX[i,j] 表示 (i,j)↔(i+1,j)。
+            // 往 -x 走要查 ix-1，查 ix 就成了"另一侧那条边"——之前就是这么写的，
+            // 于是 A* 只能可靠地往 +x/+z 扩，需要往左/往下就报不可达。
+            if (dx > 0)
             {
-                return _passableX != null && ix >= 0 && ix < _cellsX && iz >= 0 && iz < _cellsZ
-                       && _passableX[ix, iz] && IsWalkableCell(ix + dx, iz);
+                return ix >= 0 && ix + 1 < _cellsX && iz >= 0 && iz < _cellsZ
+                       && _passableX != null && _passableX[ix, iz] && IsWalkableCell(ix + 1, iz);
             }
 
-            return _passableZ != null && ix >= 0 && ix < _cellsX && iz >= 0 && iz < _cellsZ
-                   && _passableZ[ix, iz] && IsWalkableCell(ix, iz + dz);
+            if (dx < 0)
+            {
+                return ix - 1 >= 0 && iz >= 0 && iz < _cellsZ
+                       && _passableX != null && _passableX[ix - 1, iz] && IsWalkableCell(ix - 1, iz);
+            }
+
+            if (dz > 0)
+            {
+                return ix >= 0 && ix < _cellsX && iz >= 0 && iz + 1 < _cellsZ
+                       && _passableZ != null && _passableZ[ix, iz] && IsWalkableCell(ix, iz + 1);
+            }
+
+            return ix >= 0 && ix < _cellsX && iz - 1 >= 0
+                   && _passableZ != null && _passableZ[ix, iz - 1] && IsWalkableCell(ix, iz - 1);
         }
 
         public static bool IsWalkablePoint(float x, float z)
