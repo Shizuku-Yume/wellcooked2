@@ -699,8 +699,14 @@ namespace WellCooked
                     // 到达是"走到路径终点"就成立，而走位日志每 2 秒才一行，正好会错过它。
                     // 所以到达单独计数、单独打日志，别让它看起来像"0 次到达"。
                     _arrivals++;
+                    Vector2 reached;
+                    string reachedText = Navigation.TryTarget(owned.Slot, out reached)
+                        ? "目标=(" + reached.x.ToString("F1") + "," + reached.y.ToString("F1") + ") 距离="
+                          + Vector2.Distance(position, reached).ToString("F2")
+                        : "没有目标";
                     _log.LogInfo("takeover: 到达 玩家位=" + (owned.Slot + 1)
-                                 + " 位置=(" + position.x.ToString("F2") + "," + position.y.ToString("F2") + ")");
+                                 + " 位置=(" + position.x.ToString("F2") + "," + position.y.ToString("F2") + ") "
+                                 + reachedText);
                     AssignNextTarget(owned.Slot, position, now);
                 }
             }
