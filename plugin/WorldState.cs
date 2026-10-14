@@ -322,8 +322,10 @@ namespace WellCooked
                     var p = unity.transform.position;
                     json.Append("{\"type\":\"").Append(typeName)
                         .Append("\",\"name\":\"").Append(Clean(unity.gameObject.name))
-                        .Append("\",\"pos\":[").Append(p.x.ToString("F2")).Append(',').Append(p.y.ToString("F2"))
-                        .Append(']');
+                        // 注意是 (x, z)：水平面才是走位用的，y 是高度（之前这里打成了 x,y，
+                        // 工序状态机按 z 读坐标会全错）
+                        .Append("\",\"pos\":[").Append(p.x.ToString("F2")).Append(',').Append(p.z.ToString("F2"))
+                        .Append("],\"height\":").Append(p.y.ToString("F2"));
 
                     if (typeName == "ClientPickupItemSpawner")
                     {
