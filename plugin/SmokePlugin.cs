@@ -27,6 +27,7 @@ namespace WellCooked
             _log.LogInfo("WellCooked.Smoke loaded; Unity " + UnityEngine.Application.unityVersion
                          + ", BepInEx " + typeof(BaseUnityPlugin).Assembly.GetName().Version);
             ApplySmokePatches();
+            ControlSpike.Install(_log);
             DumpGameInventory();
         }
 
@@ -160,6 +161,42 @@ namespace WellCooked
                     if (lines > 40000)
                     {
                         break;
+                    }
+                }
+
+                text.AppendLine();
+                text.AppendLine("# 关注类型（输入注入与状态读取要用到的完整成员）");
+                foreach (var wanted in new[]
+                         {
+                             "ILogicalButton", "ILogicalValue", "LogicalButtonID", "LogicalValueID",
+                             "Player", "PlayerControls", "ControlSchemeData", "PCPlayerManager",
+                             "GamepadEngagementManager", "InControl.InputDevice", "InControl.InputManager",
+                             "XInputDotNetPure.GamePad", "XInputDotNetPure.GamePadState"
+                         })
+                {
+                    var focus = AccessTools.TypeByName(wanted)
+                                ?? SafeTypes(game).FirstOrDefault(t => t.FullName == wanted || t.Name == wanted);
+                    if (focus == null)
+                    {
+                        text.AppendLine(wanted + " : 没找到");
+                        continue;
+                    }
+
+                    text.AppendLine(focus.FullName + (focus.IsEnum ? " (enum)" : ""));
+                    if (focus.IsEnum)
+                    {
+                        foreach (var value in Enum.GetNames(focus))
+                        {
+                            text.AppendLine("    " + value + " = " + Convert.ToInt64(Enum.Parse(focus, value)));
+                        }
+                        continue;
+                    }
+
+                    foreach (var member in focus.GetMembers(BindingFlags.Public | BindingFlags.NonPublic
+                                                            | BindingFlags.Instance | BindingFlags.Static
+                                                            | BindingFlags.DeclaredOnly))
+                    {
+                        text.AppendLine("    " + member);
                     }
                 }
 

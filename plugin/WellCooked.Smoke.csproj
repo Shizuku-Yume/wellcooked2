@@ -27,6 +27,15 @@
       <HintPath>$(GameDir)/BepInEx/core/0Harmony.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <!-- 游戏自己的程序集：只有编译期用（实现 ILogicalButton 之类的游戏接口），不随插件输出 -->
+    <Reference Include="Assembly-CSharp">
+      <HintPath>$(UnityManaged)/Assembly-CSharp.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="XInputDotNetPure">
+      <HintPath>$(UnityManaged)/XInputDotNetPure.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
   </ItemGroup>
 
   <!-- 引用游戏自带的 UnityEngine 程序集（2017.4 是模块化布局，名字随版本变，用通配符）。
