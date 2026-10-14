@@ -27,6 +27,7 @@ namespace WellCooked
             _log.LogInfo("WellCooked.Smoke loaded; Unity " + UnityEngine.Application.unityVersion
                          + ", BepInEx " + typeof(BaseUnityPlugin).Assembly.GetName().Version);
             ApplySmokePatches();
+            Takeover.Install(_log);
             DumpGameInventory();
         }
 
