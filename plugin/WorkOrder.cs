@@ -34,6 +34,10 @@ namespace WellCooked
         private static float _interactAt;
         private static float _pressUntil;
         private static bool _pressing;
+        private static float _nextPress;
+        private static float _lastCheckAt;
+        private static bool _warned;
+        private static bool _arrivedLogged;
         private static bool _interacted;
         private static string _expectHeld = "";
         private static Vector2 _target;
@@ -49,6 +53,9 @@ namespace WellCooked
 
         /// <summary>交互按下的时长（秒）。游戏只认按下的边沿，必须松开。</summary>
         private const float InteractHold = 0.25f;
+
+        /// <summary>隔多久按一次交互（秒）。交互有没有生效由世界状态判定，没生效就再按。</summary>
+        private const float PressInterval = 0.5f;
 
         public static void Install(ManualLogSource log)
         {
@@ -121,57 +128,65 @@ namespace WellCooked
             }
 
             float distance = Vector2.Distance(chef.Position, _target);
-            if (distance > ReachRadius)
-            {
-                return; // 还没走到，驱动层在推
-            }
+            string heldNow = chef.Held;
 
-            if (!_interacted)
+            // 已经到位了：等按键松开，然后查效果
+            if (distance <= ReachRadius)
             {
-                if (_interactAt <= 0f)
+                if (!_arrivedLogged)
                 {
-                    _interactAt = now + InteractHold;
+                    _arrivedLogged = true;
+                    _log.LogInfo("工序: " + _step + " 到位（距目标 " + distance.ToString("F2") + " 米）");
+                }
+
+                // 边走边按：交互范围由游戏自己判，我们按到"效果出现"为止
+                if (now >= _nextPress)
+                {
+                    _nextPress = now + PressInterval;
                     _pressUntil = now + InteractHold;
                     _pressing = true;
-                    _log.LogInfo("工序: " + _step + " 到达（距目标 " + distance.ToString("F2")
-                                 + " 米），按交互");
+                    _lastCheckAt = now + InteractHold + 0.15f;
+                    _log.LogInfo("工序: " + _step + " 按交互（手上「" + heldNow + "」）");
+                }
+
+                if (_pressing && now >= _pressUntil)
+                {
+                    _pressing = false;
+                }
+
+                if (now < _lastCheckAt)
+                {
                     return;
                 }
 
-                if (now < _pressUntil)
+                if (Matches(heldNow))
                 {
-                    return; // 正在按
+                    Next(now);
+                    return;
                 }
 
+                // 按了没效果：继续按（可能还没进交互范围），但不刷屏
+                if (!_warned && now - _stepStart > 6f)
+                {
+                    _warned = true;
+                    _log.LogWarning("工序: " + _step + " 按了几次没效果（手上「" + heldNow
+                                    + "」，期望「" + (_expectHeld.Length == 0 ? "空手" : _expectHeld) + "」），继续试");
+                }
+
+                return;
+            }
+
+            // 还没到位：驱动层在推，先不按
+            if (_pressing && now >= _pressUntil)
+            {
                 _pressing = false;
-                _interacted = true;
-                return;
             }
+        }
 
-            // 交互已按下：等世界状态出现预期变化（手上多了什么 / 变成空手）
-            if (now - _interactAt < InteractHold)
-            {
-                return;
-            }
-
-            string held = chef.Held;
-            if (_expectHeld.Length > 0 && !held.Contains(_expectHeld))
-            {
-                if (now - _interactAt > 2.5f)
-                {
-                    Fail(now, _step + " 后手上应该是「" + _expectHeld + "」，实际「" + held + "」");
-                }
-
-                return;
-            }
-
-            if (_expectHeld.Length == 0 && held.Length > 0 && now - _interactAt > 2.5f)
-            {
-                Fail(now, _step + " 后应该空手，实际「" + held + "」");
-                return;
-            }
-
-            Next(now);
+        /// <summary>手上状态是否符合这一步的预期。</summary>
+        private static bool Matches(string held)
+        {
+            return _expectHeld.Length == 0 ? held.Length == 0 : held.Contains(_expectHeld);
         }
 
         /// <summary>谁去做这一单：现在取第一个厨师位（替身，等 Scheduler 接管）。</summary>
@@ -187,6 +202,10 @@ namespace WellCooked
             _interactAt = 0f;
             _pressing = false;
             _interacted = false;
+            _nextPress = 0f;
+            _lastCheckAt = 0f;
+            _warned = false;
+            _arrivedLogged = false;
             _hasTarget = false;
 
             switch (step)
