@@ -282,7 +282,17 @@ namespace WellCooked
             }
 
             path.Reverse();
-            return Simplify(path);
+            var simplified = Simplify(path);
+
+            // 第一个路点是"厨师自己所在格的中心"，走过去是 0.6 格回头路；
+            // 而且每次重算路径都会把它拨回来，厨师就在两个格心之间来回（实测方向反复翻转）。
+            // 起点格直接丢掉：已经在里面了，下一个格才是要去的。
+            if (simplified.Count > 1)
+            {
+                simplified.RemoveAt(0);
+            }
+
+            return simplified;
         }
 
         /// <summary>
