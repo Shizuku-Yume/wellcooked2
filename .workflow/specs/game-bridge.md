@@ -19,7 +19,7 @@
 
 四个部分，边界固定：
 
-- **游戏插件（C#，BepInEx 5.4.x + Harmony 2）** — 跑在游戏进程内，负责状态读取、输入注入、TCP 客户端。它不做任何调度决策，只执行"某厨师做某动作"。工程放 `plugin/`，构建产物拷进游戏目录的 `BepInEx/plugins/`。
+- **游戏插件（C#，BepInEx 5.4.x + Harmony 2）** — 跑在游戏进程内，负责状态读取、输入注入、TCP 客户端。它不做任何调度决策，只执行"某厨师做某动作"。工程放 `plugin/`，构建产物拷进游戏目录的 `BepInEx/plugins/`。输入注入走**设备层**：进程内建一个 `InControl.InputDevice`（`AddControl` 注册控制项）用 `InputManager.AttachDevice` 挂上，每帧设置按键状态（spike game-bridge/06 实测，见 Notes）。
 - **Bridge（C11，Linux）** — TCP 服务端，唯一连接游戏的进程。解析上报、写日志、回发控制指令；后续版本把世界状态写进共享内存供 Scheduler 和 Worker 读。源码放 `bridge/`。
 - **协议（`protocol/`）** — JSON 行协议，四种消息 `state_update`、`action`、`heartbeat`、`config`，字段按方案 §5.2。schema、示例和字段含义落在 `protocol/protocol.md`，两侧各自实现序列化（方案 §5.3）。
 - **部署脚本（`scripts/`）** — 安装 BepInEx 到游戏目录、构建插件、启动游戏和 Bridge 的可重复命令。游戏目录是外部依赖，仓库只放脚本和源码。

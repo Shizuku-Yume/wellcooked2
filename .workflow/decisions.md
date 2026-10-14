@@ -100,7 +100,7 @@ user may overturn on sight. `Revisit when` of "never" is allowed but suspicious;
 
 - **Decided:** 插件在游戏进程里建一个 `InControl.InputDevice`（`AddControl` 注册控制项），用 `InputManager.AttachDevice` 挂上，每帧设置按键状态；不动 `PlayerInputLookup` 的逻辑按钮层。
 - **Instead of:** Harmony 补 `PlayerInputLookup.GetButton/GetValue`，返回自己的 `ILogicalButton`/`ILogicalValue` 包装对象（supercharged 的 `InputPatching.cs`、TAS 的 `TASControl.cs` 都这么做）。
-- **Because:** spike `game-bridge/06` 实测：逻辑层替换本身成立（游戏把我们的对象轮询了 2400 多次），但本次测的按钮和场景（标题画面的继续/加入流程）完全不响应，画面不动；换成进程内虚拟手柄后，每 3 秒按 0.3 秒 A 键，游戏就推进到了开场过场（两次独立运行都成立）。前端的"按 A 继续"走的是设备/加入流程。逻辑层在关卡内能不能用这次没测，不作结论。
+- **Because:** spike `game-bridge/06` 实测：逻辑层替换本身成立（游戏把我们的对象轮询了 2400 多次），但本次测的按钮和场景（标题画面的继续/加入流程）完全不响应，画面不动；换成进程内虚拟手柄后，每 3 秒按 0.3 秒 A 键，卷帘门升起、进入队伍大厅（连拍前后两帧 + 另两次运行都成立）。**推断（没有直接证明）**：前端的"按 A 继续"走设备/加入流程而不是逻辑按钮层——这两次观察符合这个解释，但没有反证过其它解释。逻辑层在关卡内能不能用这次没测，不作结论。
 - **Mine:** yes.
 - **Revisit when:** 关卡内的动作指令（移动、交互）在设备层表达不了，或游戏改版换掉 InControl。
 - **Effort:** game-bridge
