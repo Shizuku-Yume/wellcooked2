@@ -184,7 +184,20 @@ namespace WellCooked
                 // 游戏挑的是"最对齐的邻居格"，站错格会挑到别的东西（实测挑到垃圾桶，
                 // 一按就把盘子丢了）。所以先问游戏面前是什么，不是工位就只转身不按。
                 string facing = chef.FacingName;
-                if (facing != _stationName)
+
+                // 名字不完全可靠：盘子堆挂在台面上，游戏返回的占位物是台面本身
+                // （实测面前是「countertop_fake」而不是「Plate 1」）。所以再比一次格子：
+                // 面前那东西和工位在同一格，就当成对上了。
+                bool facingStation = facing == _stationName;
+                if (!facingStation && chef.HasFacing)
+                {
+                    int fx, fz, sx, sz;
+                    facingStation = WorldState.GameCellOf(chef.FacingPosition, out fx, out fz)
+                                    && WorldState.GameCellOf(_station, out sx, out sz)
+                                    && fx == sx && fz == sz;
+                }
+
+                if (!facingStation)
                 {
                     // 转身要短促：一直喂方向会顶着工位沿它滑走（实测滑出 2.6 米）。
                     if (now >= _faceNextPulse)
@@ -445,6 +458,8 @@ namespace WellCooked
             public Vector2 Position;
             public string Held;
             public string FacingName = "?";
+            public Vector2 FacingPosition;
+            public bool HasFacing;
         }
     }
 }

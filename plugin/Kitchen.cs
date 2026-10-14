@@ -256,6 +256,30 @@ namespace WellCooked
             return collider == null ? "（空）" : collider.gameObject.name;
         }
 
+        /// <summary>厨师面前那个东西的位置（判"是不是工位"用它比格子，比名字靠谱）。</summary>
+        public static bool FacingObjectPosition(PlayerControls chef, out Vector2 position)
+        {
+            position = Vector2.zero;
+            var helper = AccessTools.TypeByName("InteractWithItemHelper");
+            var method = helper == null
+                ? null
+                : AccessTools.Method(helper, "GetFacingGridOccupant", new[] { typeof(Transform), typeof(int) });
+            if (method == null)
+            {
+                return false;
+            }
+
+            var collider = method.Invoke(null, new object[] { chef.transform, -1 }) as Component;
+            if (collider == null)
+            {
+                return false;
+            }
+
+            var p = collider.transform.position;
+            position = new Vector2(p.x, p.z);
+            return true;
+        }
+
         /// <summary>
         /// 厨师手上东西的摘要：盘子会把里面的东西带出来，如 `Plate 1 (4)[SushiFish]`。
         /// 只报名字分不清"拿着生鱼"和"拿着装了鱼的盘子"（实测装盘那步就这么误判成成功）。

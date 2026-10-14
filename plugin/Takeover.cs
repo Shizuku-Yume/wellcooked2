@@ -775,12 +775,16 @@ namespace WellCooked
 
                 PlayerControls chef;
                 ChefControllers.TryGetValue(owned.Slot, out chef);
+                Vector2 facingPosition = Vector2.zero;
+                bool hasFacing = chef != null && Kitchen.FacingObjectPosition(chef, out facingPosition);
                 states.Add(new WorkOrder.ChefState
                 {
                     Slot = owned.Slot,
                     Position = position,
                     Held = chef == null ? "" : Kitchen.HeldSummary(chef),
-                    FacingName = chef == null ? "?" : Kitchen.FacingObjectName(chef)
+                    FacingName = chef == null ? "?" : Kitchen.FacingObjectName(chef),
+                    FacingPosition = facingPosition,
+                    HasFacing = hasFacing
                 });
             }
 
