@@ -152,14 +152,16 @@ namespace WellCooked
                 agent.StuckReported = false;
                 agent.SlideCount = 0;
             }
-            else if (now - agent.LastMovedAt > 0.4f && now >= agent.SlideUntil)
+            else if (now - agent.LastMovedAt > 0.4f && now >= agent.SlideUntil
+                     && Vector2.Distance(position, agent.Target) < 3f)
             {
                 // 侧向错身：两个厨师面对面互推时（路点正好在对穿位置），谁都不让、双双卡死
                 // （实测两人坐标完全不动）。按玩家位奇偶决定往哪边让，两边正好相反。
                 //
-                // 但错身必须**有界**：错身期间厨师一直在小幅移动，卡住计时攒不够，
-                // 于是永远不重算路径、也永远走不到远处目标（实测在盘子堆旁抖到超时）。
-                // 连续错身 2 次还推不动，就丢掉路径让上层重算。
+                // 只在**离目标很近**时才错身：那是"两个厨师对着同一个点互推"的场景。
+                // 离得远时还错身就成了乱走——错身期间厨师一直在小幅移动，卡住计时攒不够，
+                // 永远不重算路径，20 秒只挪半米（实测）。
+                // 另外错身本身有界：连续 2 次还推不动就丢路径让上层重算。
                 agent.SlideCount++;
                 if (agent.SlideCount > 2)
                 {
