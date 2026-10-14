@@ -825,6 +825,15 @@ namespace WellCooked
                 Navigation.Assign(owned.Slot, target);
                 string status;
                 var direction = Navigation.Steer(owned.Slot, position, now, out status);
+
+                // 最后一段（1 米内）不走寻路，直接朝格子中心收：
+                // 寻路是"走到附近就算到"，收不进 0.25 米的格子中心（实测停在 1.4 米外）。
+                float toTarget = Vector2.Distance(position, target);
+                if (toTarget < 1.0f)
+                {
+                    direction = toTarget < 0.05f ? Vector2.zero : (target - position).normalized;
+                    status = "收尾 " + toTarget.ToString("F2") + " 米";
+                }
                 owned.Pad.Want(interact, false, direction);
 
                 if (_trace || interact)
