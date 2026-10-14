@@ -557,12 +557,17 @@ namespace WellCooked
             var free = new List<Vector2>();
             int count = 0;
 
+            // 探针半径比厨师实际半径略小：贴着台面走时厨师能蹭过去，
+            // 用足半径会把贴着台面的一整圈都判死，路就断了。
+            float nodeRadius = chefRadius * 0.75f;
+            float edgeRadius = chefRadius * 0.6f;
+
             for (int i = 0; i < _cellsX; i++)
             {
                 for (int j = 0; j < _cellsZ; j++)
                 {
                     var world = new Vector3(minX + i * step, 0f, minZ + j * step);
-                    if (!Standable(world, chefRadius))
+                    if (!Standable(world, nodeRadius))
                     {
                         continue;
                     }
@@ -579,6 +584,7 @@ namespace WellCooked
                 return false;
             }
 
+            int dropped = KeepLargestComponent();
             int edges = 0;
             for (int i = 0; i < _cellsX - 1; i++)
             {
@@ -589,7 +595,7 @@ namespace WellCooked
                         continue;
                     }
 
-                    if (StandableBetween(CellCenter(i, j), CellCenter(i + 1, j), chefRadius))
+                    if (StandableBetween(CellCenter(i, j), CellCenter(i + 1, j), edgeRadius))
                     {
                         _passableX[i, j] = true;
                         edges++;
@@ -606,7 +612,7 @@ namespace WellCooked
                         continue;
                     }
 
-                    if (StandableBetween(CellCenter(i, j), CellCenter(i, j + 1), chefRadius))
+                    if (StandableBetween(CellCenter(i, j), CellCenter(i, j + 1), edgeRadius))
                     {
                         _passableZ[i, j] = true;
                         edges++;
@@ -631,6 +637,7 @@ namespace WellCooked
             text.Append(",\"map\":[").Append(_cellsX).Append(',').Append(_cellsZ).Append(']');
             text.Append(",\"cells\":[").Append(cells.ToString()).Append("]}");
             File.WriteAllText(Path.Combine(Paths.BepInExRootPath, "wellcooked-terrain.json"), text.ToString());
+            count -= dropped;
             _log.LogInfo("state: 可走格 " + count + "/" + (_cellsX * _cellsZ) + "，可走边 " + edges
                          + "（物理采样，格距 " + _step.ToString("F2")
                          + "，厨师半径 " + chefRadius.ToString("F2")
@@ -676,6 +683,86 @@ namespace WellCooked
             }
 
             return 0.35f;
+        }
+
+        /// <summary>
+        /// 只保留最大的连通块。物理采样难免留下"口袋"（一小片孤立可走格），
+        /// 厨师走进去就再也出不来：起点格在口袋里，A* 到哪都报不可达（实测卡死在 20.56,-3.13）。
+        /// 把口袋从可走表里去掉，起点就会就近跳到主区。
+        /// </summary>
+        private static int KeepLargestComponent()
+        {
+            var component = new int[_cellsX, _cellsZ];
+            var queue = new Queue<int>();
+            int best = 0;
+            int bestSize = 0;
+            int label = 0;
+
+            for (int i = 0; i < _cellsX; i++)
+            {
+                for (int j = 0; j < _cellsZ; j++)
+                {
+                    if (!_walkable[i, j] || component[i, j] != 0)
+                    {
+                        continue;
+                    }
+
+                    label++;
+                    int size = 0;
+                    component[i, j] = label;
+                    queue.Enqueue(i * _cellsZ + j);
+                    while (queue.Count > 0)
+                    {
+                        int current = queue.Dequeue();
+                        int cx = current / _cellsZ;
+                        int cz = current % _cellsZ;
+                        size++;
+                        for (int d = 0; d < 4; d++)
+                        {
+                            int nx = cx + (d == 0 ? 1 : d == 1 ? -1 : 0);
+                            int nz = cz + (d == 2 ? 1 : d == 3 ? -1 : 0);
+                            if (nx < 0 || nz < 0 || nx >= _cellsX || nz >= _cellsZ)
+                            {
+                                continue;
+                            }
+
+                            if (!_walkable[nx, nz] || component[nx, nz] != 0)
+                            {
+                                continue;
+                            }
+
+                            if (!CanStep(cx, cz, nx - cx, nz - cz))
+                            {
+                                continue;
+                            }
+
+                            component[nx, nz] = label;
+                            queue.Enqueue(nx * _cellsZ + nz);
+                        }
+                    }
+
+                    if (size > bestSize)
+                    {
+                        bestSize = size;
+                        best = label;
+                    }
+                }
+            }
+
+            int dropped = 0;
+            for (int i = 0; i < _cellsX; i++)
+            {
+                for (int j = 0; j < _cellsZ; j++)
+                {
+                    if (_walkable[i, j] && component[i, j] != best)
+                    {
+                        _walkable[i, j] = false;
+                        dropped++;
+                    }
+                }
+            }
+
+            return dropped;
         }
 
         /// <summary>两格之间的空隙也要能过：在中点按厨师半径查一圈。</summary>
