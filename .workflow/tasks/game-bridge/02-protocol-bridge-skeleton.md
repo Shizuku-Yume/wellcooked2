@@ -3,6 +3,7 @@
 **Effort:** game-bridge
 **Task type:** feature
 **Base commit:** <commit-sha>
+**Status:** active
 
 **Delivers:** 一个能跑的 Linux 侧 Bridge：监听 `127.0.0.1:14455`，按 JSON 行解析 `state_update`、`action`、`heartbeat`、`config`，写 `bridge.log`，回 `heartbeat`。用脚本假客户端就能验证，不依赖游戏。
 
@@ -21,3 +22,4 @@
 - [ ] `bridge.log` 每行带时间戳和消息类型，方便联调时人工比对
 
 **Progress:**
+由组员在另一个工作树实现（用户 2026-10-14 说明），本工作树不领取；任务 03/04 仍然依赖它产出的 `protocol/protocol.md`。
