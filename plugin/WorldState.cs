@@ -517,6 +517,7 @@ namespace WellCooked
             _cellsZ = nodeMap.GetLength(1);
             _walkable = new bool[_cellsX, _cellsZ];
 
+            float chefRadius = MeasureChefRadius();
             var cells = new StringBuilder();
             var free = new List<Vector3>();
             float minX = float.MaxValue, minZ = float.MaxValue;
@@ -534,6 +535,15 @@ namespace WellCooked
 
                     object index = indexCtor.Invoke(new object[] { i - offX, 0, j - offY });
                     var world = (Vector3)getPos.Invoke(manager, new[] { index });
+
+                    // 游戏这张节点图只记"格子有没有被占"，不含碰撞体：实测格子是空的，
+                    // 厨师却推不过去（24 秒只在格心 ±0.1 抖动）。所以再问一次物理：
+                    // 脚下要有地面，且以厨师半径在腰间查一圈不能碰到东西。
+                    if (!Standable(world, chefRadius))
+                    {
+                        continue;
+                    }
+
                     _walkable[i, j] = true;
                     free.Add(world);
                     minX = Math.Min(minX, world.x);
@@ -587,10 +597,43 @@ namespace WellCooked
             text.Append(",\"offset\":[").Append(offX).Append(',').Append(offY).Append(']');
             text.Append(",\"cells\":[").Append(cells.ToString()).Append("]}");
             File.WriteAllText(Path.Combine(Paths.BepInExRootPath, "wellcooked-terrain.json"), text.ToString());
-            _log.LogInfo("state: 游戏导航节点图 " + count + "/" + (_cellsX * _cellsZ) + " 个可走格（格距 "
-                         + _step.ToString("F2") + "，左上角下标 " + _cellOffsetX + "," + _cellOffsetZ
+            _log.LogInfo("state: 可走格 " + count + "/" + (_cellsX * _cellsZ) + "（游戏节点图 + 物理检查，格距 "
+                         + _step.ToString("F2") + "，厨师半径 " + MeasureChefRadius().ToString("F2")
                          + "，场景 " + ActiveScene() + "）");
             return true;
+        }
+
+        /// <summary>厨师体积半径：直接量他的碰撞体，别猜。</summary>
+        private static float MeasureChefRadius()
+        {
+            foreach (var chef in UnityEngine.Object.FindObjectsOfType<PlayerControls>())
+            {
+                var collider = chef.GetComponent<Collider>();
+                if (collider != null)
+                {
+                    var extents = collider.bounds.extents;
+                    float radius = Math.Max(extents.x, extents.z);
+                    if (radius > 0.05f)
+                    {
+                        return radius;
+                    }
+                }
+            }
+
+            return 0.35f;
+        }
+
+        /// <summary>脚下有地面、且以厨师半径在腰间查一圈没有别的东西，才算站得住。</summary>
+        private static bool Standable(Vector3 world, float radius)
+        {
+            RaycastHit ground;
+            if (!Physics.Raycast(world + Vector3.up * 2f, Vector3.down, out ground, 4f))
+            {
+                return false;
+            }
+
+            var probe = new Vector3(world.x, ground.point.y + 0.5f, world.z);
+            return !Physics.CheckSphere(probe, radius, ~0, QueryTriggerInteraction.Ignore);
         }
 
         private static string ActiveScene()
