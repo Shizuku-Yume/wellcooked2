@@ -12,7 +12,9 @@ namespace WellCooked
     /// `PlayerControls.GroundLayer` 向下打射线得到的），输出是"这一帧往哪个方向走"。
     /// 调度器只负责决定"谁去哪"，走位由这里负责——两层分开，调度不用关心格子。
     ///
-    /// 网格约定：8 邻域，对角不能穿过两个相邻的墙格；代价 1 / √2；启发式用 octile。
+    /// 网格约定：**4 邻域**（只走上下左右）。实测 8 邻域不行：胡闹厨房的厨师走位只认四个方向，
+    /// 喂对角方向（0.7,0.7）他们会原地卡住不动——日志里 4 名厨师 12 秒坐标不变。
+    /// 代价 1；启发式用曼哈顿距离。
     /// </summary>
     public static class Navigation
     {
@@ -187,36 +189,23 @@ namespace WellCooked
 
                 int cx = current >> 16;
                 int cz = current & 0xffff;
-                for (int dx = -1; dx <= 1; dx++)
+                foreach (var offset in Steps)
                 {
-                    for (int dz = -1; dz <= 1; dz++)
+                    int nx = cx + offset[0];
+                    int nz = cz + offset[1];
+                    if (!WorldState.IsWalkableCell(nx, nz))
                     {
-                        if (dx == 0 && dz == 0)
-                        {
-                            continue;
-                        }
+                        continue;
+                    }
 
-                        int nx = cx + dx;
-                        int nz = cz + dz;
-                        if (!WorldState.IsWalkableCell(nx, nz))
-                        {
-                            continue;
-                        }
-
-                        // 对角不能穿角：两侧正交格都得能走
-                        if (dx != 0 && dz != 0
-                            && (!WorldState.IsWalkableCell(cx + dx, cz) || !WorldState.IsWalkableCell(cx, cz + dz)))
-                        {
-                            continue;
-                        }
-
+                    {
                         int neighbor = Key(nx, nz);
                         if (closed.Contains(neighbor))
                         {
                             continue;
                         }
 
-                        float step = dx != 0 && dz != 0 ? 1.41421356f : 1f;
+                        const float step = 1f;
                         float tentative = gScore[current] + step;
                         float known;
                         if (gScore.TryGetValue(neighbor, out known) && tentative >= known)
@@ -277,10 +266,14 @@ namespace WellCooked
 
         private static float Heuristic(int x, int z, int gx, int gz)
         {
-            int dx = Math.Abs(x - gx);
-            int dz = Math.Abs(z - gz);
-            return dx + dz + (1.41421356f - 2f) * Math.Min(dx, dz);
+            return Math.Abs(x - gx) + Math.Abs(z - gz);
         }
+
+        /// <summary>只走四个方向：游戏里的厨师走位只认上下左右。</summary>
+        private static readonly int[][] Steps = new[]
+        {
+            new[] { 1, 0 }, new[] { -1, 0 }, new[] { 0, 1 }, new[] { 0, -1 }
+        };
 
         /// <summary>net35 没有优先队列，自己写一个二叉堆。</summary>
         private sealed class BinaryHeap
