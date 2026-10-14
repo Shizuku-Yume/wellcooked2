@@ -5,7 +5,7 @@
 
 ## What this is for
 
-调度系统要用游戏得分当唯一评价指标，就必须能读游戏状态、能控制游戏里的厨师。现在仓库里只有文档和汇报材料：游戏目录没有 BepInEx，没有插件，也没有 Linux 侧能和游戏对话的进程。缺了这一层，Supervisor、调度算法、策略对比实验全都无处落地，第6周的验收演示和占 60% 的答辩都拿不到分。方案 §9 把游戏接入定为项目基础并要求第3周跑通，现在已经到第4周。
+调度系统要用游戏得分当唯一评价指标，就必须能读游戏状态、能控制游戏里的厨师。缺了这一层，Supervisor、调度算法、策略对比实验全都无处落地，第6周的验收演示和占 60% 的答辩都拿不到分。方案 §9 把游戏接入定为项目基础并要求第3周跑通，而本 effort 开始时已经是第4周，仓库里还只有文档和汇报材料：游戏目录没有 BepInEx，没有插件，也没有 Linux 侧能和游戏对话的进程。任务 01 已经把插件链路打通（BepInEx 加载、Harmony 补丁生效），剩下的部分见下面各任务。
 
 ## What it does
 
@@ -30,6 +30,10 @@
 
 平台差异只有地址和启动参数：Fedora 走 Proton 前缀内的同一个游戏目录，WSL2 侧插件跑在 Windows 原生游戏里，连 WSL2 的监听端口。代码同一份，不用条件编译（方案 §2.2.1）。
 
+游戏是 **32 位**（`Overcooked2.exe` 和 `UnityPlayer.dll` 都是 PE32/x86），所以 BepInEx 必须装 `win_x86` 包；`scripts/install-bepinex.sh` 从 exe 的 PE 头读架构，不靠人工判断。插件按 `net35` 编译：游戏的 `Overcooked2_Data/Managed/` 里没有 `netstandard.dll`（Unity 2017.4.8f1），引用的是游戏自带的 UnityEngine 程序集和 `BepInEx/core` 里的 `BepInEx.dll`、`0Harmony.dll`。
+
+Wine 默认优先加载自带的 `winhttp`，BepInEx 的 doorstop 就不会被注入（见 BepInEx 文档 `advanced/proton_wine.html`），所以前缀里需要 `winhttp=native,builtin` 的 DLL 覆盖，由 `scripts/set-winhttp-override.sh` 写进 Proton 前缀注册表。
+
 ## What it must not do
 
 - 不做调度决策。订单排序、任务分配、资源预订属于 Scheduler；插件和 Bridge 只搬运数据。
@@ -42,13 +46,13 @@
 
 - **插件作为 TCP 服务端、Bridge 主动连接**（方案 §6.1、§6.2 的写法）。最强理由：游戏可以随时重启而 Bridge 不必重启，Bridge 只做主动连接。否决原因：方案 §2.2.1 架构图和 §9 阶段B 都要求 Bridge 监听；WSL2 默认 localhostForwarding 让 Windows 侧直连 WSL2 的监听端口，反向要取宿主 IP 并处理防火墙；游戏由人手动启动，插件重连比维护监听生命周期更简单。
 - **BepInEx 6（bleeding edge）**。它对新版 Unity 的 doorstop 有更新。否决原因：游戏是 Unity 2017.4.8f1 的老 Mono 运行时，社区插件和文档集中在 5.4.x，第4周不该赌版本。
-- **Linux 原生 BepInEx 包**。否决原因：安装的是 Windows 版 `Overcooked2.exe`（Proton 运行），doorstop 必须注入 `winhttp`，只能用 `BepInEx_win_x64`。
+- **Linux 原生 BepInEx 包**。否决原因：安装的是 Windows 版 `Overcooked2.exe`（Proton 运行），doorstop 必须注入 `winhttp`，只能用 Windows 包；架构按游戏 exe 的 PE 头选，本机是 `win_x86`（`Overcooked2.exe` 和 `UnityPlayer.dll` 都是 32 位）。
 - **不装插件、从外部进程读内存或模拟键盘**。否决原因：跨不过 WSL/Windows 边界，也拿不到结构化的订单和厨具状态，答辩时讲不出 IPC 设计。
 - **只用 overcooked_ai 仿真环境做实验**。否决原因：评分表要求真实游戏画面，模拟器只留作策略预筛（方案 §8）。
 
 ## How we will know it works
 
-- **W1.** 启动游戏到主菜单后，游戏目录 `BepInEx/LogOutput.log` 里有 BepInEx 启动行和 `WellCooked.Smoke` 插件加载行，没有 `Failed to load`。
+- **W1.** 启动游戏后（标题画面即可，日志在这之前就已经写完），游戏目录 `BepInEx/LogOutput.log` 里有 BepInEx 启动行和 `WellCooked.Smoke` 插件加载行，没有 `Failed to load`。
 - **W2.** 同一次启动的 `LogOutput.log` 里出现 smoke 插件 Harmony 补丁的日志行（证明补丁真的执行，不只是程序集加载成功）。
 - **W3.** Bridge 没启动时启动游戏，插件日志显示重连；随后启动 Bridge，5 秒内建立连接（`bridge.log` 出现 `client connected`）。
 - **W4.** 游戏里跑一局，`bridge.log` 收到 `state_update`，其中 `score` 与画面得分一致，`chefs` 数量与场上厨师数一致（人工比对）。
@@ -62,13 +66,24 @@
 
 ## Open questions
 
-- **第一版固定地图与订单集。** 用户 2026-10-14 决定暂缓。由 A1 验证时列出的可用关卡和与组员确认来定，默认 Story 1-1（方案 §12 建议：无传送带、无移动平台）。影响任务 05 的验收地图和阶段D 的实验输入。
+- **第一版固定地图与订单集。** 用户 2026-10-14 决定暂缓。可用关卡列表要进到游戏界面才能读，而进菜单需要输入注入（任务 04），所以列表由任务 04 读出并回填到这里，再由用户和组员确认；默认 Story 1-1（方案 §12 建议：无传送带、无移动平台）。影响任务 05 的验收地图和阶段D 的实验输入。
 - **WSL2 ↔ Windows 的连通方案。** 由组员在 Windows 侧验证：先试 localhost，再试 WSL2 IP 加防火墙规则（方案 §2.2.1）。只影响实验室乙的启动参数，不影响代码。
-- **输入注入的具体路径。** 待任务 04 期间确定：Harmony 改游戏输入层，还是模拟手柄设备。游戏用 InControl 加 XInputDotNetPure，两条路都可能，代价不同。
+- **输入注入的具体路径。** 待任务 04 期间确定。游戏输入是 InControl（`InControl.InControlInputModule`、`InputManager.AttachDevice`）加游戏自己的 `ILogicalButton`/`ILogicalValue`，另有 `XInputDotNetPure`。路线 A：补 `PlayerInputLookup.GetButton/GetValue`，返回自己的按钮/值包装（supercharged 的做法，延迟低、绑死私有类型）。路线 B：uinput 建虚拟手柄（本机 `/dev/uinput` 对当前用户可写，不需要 root；但要让 Proton/Wine 认成手柄，还要在菜单里让虚拟玩家加入）。
 
 ## Notes
 
 - 方案 §9 阶段A（A1–A4）是本 effort 的主体；§6.1 Bridge 职责、§5.2 协议、§5.3 联调顺序是接口依据。
 - 任务文件：`.workflow/tasks/game-bridge/`。
 - 阶段B（Supervisor、Scheduler、Worker 骨架）是另一个 effort，等本 effort 跑通状态读取后开始。
-- 相关决策：`decisions.md: 2026-10-14 - TCP 连接由 Bridge 监听，游戏插件作为客户端`、`decisions.md: 2026-10-14 - OS 核心用 C11`。
+- 相关决策：`decisions.md: 2026-10-14 - TCP 连接由 Bridge 监听，游戏插件作为客户端`、`decisions.md: 2026-10-14 - OS 核心用 C11`、`decisions.md: 2026-10-14 - 不复制 overcooked-supercharged 的代码，只借用游戏类型与字段名`。
+
+### 游戏内部接口的已知起点（2026-10-14 调研，任务 03/04 从这里开始）
+
+类型名和字段名来自参考项目对游戏程序集的读取，属于游戏自身的接口事实：
+
+- 实体遍历：`EntitySerialisationRegistry.m_EntitiesList`。
+- 厨师：`ClientPlayerControlsImpl_Default`（`transform` 的位置与朝向、`m_lastMoveInputDirection`、`m_dashTimer`）；手持物在 `ServerPlayerAttachmentCarrier.m_carriedObjects`。
+- 厨具：砧板与工作台上的物品 `ServerWorkstation.m_item`、`ServerWorkableItem.m_progress`；锅 `ServerCookingHandler` 的 `GetServerUpdate()` → `CookingStateMessage.m_cookingProgress`；搅拌 `ServerMixingHandler` → `MixingStateMessage.m_mixingProgress`；清洗 `ServerWashingStation.m_cleaningTimer`；加热 `ServerHeatedStation.m_heatValue`；盘子 `PlateReturnController.m_platesToReturn`。
+- 订单与得分：`ServerTeamMonitor.Score.GetTotalScore()`（另有 `TotalBaseScore`、`TotalTipsScore`、`TotalSuccessfulDeliveries`）；订单在 `ServerOrderControllerBase.m_activeOrders`，每条 `ServerOrderData` 有 `ID.m_id`、`Remaining`、`Lifetime`、`RecipeListEntry.m_order.m_uID`/`name`/`m_scoreForMeal`；剩余时间用 `flow.RoundTimer.TimeElapsed` 加私有 `m_timeLimit` 算。
+- 输入：游戏用 InControl 加自己的 `ILogicalButton`/`ILogicalValue`，入口是 `PlayerInputLookup.GetButton/GetValue`（`$Scripts/Game/Input/PlayerInputLookup`），另有 `XInputDotNetPure` 直接读手柄。两条注入路线：A 用 Harmony 补 `PlayerInputLookup.GetButton/GetValue`，返回自己的按钮/值包装对象（supercharged 的 `patch/AlteredComponents/InputPatching.cs`、TAS 的 `TASControl.cs` 都这么做，延迟低但绑死私有类型）；B 在进程内建一个 `InControl.InputDevice`（supercharged 的 `TasLocalPad`，用 `AddControl`），再用 `InputManager.AttachDevice` 挂上——不需要 ViGEm 或外部虚拟手柄，代价是设备/用户绑定、私有接口和帧边界事件处理。本机 `/dev/uinput` 对当前用户可写，需要真手柄时也能自己建，但优先级低于 B。
+- 菜单自动加入（来自 supercharged `bridge/SessionSetup.cs`）：建 `TasLocalPad(slot)` → `InputManager.AttachDevice(pad)` → 反射调 `PCPlayerManager.EngagePadToSlot(ControlPadInput.PadNum, EngagementSlot)` → 没有用户时 `ServerUserSystem.AddUser` 并等 `UsersChanged`/4 人同步。这条比"人工按 A"可靠，是任务 05 的首选做法。

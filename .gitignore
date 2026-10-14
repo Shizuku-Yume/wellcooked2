@@ -1,0 +1,15 @@
+# C# 构建产物
+plugin/bin/
+plugin/obj/
+
+# C 构建产物（bridge effort）
+bridge/*.o
+bridge/bridge
+
+# 运行日志
+*.log
+
+# 游戏目录是外部依赖：仓库只放插件源码和部署脚本，不提交游戏与 BepInEx 二进制
+BepInEx/
+winhttp.dll
+doorstop_config.ini

@@ -1,0 +1,43 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net35</TargetFramework>
+    <AssemblyName>WellCooked.Smoke</AssemblyName>
+    <RootNamespace>WellCooked</RootNamespace>
+    <Version>0.1.0</Version>
+    <LangVersion>7.3</LangVersion>
+    <!-- 游戏目录：默认本机 Fedora 的 Steam 库；其他机器用 -p:GameDir=... 覆盖 -->
+    <GameDir Condition="'$(GameDir)' == ''">/run/media/shizuku/File/Steam/steamapps/common/Overcooked! 2</GameDir>
+    <UnityManaged>$(GameDir)/Overcooked2_Data/Managed</UnityManaged>
+  </PropertyGroup>
+
+  <!-- net35 是硬要求：游戏的 Managed 目录里没有 netstandard.dll（Unity 2017.4.8f1）。
+       BepInEx.dll 和 0Harmony.dll 直接从游戏目录的 BepInEx/core 引用（BepInEx 不在 nuget.org 上，
+       而游戏目录本来就是编译依赖），不随插件输出。 -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="BepInEx">
+      <HintPath>$(GameDir)/BepInEx/core/BepInEx.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="0Harmony">
+      <HintPath>$(GameDir)/BepInEx/core/0Harmony.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <!-- 引用游戏自带的 UnityEngine 程序集（2017.4 是模块化布局，名字随版本变，用通配符）。
+       以完整路径作为 Reference 的身份，避免按元数据批处理（MSBuild 不支持那种写法）。 -->
+  <ItemGroup>
+    <UnityRef Include="$(UnityManaged)/UnityEngine*.dll" />
+  </ItemGroup>
+  <ItemGroup>
+    <Reference Include="@(UnityRef)">
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+</Project>
