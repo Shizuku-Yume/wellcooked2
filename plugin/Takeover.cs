@@ -40,6 +40,8 @@ namespace WellCooked
 
         /// <summary>`trace=true` 时每帧把喂出去的方向与厨师位置打进日志（卡住时看抖动从哪来）。</summary>
         private static bool _trace;
+        private static int _arrivals;
+        private static int _retargets;
 
         private static readonly List<int> Slots = new List<int> { 0, 1 };
         private static readonly List<PlayerInputLookup.Player> LogicalPlayers = new List<PlayerInputLookup.Player>();
@@ -654,6 +656,11 @@ namespace WellCooked
                 }
                 else
                 {
+                    // 到达是"走到路径终点"就成立，而走位日志每 2 秒才一行，正好会错过它。
+                    // 所以到达单独计数、单独打日志，别让它看起来像"0 次到达"。
+                    _arrivals++;
+                    _log.LogInfo("takeover: 到达 玩家位=" + (owned.Slot + 1)
+                                 + " 位置=(" + position.x.ToString("F2") + "," + position.y.ToString("F2") + ")");
                     AssignNextTarget(owned.Slot, position, now);
                 }
             }
@@ -680,7 +687,7 @@ namespace WellCooked
                 _nextDriveLog = now + 2f;
                 _log.LogInfo("takeover: 驱动中 交互=" + action
                              + " 设备层=" + OwnedPads.Count + " 逻辑层=" + LogicalPlayers.Count
-                             + " 目标点=" + Targets.Count);
+                             + " 目标点=" + Targets.Count + " 到达次数=" + _arrivals + " 换目标次数=" + _retargets);
                 foreach (var owned in OwnedPads)
                 {
                     _log.LogInfo("takeover: 手柄 玩家位=" + (owned.Slot + 1) + " pad=" + owned.PadNumber
@@ -790,6 +797,7 @@ namespace WellCooked
             }
 
             TargetIndex[owner] = index;
+            _retargets++;
             Navigation.Assign(owner, Targets[index]);
         }
 
