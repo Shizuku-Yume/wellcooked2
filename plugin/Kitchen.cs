@@ -114,6 +114,30 @@ namespace WellCooked
 
                 var p = unity.transform.position;
                 var position = new Vector2(p.x, p.z);
+
+                // 离料箱/盘子堆太近的台面不能用：站在那儿按 A，游戏会在"料箱取料"和
+                // "台面拿放"之间乱选，手上东西在鱼和盘子之间跳（实测就是这么卡住的）。
+                bool tooCloseToCrate = false;
+                foreach (var crate in Crates())
+                {
+                    if (Vector2.Distance(position, crate.Position) < 2.4f)
+                    {
+                        tooCloseToCrate = true;
+                        break;
+                    }
+                }
+
+                if (tooCloseToCrate)
+                {
+                    continue;
+                }
+
+                var stack = PlateStack();
+                if (stack != null && Vector2.Distance(position, stack.Position) < 2.4f)
+                {
+                    continue;
+                }
+
                 float distance = Vector2.Distance(position, near);
                 if (distance < bestDistance)
                 {
