@@ -75,7 +75,7 @@ namespace WellCooked
             {
                 SetControlState.Invoke(this, new object[] { _action1, _wantAction1, updateTick, deltaTime });
                 SetControlState.Invoke(this, new object[] { _action2, _wantAction2, updateTick, deltaTime });
-                ButtonWrites++;
+                OwnButtonWrites++;
 
                 if (SetStickValue != null)
                 {
@@ -85,7 +85,7 @@ namespace WellCooked
                         CommitStick.Invoke(this, null);
                     }
 
-                    StickWrites++;
+                    OwnStickWrites++;
                 }
 
                 // 双保险：这套 InControl 把摇杆拆成方向控制项，模拟量和数字方向一起给，
@@ -97,7 +97,7 @@ namespace WellCooked
             }
             catch (Exception e)
             {
-                LastError = e.GetType().Name + ": " + e.Message;
+                OwnLastError = e.GetType().Name + ": " + e.Message;
             }
         }
 
@@ -134,19 +134,21 @@ namespace WellCooked
 
         /// <summary>
         /// 反射调用是否真的成功过。日志只写"想要什么"会骗人：写不进游戏时看起来一样。
+        /// 计数器按手柄实例分开记，否则分不清是哪个手柄没写进去。
         /// </summary>
-        public static int ButtonWrites;
-        public static int StickWrites;
-        public static string LastError = "";
+        public int OwnButtonWrites;
+        public int OwnStickWrites;
+        public string OwnLastError = "";
 
-        public static string Diagnostics
+        public string State
         {
             get
             {
-                return "按键写入=" + ButtonWrites
-                       + " 摇杆写入=" + StickWrites
+                return "按键写入=" + OwnButtonWrites
+                       + " 摇杆写入=" + OwnStickWrites
                        + " 摇杆方法=" + (SetStickValue == null ? "缺" : "有")
-                       + (LastError.Length == 0 ? "" : " 最近错误=" + LastError);
+                       + " 附加=" + IsAttached
+                       + (OwnLastError.Length == 0 ? "" : " 最近错误=" + OwnLastError);
             }
         }
 

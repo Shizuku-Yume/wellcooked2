@@ -23,7 +23,7 @@ namespace WellCooked
     {
         private const int TargetPlayers = 2;
         private const float CheckInterval = 0.5f;
-        private const float WalkHalfPeriod = 2f;
+        private const float WalkHalfPeriod = 5f;
         private const float ActionPeriod = 3f;
         private const float ActionLength = 0.2f;
 
@@ -37,7 +37,7 @@ namespace WellCooked
         private static float _nextConfigCheck;
         private static float _nextFrontendPress;
 
-        private static int _targetPlayers = 2;
+        private static readonly List<int> Slots = new List<int> { 0, 1 };
         private static bool _frontendPress;
 
         private sealed class Owned
@@ -49,7 +49,7 @@ namespace WellCooked
 
         /// <summary>
         /// 参数放在游戏目录的 `BepInEx/wellcooked-takeover.txt`，改文件不用重新编译：
-        /// `players=N` 目标玩家数（含用户自己占的那位）；`frontend_press=true` 让虚拟手柄在前端也按 A
+        /// `slots=1,2` 要占的玩家位（1 基，默认 1,2）；`frontend_press=true` 让虚拟手柄在前端也按 A
         /// （占位后加入/确认要用，但会抢菜单导航，默认关）。
         /// </summary>
         private static void ReadConfig()
@@ -85,13 +85,25 @@ namespace WellCooked
 
                     var key = trimmed.Substring(0, equals).Trim().ToLowerInvariant();
                     var value = trimmed.Substring(equals + 1).Trim();
-                    if (key == "players")
+                    if (key == "slots")
                     {
-                        int players;
-                        if (int.TryParse(value, out players) && players >= 1 && players <= 4 && players != _targetPlayers)
+                        var parsed = new List<int>();
+                        foreach (var part in value.Split(','))
                         {
-                            _targetPlayers = players;
-                            _log.LogInfo("takeover: 目标玩家数改成 " + players);
+                            int slot;
+                            if (int.TryParse(part.Trim(), out slot) && slot >= 1 && slot <= 4)
+                            {
+                                parsed.Add(slot - 1); // 配置里写 1 基，内部用 0 基
+                            }
+                        }
+
+                        if (parsed.Count > 0
+                            && string.Join(",", parsed.ConvertAll(x => x.ToString()).ToArray())
+                               != string.Join(",", Slots.ConvertAll(x => x.ToString()).ToArray()))
+                        {
+                            Slots.Clear();
+                            Slots.AddRange(parsed);
+                            _log.LogInfo("takeover: 占位改成 " + string.Join(",", Slots.ConvertAll(x => (x + 1).ToString()).ToArray()));
                         }
                     }
                     else if (key == "frontend_press")
@@ -125,7 +137,7 @@ namespace WellCooked
             var postfix = new HarmonyMethod(typeof(Takeover).GetMethod(
                 nameof(Tick), BindingFlags.Static | BindingFlags.NonPublic));
             new Harmony("wellcooked.takeover").Patch(update, postfix: postfix);
-            _log.LogInfo("takeover: 每帧检查已挂上，目标玩家数 " + TargetPlayers);
+            _log.LogInfo("takeover: 每帧检查已挂上，占位 " + string.Join(",", Slots.ConvertAll(x => (x + 1).ToString()).ToArray()));
         }
 
         private static void Tick()
@@ -208,7 +220,7 @@ namespace WellCooked
                 return;
             }
 
-            for (int slot = 0; slot < TargetPlayers; slot++)
+            foreach (int slot in Slots)
             {
                 var engagement = (EngagementSlot)slot;
                 if (manager.GetUser(engagement) != null || IsHandled(slot))
@@ -275,12 +287,44 @@ namespace WellCooked
                 OwnedPads.Add(new Owned { Slot = slot, PadNumber = padNumber, Pad = pad });
                 PendingPads.RemoveAt(i);
                 _log.LogInfo("takeover: 已占玩家位 " + (slot + 1) + "（pad " + padNumber + "）");
+                RegenerateControls();
+            }
+        }
+
+        /// <summary>
+        /// 让游戏按新的玩家/手柄绑定重建输入映射。占位只是改了用户表，
+        /// 玩家的 ControlSchemeData 不一定跟着更新，所以显式叫它重建一次。
+        /// </summary>
+        private static void RegenerateControls()
+        {
+            var lookup = UnityEngine.Object.FindObjectOfType(typeof(PlayerInputLookup));
+            if (lookup == null)
+            {
+                _log.LogWarning("takeover: 找不到 PlayerInputLookup 实例，跳过重建输入映射");
+                return;
+            }
+
+            var regenerate = AccessTools.Method(lookup.GetType(), "RegenerateControls", Type.EmptyTypes);
+            if (regenerate == null)
+            {
+                _log.LogWarning("takeover: 找不到 RegenerateControls");
+                return;
+            }
+
+            try
+            {
+                regenerate.Invoke(lookup, null);
+                _log.LogInfo("takeover: 已让游戏重建输入映射");
+            }
+            catch (Exception e)
+            {
+                _log.LogWarning("takeover: 重建输入映射失败: " + e.Message);
             }
         }
 
         private static int FirstFreeSlot(PCPlayerManager manager)
         {
-            for (int slot = 0; slot < TargetPlayers; slot++)
+            foreach (int slot in Slots)
             {
                 if (manager.GetUser((EngagementSlot)slot) == null && !IsHandled(slot))
                 {
@@ -364,8 +408,13 @@ namespace WellCooked
             if (now >= _nextDriveLog)
             {
                 _nextDriveLog = now + 2f;
-                _log.LogInfo("takeover: 驱动中 方向=" + direction + " 交互=" + action
-                             + " | " + VirtualPad.Diagnostics);
+                _log.LogInfo("takeover: 驱动中 方向=" + direction + " 交互=" + action);
+                foreach (var owned in OwnedPads)
+                {
+                    _log.LogInfo("takeover: 手柄 玩家位=" + (owned.Slot + 1) + " pad=" + owned.PadNumber
+                                 + " 想要 " + owned.Pad.Wanted + " | " + owned.Pad.State);
+                }
+
                 LogChefs();
             }
         }
@@ -402,6 +451,24 @@ namespace WellCooked
 
             _log.LogInfo("takeover: 用户 客户端=" + ClientUserSystem.m_Users.Count
                          + " 服务端=" + ServerUserSystem.m_Users.Count);
+
+            try
+            {
+                var config = PlayerInputLookup.GetInputConfig();
+                if (config != null)
+                {
+                    foreach (PlayerInputLookup.Player player in new[] { PlayerInputLookup.Player.One, PlayerInputLookup.Player.Two })
+                    {
+                        var data = config.GetInputData(player);
+                        _log.LogInfo("takeover: 输入映射 玩家=" + player + " → "
+                                     + (data == null ? "无" : data.ToString()));
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                _log.LogWarning("takeover: 读输入映射失败: " + e.Message);
+            }
         }
     }
 }
