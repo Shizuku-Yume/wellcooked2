@@ -669,7 +669,9 @@ namespace WellCooked
                                      + " 位置=(" + position.x.ToString("F2") + "," + position.y.ToString("F2") + ")");
                     }
 
-                    if (direction == Vector2.zero)
+                    // 只有"这个目标做完了"才换目标（到达/不可达/卡住都会把 Arrived 置上）。
+                    // 不能一看方向是零就换：局部跳过路点时会短暂给零向量，那样会把整条路丢掉。
+                    if (direction == Vector2.zero && Navigation.HasArrived(owned.Slot))
                     {
                         AssignNextTarget(owned.Slot, position, now);
                     }
@@ -696,7 +698,7 @@ namespace WellCooked
                 string status;
                 var direction = Navigation.Steer(player, position, now, out status);
                 LogicalInput.Set(player, direction, action);
-                if (direction == Vector2.zero)
+                if (direction == Vector2.zero && Navigation.HasArrived(player))
                 {
                     AssignNextTarget(player, position, now);
                 }

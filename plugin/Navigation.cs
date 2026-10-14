@@ -35,9 +35,7 @@ namespace WellCooked
             public Vector2 LastPosition;
             public float LastMovedAt;
             public bool StuckReported;
-            public int LastAxis = -1;
-            public int SlideAxis = -1;
-            public float SlideUntil;
+            public float SkipAllowed;
         }
 
         private static readonly Dictionary<object, Agent> Agents = new Dictionary<object, Agent>();
@@ -118,13 +116,20 @@ namespace WellCooked
                 agent.LastMovedAt = now;
                 agent.StuckReported = false;
             }
-            else if (agent.LastAxis >= 0 && now - agent.LastMovedAt > 0.35f && now >= agent.SlideUntil)
+            else if (agent.Path != null && now - agent.LastMovedAt > 0.4f && now >= agent.SkipAllowed)
             {
-                // 局部绕行：A* 给的路线没错，但地图与真实碰撞对不齐时，
-                // 厨师会顶着台面一直推、方向永远指向墙（实测 x 在 20.0~20.4 之间反复蹭）。
-                // 喂出去的那个轴 0.35 秒没推动，就短暂改走另一个轴绕过去。
-                agent.SlideAxis = agent.LastAxis == 0 ? 1 : 0;
-                agent.SlideUntil = now + 0.7f;
+                // 局部容错：网格是物理采样出来的，永远不可能和游戏碰撞完全对齐。
+                // 喂了方向 0.4 秒还推不动，就跳过这个路点去下一个——比顶着台面推墙强。
+                // （1.5 秒那个分支是"整条路都不通"，会放弃目标换下一个。）
+                agent.SkipAllowed = now + 0.4f;
+                agent.Waypoint++;
+                status = "跳过被挡的路点";
+                if (agent.Waypoint >= agent.Path.Count)
+                {
+                    agent.Arrived = true;
+                    status = "路点都被挡住，算到达";
+                    return Vector2.zero;
+                }
             }
             else if (!agent.StuckReported && now - agent.LastMovedAt > 1.5f)
             {
@@ -132,8 +137,8 @@ namespace WellCooked
                 // 下一帧又会朝同一面墙推（实测贴墙站着不动、日志里只剩不可达）。
                 agent.StuckReported = true;
                 agent.Path = null;
-                agent.NextRepath = 0f;
-                status = "卡住（" + (now - agent.LastMovedAt).ToString("F1") + " 秒没动）";
+                agent.Arrived = true;
+                status = "卡住（" + (now - agent.LastMovedAt).ToString("F1") + " 秒没动），放弃这个目标";
                 return Vector2.zero;
             }
 
@@ -155,6 +160,7 @@ namespace WellCooked
                 agent.Waypoint = 0;
                 if (agent.Path == null)
                 {
+                    agent.Arrived = true; // 别每帧重算，让上层换目标
                     status = "不可达（目标 " + agent.Target.x.ToString("F1") + "," + agent.Target.y.ToString("F1") + "）";
                     return Vector2.zero;
                 }
@@ -182,28 +188,9 @@ namespace WellCooked
 
             // 游戏里的厨师只走四个方向，喂对角方向他会走出锯齿、贴着台面蹭。
             // 取分量大的那个轴，给纯轴向。
-            if (now < agent.SlideUntil)
-            {
-                // 绕行期间只走"侧向"那个轴，符号取能靠近路点的那一边
-                float side = agent.SlideAxis == 0 ? direction.x : direction.y;
-                if (Math.Abs(side) < 0.05f)
-                {
-                    side = agent.SlideAxis == 0
-                        ? agent.Target.x - position.x
-                        : agent.Target.y - position.y;
-                }
-
-                float sign = side >= 0f ? 1f : -1f;
-                direction = agent.SlideAxis == 0 ? new Vector2(sign, 0f) : new Vector2(0f, sign);
-                agent.LastAxis = agent.SlideAxis;
-                status = "绕行(" + (agent.SlideAxis == 0 ? "x" : "z") + ") " + status;
-                return direction;
-            }
-
             direction = Math.Abs(direction.x) >= Math.Abs(direction.y)
                 ? new Vector2(Math.Sign(direction.x), 0f)
                 : new Vector2(0f, Math.Sign(direction.y));
-            agent.LastAxis = Math.Abs(next.x - position.x) >= Math.Abs(next.y - position.y) ? 0 : 1;
             status = "路点 " + agent.Waypoint + "/" + agent.Path.Count + " 剩余 " + toTarget.ToString("F1")
                      + " 路点坐标=(" + next.x.ToString("F2") + "," + next.y.ToString("F2") + ")"
                      + " 目标=(" + agent.Target.x.ToString("F2") + "," + agent.Target.y.ToString("F2") + ")";
