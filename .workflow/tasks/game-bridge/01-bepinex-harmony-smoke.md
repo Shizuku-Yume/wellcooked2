@@ -2,7 +2,9 @@
 
 **Effort:** game-bridge
 **Task type:** feature
-**Base commit:** <commit-sha>
+**Base commit:** 3f566f251e24250c1735c96299977d8af6796a26
+**Started:** 2026-10-14T13:31:24+08:00
+**Status:** active
 
 **Delivers:** 启动《胡闹厨房2》到主菜单后，游戏目录出现 `BepInEx/LogOutput.log`，里面有 BepInEx 启动行、`WellCooked.Smoke` 插件加载行和该插件 Harmony 补丁的日志行——插件链路打通，后面读状态和注入输入才有地方落。
 
@@ -22,4 +24,8 @@
 - [ ] 顺带记录：可用关卡列表（为 spec 开放问题「第一版固定地图」提供输入）、实际生效的 Proton 启动参数
 
 **Progress:**
+Dirty at start: none
+
+Check before: 脚本和插件工程都还不存在，`scripts/install-bepinex.sh` 无法执行，Check 跑不起来。
+本机事实：`~/.dotnet` 只有 .NET 9 运行时（无 SDK，无法编译 C#）；游戏 `Overcooked2_Data/Managed/` 里没有 `netstandard.dll`，所以插件必须按 `net35` 编译。
 

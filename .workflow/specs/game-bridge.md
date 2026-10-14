@@ -1,6 +1,6 @@
 # 游戏接入与 Bridge（阶段A）
 
-**Status:** proposed
+**Status:** in progress
 **Priority:** critical
 
 ## What this is for
