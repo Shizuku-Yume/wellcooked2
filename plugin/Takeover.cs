@@ -143,6 +143,7 @@ namespace WellCooked
         private static void Tick()
         {
             var now = Time.realtimeSinceStartup;
+            WorldState.Tick(now);
             if (now < _nextCheck)
             {
                 return;

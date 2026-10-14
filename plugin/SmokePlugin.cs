@@ -27,6 +27,7 @@ namespace WellCooked
             _log.LogInfo("WellCooked.Smoke loaded; Unity " + UnityEngine.Application.unityVersion
                          + ", BepInEx " + typeof(BaseUnityPlugin).Assembly.GetName().Version);
             ApplySmokePatches();
+            WorldState.Install(_log);
             Takeover.Install(_log);
             DumpGameInventory();
         }
@@ -161,6 +162,36 @@ namespace WellCooked
                     if (lines > 40000)
                     {
                         break;
+                    }
+                }
+
+                text.AppendLine();
+                text.AppendLine("# 关注类型（世界状态读取要用到的完整成员）");
+                foreach (var wanted in new[]
+                         {
+                             "ServerKitchenFlowControllerBase", "ClientKitchenFlowControllerBase",
+                             "ServerTeamMonitor", "ServerOrderControllerBase", "ServerOrderData",
+                             "ServerCookingHandler", "ServerWorkstation", "ServerWorkableItem",
+                             "ServerPlayerAttachmentCarrier", "ServerWashingStation", "ServerHeatedStation",
+                             "PlateReturnController", "ServerPlateStation", "EntitySerialisationRegistry",
+                             "RoundTimer", "ServerRoundTimer", "OrderDefinitionNode", "RecipeListEntry",
+                             "PlayerIDProvider", "PlayerControls", "GameUtils", "MultiplayerController"
+                         })
+                {
+                    var focus = AccessTools.TypeByName(wanted)
+                                ?? SafeTypes(game).FirstOrDefault(t => t.FullName == wanted || t.Name == wanted);
+                    if (focus == null)
+                    {
+                        text.AppendLine(wanted + " : 没找到");
+                        continue;
+                    }
+
+                    text.AppendLine(focus.FullName + (focus.IsEnum ? " (enum)" : ""));
+                    foreach (var member in focus.GetMembers(BindingFlags.Public | BindingFlags.NonPublic
+                                                            | BindingFlags.Instance | BindingFlags.Static
+                                                            | BindingFlags.DeclaredOnly))
+                    {
+                        text.AppendLine("    " + member);
                     }
                 }
 
