@@ -155,7 +155,60 @@ namespace WellCooked
             }
 
             float distance = Vector2.Distance(chef.Position, _target);
+            float toStation = Vector2.Distance(chef.Position, _station);
             string heldNow = chef.Held;
+
+            // 最后一段不用寻路，直接朝工位推：像人一样顶着台面站到它旁边那一格，
+            // 推的过程顺便把朝向也对准了（交互按的是"面前那一格"，见 GetFacingGridOccupant）。
+            // 寻路停在哪一格是"我们网格"说了算，未必正好是游戏网格的相邻格（实测差 1.48 米）。
+            if (toStation <= 2.4f)
+            {
+                if (!_arrivedLogged)
+                {
+                    _arrivedLogged = true;
+                    _log.LogInfo("工序: " + _step + " 接近工位（" + toStation.ToString("F2") + " 米），直接朝它推");
+                }
+
+                _facing = true;
+                _faceDirection = (chef.Position - _station).sqrMagnitude > 0.0001f
+                    ? (_station - chef.Position).normalized
+                    : Vector2.zero;
+
+                if (!_pressing && now >= _nextPress)
+                {
+                    _nextPress = now + PressInterval;
+                    _pressUntil = now + InteractHold;
+                    _pressing = true;
+                    _lastCheckAt = now + InteractHold + 0.2f;
+                    _log.LogInfo("工序: " + _step + " 按交互（手上「" + heldNow + "」，距工位 "
+                                 + toStation.ToString("F2") + " 米）");
+                }
+
+                if (_pressing && now >= _pressUntil)
+                {
+                    _pressing = false;
+                }
+
+                if (now >= _lastCheckAt)
+                {
+                    if (Matches(heldNow))
+                    {
+                        Next(now);
+                        return;
+                    }
+
+                    _nextPress = now + PressInterval;
+                }
+
+                if (!_warned && now - _stepStart > 8f)
+                {
+                    _warned = true;
+                    _log.LogWarning("工序: " + _step + " 推了几次没效果（手上「" + heldNow
+                                    + "」，期望「" + (_expectHeld.Length == 0 ? "空手" : _expectHeld) + "」），继续试");
+                }
+
+                return;
+            }
 
             // 已经到位了：先朝着工位站好，再按交互
             if (distance <= ReachRadius)
