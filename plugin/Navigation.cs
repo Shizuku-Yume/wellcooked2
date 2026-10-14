@@ -44,6 +44,7 @@ namespace WellCooked
             public int SlideAxis = -1;
             public float SlideSign = 1f;
             public float SlideUntil;
+            public int SlideCount;
         }
 
         private static readonly Dictionary<object, Agent> Agents = new Dictionary<object, Agent>();
@@ -149,14 +150,29 @@ namespace WellCooked
                 agent.LastPosition = position;
                 agent.LastMovedAt = now;
                 agent.StuckReported = false;
+                agent.SlideCount = 0;
             }
             else if (now - agent.LastMovedAt > 0.4f && now >= agent.SlideUntil)
             {
                 // 侧向错身：两个厨师面对面互推时（路点正好在对穿位置），谁都不让、双双卡死
                 // （实测两人坐标完全不动）。按玩家位奇偶决定往哪边让，两边正好相反。
-                agent.SlideAxis = agent.LastAxis == 0 ? 1 : 0;
-                agent.SlideSign = SideOf(owner);
-                agent.SlideUntil = now + 0.6f;
+                //
+                // 但错身必须**有界**：错身期间厨师一直在小幅移动，卡住计时攒不够，
+                // 于是永远不重算路径、也永远走不到远处目标（实测在盘子堆旁抖到超时）。
+                // 连续错身 2 次还推不动，就丢掉路径让上层重算。
+                agent.SlideCount++;
+                if (agent.SlideCount > 2)
+                {
+                    agent.SlideCount = 0;
+                    agent.Path = null;
+                    agent.SlideUntil = 0f;
+                }
+                else
+                {
+                    agent.SlideAxis = agent.LastAxis == 0 ? 1 : 0;
+                    agent.SlideSign = SideOf(owner);
+                    agent.SlideUntil = now + 0.6f;
+                }
             }
 
             if (now < agent.SlideUntil)
