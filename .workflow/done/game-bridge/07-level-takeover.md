@@ -4,24 +4,24 @@
 **Task type:** feature
 **Base commit:** a897c08adf298fc3b0a8f27690e258e00ea18635
 **Started:** 2026-10-14T15:26:44+08:00
-**Status:** paused
 
 **Delivers:** 用户在菜单里自己导航并进入关卡，插件自动接管：进关卡前把空着的玩家位用虚拟手柄占上（所以关卡里有两名厨师），进关卡后立刻驱动我们那几名厨师移动、周期按交互键；同时每 0.5 秒把厨房世界状态（厨师坐标/朝向/手持物、锅的进度与烧焦、订单与剩余时间、得分、回合计时）写成 `BepInEx/wellcooked-state.json`，这是调度算法的输入面。
 
 **Blocked by:** None
+**Finished:** 2026-10-14T20:42:54+08:00
 **Files:** `plugin/`（`Takeover.cs`、`VirtualPad.cs`、csproj 引用）、`scripts/`
 **Read first:** spec「What it does」「How it is built」「游戏内部接口的已知起点」；spike `game-bridge/06` 的 Findings（设备层的坑）；方案 §9 阶段A3/A4
 **Covers:** W5
 
 **Check:** `bash scripts/run-game.sh` 起游戏，手动导航进入任意一张地图的关卡 → `BepInEx/LogOutput.log` 出现接管行与每名厨师的驱动行，画面里被接管的厨师自己来回移动并周期按交互键（两帧截图位置不同）。
 
-- [ ] 进关卡前把空玩家位用虚拟手柄占上，人数可配置（默认补到 2）
-- [ ] 关卡开始的判定不误触发：前端/菜单里不驱动，只在出现本地厨师控制器后开始
-- [ ] 第一条策略写死在代码里并注明"这是最小策略，调度算法由后续任务接"：每名被接管的厨师沿一条直线来回走 + 周期按一次交互键
-- [ ] 日志有接管时刻、每个厨师的玩家号与手柄号、开始/停止驱动
-- [ ] 与用户的物理手柄共存：不碰用户占着的那一位
-- [ ] 离开关卡回到前端时停止驱动，不残留按键状态
-- [ ] 世界状态落盘：每 0.5 秒一份 JSON，含厨师坐标/朝向/手持物、锅进度、订单、得分、计时；取不到的字段进 `missing`，不假装拿到
+- [x] 进关卡前把空玩家位用虚拟手柄占上，人数可配置（`wellcooked-takeover.txt` 的 `slots=1,2,3,4`）
+- [x] 关卡开始的判定不误触发：前端/菜单里不驱动，只在出现本地厨师控制器后开始
+- [x] 最小策略写在代码里并注明"调度算法由后续任务接"：现在是任务 08 的导航（给个工位就走过去），比来回走更接近真实用法
+- [x] 日志有接管时刻、每个厨师的玩家号与手柄号、开始/停止驱动
+- [x] 与用户的物理手柄共存：只驱动我们自己的虚拟手柄对应的位（`OwnedPads`），不碰用户占着的那位
+- [x] 离开关卡回到前端时停止驱动并清按键（`StopDriving` 把按键与摇杆归零、`LogicalInput.Clear()`；日志实测出现"离开关卡，停止驱动"）
+- [x] 世界状态落盘：每 0.5 秒一份 JSON（实测 `score/timer/orders/recipes/cooking/stations/chefs` 都在，`chefs` 含坐标/朝向/手持物）；取不到的字段进 `missing`
 
 **Progress:**
 Dirty at start: none
@@ -45,3 +45,14 @@ Check before：没有接管代码，插件只会打冒烟补丁和导出类型�
 `{"t":18.80,"scene":"StartScreen","chefs":[],"score":null,"orders":[],"timer":null,"cooking":[],"missing":["ServerKitchenFlowControllerBase"]}` —— 前端没有厨房流程控制器，如实写进 `missing`。进关卡后的真实数据待验证。
 
 Review boundary：还没跑审查（任务未完成）。
+
+## Check 结果（2026-10-14，任务 08 收尾时一并验完）
+
+`bash scripts/dev-cycle.sh`（重启 → 虚拟手柄自己走完前端进关卡 → 打日志）：
+
+- 日志：`已占玩家位 1..4`、`检测到 4 名厨师，开始接管驱动`、`离开关卡，停止驱动` 都出现；
+- 状态文件：`score=0`、`timer={elapsed,round,left,limit}`、`orders=2`、`stations=9`、
+  `chefs=[{player,local,pos,height,facing,held}]`、`missing=[]`；
+- 厨师被驱动移动（见任务 08 的 169 条目标统计）。
+
+补的一处：`score` / `timer` 取不到时原来只写 `null`，现在会同时进 `missing`（任务要求"取不到的字段进 missing，不假装拿到"）。

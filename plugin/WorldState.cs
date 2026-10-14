@@ -145,6 +145,11 @@ namespace WellCooked
             json.Append(",\"score\":");
             var points = team == null ? null : Invoke(flow, "GetPoints", team);
             json.Append(points == null ? "null" : points.ToString());
+            if (points == null)
+            {
+                // 拿不到就进 missing，不要只写个 null 让人以为是"没得分"
+                missing.Add("score");
+            }
 
             json.Append(",\"orders\":[");
             var monitor = team == null ? null : Invoke(flow, "GetMonitorForTeam", team);
@@ -213,9 +218,15 @@ namespace WellCooked
             {
                 missing.Add("RoundTimer");
                 json.Append("null");
+                missing.Add("timer");
             }
             else
             {
+                if (Get(timer, "TimeElapsed") == null || Get(timer, "m_timeLeft") == null)
+                {
+                    missing.Add("timer 字段");
+                }
+
                 json.Append("{\"elapsed\":").Append(Num(Get(timer, "TimeElapsed")))
                     .Append(",\"round\":").Append(Num(Get(timer, "m_roundTimer")))
                     .Append(",\"left\":").Append(Num(Get(timer, "m_timeLeft")))
