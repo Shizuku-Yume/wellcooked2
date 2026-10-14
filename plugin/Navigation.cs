@@ -36,6 +36,7 @@ namespace WellCooked
             public float LastMovedAt;
             public bool StuckReported;
             public float SkipAllowed;
+            public int GiveUps;
         }
 
         private static readonly Dictionary<object, Agent> Agents = new Dictionary<object, Agent>();
@@ -60,6 +61,8 @@ namespace WellCooked
             agent.Waypoint = 0;
             agent.NextRepath = 0f;
             agent.Arrived = false;
+            agent.GiveUps = 0;
+            agent.StuckReported = false;
         }
 
         public static void Release(object owner)
@@ -132,8 +135,11 @@ namespace WellCooked
                 status = "跳过被挡的路点";
                 if (agent.Waypoint >= agent.Path.Count)
                 {
-                    agent.Arrived = true;
-                    status = "路点都被挡住，算到达";
+                    // 不置 Arrived：置了上层就换目标、把路点指针拨回 0，
+                    // 厨师永远走不完一条长路（实测换目标 148 次/150 秒、到达 0）。
+                    // 改成丢掉这条路径、下一帧从当前位置重算。
+                    agent.Path = null;
+                    status = "路点都被挡住，重算路径";
                     return Vector2.zero;
                 }
             }
@@ -143,8 +149,18 @@ namespace WellCooked
                 // 下一帧又会朝同一面墙推（实测贴墙站着不动、日志里只剩不可达）。
                 agent.StuckReported = true;
                 agent.Path = null;
-                agent.Arrived = true;
-                status = "卡住（" + (now - agent.LastMovedAt).ToString("F1") + " 秒没动），放弃这个目标";
+                agent.GiveUps++;
+                if (agent.GiveUps >= 3)
+                {
+                    // 同一个目标连续三次推不动，才算真做不到，换目标
+                    agent.Arrived = true;
+                    status = "卡住（" + (now - agent.LastMovedAt).ToString("F1") + " 秒没动），放弃这个目标";
+                }
+                else
+                {
+                    status = "卡住（" + (now - agent.LastMovedAt).ToString("F1") + " 秒没动），重算路径";
+                }
+
                 return Vector2.zero;
             }
 
