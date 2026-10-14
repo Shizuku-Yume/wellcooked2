@@ -20,7 +20,7 @@ namespace WellCooked
     ///   load=&lt;场景名&gt;   直接加载关卡场景（如 s_sushi_1_1）
     ///   restart=1        重新加载当前场景（相当于原地重进这一关）
     ///   continue=1       标题画面的"继续游戏"：加载存档档位，之后 load 才是正常进关
-    ///   engage=1         只做标题画面的加入检查
+    ///   engage=1         标题画面：直接替我们的占位完成"加入"（等价于按 A）
     ///   dump=&lt;类型名&gt;    把这个类型的所有方法签名打到日志
     ///   pause=1          打当前暂停状态（TimeManager 各层）
     /// </summary>
@@ -108,6 +108,9 @@ namespace WellCooked
                 case "continue":
                     ContinueFromTitle();
                     break;
+                case "session":
+                    StartSession(value);
+                    break;
                 case "dump":
                     DumpType(value);
                     break;
@@ -164,6 +167,11 @@ namespace WellCooked
             _log.LogWarning("指令: GameUtils 上没有单参数的 LoadLevel");
         }
 
+        /// <summary>
+        /// 标题画面按 A 的效果：游戏内部是"某个手柄完成加入" → StartScreenFlow.OnEngagementFinished。
+        /// 我们的虚拟手柄已经占住了玩家位，所以直接把这个加入结果告诉标题画面。
+        /// 只调 CheckForEngagement 不够：它在等一次新的按键加入，而我们早就占好位了。
+        /// </summary>
         private static void Engage()
         {
             var type = AccessTools.TypeByName("StartScreenFlow");
@@ -181,12 +189,109 @@ namespace WellCooked
                 return;
             }
 
-            _log.LogInfo("指令: 标题画面 检查加入状态");
-            var check = AccessTools.Method(type, "CheckForEngagement", Type.EmptyTypes);
-            if (check != null)
+            object user = FirstEngagedUser();
+            if (user == null)
             {
-                check.Invoke(flow, null);
+                _log.LogWarning("指令: 还没有任何已加入的手柄用户，没法完成加入");
+                return;
             }
+
+            var finished = AccessTools.Method(type, "OnEngagementFinished");
+            if (finished == null)
+            {
+                _log.LogWarning("指令: 找不到 OnEngagementFinished");
+                return;
+            }
+
+            _log.LogInfo("指令: 用 " + user.GetType().Name + " 完成加入（等价按 A）");
+            finished.Invoke(flow, new[] { user });
+        }
+
+        private static object FindPlayerManager()
+        {
+            var type = AccessTools.TypeByName("PCPlayerManager");
+            if (type == null)
+            {
+                return null;
+            }
+
+            var found = UnityEngine.Object.FindObjectsOfType(type);
+            return found.Length > 0 ? found[0] : null;
+        }
+
+        private static object FirstEngagedUser()
+        {
+            object manager = FindPlayerManager();
+            if (manager == null)
+            {
+                return null;
+            }
+
+            var slotType = AccessTools.TypeByName("EngagementSlot");
+            var get = AccessTools.Method(manager.GetType(), "GetUser", new[] { slotType });
+            if (get == null)
+            {
+                _log.LogWarning("指令: PlayerManager 上没有 GetUser(EngagementSlot)");
+                return null;
+            }
+
+            for (int slot = 0; slot < 4; slot++)
+            {
+                object user = get.Invoke(manager, new[] { Enum.ToObject(slotType, slot) });
+                if (user != null)
+                {
+                    _log.LogInfo("指令: 玩家位 " + (slot + 1) + " 已加入");
+                    return user;
+                }
+            }
+
+            return null;
+        }
+
+        /// <summary>开一个空会话（不带存档）：T17FrontendFlow.StartEmptySession(GameType, int)。</summary>
+        private static void StartSession(string value)
+        {
+            var type = AccessTools.TypeByName("T17FrontendFlow");
+            if (type == null)
+            {
+                _log.LogWarning("指令: 找不到 T17FrontendFlow");
+                return;
+            }
+
+            var instance = type.GetProperty("Instance", BindingFlags.Public | BindingFlags.Static);
+            object flow = instance != null ? instance.GetValue(null, null) : null;
+            if (flow == null)
+            {
+                _log.LogWarning("指令: T17FrontendFlow 没有实例");
+                return;
+            }
+
+            var method = AccessTools.Method(type, "StartEmptySession");
+            if (method == null)
+            {
+                _log.LogWarning("指令: 找不到 StartEmptySession");
+                return;
+            }
+
+            var parameters = method.GetParameters();
+            var args = new object[parameters.Length];
+            for (int i = 0; i < parameters.Length; i++)
+            {
+                if (parameters[i].ParameterType.IsEnum)
+                {
+                    var names = Enum.GetNames(parameters[i].ParameterType);
+                    args[i] = Enum.Parse(parameters[i].ParameterType,
+                        value.Length > 0 && Array.IndexOf(names, value) >= 0 ? value : names[0]);
+                }
+                else
+                {
+                    args[i] = System.Convert.ChangeType("0", parameters[i].ParameterType);
+                }
+            }
+
+            _log.LogInfo("指令: StartEmptySession(" + args[0] + ", " + args[1] + ")");
+            var session = method.Invoke(flow, args);
+            _log.LogInfo("指令: 会话=" + (session == null ? "null" : session.GetType().Name));
         }
 
         /// <summary>
@@ -271,6 +376,12 @@ namespace WellCooked
             if (type == null)
             {
                 _log.LogWarning("指令: 找不到类型 " + name);
+                return;
+            }
+
+            if (type.IsEnum)
+            {
+                _log.LogInfo("指令: 枚举 " + type.FullName + " = " + string.Join(", ", Enum.GetNames(type)));
                 return;
             }
 
