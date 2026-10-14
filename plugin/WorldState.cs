@@ -477,102 +477,84 @@ namespace WellCooked
         }
 
         /// <summary>
-        /// 可走格直接取游戏自己的导航节点图：`GridNavSpace.m_nodeMap`。
+        /// 可走格：自己按 0.6 米格做物理采样。
         ///
-        /// 走过的弯路：自己拿 `PlayerControls.GroundLayer` 向下打射线采样——台面的碰撞体
-        /// 不在这一层，射线从台面旁穿到台面底下的地板，台面被算成可走，厨师贴着台面推墙
-        /// （实测 x=20.6 一动不动）。改用 `GridManager.GetActive(0)` 的 occupant 判据也不行：
-        /// 拿到的不是厨房那张网格，191 个点互相不连通，A* 全报"不可达"。
-        /// `GridNavSpace` 是游戏自己的导航空间（`GridNavigator`/它自带的 A* 都用它），
-        /// 它的 `m_nodeMap` 就是答案。
+        /// 走过的两条弯路：
+        /// 1. 拿 `PlayerControls.GroundLayer` 向下打射线——台面碰撞体不在这一层，
+        ///    射线穿到台面底下的地板，台面被算成可走；
+        /// 2. 改用游戏自己的 `GridNavSpace.m_nodeMap`——它的格子是 1.2 米，
+        ///    而台面/工作台摆在 0.6 米的格子上（`probe` 实测：worktop 在 19.8/20.4/21.0），
+        ///    粗一半的网格表示不出中间的障碍，于是厨师卡在两格正中间。
+        ///
+        /// 现在按场景里的物体实际尺寸来：0.6 米一格，每格要求脚下有地面、
+        /// 且以厨师碰撞体半径在腰间查一圈没有别的东西；相邻两格之间的中点也要能过。
         /// </summary>
         private static bool SampleGameGrid()
         {
-            var navSpaceType = AccessTools.TypeByName("GridNavSpace");
-            var gridManagerType = AccessTools.TypeByName("GridManager");
-            var indexType = AccessTools.TypeByName("GridIndex");
-            if (navSpaceType == null || gridManagerType == null || indexType == null)
-            {
-                _log.LogWarning("state: 找不到 GridNavSpace/GridManager/GridIndex");
-                return false;
-            }
-
-            var spaces = UnityEngine.Object.FindObjectsOfType(navSpaceType);
-            if (spaces.Length == 0)
-            {
-                _log.LogWarning("state: 场上没有 GridNavSpace");
-                return false;
-            }
-
-            object space = spaces[0];
-            var flags = BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public;
-            var nodeMapField = navSpaceType.GetField("m_nodeMap", flags);
-            var managerField = navSpaceType.GetField("m_gridManager", flags);
-            var offsetField = navSpaceType.GetField("m_mapOffset", flags);
-            if (nodeMapField == null || managerField == null || offsetField == null)
-            {
-                _log.LogWarning("state: GridNavSpace 字段名对不上（m_nodeMap/m_gridManager/m_mapOffset）");
-                return false;
-            }
-
-            var nodeMap = (bool[,])nodeMapField.GetValue(space);
-            object manager = managerField.GetValue(space);
-            object offset = offsetField.GetValue(space);
-            if (nodeMap == null || manager == null || offset == null)
-            {
-                _log.LogWarning("state: GridNavSpace 还没初始化好");
-                return false;
-            }
-
-            var offsetType = offset.GetType();
-            int offX = System.Convert.ToInt32(offsetType.GetField("X").GetValue(offset));
-            int offY = System.Convert.ToInt32(offsetType.GetField("Y").GetValue(offset));
-
-            var getPos = AccessTools.Method(gridManagerType, "GetPosFromGridLocation", new[] { indexType });
-            var indexCtor = indexType.GetConstructor(new[] { typeof(int), typeof(int), typeof(int) });
-            if (getPos == null || indexCtor == null)
-            {
-                _log.LogWarning("state: GridManager.GetPosFromGridLocation 找不到");
-                return false;
-            }
-
-            _cellsX = nodeMap.GetLength(0);
-            _cellsZ = nodeMap.GetLength(1);
-            _walkable = new bool[_cellsX, _cellsZ];
-
             float chefRadius = MeasureChefRadius();
+            float step = ObjectStep;
+
+            float minX = float.MaxValue, maxX = float.MinValue, minZ = float.MaxValue, maxZ = float.MinValue;
+            var anchors = new List<Vector3>();
+            foreach (var chef in UnityEngine.Object.FindObjectsOfType<PlayerControls>())
+            {
+                anchors.Add(chef.transform.position);
+            }
+
+            foreach (var station in FindAll("ClientIngredientContainer"))
+            {
+                var component = station as Component;
+                if (component != null)
+                {
+                    anchors.Add(component.transform.position);
+                }
+            }
+
+            foreach (var p in anchors)
+            {
+                minX = Math.Min(minX, p.x);
+                maxX = Math.Max(maxX, p.x);
+                minZ = Math.Min(minZ, p.z);
+                maxZ = Math.Max(maxZ, p.z);
+            }
+
+            if (anchors.Count == 0)
+            {
+                return false;
+            }
+
+            minX -= SampleMargin;
+            maxX += SampleMargin;
+            minZ -= SampleMargin;
+            maxZ += SampleMargin;
+
+            _originX = minX;
+            _originZ = minZ;
+            _step = step;
+            _cellOffsetX = 0;
+            _cellOffsetZ = 0;
+            _cellsX = (int)Math.Floor((maxX - minX) / step) + 1;
+            _cellsZ = (int)Math.Floor((maxZ - minZ) / step) + 1;
+            _walkable = new bool[_cellsX, _cellsZ];
+            _passableX = new bool[_cellsX, _cellsZ];
+            _passableZ = new bool[_cellsX, _cellsZ];
+
             var cells = new StringBuilder();
-            var free = new List<Vector3>();
-            float minX = float.MaxValue, minZ = float.MaxValue;
-            int minI = int.MaxValue, minJ = int.MaxValue;
+            var free = new List<Vector2>();
             int count = 0;
 
             for (int i = 0; i < _cellsX; i++)
             {
                 for (int j = 0; j < _cellsZ; j++)
                 {
-                    if (!nodeMap[i, j])
-                    {
-                        continue;
-                    }
-
-                    object index = indexCtor.Invoke(new object[] { i - offX, 0, j - offY });
-                    var world = (Vector3)getPos.Invoke(manager, new[] { index });
-
-                    // 游戏这张节点图只记"格子有没有被占"，不含碰撞体：实测格子是空的，
-                    // 厨师却推不过去（24 秒只在格心 ±0.1 抖动）。所以再问一次物理：
-                    // 脚下要有地面，且以厨师半径在腰间查一圈不能碰到东西。
+                    var world = new Vector3(minX + i * step, 0f, minZ + j * step);
                     if (!Standable(world, chefRadius))
                     {
                         continue;
                     }
 
                     _walkable[i, j] = true;
-                    free.Add(world);
-                    minX = Math.Min(minX, world.x);
-                    minZ = Math.Min(minZ, world.z);
-                    minI = Math.Min(minI, i);
-                    minJ = Math.Min(minJ, j);
+                    free.Add(new Vector2(world.x, world.z));
                     count++;
                 }
             }
@@ -583,29 +565,21 @@ namespace WellCooked
                 return false;
             }
 
-            float step = 0f;
-            foreach (var p in free)
-            {
-                float d = Math.Abs(p.x - minX);
-                if (d > 0.01f && (step == 0f || d < step))
-                {
-                    step = d;
-                }
-            }
-
-            _originX = minX;
-            _originZ = minZ;
-            _step = step > 0.01f ? step : 1f;
-
-            // 边：两格都空，且两格中点的物理检查也过
-            _passableX = new bool[_cellsX, _cellsZ];
-            _passableZ = new bool[_cellsX, _cellsZ];
+            int edges = 0;
             for (int i = 0; i < _cellsX - 1; i++)
             {
                 for (int j = 0; j < _cellsZ; j++)
                 {
-                    _passableX[i, j] = _walkable[i, j] && _walkable[i + 1, j]
-                                       && StandableBetween(CellCenter(i, j), CellCenter(i + 1, j), chefRadius);
+                    if (!_walkable[i, j] || !_walkable[i + 1, j])
+                    {
+                        continue;
+                    }
+
+                    if (StandableBetween(CellCenter(i, j), CellCenter(i + 1, j), chefRadius))
+                    {
+                        _passableX[i, j] = true;
+                        edges++;
+                    }
                 }
             }
 
@@ -613,15 +587,18 @@ namespace WellCooked
             {
                 for (int j = 0; j < _cellsZ - 1; j++)
                 {
-                    _passableZ[i, j] = _walkable[i, j] && _walkable[i, j + 1]
-                                       && StandableBetween(CellCenter(i, j), CellCenter(i, j + 1), chefRadius);
+                    if (!_walkable[i, j] || !_walkable[i, j + 1])
+                    {
+                        continue;
+                    }
+
+                    if (StandableBetween(CellCenter(i, j), CellCenter(i, j + 1), chefRadius))
+                    {
+                        _passableZ[i, j] = true;
+                        edges++;
+                    }
                 }
             }
-            // 数组下标是游戏网格的绝对下标，而 origin 取的是"可走格"的左上角：
-            // 左上角被台面占掉几格，两者就差几格。之前忘了这一步，整张表错位，
-            // 厨师所在格查出来全不可走，A* 一律报"不可达"（实测 178 次）。
-            _cellOffsetX = minI;
-            _cellOffsetZ = minJ;
 
             foreach (var p in free)
             {
@@ -630,46 +607,26 @@ namespace WellCooked
                     cells.Append(',');
                 }
 
-                cells.Append('[').Append(p.x.ToString("F2")).Append(',').Append(p.z.ToString("F2")).Append(']');
+                cells.Append('[').Append(p.x.ToString("F2")).Append(',').Append(p.y.ToString("F2")).Append(']');
             }
 
             var text = new StringBuilder();
             text.Append("{\"scene\":\"").Append(ActiveScene()).Append('"');
-            text.Append(",\"source\":\"game-navspace\"");
+            text.Append(",\"source\":\"physics-0.6\"");
             text.Append(",\"step\":").Append(_step.ToString("F2"));
             text.Append(",\"map\":[").Append(_cellsX).Append(',').Append(_cellsZ).Append(']');
-            text.Append(",\"offset\":[").Append(offX).Append(',').Append(offY).Append(']');
             text.Append(",\"cells\":[").Append(cells.ToString()).Append("]}");
             File.WriteAllText(Path.Combine(Paths.BepInExRootPath, "wellcooked-terrain.json"), text.ToString());
-            int edges = 0;
-            for (int i = 0; i < _cellsX - 1; i++)
-            {
-                for (int j = 0; j < _cellsZ; j++)
-                {
-                    if (_passableX[i, j])
-                    {
-                        edges++;
-                    }
-                }
-            }
-
-            for (int i = 0; i < _cellsX; i++)
-            {
-                for (int j = 0; j < _cellsZ - 1; j++)
-                {
-                    if (_passableZ[i, j])
-                    {
-                        edges++;
-                    }
-                }
-            }
-
             _log.LogInfo("state: 可走格 " + count + "/" + (_cellsX * _cellsZ) + "，可走边 " + edges
-                         + "（游戏节点图 + 物理检查，格距 " + _step.ToString("F2")
-                         + "，厨师半径 " + MeasureChefRadius().ToString("F2")
-                         + "，场景 " + ActiveScene() + "）");
+                         + "（物理采样，格距 " + _step.ToString("F2")
+                         + "，厨师半径 " + chefRadius.ToString("F2") + "，场景 " + ActiveScene() + "）");
             return true;
         }
+
+        /// <summary>场景里的台面/工作台按 0.6 米一格摆放（probe 实测），采样就按这个来。</summary>
+        private const float ObjectStep = 0.6f;
+
+        private const float SampleMargin = 3f;
 
         /// <summary>厨师体积半径：直接量他的碰撞体，别猜。</summary>
         private static float MeasureChefRadius()
