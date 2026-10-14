@@ -148,6 +148,12 @@ namespace WellCooked
 
             var next = agent.Path[agent.Waypoint];
             var direction = next - position;
+
+            // 游戏里的厨师只走四个方向，喂对角方向他会走出锯齿、贴着台面蹭。
+            // 取分量大的那个轴，给纯轴向。
+            direction = Math.Abs(direction.x) >= Math.Abs(direction.y)
+                ? new Vector2(Math.Sign(direction.x), 0f)
+                : new Vector2(0f, Math.Sign(direction.y));
             status = "路点 " + agent.Waypoint + "/" + agent.Path.Count + " 剩余 " + toTarget.ToString("F1")
                      + " 路点坐标=(" + next.x.ToString("F2") + "," + next.y.ToString("F2") + ")"
                      + " 目标=(" + agent.Target.x.ToString("F2") + "," + agent.Target.y.ToString("F2") + ")";
@@ -161,7 +167,15 @@ namespace WellCooked
         }
 
         private const float ArriveRadius = 0.45f;
-        private const float WaypointRadius = 0.3f;
+
+        /// <summary>
+        /// "算到了这个路点"的半径。取格距的一半左右：厨师是连续移动的，
+        /// 很少正好站在格心上，半径太小就会永远够不到那个格心。
+        /// </summary>
+        private static float WaypointRadius
+        {
+            get { return WorldState.Step * 0.45f; }
+        }
 
         /// <summary>A*：找不到路返回 null（调用方要明确报"不可达"，不能原地打转）。</summary>
         public static List<Vector2> FindPath(Vector2 from, Vector2 to)

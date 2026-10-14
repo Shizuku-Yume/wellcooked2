@@ -371,6 +371,12 @@ namespace WellCooked
             get { return _walkable != null; }
         }
 
+        /// <summary>游戏网格的格距（米）。路径跟随按它决定"算到了这一格"的半径。</summary>
+        public static float Step
+        {
+            get { return _step; }
+        }
+
         public static void WorldToCell(float x, float z, out int ix, out int iz)
         {
             ix = (int)Math.Round((x - _originX) / _step) - _cellOffsetX;
