@@ -28,6 +28,7 @@ namespace WellCooked
                          + ", BepInEx " + typeof(BaseUnityPlugin).Assembly.GetName().Version);
             ApplySmokePatches();
             WorldState.Install(_log);
+            LogicalInput.Install(_log);
             Takeover.Install(_log);
             DumpGameInventory();
         }

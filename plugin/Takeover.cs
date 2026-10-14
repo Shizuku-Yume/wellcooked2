@@ -38,6 +38,7 @@ namespace WellCooked
         private static float _nextFrontendPress;
 
         private static readonly List<int> Slots = new List<int> { 0, 1 };
+        private static readonly List<PlayerInputLookup.Player> LogicalPlayers = new List<PlayerInputLookup.Player>();
         private static bool _frontendPress;
 
         private sealed class Owned
@@ -378,10 +379,68 @@ namespace WellCooked
             _driving = true;
             _drivingSince = now;
             _log.LogInfo("takeover: 检测到 " + chefCount + " 名厨师，开始接管驱动（我们占了 " + OwnedPads.Count + " 位）");
+            ChooseLogicalPlayers(UnityEngine.Object.FindObjectsOfType<PlayerControls>());
             _log.LogInfo("takeover: 系统手柄槽位数=" + PlayerInputLookup.GetSystemControllerMaximum());
             LogDevices();
             LogPadInventory();
             LogUsers();
+        }
+
+        /// <summary>
+        /// 挑出设备层管不到的玩家（典型是键盘占住的 1 号位），改成逻辑层注入驱动。
+        /// 设备层只能写进我们自己的虚拟手柄，键盘占的位写不进去——截图实证键盘会抢 1 号位。
+        /// </summary>
+        private static void ChooseLogicalPlayers(PlayerControls[] chefs)
+        {
+            LogicalPlayers.Clear();
+            foreach (var chef in chefs)
+            {
+                var provider = chef.GetComponent<PlayerIDProvider>();
+                if (provider == null || !provider.IsLocallyControlled())
+                {
+                    continue;
+                }
+
+                var player = provider.GetID();
+                int pad;
+                try
+                {
+                    pad = (int)PlayerInputLookup.GetPadForPlayer(player);
+                }
+                catch (Exception)
+                {
+                    pad = -1;
+                }
+
+                bool ours = false;
+                foreach (var owned in OwnedPads)
+                {
+                    if (owned.PadNumber == pad)
+                    {
+                        ours = true;
+                    }
+                }
+
+                if (!ours)
+                {
+                    LogicalPlayers.Add(player);
+                }
+            }
+
+            if (LogicalPlayers.Count == 0)
+            {
+                _log.LogInfo("takeover: 所有本地玩家都在我们的手柄上，不需要逻辑层注入");
+                return;
+            }
+
+            var names = new List<string>();
+            foreach (var player in LogicalPlayers)
+            {
+                names.Add(player.ToString());
+            }
+
+            _log.LogInfo("takeover: 逻辑层接管玩家 " + string.Join(",", names.ToArray())
+                         + "（他们的设备不是我们的手柄）");
         }
 
         /// <summary>InControl 认得的所有设备：键盘、物理手柄、我们挂的虚拟手柄都在这里。</summary>
@@ -481,6 +540,8 @@ namespace WellCooked
                 owned.Pad.Want(false, false, Vector2.zero);
             }
 
+            LogicalInput.Clear();
+
             _log.LogInfo("takeover: 离开关卡，停止驱动");
         }
 
@@ -499,10 +560,16 @@ namespace WellCooked
                 owned.Pad.Want(action, false, new Vector2(direction, 0f));
             }
 
+            foreach (var player in LogicalPlayers)
+            {
+                LogicalInput.Set(player, direction, action);
+            }
+
             if (now >= _nextDriveLog)
             {
                 _nextDriveLog = now + 2f;
-                _log.LogInfo("takeover: 驱动中 方向=" + direction + " 交互=" + action);
+                _log.LogInfo("takeover: 驱动中 方向=" + direction + " 交互=" + action
+                             + " 设备层=" + OwnedPads.Count + " 逻辑层=" + LogicalPlayers.Count);
                 foreach (var owned in OwnedPads)
                 {
                     _log.LogInfo("takeover: 手柄 玩家位=" + (owned.Slot + 1) + " pad=" + owned.PadNumber
