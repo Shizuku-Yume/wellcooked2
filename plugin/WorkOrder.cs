@@ -169,6 +169,11 @@ namespace WellCooked
                     _log.LogInfo("工序: " + _step + " 接近工位（" + toStation.ToString("F2") + " 米），直接朝它推");
                 }
 
+                if (!_facing)
+                {
+                    _nextPress = now + 0.35f; // 先转 0.35 秒身再按
+                }
+
                 _facing = true;
                 _faceDirection = (chef.Position - _station).sqrMagnitude > 0.0001f
                     ? (_station - chef.Position).normalized
@@ -197,6 +202,8 @@ namespace WellCooked
                         return;
                     }
 
+                    // 检查过了就作废这次检查，别每帧都往后推"下一次按"——那样永远按不出去
+                    _lastCheckAt = float.MaxValue;
                     _nextPress = now + PressInterval;
                 }
 
