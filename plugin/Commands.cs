@@ -114,6 +114,9 @@ namespace WellCooked
                 case "path":
                     ProbePath(value);
                     break;
+                case "order":
+                    DumpOrder();
+                    break;
                 case "scan":
                     Scan(value);
                     break;
@@ -410,6 +413,26 @@ namespace WellCooked
 
         private static void Noop()
         {
+        }
+
+        /// <summary>order=1：把当前订单/菜谱/步骤叶子打出来（工序状态机读的就是这些）。</summary>
+        private static void DumpOrder()
+        {
+            var controller = WorldState.FirstOrderController();
+            _log.LogInfo("指令: 订单控制器=" + (controller == null ? "null" : controller.GetType().Name));
+            var recipes = WorldState.ActiveRecipes(controller);
+            _log.LogInfo("指令: 活跃订单菜名=" + (recipes.Count == 0 ? "（空）" : string.Join(",", recipes.ToArray())));
+            var leaves = WorldState.OrderStepLeaves(controller);
+            _log.LogInfo("指令: 步骤叶子=" + (leaves.Count == 0 ? "（空）" : string.Join(",", leaves.ToArray())));
+            var stack = Kitchen.PlateStack();
+            _log.LogInfo("指令: 盘子堆=" + (stack == null ? "null" : stack.Name + " (" + stack.Position.x.ToString("F1") + "," + stack.Position.y.ToString("F1") + ")"));
+            var station = Kitchen.DeliveryStation();
+            _log.LogInfo("指令: 出菜台=" + (station == null ? "null" : station.Name + " (" + station.Position.x.ToString("F1") + "," + station.Position.y.ToString("F1") + ")"));
+            foreach (var crate in Kitchen.Crates())
+            {
+                _log.LogInfo("指令: 料箱 " + crate.Name + " 给=" + crate.Gives
+                             + " (" + crate.Position.x.ToString("F1") + "," + crate.Position.y.ToString("F1") + ")");
+            }
         }
 
         /// <summary>scan=关键字：列出物体名或组件类型名含这个关键字的对象（找料箱/工位用）。</summary>
