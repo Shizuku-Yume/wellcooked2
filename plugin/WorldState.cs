@@ -114,7 +114,8 @@ namespace WellCooked
 
                 json.Append("{\"player\":\"").Append(provider == null ? "?" : provider.GetID().ToString())
                     .Append("\",\"local\":").Append(provider != null && provider.IsLocallyControlled() ? "true" : "false")
-                    .Append(",\"pos\":[").Append(position.x.ToString("F2")).Append(',').Append(position.y.ToString("F2")).Append(']')
+                    .Append(",\"pos\":[").Append(position.x.ToString("F2")).Append(',').Append(position.z.ToString("F2")).Append(']')
+                    .Append(",\"height\":").Append(position.y.ToString("F2"))
                     .Append(",\"facing\":[").Append(forward.x.ToString("F2")).Append(',').Append(forward.z.ToString("F2")).Append(']')
                     .Append(",\"held\":\"").Append(held == null ? "" : Clean(held.name)).Append("\"}");
             }
@@ -146,63 +147,60 @@ namespace WellCooked
 
             json.Append(",\"orders\":[");
             var monitor = team == null ? null : Invoke(flow, "GetMonitorForTeam", team);
+            var controller = monitor == null ? null : Get(monitor, "OrdersController");
             if (monitor == null)
             {
                 missing.Add("ServerTeamMonitor");
             }
+            else if (controller == null)
+            {
+                missing.Add("OrdersController");
+            }
             else
             {
-                var controller = Get(monitor, "OrdersController");
-                if (controller == null)
+                // 活跃订单：控制器私有 m_activeOrders 上有剩余时间与寿命
+                var active = AsEnumerable(Get(controller, "m_activeOrders"));
+                if (active == null)
                 {
-                    missing.Add("OrdersController");
+                    missing.Add("m_activeOrders");
                 }
                 else
                 {
-                    // 活跃订单：控制器私有 m_activeOrders 上有剩余时间与寿命
-                    var active = AsEnumerable(Get(controller, "m_activeOrders"));
-                    if (active == null)
+                    bool first = true;
+                    foreach (var order in active)
                     {
-                        missing.Add("m_activeOrders");
-                    }
-                    else
-                    {
-                        bool first = true;
-                        foreach (var order in active)
+                        if (!first)
                         {
-                            if (!first)
-                            {
-                                json.Append(',');
-                            }
-
-                            first = false;
-                            json.Append(DescribeOrder(order));
+                            json.Append(',');
                         }
-                    }
 
-                    // 菜谱条目单独一个键：能拿到菜名与单份分数
-                    json.Append(",\"recipes\":[");
-                    var recipes = AsEnumerable(Get(controller, "ActiveRecipes"));
-                    if (recipes == null)
+                        first = false;
+                        json.Append(DescribeOrder(order));
+                    }
+                }
+            }
+
+            json.Append(']');
+
+            // 菜谱条目单独一个键：能拿到菜名与单份分数
+            json.Append(",\"recipes\":[");
+            var recipes = controller == null ? null : AsEnumerable(Get(controller, "ActiveRecipes"));
+            if (controller != null && recipes == null)
+            {
+                missing.Add("ActiveRecipes");
+            }
+            else if (recipes != null)
+            {
+                bool firstRecipe = true;
+                foreach (var recipe in recipes)
+                {
+                    if (!firstRecipe)
                     {
-                        missing.Add("ActiveRecipes");
-                    }
-                    else
-                    {
-                        bool firstRecipe = true;
-                        foreach (var recipe in recipes)
-                        {
-                            if (!firstRecipe)
-                            {
-                                json.Append(',');
-                            }
-
-                            firstRecipe = false;
-                            json.Append(DescribeRecipe(recipe));
-                        }
+                        json.Append(',');
                     }
 
-                    json.Append(']');
+                    firstRecipe = false;
+                    json.Append(DescribeRecipe(recipe));
                 }
             }
 
@@ -255,7 +253,7 @@ namespace WellCooked
 
                 first = false;
                 var p = component.transform.position;
-                json.Append("{\"pos\":[").Append(p.x.ToString("F2")).Append(',').Append(p.y.ToString("F2")).Append(']')
+                json.Append("{\"pos\":[").Append(p.x.ToString("F2")).Append(',').Append(p.z.ToString("F2")).Append(']')
                     .Append(",\"progress\":").Append(Num(Invoke(handler, "GetCookingProgress")))
                     .Append(",\"cooked\":").Append(Bool(Invoke(handler, "IsCooked")))
                     .Append(",\"burning\":").Append(Bool(Invoke(handler, "IsBurning")))
@@ -349,15 +347,26 @@ namespace WellCooked
         }
 
         /// <summary>
-        /// 地形：Unity 导航网格就是"人能走的地方"，障碍（台面、墙）自然被排除。
-        /// 每个场景导一次，写 `wellcooked-terrain.json`，寻路拿它当可走区域。
+        /// 地形：这个游戏没有可用的 Unity 导航网格（实测 0 个顶点），
+        /// 它自己是靠"地面层 + 向下打射线"判断能不能站的（`PlayerControls.GroundLayer`）。
+        /// 所以按同样的办法采样：在地图范围内按 0.5 格打射线，打到地面层的格子就是可走格。
+        /// 每个场景导一次，写 `wellcooked-terrain.json`。
         /// </summary>
         private static string _terrainScene;
+
+        private const float SampleStep = 0.5f;
+        private const float SampleMargin = 6f;
 
         private static void DumpTerrainOnce()
         {
             var scene = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
-            if (scene == _terrainScene || scene == "StartScreen")
+            if (scene == _terrainScene || scene == "StartScreen" || scene == "Loading")
+            {
+                return;
+            }
+
+            var chefs = UnityEngine.Object.FindObjectsOfType<PlayerControls>();
+            if (chefs.Length == 0)
             {
                 return;
             }
@@ -365,39 +374,75 @@ namespace WellCooked
             _terrainScene = scene;
             try
             {
-                var triangulation = UnityEngine.AI.NavMesh.CalculateTriangulation();
+                int mask = chefs[0].GroundLayer.value;
+
+                // 采样范围：厨师与工位的外接矩形再加一圈余量
+                float minX = float.MaxValue, maxX = float.MinValue, minZ = float.MaxValue, maxZ = float.MinValue;
+                var points = new List<Vector3>();
+                foreach (var chef in chefs)
+                {
+                    points.Add(chef.transform.position);
+                }
+
+                foreach (var station in FindAll("ClientIngredientContainer"))
+                {
+                    var component = station as Component;
+                    if (component != null)
+                    {
+                        points.Add(component.transform.position);
+                    }
+                }
+
+                foreach (var p in points)
+                {
+                    minX = Math.Min(minX, p.x);
+                    maxX = Math.Max(maxX, p.x);
+                    minZ = Math.Min(minZ, p.z);
+                    maxZ = Math.Max(maxZ, p.z);
+                }
+
+                minX -= SampleMargin;
+                maxX += SampleMargin;
+                minZ -= SampleMargin;
+                maxZ += SampleMargin;
+
+                var cells = new StringBuilder();
+                int count = 0;
+                float top = 5f;
+                float distance = 10f;
+                for (float x = minX; x <= maxX; x += SampleStep)
+                {
+                    for (float z = minZ; z <= maxZ; z += SampleStep)
+                    {
+                        RaycastHit hit;
+                        if (!Physics.Raycast(new Vector3(x, top, z), Vector3.down, out hit, distance, mask))
+                        {
+                            continue;
+                        }
+
+                        if (count > 0)
+                        {
+                            cells.Append(',');
+                        }
+
+                        count++;
+                        cells.Append('[').Append(x.ToString("F2")).Append(',').Append(hit.point.z.ToString("F2")).Append(']');
+                    }
+                }
+
                 var text = new StringBuilder();
                 text.Append("{\"scene\":\"").Append(scene).Append('"');
-                text.Append(",\"vertices\":[");
-                for (int i = 0; i < triangulation.vertices.Length; i++)
-                {
-                    var v = triangulation.vertices[i];
-                    if (i > 0)
-                    {
-                        text.Append(',');
-                    }
-
-                    text.Append('[').Append(v.x.ToString("F2")).Append(',').Append(v.z.ToString("F2")).Append(']');
-                }
-
-                text.Append("],\"triangles\":[");
-                for (int i = 0; i < triangulation.indices.Length; i++)
-                {
-                    if (i > 0)
-                    {
-                        text.Append(',');
-                    }
-
-                    text.Append(triangulation.indices[i]);
-                }
-
-                text.Append("]}");
+                text.Append(",\"step\":").Append(SampleStep.ToString("F1"));
+                text.Append(",\"groundLayer\":").Append(mask);
+                text.Append(",\"bounds\":[").Append(minX.ToString("F2")).Append(',').Append(minZ.ToString("F2"))
+                    .Append(',').Append(maxX.ToString("F2")).Append(',').Append(maxZ.ToString("F2")).Append(']');
+                text.Append(",\"cells\":[").Append(cells).Append("]}");
                 File.WriteAllText(Path.Combine(Paths.BepInExRootPath, "wellcooked-terrain.json"), text.ToString());
-                _log.LogInfo("state: 地形导出 " + triangulation.vertices.Length + " 个可走顶点（场景 " + scene + "）");
+                _log.LogInfo("state: 地形采样 " + count + " 个可走格（场景 " + scene + "，地面层 " + mask + "）");
             }
             catch (Exception e)
             {
-                _log.LogWarning("state: 地形导出失败: " + e.Message);
+                _log.LogWarning("state: 地形采样失败: " + e.Message);
             }
         }
 
