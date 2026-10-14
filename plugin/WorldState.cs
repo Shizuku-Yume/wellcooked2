@@ -288,7 +288,9 @@ namespace WellCooked
                 "ClientHeatedStation", "ClientMixingStation", "ClientCleanPlateStack",
                 "ClientDirtyPlateStack", "ClientConveyorStation", "ClientSwitchStation",
                 "ClientCookingStation", "ClientPlate", "ClientCookableContainer",
-                "ClientCookablePreparationContainer", "ClientTrayIngredientContainer"
+                "ClientCookablePreparationContainer", "ClientTrayIngredientContainer",
+                // 料箱：DispenserCrate 上的这个组件给出它发的是哪种料
+                "ClientPickupItemSpawner"
             };
 
             json.Append(",\"stations\":[");
@@ -322,6 +324,13 @@ namespace WellCooked
                         .Append("\",\"name\":\"").Append(Clean(unity.gameObject.name))
                         .Append("\",\"pos\":[").Append(p.x.ToString("F2")).Append(',').Append(p.y.ToString("F2"))
                         .Append("],\"contents\":[");
+
+                    if (typeName == "ClientPickupItemSpawner")
+                    {
+                        // 料箱给什么：PickupItemSpawner.m_itemPrefab 的名字就是料名（如 SushiFish）
+                        var prefab = Invoke(component, "GetItemPrefab") as UnityEngine.Object;
+                        json.Append("\"gives\":\"" + Clean(prefab == null ? "" : prefab.name) + "\",");
+                    }
 
                     var contents = AsEnumerable(Invoke(component, "GetContents"));
                     bool firstItem = true;
