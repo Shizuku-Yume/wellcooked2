@@ -118,7 +118,8 @@ namespace WellCooked
 
             if (agent.Path == null || now >= agent.NextRepath)
             {
-                agent.NextRepath = now + 1f;
+                // 别重算太勤：每次重算都会把路点指针拨回 0，厨师会在原地上下来回。
+                agent.NextRepath = now + 2f;
                 agent.Path = FindPath(position, agent.Target);
                 agent.Waypoint = 0;
                 if (agent.Path == null)
@@ -137,7 +138,11 @@ namespace WellCooked
 
             if (agent.Waypoint >= agent.Path.Count)
             {
-                status = "路径走完";
+                // 走到路径终点就算到了。目标点是台面中心（锅/出菜台/食材箱），
+                // 厨师根本站不上去，用"离目标 ≤0.45 格"判到达永远不成立——
+                // 实测厨师在目标旁边绕圈、剩余距离不降、0 次到达。
+                agent.Arrived = true;
+                status = "已到达（路径终点，距目标 " + toTarget.ToString("F1") + "）";
                 return Vector2.zero;
             }
 
