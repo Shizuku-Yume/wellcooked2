@@ -101,15 +101,20 @@ namespace WellCooked
             get { return Drives.Count; }
         }
 
-        private static void AfterGetValue(PlayerInputLookup.LogicalValueID id,
-                                          PlayerInputLookup.Player player,
-                                          ref ILogicalValue __result)
+        // 补丁签名按 spike 里验证过的那种写法：用 __args 取参数，避免 Harmony 生成包装时踩类型坑
+        private static void AfterGetValue(object[] __args, ref ILogicalValue __result)
         {
-            if (id != PlayerInputLookup.LogicalValueID.MovementX || __result == null)
+            if (__result == null || __args == null || __args.Length < 2)
             {
                 return;
             }
 
+            if (__args[0] == null || __args[0].ToString() != "MovementX")
+            {
+                return;
+            }
+
+            var player = (PlayerInputLookup.Player)__args[1];
             Drive drive;
             if (!Drives.TryGetValue(player, out drive))
             {
@@ -119,15 +124,19 @@ namespace WellCooked
             __result = new DrivenValue(__result, drive);
         }
 
-        private static void AfterGetButton(PlayerInputLookup.LogicalButtonID id,
-                                           PlayerInputLookup.Player player,
-                                           ref ILogicalButton __result)
+        private static void AfterGetButton(object[] __args, ref ILogicalButton __result)
         {
-            if (id != PlayerInputLookup.LogicalButtonID.WorkstationInteract && __result == null)
+            if (__result == null || __args == null || __args.Length < 2)
             {
                 return;
             }
 
+            if (__args[0] == null || __args[0].ToString() != "WorkstationInteract")
+            {
+                return;
+            }
+
+            var player = (PlayerInputLookup.Player)__args[1];
             Drive drive;
             if (!Drives.TryGetValue(player, out drive))
             {
