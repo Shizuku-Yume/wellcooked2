@@ -53,7 +53,7 @@ namespace WellCooked
         private const float StepTimeout = 20f;
 
         /// <summary>到达判定半径：工位都在台面里，厨师只能站到旁边一格。</summary>
-        private const float ReachRadius = 1.3f;
+        private const float ReachRadius = 1.6f;
 
         /// <summary>交互按下的时长（秒）。游戏只认按下的边沿，必须松开。</summary>
         private const float InteractHold = 0.25f;

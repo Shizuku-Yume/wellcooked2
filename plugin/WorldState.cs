@@ -429,9 +429,57 @@ namespace WellCooked
             return _walkable != null && ix >= 0 && iz >= 0 && ix < _cellsX && iz < _cellsZ && _walkable[ix, iz];
         }
 
+        // 运行时"这条边实际过不去"的记录：物理采样不可能和游戏碰撞完全一致，
+        // 厨师真推不动的地方就记下来，下次重算自动绕开（地图从失败里学）。
+        private static readonly HashSet<long> BlockedSteps = new HashSet<long>();
+
+        /// <summary>记下"从 (ix,iz) 朝 (dx,dz) 过不去"。无向：两个方向一起封。</summary>
+        public static void BlockStep(int ix, int iz, int dx, int dz)
+        {
+            if (dx != 0)
+            {
+                dx = dx > 0 ? 1 : -1;
+                dz = 0;
+            }
+            else if (dz != 0)
+            {
+                dz = dz > 0 ? 1 : -1;
+                dx = 0;
+            }
+            else
+            {
+                return;
+            }
+
+            if (BlockedSteps.Count > 400)
+            {
+                BlockedSteps.Clear(); // 别让它越积越多把整张图封死
+            }
+
+            BlockedSteps.Add(EdgeKey(ix, iz, dx, dz));
+        }
+
+        public static void ClearBlockedSteps()
+        {
+            BlockedSteps.Clear();
+        }
+
+        private static long EdgeKey(int ix, int iz, int dx, int dz)
+        {
+            int ax = dx != 0 ? Math.Min(ix, ix + dx) : ix;
+            int az = dz != 0 ? Math.Min(iz, iz + dz) : iz;
+            int axis = dx != 0 ? 0 : 1;
+            return ((long)(ax & 0xffff) << 24) | ((long)(az & 0xffff) << 8) | (uint)axis;
+        }
+
         /// <summary>从 (ix,iz) 朝 (dx,dz)（只允许单步正交）走不走得过去。</summary>
         public static bool CanStep(int ix, int iz, int dx, int dz)
         {
+            if (BlockedSteps.Count > 0 && BlockedSteps.Contains(EdgeKey(ix, iz, dx, dz)))
+            {
+                return false;
+            }
+
             if (!IsWalkableCell(ix, iz))
             {
                 return false;
@@ -592,6 +640,7 @@ namespace WellCooked
             _walkable = new bool[_cellsX, _cellsZ];
             _passableX = new bool[_cellsX, _cellsZ];
             _passableZ = new bool[_cellsX, _cellsZ];
+            ClearBlockedSteps();
 
             var cells = new StringBuilder();
             var free = new List<Vector2>();

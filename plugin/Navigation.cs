@@ -162,6 +162,31 @@ namespace WellCooked
                 // 离得远时还错身就成了乱走——错身期间厨师一直在小幅移动，卡住计时攒不够，
                 // 永远不重算路径，20 秒只挪半米（实测）。
                 // 另外错身本身有界：连续 2 次还推不动就丢路径让上层重算。
+                // 同时把"从当前格朝路点方向过不去"记进地图：下次重算就绕开这条路。
+                int cx, cz, tx, tz;
+                WorldState.WorldToCell(position.x, position.y, out cx, out cz);
+                var blockedTarget = agent.Path != null && agent.Waypoint < agent.Path.Count
+                    ? agent.Path[agent.Waypoint]
+                    : agent.Target;
+                WorldState.WorldToCell(blockedTarget.x, blockedTarget.y, out tx, out tz);
+                int bx = Math.Sign(tx - cx);
+                int bz = Math.Sign(tz - cz);
+                if (bx != 0)
+                {
+                    bz = 0;
+                }
+                else if (bz != 0)
+                {
+                    bx = 0;
+                }
+
+                if (bx != 0 || bz != 0)
+                {
+                    WorldState.BlockStep(cx, cz, bx, bz);
+                    _log.LogInfo("寻路: 记下过不去的边 格(" + cx + "," + cz + ") 方向(" + bx + "," + bz
+                                 + ") —— 位置(" + position.x.ToString("F2") + "," + position.y.ToString("F2") + ")");
+                }
+
                 agent.SlideCount++;
                 if (agent.SlideCount > 2)
                 {
