@@ -84,6 +84,7 @@ namespace WellCooked
             Agent agent;
             if (!Agents.TryGetValue(owner, out agent))
             {
+                status = "没登记目标";
                 return Vector2.zero;
             }
 
@@ -142,12 +143,15 @@ namespace WellCooked
 
             var next = agent.Path[agent.Waypoint];
             var direction = next - position;
+            status = "路点 " + agent.Waypoint + "/" + agent.Path.Count + " 剩余 " + toTarget.ToString("F1")
+                     + " 路点坐标=(" + next.x.ToString("F2") + "," + next.y.ToString("F2") + ")"
+                     + " 目标=(" + agent.Target.x.ToString("F2") + "," + agent.Target.y.ToString("F2") + ")";
             if (direction.sqrMagnitude < 0.0001f)
             {
+                status = "路点与当前位置重合 " + status;
                 return Vector2.zero;
             }
 
-            status = "路点 " + agent.Waypoint + "/" + agent.Path.Count + " 剩余 " + toTarget.ToString("F1");
             return direction.normalized;
         }
 
