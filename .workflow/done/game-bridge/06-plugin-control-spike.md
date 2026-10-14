@@ -32,13 +32,28 @@ Review（flow-verify brief A，2026-10-14）：blocked，1 blocking / 2 nonblock
 - nonblocking：证据没写来源 → 补上截图路径与"截图在 `/tmp`、游戏日志每次运行前被清空"的说明；构建产物 `plugin/bin`、`plugin/obj` 是本任务构建产生的，已被 `.gitignore` 忽略。
 - Review boundary: `fd300b8e0903ab31ba59564511940f495d5564f7` → main（`69100c3`、`09bb809`）+ `spike/game-bridge-06`（`f7a0554`）; round: 1; briefs: A; boundaries: 游戏进程内输入注入、游戏目录构建产物; findings: 1 blocking / 2 nonblocking
 
+第二轮（同一 brief，按发现修订）：
+
+- blocking：路线 A 的结论被泛化成"前端不走逻辑按钮层" → 限定为"本次测的按钮和场景"；decisions 里的机制解释标注为推断。
+- blocking：spec「How it is built」声称被回写但实际没改 → 现在真的把注入方案写进去了（插件那一条），Findings 的 "Recorded in" 也改成实际位置。
+- nonblocking：证据来源与用途不完整 → 点名 A/B 各自对应的截图、三次运行、日志是历史摘录；补上卷帘门的连拍证据。
+- nonblocking：试验范围与外部状态没披露完 → 见下。
+
+**本任务的完整试验范围（都在 `spike/game-bridge-06` 分支，不进 main）：**
+
+- 新增 `plugin/ControlSpike.cs`（逻辑层包装 + 虚拟手柄挂载 + 控制名清单）、`plugin/VirtualPad.cs`（`InControl.InputDevice` 子类）。
+- 改动 `plugin/SmokePlugin.cs`：挂接 `ControlSpike.Install`，并把类型清单导出扩展成"关键字 + 关注类型完整成员"。
+- 改动 `plugin/WellCooked.Smoke.csproj`：加 `Assembly-CSharp` 和 `XInputDotNetPure` 两个编译期引用（`Private=false`）。
+
+**外部状态（游戏目录，不在仓库）：** 跑完 spike 后已用 main 的源码重新构建并覆盖 `BepInEx/plugins/WellCooked.Smoke.dll`，当前游戏目录跑的是 main 版本（冒烟补丁照常、无 `control-spike` 日志行）；强制开关文件 `BepInEx/wellcooked-force.txt` 已删除；`BepInEx/welcooked-inventory.txt` 是导出产物，保留（任务 03/04 要用，每次游戏启动会重写）；`BepInEx/LogOutput.log` 每次运行前清空。构建产物 `plugin/bin`、`plugin/obj` 被 `.gitignore` 忽略。
+
 **Finished:** 2026-10-14T14:52:00+08:00
 
 ## Findings
 
 **Result:** 设备层能控制游戏。**路线 B（在游戏进程里建一个 `InControl.InputDevice`，用 `InputManager.AttachDevice` 挂上）能驱动游戏的前端/加入流程**：挂上虚拟手柄后，A 键（每 3 秒按 0.3 秒，共 30 秒）把游戏从标题画面推进到开场剧情过场。路线 A（替换 `PlayerInputLookup` 返回的逻辑按钮）在本次测的按钮和场景里不驱动前端。
 
-**关于 Check 的措辞：** Check 写的是"标题画面的卷帘门打开"。实测到的可见表现是**标题画面被消费、进入开场过场**（两次运行的截图都是过场画面），没有逐帧抓到卷帘门动画本身。按行为判定算通过——继续提示被消费了——但"卷帘门打开"这个具体画面没有被单独证明，这里如实记下。
+**关于 Check 里的"卷帘门打开"：这个效果抓到了。** 同一次运行的连拍（每 0.35 秒一张，`import -window <Overcooked2 窗口 id>`）：`/tmp/burst/f11.png` 是标题画面、卷帘门**关着**（`OVERCOOKED! 2` + `按 A/空格键继续`），0.35 秒后的 `/tmp/burst/f12.png` 卷帘门**完全升起**，露出餐车内部、1 号玩家和队伍大厅 UI。前后两帧在同一批连拍里，中间没有人工输入，只有虚拟手柄的 A 键。
 
 **范围（重要，别读宽了）：** 本次只证实"设备层能驱动前端/加入流程"。**关卡内厨师的动作（移动、交互）没有验证**——进关卡要先过前端和加入流程，那是任务 04 的验收内容。所以这次回答的是"能控制游戏、注入通道可用"，不是"能控制厨师"；"能控制厨师"由任务 04 证实。
 
@@ -51,9 +66,9 @@ Review（flow-verify brief A，2026-10-14）：blocked，1 blocking / 2 nonblock
 
 **路线 B 的证据**
 
-- 两次独立运行，日志都有 `control-spike: 虚拟手柄已挂上，接下来 30 秒每 3 秒按一次 A（跳过不存在的控制: LeftStickX, LeftStickY, DPadX, DPadY）`，随后画面从标题画面进入开场过场：截图 `/tmp/spike5.png`（第一次）、`/tmp/spike6.png`（第二次，同一份代码另加控制名清单日志）。两次都是"标题画面消失、进入洋葱国王王座厅过场"，由看图确认。
+- 三次独立运行，日志都有 `control-spike: 虚拟手柄已挂上，接下来 30 秒每 3 秒按一次 A（跳过不存在的控制: LeftStickX, LeftStickY, DPadX, DPadY）`，随后画面离开标题画面：截图 `/tmp/spike5.png`、`/tmp/spike6.png`（前两次，停在开场过场），第三次的连拍 `/tmp/burst/f11.png`（卷帘门关着）→ `/tmp/burst/f12.png`（卷帘门全开、进入队伍大厅）。
 - 挂载时机：InControl 初始化之后才有效，借游戏主循环里已有的补丁延时挂载。
-- 注意：截图在 `/tmp`（重启会丢），日志在游戏目录 `BepInEx/LogOutput.log`（每次运行前被清空）。仓库里没有留这两样，只有本节抄录的日志行；要复现就照 `spike/game-bridge-06` 分支的代码重跑。
+- 注意：截图在 `/tmp`（重启会丢），日志在游戏目录 `BepInEx/LogOutput.log`（每次运行前被清空，本节抄录的是历史日志行，不是当前日志内容）；要复现就照 `spike/game-bridge-06` 分支的代码重跑。
 
 **给任务 04 的代价与坑（都在这次实测里撞到过）**
 
@@ -62,6 +77,6 @@ Review（flow-verify brief A，2026-10-14）：blocked，1 blocking / 2 nonblock
 - 这条路绑死 InControl 的私有 API（所以要走反射）和游戏对设备的枚举顺序；supercharged 的 `TasLocalPad` + `bridge/SessionSetup.cs` 是现成参考（MIT 之外的仓库，只借做法不抄代码）。
 - 按键时序要自己造边沿（按下 → 被领取 → 释放），并注意游戏的帧同步：一个 `Update` 里设置的状态只对这一帧有效。
 
-**Recorded in:** spec「How it is built」「游戏内部接口的已知起点」；`decisions.md: 2026-10-14 - 输入注入走进程内 InControl 设备`。
+**Recorded in:** spec「How it is built」（插件那条写明走设备层）、「游戏内部接口的已知起点」（注入路线、InControl 的两个坑、控制名）；`decisions.md: 2026-10-14 - 输入注入走进程内 InControl 设备`。
 
-**代码去向:** 保留在分支 `spike/game-bridge-06`（`plugin/ControlSpike.cs`、`plugin/VirtualPad.cs`、csproj 里的 `Assembly-CSharp` 引用），不进 main；任务 04 按正式要求重写，可以拿它当起点。
+**代码去向:** 保留在分支 `spike/game-bridge-06`：新增 `plugin/ControlSpike.cs`、`plugin/VirtualPad.cs`，改 `plugin/SmokePlugin.cs`（挂接 + 扩展类型清单导出）和 `plugin/WellCooked.Smoke.csproj`（加 `Assembly-CSharp`、`XInputDotNetPure` 编译期引用）。不进 main；任务 04 按正式要求重写，可以拿它当起点。
