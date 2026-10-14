@@ -172,16 +172,12 @@ namespace WellCooked
 
             ReadConfig();
 
-            // 前端（标题画面/主菜单）里不要抢着占位：游戏的"按 A 加入"流程靠
-            // GetEngagementPad 找一个还没占位的 pad，我们提前占满会导致它永远等不到，
-            // 标题画面就卡死（反编译证据 StartScreenFlow.CheckForEngagement）。
-            // 前端里让虚拟手柄自己按 A，由游戏完成加入；进了关卡再补位。
+            // 设备一直挂；但**前端里不抢着占位**：游戏的"按 A 加入"靠 GetEngagementPad
+            // 找一个还没占位、刚按下的 pad（反编译证据 StartScreenFlow.CheckForEngagement），
+            // 我们提前占满会让标题画面永远等不到，卡死在那儿。
             bool inLevel = UnityEngine.Object.FindObjectsOfType<PlayerControls>().Length > 0;
-            if (inLevel)
-            {
-                EnsurePads();
-                ResolvePendingPads();
-            }
+            EnsurePads();
+            ResolvePendingPads(inLevel);
 
             // 关卡开始的判定：场景里出现本地厨师控制器。前端没有它，所以不会误触发。
             var chefs = UnityEngine.Object.FindObjectsOfType<PlayerControls>();
@@ -218,28 +214,28 @@ namespace WellCooked
             // 第一次又常常发生在标题画面就绪之前，于是画面永远停在标题页。
             _nextFrontendPress = now + 2f;
             _frontendHeld = !_frontendHeld;
+            int count = 0;
             foreach (var owned in OwnedPads)
             {
                 owned.Pad.Want(_frontendHeld, false, Vector2.zero);
+                count++;
             }
 
-            _log.LogInfo("takeover: 前端 A " + (_frontendHeld ? "按下" : "松开")
-                         + "（" + OwnedPads.Count + " 个占位）");
+            foreach (var pad in PendingPads)
+            {
+                pad.Want(_frontendHeld, false, Vector2.zero);
+                count++;
+            }
+
+            _log.LogInfo("takeover: 前端 A " + (_frontendHeld ? "按下" : "松开") + "（" + count + " 个手柄）");
         }
 
-        /// <summary>把空着的玩家位占上；用户自己占着的那位不动。</summary>
+        /// <summary>保证每个配置的玩家位都有一个我们的虚拟手柄（挂了就等游戏枚举）。</summary>
         private static void EnsurePads()
         {
-            var manager = GameUtils.RequestManager<PlayerManager>() as PCPlayerManager;
-            if (manager == null)
-            {
-                return;
-            }
-
             foreach (int slot in Slots)
             {
-                var engagement = (EngagementSlot)slot;
-                if (manager.GetUser(engagement) != null || IsHandled(slot))
+                if (HasPadFor(slot))
                 {
                     continue;
                 }
@@ -247,13 +243,39 @@ namespace WellCooked
                 var pad = new VirtualPad("WellCooked Pad " + (slot + 1), slot);
                 InputManager.AttachDevice(pad);
                 PendingPads.Add(pad);
-                _log.LogInfo("takeover: 挂了虚拟手柄准备占玩家位 " + (slot + 1) + "，等游戏把它枚举出来");
-                return; // 一次只处理一位，剩下的下一次检查再说
+                _log.LogInfo("takeover: 挂了虚拟手柄（玩家位 " + (slot + 1) + "），等游戏把它枚举出来");
+                return; // 一次只挂一个，剩下的下一次检查再说
             }
         }
 
-        /// <summary>刚挂上的设备要等游戏自己枚举一轮才拿得到 pad 号。</summary>
-        private static void ResolvePendingPads()
+        /// <summary>这个玩家位是否已经有我们的手柄（已占位或在等枚举）。</summary>
+        private static bool HasPadFor(int slot)
+        {
+            foreach (var owned in OwnedPads)
+            {
+                if (owned.Slot == slot)
+                {
+                    return true;
+                }
+            }
+
+            foreach (var pad in PendingPads)
+            {
+                if (pad.Slot == slot)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// 刚挂上的设备要等游戏自己枚举一轮才拿得到 pad 号。
+        /// 拿到之后：游戏要是已经自己把它加入了（前端按 A 那条路），直接认下来；
+        /// 否则在关卡里补位（游戏自己那条路走不通时用）。
+        /// </summary>
+        private static void ResolvePendingPads(bool inLevel)
         {
             if (PendingPads.Count == 0)
             {
@@ -273,6 +295,20 @@ namespace WellCooked
                 if (padNumber < 0)
                 {
                     continue; // 游戏还没枚举到，下一轮再看
+                }
+
+                // 游戏自己已经把这只手柄加入了（pad 号即玩家位号）
+                if (manager.GetUser((EngagementSlot)padNumber) != null)
+                {
+                    OwnedPads.Add(new Owned { Slot = padNumber, PadNumber = padNumber, Pad = pad });
+                    PendingPads.RemoveAt(i);
+                    _log.LogInfo("takeover: 游戏已自己加入 pad " + padNumber + " → 玩家位 " + (padNumber + 1));
+                    continue;
+                }
+
+                if (!inLevel)
+                {
+                    continue; // 前端里继续靠按 A 让游戏自己加入
                 }
 
                 int slot = FirstFreeSlot(manager);

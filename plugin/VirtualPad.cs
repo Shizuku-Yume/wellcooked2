@@ -32,10 +32,14 @@ namespace WellCooked
         private bool _wantAction2;
         private Vector2 _wantStick;
 
+        /// <summary>这个手柄是给哪个玩家位挂的（0 基）。</summary>
+        public int Slot { get; private set; }
+
         public VirtualPad(string name, int slot)
             : base(name)
         {
             Name = name;
+            Slot = slot;
             Meta = "wellcooked-pad-" + slot;
 
             // 控制项名字在这套 InControl 里和文档对不上，直接按枚举全注册
