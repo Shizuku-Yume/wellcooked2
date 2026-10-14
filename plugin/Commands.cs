@@ -19,7 +19,8 @@ namespace WellCooked
     /// 支持的指令（一行一条，`#` 开头是注释）：
     ///   load=&lt;场景名&gt;   直接加载关卡场景（如 s_sushi_1_1）
     ///   restart=1        重新加载当前场景（相当于原地重进这一关）
-    ///   engage=1         跳过标题画面（直接走 StartScreenFlow 的加入流程）
+    ///   continue=1       标题画面的"继续游戏"：加载存档档位，之后 load 才是正常进关
+    ///   engage=1         只做标题画面的加入检查
     ///   dump=&lt;类型名&gt;    把这个类型的所有方法签名打到日志
     ///   pause=1          打当前暂停状态（TimeManager 各层）
     /// </summary>
@@ -104,6 +105,9 @@ namespace WellCooked
                 case "engage":
                     Engage();
                     break;
+                case "continue":
+                    ContinueFromTitle();
+                    break;
                 case "dump":
                     DumpType(value);
                     break;
@@ -183,6 +187,82 @@ namespace WellCooked
             {
                 check.Invoke(flow, null);
             }
+        }
+
+        /// <summary>
+        /// 标题画面的"继续游戏"。必须走这一步：直接用 GameUtils.LoadLevel 加载关卡场景，
+        /// 关卡流程不会起来（实测订单为空、得分 None、计时全 0，厨师也不受控）。
+        /// StartScreenFlow.StartLoadProfile 是个协程，得拿 IEnumerator 交给 StartCoroutine 跑。
+        /// </summary>
+        private static void ContinueFromTitle()
+        {
+            var type = AccessTools.TypeByName("StartScreenFlow");
+            if (type == null)
+            {
+                _log.LogWarning("继续游戏: 找不到 StartScreenFlow");
+                return;
+            }
+
+            var property = type.GetProperty("Instance", BindingFlags.Public | BindingFlags.Static);
+            object flow = property != null ? property.GetValue(null, null) : null;
+            if (flow == null)
+            {
+                _log.LogWarning("继续游戏: 没有 StartScreenFlow 实例（现在不在标题画面）");
+                return;
+            }
+
+            _log.LogInfo("继续游戏: 当前场景 " + UnityEngine.SceneManagement.SceneManager.GetActiveScene().name);
+            var check = AccessTools.Method(type, "CheckForEngagement", Type.EmptyTypes);
+            if (check != null)
+            {
+                check.Invoke(flow, null);
+                _log.LogInfo("继续游戏: 已触发加入检查");
+            }
+
+            var loadProfile = AccessTools.Method(type, "StartLoadProfile");
+            if (loadProfile == null)
+            {
+                _log.LogWarning("继续游戏: 找不到 StartLoadProfile");
+                return;
+            }
+
+            object callback = MakeCallback(loadProfile.GetParameters()[0].ParameterType);
+            object result = loadProfile.Invoke(flow, new[] { callback });
+            var routine = result as System.Collections.IEnumerator;
+            if (routine == null)
+            {
+                _log.LogWarning("继续游戏: StartLoadProfile 没返回协程，拿到 " + (result == null ? "null" : result.GetType().Name));
+                return;
+            }
+
+            var behaviour = flow as MonoBehaviour;
+            if (behaviour == null)
+            {
+                _log.LogWarning("继续游戏: StartScreenFlow 不是 MonoBehaviour，协程起不来");
+                return;
+            }
+
+            behaviour.StartCoroutine(routine);
+            _log.LogInfo("继续游戏: 协程已启动（等场景切换）");
+        }
+
+        /// <summary>回调类型未知，按它的委托签名现场造一个空实现。</summary>
+        private static object MakeCallback(Type callbackType)
+        {
+            try
+            {
+                var method = typeof(Commands).GetMethod(nameof(Noop), BindingFlags.Static | BindingFlags.NonPublic);
+                return Delegate.CreateDelegate(callbackType, method);
+            }
+            catch (Exception e)
+            {
+                _log.LogWarning("继续游戏: 造不出回调 " + callbackType.Name + ": " + e.Message);
+                return null;
+            }
+        }
+
+        private static void Noop()
+        {
         }
 
         private static void DumpType(string name)
