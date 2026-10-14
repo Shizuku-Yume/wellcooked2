@@ -36,6 +36,7 @@ namespace WellCooked
         private static float _nextDriveLog;
         private static float _nextConfigCheck;
         private static float _nextFrontendPress;
+        private static bool _frontendHeld;
 
         private static readonly List<int> Slots = new List<int> { 0, 1 };
         private static readonly List<PlayerInputLookup.Player> LogicalPlayers = new List<PlayerInputLookup.Player>();
@@ -203,14 +204,17 @@ namespace WellCooked
                 return;
             }
 
-            _nextFrontendPress = now + 3f;
-            bool press = true;
+            // 必须"按下→松开"交替：游戏只认按下这个边沿，一直按着的话只有第一次算数，
+            // 第一次又常常发生在标题画面就绪之前，于是画面永远停在标题页。
+            _nextFrontendPress = now + 2f;
+            _frontendHeld = !_frontendHeld;
             foreach (var owned in OwnedPads)
             {
-                owned.Pad.Want(press, false, Vector2.zero);
+                owned.Pad.Want(_frontendHeld, false, Vector2.zero);
             }
 
-            _log.LogInfo("takeover: 前端按 A 帮 " + OwnedPads.Count + " 个占位加入/确认");
+            _log.LogInfo("takeover: 前端 A " + (_frontendHeld ? "按下" : "松开")
+                         + "（" + OwnedPads.Count + " 个占位）");
         }
 
         /// <summary>把空着的玩家位占上；用户自己占着的那位不动。</summary>
