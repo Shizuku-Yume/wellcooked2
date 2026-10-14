@@ -584,7 +584,6 @@ namespace WellCooked
                 return false;
             }
 
-            int dropped = KeepLargestComponent();
             int edges = 0;
             for (int i = 0; i < _cellsX - 1; i++)
             {
@@ -619,6 +618,10 @@ namespace WellCooked
                     }
                 }
             }
+
+            // 建完边再筛连通块：放在建边之前的话，边表还是全 false，
+            // 每个格子都成了独立块，最大块只剩 1 格（实测 可走格 1/308）。
+            int dropped = KeepLargestComponent();
 
             foreach (var p in free)
             {
