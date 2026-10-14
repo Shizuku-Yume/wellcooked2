@@ -37,6 +37,10 @@ namespace WellCooked
             public bool StuckReported;
             public float SkipAllowed;
             public int GiveUps;
+            public int LastAxis = -1;
+            public int SlideAxis = -1;
+            public float SlideSign = 1f;
+            public float SlideUntil;
         }
 
         private static readonly Dictionary<object, Agent> Agents = new Dictionary<object, Agent>();
@@ -125,7 +129,24 @@ namespace WellCooked
                 agent.LastMovedAt = now;
                 agent.StuckReported = false;
             }
-            else if (agent.Path != null && now - agent.LastMovedAt > 0.4f && now >= agent.SkipAllowed)
+            else if (now - agent.LastMovedAt > 0.4f && now >= agent.SlideUntil)
+            {
+                // 侧向错身：两个厨师面对面互推时（路点正好在对穿位置），谁都不让、双双卡死
+                // （实测两人坐标完全不动）。按玩家位奇偶决定往哪边让，两边正好相反。
+                agent.SlideAxis = agent.LastAxis == 0 ? 1 : 0;
+                agent.SlideSign = SideOf(owner);
+                agent.SlideUntil = now + 0.6f;
+            }
+
+            if (now < agent.SlideUntil)
+            {
+                status = "侧向错身 " + status;
+                return agent.SlideAxis == 0
+                    ? new Vector2(agent.SlideSign, 0f)
+                    : new Vector2(0f, agent.SlideSign);
+            }
+
+            if (agent.Path != null && now - agent.LastMovedAt > 0.4f && now >= agent.SkipAllowed)
             {
                 // 局部容错：网格是物理采样出来的，永远不可能和游戏碰撞完全对齐。
                 // 喂了方向 0.4 秒还推不动，就跳过这个路点去下一个——比顶着台面推墙强。
@@ -213,6 +234,7 @@ namespace WellCooked
             direction = Math.Abs(direction.x) >= Math.Abs(direction.y)
                 ? new Vector2(Math.Sign(direction.x), 0f)
                 : new Vector2(0f, Math.Sign(direction.y));
+            agent.LastAxis = Math.Abs(next.x - position.x) >= Math.Abs(next.y - position.y) ? 0 : 1;
             status = "路点 " + agent.Waypoint + "/" + agent.Path.Count + " 剩余 " + toTarget.ToString("F1")
                      + " 路点坐标=(" + next.x.ToString("F2") + "," + next.y.ToString("F2") + ")"
                      + " 目标=(" + agent.Target.x.ToString("F2") + "," + agent.Target.y.ToString("F2") + ")";
@@ -431,6 +453,22 @@ namespace WellCooked
 
             simplified.Add(path[path.Count - 1]);
             return simplified;
+        }
+
+        /// <summary>让路的朝向：按玩家位奇偶决定，两个互相顶住的厨师会往相反方向让。</summary>
+        private static float SideOf(object owner)
+        {
+            int index;
+            if (owner is int)
+            {
+                index = (int)owner;
+            }
+            else
+            {
+                index = System.Convert.ToInt32(owner);
+            }
+
+            return index % 2 == 0 ? 1f : -1f;
         }
 
         private static int Key(int x, int z)
