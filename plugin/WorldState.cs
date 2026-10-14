@@ -355,21 +355,15 @@ namespace WellCooked
         /// </summary>
         private static string _terrainScene;
 
-        public const float SampleStep = 0.5f;
-        private const float SampleMargin = 6f;
-
-        /// <summary>厨师体积半径：可走格要求中心与前后左右各偏这么多都是地面。</summary>
-        private const float BodyRadius = 0.25f;
-
-        /// <summary>命中高度和地面高度差多少以内算同一层（台面顶面一般高 1 米左右）。</summary>
-        private const float FloorTolerance = 0.25f;
-
-        // 采样出来的可走格，寻路直接查这张表
+        // 可走格：直接来自游戏的 GridManager（occupant 为空的格子），不是自己打射线猜的
         private static bool[,] _walkable;
         private static float _originX;
         private static float _originZ;
+        private static float _step = 1f;
         private static int _cellsX;
         private static int _cellsZ;
+        private static int _cellOffsetX;
+        private static int _cellOffsetZ;
 
         public static bool HasTerrain
         {
@@ -378,13 +372,13 @@ namespace WellCooked
 
         public static void WorldToCell(float x, float z, out int ix, out int iz)
         {
-            ix = (int)Math.Round((x - _originX) / SampleStep);
-            iz = (int)Math.Round((z - _originZ) / SampleStep);
+            ix = (int)Math.Round((x - _originX) / _step) - _cellOffsetX;
+            iz = (int)Math.Round((z - _originZ) / _step) - _cellOffsetZ;
         }
 
         public static Vector2 CellCenter(int ix, int iz)
         {
-            return new Vector2(_originX + ix * SampleStep, _originZ + iz * SampleStep);
+            return new Vector2(_originX + (ix + _cellOffsetX) * _step, _originZ + (iz + _cellOffsetZ) * _step);
         }
 
         public static bool IsWalkableCell(int ix, int iz)
@@ -441,154 +435,133 @@ namespace WellCooked
             _terrainScene = scene;
             try
             {
-                int mask = chefs[0].GroundLayer.value;
-
-                // 采样范围：厨师与工位的外接矩形再加一圈余量
-                float minX = float.MaxValue, maxX = float.MinValue, minZ = float.MaxValue, maxZ = float.MinValue;
-                var points = new List<Vector3>();
-                foreach (var chef in chefs)
+                if (!SampleGameGrid())
                 {
-                    points.Add(chef.transform.position);
+                    _log.LogWarning("state: 拿不到游戏网格，可走格为空");
                 }
-
-                foreach (var station in FindAll("ClientIngredientContainer"))
-                {
-                    var component = station as Component;
-                    if (component != null)
-                    {
-                        points.Add(component.transform.position);
-                    }
-                }
-
-                foreach (var p in points)
-                {
-                    minX = Math.Min(minX, p.x);
-                    maxX = Math.Max(maxX, p.x);
-                    minZ = Math.Min(minZ, p.z);
-                    maxZ = Math.Max(maxZ, p.z);
-                }
-
-                minX -= SampleMargin;
-                maxX += SampleMargin;
-                minZ -= SampleMargin;
-                maxZ += SampleMargin;
-
-                _originX = minX;
-                _originZ = minZ;
-                _cellsX = (int)Math.Floor((maxX - minX) / SampleStep) + 1;
-                _cellsZ = (int)Math.Floor((maxZ - minZ) / SampleStep) + 1;
-                _walkable = new bool[_cellsX, _cellsZ];
-
-                var cells = new StringBuilder();
-                int count = 0;
-                float top = 5f;
-                float distance = 10f;
-
-                // 只打没打到地面层是不够的：台面顶面也会被打到，采出来就成了"可走"，
-                // 于是路径穿台面、厨师贴着台面推墙（实测 20.6 处 x 一动不动）。
-                // 先按命中高度估一下地面高度（众数），只有落在地面高度上的才算可走。
-                float floorY = EstimateFloorY(top, distance, mask);
-
-                for (int ix = 0; ix < _cellsX; ix++)
-                {
-                    for (int iz = 0; iz < _cellsZ; iz++)
-                    {
-                        float x = _originX + ix * SampleStep;
-                        float z = _originZ + iz * SampleStep;
-                        if (!IsFloorAt(x, z, floorY, top, distance, mask))
-                        {
-                            continue;
-                        }
-
-                        // 厨师是有体积的：中心加上前后左右各偏 BodyRadius 都得是地面，
-                        // 否则这一格实际进不去，算进可走格就会把厨师送进墙角。
-                        bool room = true;
-                        for (int d = 0; d < 4 && room; d++)
-                        {
-                            float ox = d == 0 ? BodyRadius : (d == 1 ? -BodyRadius : 0f);
-                            float oz = d == 2 ? BodyRadius : (d == 3 ? -BodyRadius : 0f);
-                            room = IsFloorAt(x + ox, z + oz, floorY, top, distance, mask);
-                        }
-
-                        if (!room)
-                        {
-                            continue;
-                        }
-
-                        _walkable[ix, iz] = true;
-                        if (count > 0)
-                        {
-                            cells.Append(',');
-                        }
-
-                        count++;
-                        cells.Append('[').Append(x.ToString("F2")).Append(',').Append(z.ToString("F2")).Append(']');
-                    }
-                }
-
-                var text = new StringBuilder();
-                text.Append("{\"scene\":\"").Append(scene).Append('"');
-                text.Append(",\"step\":").Append(SampleStep.ToString("F1"));
-                text.Append(",\"groundLayer\":").Append(mask);
-                text.Append(",\"bounds\":[").Append(minX.ToString("F2")).Append(',').Append(minZ.ToString("F2"))
-                    .Append(',').Append(maxX.ToString("F2")).Append(',').Append(maxZ.ToString("F2")).Append(']');
-                text.Append(",\"cells\":[").Append(cells).Append("]}");
-                File.WriteAllText(Path.Combine(Paths.BepInExRootPath, "wellcooked-terrain.json"), text.ToString());
-                _log.LogInfo("state: 地形采样 " + count + " 个可走格（场景 " + scene + "，地面层 " + mask + "）");
             }
             catch (Exception e)
             {
-                _log.LogWarning("state: 地形采样失败: " + e.Message);
+                _log.LogWarning("state: 地形采样失败: " + e);
             }
         }
 
-        /// <summary>地面高度取所有命中的众数（0.1 一档）：台面顶面是少数派，会被筛掉。</summary>
-        private static float EstimateFloorY(float top, float distance, int mask)
+        /// <summary>
+        /// 可走格直接取游戏自己的网格：`GridManager.GetGridOccupant(index) == null` 就是空格。
+        ///
+        /// 原来是自己拿 `PlayerControls.GroundLayer` 向下打射线采样，实测不行：台面的碰撞体
+        /// 不在这一层，射线从台面旁边穿到台面底下的地板，于是台面被算成可走，路径穿台面、
+        /// 厨师贴着台面推墙（实测 x=20.6 处一动不动、剩余距离不降）。游戏的 `GridNavSpace`
+        /// 用的就是这个 occupant 判据，跟它一致才不会两套说法。
+        /// </summary>
+        private static bool SampleGameGrid()
         {
-            var buckets = new Dictionary<int, int>();
-            for (int ix = 0; ix < _cellsX; ix += 2)
+            var gridManagerType = AccessTools.TypeByName("GridManager");
+            var indexType = AccessTools.TypeByName("GridIndex");
+            if (gridManagerType == null || indexType == null)
             {
-                for (int iz = 0; iz < _cellsZ; iz += 2)
-                {
-                    float x = _originX + ix * SampleStep;
-                    float z = _originZ + iz * SampleStep;
-                    RaycastHit hit;
-                    if (!Physics.Raycast(new Vector3(x, top, z), Vector3.down, out hit, distance, mask))
-                    {
-                        continue;
-                    }
-
-                    int bucket = (int)Math.Round(hit.point.y * 10f);
-                    int seen;
-                    buckets.TryGetValue(bucket, out seen);
-                    buckets[bucket] = seen + 1;
-                }
-            }
-
-            int best = 0;
-            int bestCount = -1;
-            foreach (var pair in buckets)
-            {
-                if (pair.Value > bestCount)
-                {
-                    best = pair.Key;
-                    bestCount = pair.Value;
-                }
-            }
-
-            return best / 10f;
-        }
-
-        /// <summary>这个点上打到的是不是地面（而不是台面顶面或根本没有地面）。</summary>
-        private static bool IsFloorAt(float x, float z, float floorY, float top, float distance, int mask)
-        {
-            RaycastHit hit;
-            if (!Physics.Raycast(new Vector3(x, top, z), Vector3.down, out hit, distance, mask))
-            {
+                _log.LogWarning("state: 找不到 GridManager/GridIndex");
                 return false;
             }
 
-            return Math.Abs(hit.point.y - floorY) <= FloorTolerance;
+            var getActive = AccessTools.Method(gridManagerType, "GetActive", new[] { typeof(int) });
+            var getOccupant = AccessTools.Method(gridManagerType, "GetGridOccupant", new[] { indexType });
+            var getPos = AccessTools.Method(gridManagerType, "GetPosFromGridLocation", new[] { indexType });
+            var getHalf = AccessTools.Method(gridManagerType, "GetGridHalfSize", Type.EmptyTypes);
+            var indexCtor = indexType.GetConstructor(new[] { typeof(int), typeof(int), typeof(int) });
+            if (getActive == null || getOccupant == null || getPos == null || getHalf == null || indexCtor == null)
+            {
+                _log.LogWarning("state: GridManager 接口对不上");
+                return false;
+            }
+
+            object manager = getActive.Invoke(null, new object[] { 0 });
+            if (manager == null)
+            {
+                _log.LogWarning("state: 场上没有 GridManager");
+                return false;
+            }
+
+            object half = getHalf.Invoke(manager, null);
+            var halfType = half.GetType();
+            int hx = System.Convert.ToInt32(halfType.GetField("X").GetValue(half));
+            int hz = System.Convert.ToInt32(halfType.GetField("Z").GetValue(half));
+
+            _cellsX = 2 * hx + 1;
+            _cellsZ = 2 * hz + 1;
+            _cellOffsetX = -hx;
+            _cellOffsetZ = -hz;
+            _walkable = new bool[_cellsX, _cellsZ];
+
+            var cells = new StringBuilder();
+            var free = new List<Vector3>();
+            float minX = float.MaxValue, minZ = float.MaxValue, step = 0f;
+            int count = 0;
+
+            for (int ix = -hx; ix <= hx; ix++)
+            {
+                for (int iz = -hz; iz <= hz; iz++)
+                {
+                    object index = indexCtor.Invoke(new object[] { ix, 0, iz });
+                    if (getOccupant.Invoke(manager, new[] { index }) != null)
+                    {
+                        continue; // 这一格被台面/工位/墙占着
+                    }
+
+                    var world = (Vector3)getPos.Invoke(manager, new[] { index });
+                    _walkable[ix + hx, iz + hz] = true;
+                    free.Add(world);
+                    minX = Math.Min(minX, world.x);
+                    minZ = Math.Min(minZ, world.z);
+                    count++;
+                }
+            }
+
+            if (count == 0)
+            {
+                _walkable = null;
+                return false;
+            }
+
+            // 格距从相邻两格的实际间距取，不写死
+            foreach (var p in free)
+            {
+                float d = Math.Abs(p.x - minX);
+                if (d > 0.01f && (step == 0f || d < step))
+                {
+                    step = d;
+                }
+            }
+
+            _originX = minX;
+            _originZ = minZ;
+            _step = step > 0.01f ? step : 1f;
+
+            foreach (var p in free)
+            {
+                if (cells.Length > 0)
+                {
+                    cells.Append(',');
+                }
+
+                cells.Append('[').Append(p.x.ToString("F2")).Append(',').Append(p.z.ToString("F2")).Append(']');
+            }
+
+            var text = new StringBuilder();
+            text.Append("{\"scene\":\"").Append(ActiveScene()).Append('"');
+            text.Append(",\"source\":\"game-grid\"");
+            text.Append(",\"step\":").Append(_step.ToString("F2"));
+            text.Append(",\"half\":[").Append(hx).Append(',').Append(hz).Append(']');
+            text.Append(",\"cells\":[").Append(cells.ToString()).Append("]}");
+            File.WriteAllText(Path.Combine(Paths.BepInExRootPath, "wellcooked-terrain.json"), text.ToString());
+            _log.LogInfo("state: 游戏网格可走格 " + count + " 个（半宽 " + hx + "×" + hz
+                         + "，格距 " + _step.ToString("F2") + "，场景 " + ActiveScene() + "）");
+            return true;
+        }
+
+        private static string ActiveScene()
+        {
+            return UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
         }
 
         private static object TeamId()
