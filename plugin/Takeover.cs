@@ -171,8 +171,17 @@ namespace WellCooked
             }
 
             ReadConfig();
-            EnsurePads();
-            ResolvePendingPads();
+
+            // 前端（标题画面/主菜单）里不要抢着占位：游戏的"按 A 加入"流程靠
+            // GetEngagementPad 找一个还没占位的 pad，我们提前占满会导致它永远等不到，
+            // 标题画面就卡死（反编译证据 StartScreenFlow.CheckForEngagement）。
+            // 前端里让虚拟手柄自己按 A，由游戏完成加入；进了关卡再补位。
+            bool inLevel = UnityEngine.Object.FindObjectsOfType<PlayerControls>().Length > 0;
+            if (inLevel)
+            {
+                EnsurePads();
+                ResolvePendingPads();
+            }
 
             // 关卡开始的判定：场景里出现本地厨师控制器。前端没有它，所以不会误触发。
             var chefs = UnityEngine.Object.FindObjectsOfType<PlayerControls>();

@@ -31,6 +31,7 @@ namespace WellCooked
             UnityEngine.Application.runInBackground = true;
             ApplySmokePatches();
             ApplyFocusPausePatch();
+            ApplyAlwaysFocusedPatch();
             WorldState.Install(_log);
             LogicalInput.Install(_log);
             Navigation.Install(_log);
@@ -124,6 +125,34 @@ namespace WellCooked
         private static bool SkipPauseOnFocusLost(bool focus)
         {
             return focus;
+        }
+
+        /// <summary>
+        /// 游戏把所有本地输入都卡在 `Application.isFocused` 上（反编译证据）：
+        ///   PlayerControls.cs:455、LogicalButtonBase.cs:76、LogicalPCEngagementButton.cs:23、
+        ///   LogicalPadValue.cs:26 —— 失焦时直接丢弃输入。
+        /// 所以光有 runInBackground 没用：游戏在后台照样不认手柄、不认"按 A"。
+        /// 直接把 getter 改成恒真，游戏就当自己一直在前台。
+        /// </summary>
+        private static void ApplyAlwaysFocusedPatch()
+        {
+            var getter = AccessTools.PropertyGetter(typeof(UnityEngine.Application), "isFocused");
+            if (getter == null)
+            {
+                _log.LogWarning("前台伪装: 找不到 Application.isFocused");
+                return;
+            }
+
+            var prefix = new HarmonyMethod(typeof(SmokePlugin).GetMethod(
+                nameof(AlwaysFocused), BindingFlags.Static | BindingFlags.NonPublic));
+            new Harmony("wellcooked.focused").Patch(getter, prefix: prefix);
+            _log.LogInfo("前台伪装: Application.isFocused 恒为 true（后台也认输入）");
+        }
+
+        private static bool AlwaysFocused(ref bool __result)
+        {
+            __result = true;
+            return false;
         }
 
         private static string Describe(MethodBase method)
