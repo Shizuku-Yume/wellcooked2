@@ -45,6 +45,8 @@ namespace WellCooked
         private static string _stationName = "";
         private static float _closestDistance = float.MaxValue;
         private static float _closestAt;
+        private static float _faceNextPulse;
+        private static float _facePulseUntil;
         private static bool _interacted;
         private static string _expectHeld = "";
         private static string _expectContents = "";
@@ -163,61 +165,51 @@ namespace WellCooked
             float toStation = Vector2.Distance(chef.Position, _station);
             string heldNow = chef.Held;
 
-            // 已经到位了：先朝着工位站好，再按交互
+            // 已经到位了：站住、把朝向对准工位、按 A。
+            // 到位之后不再寻路（Takeover 见到 _facing 就只喂朝向不导航）。
             if (distance <= ReachRadius)
             {
+                _facing = true;
+                Vector2 toward = (chef.Position - _station).sqrMagnitude > 0.0001f
+                    ? (_station - chef.Position).normalized
+                    : Vector2.zero;
+
                 if (!_arrivedLogged)
                 {
                     _arrivedLogged = true;
-                    _log.LogInfo("工序: " + _step + " 到位（距目标 " + distance.ToString("F2") + " 米），先朝向工位");
-                    _facing = true;
-                    _faceUntil = now + 0.45f;
-                    _faceDirection = (chef.Position - _station).sqrMagnitude > 0.0001f
-                        ? (_station - chef.Position).normalized
-                        : Vector2.zero;
-                    return;
+                    _log.LogInfo("工序: " + _step + " 到位（距目标 " + distance.ToString("F2")
+                                 + " 米），对准工位");
                 }
 
-                if (_facing)
-                {
-                    if (now < _faceUntil)
-                    {
-                        _faceDirection = (chef.Position - _station).sqrMagnitude > 0.0001f
-                            ? (_station - chef.Position).normalized
-                            : Vector2.zero;
-                        return;
-                    }
-
-                    _facing = false;
-                    _nextPress = now;
-                    _lastCheckAt = float.MaxValue;
-                    _log.LogInfo("工序: " + _step + " 朝好了，开始按交互");
-                }
-
-                // 按一次 → 等效果 → 没效果才再按。
-                // 不能按完就接着按：0.5 秒后又按一次会把刚拿到的东西放下
-                // （实测 手上在「」和「SushiFish」之间反复跳，永远判不出成功）。
-                // 游戏挑的是"最对齐的邻居格"，站错格就会挑到别的东西（实测挑到垃圾桶，
+                // 游戏挑的是"最对齐的邻居格"，站错格会挑到别的东西（实测挑到垃圾桶，
                 // 一按就把盘子丢了）。所以先问游戏面前是什么，不是工位就只转身不按。
                 string facing = chef.FacingName;
-                bool facingStation = facing == _stationName;
-
-                if (!facingStation)
+                if (facing != _stationName)
                 {
-                    _faceDirection = (chef.Position - _station).sqrMagnitude > 0.0001f
-                        ? (_station - chef.Position).normalized
-                        : Vector2.zero;
+                    // 转身要短促：一直喂方向会顶着工位沿它滑走（实测滑出 2.6 米）。
+                    if (now >= _faceNextPulse)
+                    {
+                        _faceNextPulse = now + 0.45f;
+                        _facePulseUntil = now + 0.12f;
+                    }
+
+                    _faceDirection = now < _facePulseUntil ? toward : Vector2.zero;
 
                     if (!_warned && now - _stepStart > 4f)
                     {
                         _warned = true;
                         _log.LogWarning("工序: " + _step + " 面前是「" + facing + "」不是「"
-                                        + _stationName + "」，先不按，继续转身/挪位");
+                                        + _stationName + "」，先不按，继续对准");
                     }
 
                     return;
                 }
 
+                _faceDirection = Vector2.zero; // 面前就是工位：站住别动，按 A
+
+                // 按一次 → 等效果 → 没效果才再按。
+                // 不能按完就接着按：0.5 秒后又按一次会把刚拿到的东西放下
+                // （实测 手上在「」和「SushiFish」之间反复跳，永远判不出成功）。
                 if (!_pressing && now >= _nextPress)
                 {
                     _nextPress = now + PressInterval;
@@ -244,19 +236,9 @@ namespace WellCooked
                     return;
                 }
 
-                // 没效果：把下一次按往后推（等按键边沿真的被游戏消费掉）
-                if (now >= _lastCheckAt && _nextPress <= _lastCheckAt)
-                {
-                    _nextPress = now + PressInterval;
-                }
-
-                // 按了没效果：继续按（可能还没进交互范围），但不刷屏
-                if (!_warned && now - _stepStart > 6f)
-                {
-                    _warned = true;
-                    _log.LogWarning("工序: " + _step + " 按了几次没效果（手上「" + heldNow
-                                    + "」，期望「" + (_expectHeld.Length == 0 ? "空手" : _expectHeld) + "」），继续试");
-                }
+                // 检查过了就作废这次检查，别每帧都往后推"下一次按"——那样永远按不出去
+                _lastCheckAt = float.MaxValue;
+                _nextPress = now + PressInterval;
 
                 return;
             }
@@ -311,6 +293,8 @@ namespace WellCooked
             _facing = false;
             _closestDistance = float.MaxValue;
             _closestAt = now;
+            _faceNextPulse = 0f;
+            _facePulseUntil = 0f;
             _hasTarget = false;
 
             switch (step)
