@@ -561,6 +561,11 @@ namespace WellCooked
             float elapsed = now - _drivingSince;
             bool action = elapsed % ActionPeriod < ActionLength;
             ScanChefPositions(now);
+            if (now >= _nextTargetScan)
+            {
+                _nextTargetScan = now + 3f;
+                CollectTargets();
+            }
 
             foreach (var owned in OwnedPads)
             {
@@ -632,11 +637,16 @@ namespace WellCooked
         private static readonly Dictionary<object, int> TargetIndex = new Dictionary<object, int>();
         private static readonly Dictionary<int, Vector3> ChefPositions = new Dictionary<int, Vector3>();
         private static float _nextChefScan;
+        private static float _nextTargetScan;
         private static int _targetCursor;
 
         /// <summary>目标点取真实工位的位置：食材箱、出菜台、灶、水槽。调度器以后会自己决定去哪，这里先轮着走。</summary>
         private static void CollectTargets()
         {
+            // 工位不是一开始就全在场上：用 GameUtils.LoadLevel 进关时，"厨师出现"那一刻
+            // 工位还没生成完，只在这一刻采一次会得到 0 个目标（实测 目标点=0、厨师不动）。
+            // 所以驱动期间每 3 秒重采一次，数量变了才打日志。
+            int previous = Targets.Count;
             Targets.Clear();
             foreach (var typeName in new[]
                      {
@@ -661,7 +671,10 @@ namespace WellCooked
                 }
             }
 
-            _log.LogInfo("takeover: 收集到 " + Targets.Count + " 个目标点（工位）");
+            if (Targets.Count != previous)
+            {
+                _log.LogInfo("takeover: 收集到 " + Targets.Count + " 个目标点（工位）");
+            }
         }
 
         private static void ScanChefPositions(float now)
