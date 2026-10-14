@@ -114,6 +114,9 @@ namespace WellCooked
                 case "path":
                     ProbePath(value);
                     break;
+                case "scan":
+                    Scan(value);
+                    break;
                 case "probe":
                     Probe(value);
                     break;
@@ -407,6 +410,46 @@ namespace WellCooked
 
         private static void Noop()
         {
+        }
+
+        /// <summary>scan=关键字：列出物体名或组件类型名含这个关键字的对象（找料箱/工位用）。</summary>
+        private static void Scan(string value)
+        {
+            string keyword = value.ToLowerInvariant();
+            if (keyword.Length == 0)
+            {
+                _log.LogWarning("指令: scan=关键字");
+                return;
+            }
+
+            int shown = 0;
+            foreach (var component in UnityEngine.Object.FindObjectsOfType<Component>())
+            {
+                if (component == null)
+                {
+                    continue;
+                }
+
+                string typeName = component.GetType().Name;
+                string objectName = component.gameObject.name;
+                if (!typeName.ToLowerInvariant().Contains(keyword)
+                    && !objectName.ToLowerInvariant().Contains(keyword))
+                {
+                    continue;
+                }
+
+                var p = component.transform.position;
+                _log.LogInfo("     " + objectName + " [" + typeName + "] ("
+                             + p.x.ToString("F2") + "," + p.z.ToString("F2") + ")"
+                             + " 组件=" + component.gameObject.GetComponents<Component>().Length);
+                if (++shown >= 60)
+                {
+                    _log.LogInfo("     …（到 60 条截断）");
+                    return;
+                }
+            }
+
+            _log.LogInfo("     scan " + value + "：共 " + shown + " 条");
         }
 
         /// <summary>把某个点周围 2 米内的碰撞体全打出来：卡住时用它看物理布局，不靠猜。</summary>
