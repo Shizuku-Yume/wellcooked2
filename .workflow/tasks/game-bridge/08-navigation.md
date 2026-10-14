@@ -2,7 +2,9 @@
 
 **Effort:** game-bridge
 **Task type:** feature
-**Base commit:** <commit-sha>
+**Base commit:** 9ac07f3fbc3af3f9f5c8a95e1f7a12ec61a3b29f
+**Started:** 2026-10-14T17:14:41+08:00
+**Status:** active
 
 **Delivers:** 插件拿到"目标点 + 当前世界状态"后，自己算一条可走路径并驱动厨师沿路径走过去，到达后停下——不撞台面、不绕死路。这是调度算法的执行面：调度只管"谁去哪、做什么"，走位由这里负责。
 
@@ -20,3 +22,4 @@
 - [ ] 日志：路径长度、当前路点、剩余距离、是否卡住（超时判定）
 
 **Progress:**
+Dirty at start: none
