@@ -157,6 +157,23 @@ namespace WellCooked
             var now = Time.realtimeSinceStartup;
             Commands.Tick();
             WorldState.Tick(now);
+
+            // 驱动必须**每帧**给方向：原来整个 Step 被 0.5 秒的检查间隔卡住，
+            // 一秒只决策 2 次，而路点间隔 0.6 米、厨师一秒能走 3 米——一帧就冲过路点，
+            // 方向在路点两侧来回翻，厨师就在原地摆（实测坐标 3 秒只挪 0.1~0.3）。
+            // 重活（占位、读配置、日志）仍然走 0.5 秒那一档。
+            if (_driving)
+            {
+                try
+                {
+                    Drive(now);
+                }
+                catch (Exception e)
+                {
+                    _log.LogError("takeover: 驱动 " + e);
+                }
+            }
+
             if (now < _nextCheck)
             {
                 return;
