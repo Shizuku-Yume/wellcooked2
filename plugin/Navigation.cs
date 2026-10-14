@@ -32,6 +32,9 @@ namespace WellCooked
             public int Waypoint;
             public float NextRepath;
             public bool Arrived;
+            public Vector2 LastPosition;
+            public float LastMovedAt;
+            public bool StuckReported;
         }
 
         private static readonly Dictionary<object, Agent> Agents = new Dictionary<object, Agent>();
@@ -87,6 +90,20 @@ namespace WellCooked
             if (!WorldState.HasTerrain)
             {
                 status = "没有地形";
+                return Vector2.zero;
+            }
+
+            // 卡住判定：位置 1.5 秒没动过就是卡住了（不是"慢慢走"）
+            if (Vector2.Distance(position, agent.LastPosition) > 0.05f)
+            {
+                agent.LastPosition = position;
+                agent.LastMovedAt = now;
+                agent.StuckReported = false;
+            }
+            else if (!agent.StuckReported && now - agent.LastMovedAt > 1.5f)
+            {
+                agent.StuckReported = true;
+                status = "卡住（" + (now - agent.LastMovedAt).ToString("F1") + " 秒没动）";
                 return Vector2.zero;
             }
 
@@ -256,7 +273,36 @@ namespace WellCooked
             }
 
             path.Reverse();
-            return path;
+            return Simplify(path);
+        }
+
+        /// <summary>
+        /// 只留拐点：0.5 格一个路点太密，厨师一步就跨过去、在路点附近来回摆，
+        /// 永远推进不到下一个（实测"路点 1/N 剩余不变、0 次到达"）。留拐点后是长直线段。
+        /// </summary>
+        private static List<Vector2> Simplify(List<Vector2> path)
+        {
+            if (path.Count <= 2)
+            {
+                return path;
+            }
+
+            var simplified = new List<Vector2> { path[0] };
+            for (int i = 1; i < path.Count - 1; i++)
+            {
+                var previous = path[i - 1];
+                var current = path[i];
+                var next = path[i + 1];
+                var a = current - previous;
+                var b = next - current;
+                if (Math.Abs(a.x - b.x) > 0.01f || Math.Abs(a.y - b.y) > 0.01f)
+                {
+                    simplified.Add(current);
+                }
+            }
+
+            simplified.Add(path[path.Count - 1]);
+            return simplified;
         }
 
         private static int Key(int x, int z)

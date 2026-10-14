@@ -570,9 +570,11 @@ namespace WellCooked
                     string status;
                     var direction = Navigation.Steer(owned.Slot, position, now, out status);
                     owned.Pad.Want(action, false, direction);
-                    if (status.Length > 0 && now >= _nextDriveLog)
+                    if (now >= _nextDriveLog)
                     {
-                        _log.LogInfo("takeover: 走位 玩家位=" + (owned.Slot + 1) + " " + status);
+                        _log.LogInfo("takeover: 走位 玩家位=" + (owned.Slot + 1) + " " + status
+                                     + " 方向=(" + direction.x.ToString("F2") + "," + direction.y.ToString("F2") + ")"
+                                     + " 位置=(" + position.x.ToString("F2") + "," + position.y.ToString("F2") + ")");
                     }
 
                     if (direction == Vector2.zero)
