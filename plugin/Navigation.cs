@@ -198,6 +198,17 @@ namespace WellCooked
             WorldState.WorldToCell(from.x, from.y, out sx, out sz);
             WorldState.WorldToCell(to.x, to.y, out tx, out tz);
 
+            // 厨师是连续移动的，站位常常落在"格心不可站"的地方（贴着台面走、两格之间），
+            // 这时起点格查不到，A* 一步都扩不出去、一律报不可达（实测厨师走进死角后再也不动）。
+            // 起点也就近取一个可走格。
+            if (!WorldState.IsWalkableCell(sx, sz))
+            {
+                if (!FindNearestWalkable(sx, sz, out sx, out sz))
+                {
+                    return null;
+                }
+            }
+
             if (!WorldState.IsWalkableCell(tx, tz))
             {
                 // 目标格不可走时，就近找一个可走格（台面旁边站不住）
@@ -277,26 +288,46 @@ namespace WellCooked
             return null;
         }
 
+        /// <summary>就近找可走格：按距离取最近的，不是按扫描顺序取第一个。</summary>
         private static bool FindNearestWalkable(int cx, int cz, out int foundX, out int foundZ)
         {
-            for (int radius = 1; radius <= 4; radius++)
+            foundX = cx;
+            foundZ = cz;
+            int best = int.MaxValue;
+            bool found = false;
+            for (int radius = 1; radius <= 8; radius++)
             {
                 for (int dx = -radius; dx <= radius; dx++)
                 {
                     for (int dz = -radius; dz <= radius; dz++)
                     {
-                        if (WorldState.IsWalkableCell(cx + dx, cz + dz))
+                        if (Math.Abs(dx) != radius && Math.Abs(dz) != radius)
                         {
+                            continue; // 只看这一圈的边
+                        }
+
+                        if (!WorldState.IsWalkableCell(cx + dx, cz + dz))
+                        {
+                            continue;
+                        }
+
+                        int distance = dx * dx + dz * dz;
+                        if (distance < best)
+                        {
+                            best = distance;
                             foundX = cx + dx;
                             foundZ = cz + dz;
-                            return true;
+                            found = true;
                         }
                     }
                 }
+
+                if (found)
+                {
+                    return true;
+                }
             }
 
-            foundX = cx;
-            foundZ = cz;
             return false;
         }
 
