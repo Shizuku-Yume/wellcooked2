@@ -319,6 +319,7 @@ namespace WellCooked
                     count++;
                     var p = unity.transform.position;
                     json.Append("{\"type\":\"").Append(typeName)
+                        .Append("\",\"name\":\"").Append(Clean(unity.gameObject.name))
                         .Append("\",\"pos\":[").Append(p.x.ToString("F2")).Append(',').Append(p.y.ToString("F2"))
                         .Append("],\"contents\":[");
 
@@ -1030,7 +1031,55 @@ namespace WellCooked
                 parts.Add("\"score\":" + score);
             }
 
+            // 工序状态机要知道"这单要不要切、要不要煮"，这些在菜谱节点的子树里
+            var steps = new List<string>();
+            CollectOrderSteps(order, steps, 0);
+            parts.Add("\"steps\":[" + string.Join(",", steps.ToArray()) + "]");
+
             return parts.Count == 0 ? "\"" + Clean(entry.ToString()) + "\"" : "{" + string.Join(",", parts.ToArray()) + "}";
+        }
+
+        /// <summary>
+        /// 递归展开菜谱节点：CompositeOrderNode 有 m_composition 子节点，
+        /// 叶子节点的类型名（Ingredient/CookedComposite/…）就是"这一步要什么"。
+        /// </summary>
+        private static void CollectOrderSteps(object node, List<string> steps, int depth)
+        {
+            if (node == null || depth > 4)
+            {
+                return;
+            }
+
+            var type = node.GetType();
+            var unity = node as UnityEngine.Object;
+            string name = unity != null && !string.IsNullOrEmpty(unity.name) ? Clean(unity.name) : type.Name;
+            var raw = AsEnumerable(Get(node, "m_composition"));
+            var children = raw == null ? null : new List<object>(raw);
+            string plating = null;
+            var platingStep = Get(node, "m_platingStep");
+            if (platingStep != null)
+            {
+                var platingUnity = platingStep as UnityEngine.Object;
+                plating = platingUnity != null && !string.IsNullOrEmpty(platingUnity.name)
+                    ? Clean(platingUnity.name)
+                    : null;
+            }
+
+            if (children == null || children.Count == 0)
+            {
+                steps.Add("{\"node\":\"" + name + "\",\"type\":\"" + type.Name + "\""
+                          + (plating == null ? "" : ",\"plate\":\"" + plating + "\"") + "}");
+                return;
+            }
+
+            var parts = new List<string>();
+            foreach (var child in children)
+            {
+                CollectOrderSteps(child, parts, depth + 1);
+            }
+
+            steps.Add("{\"node\":\"" + name + "\",\"type\":\"" + type.Name + "\",\"children\":["
+                      + string.Join(",", parts.ToArray()) + "]}");
         }
 
         /// <summary>把订单/菜谱这类对象压成一行：有名字用名字，有剩余时间就用它。</summary>
