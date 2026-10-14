@@ -479,7 +479,8 @@ namespace WellCooked
                 {
                     var user = users._items[i];
                     _log.LogInfo("takeover: 用户 " + (i + 1) + " 玩家位=" + user.Engagement
-                                 + " 本地=" + user.IsLocal + " 半边=" + user.PadSide);
+                                 + " 本地=" + user.IsLocal + " 半边=" + user.PadSide
+                                 + " 状态=" + user.GameState);
                 }
             }
             catch (Exception e)
@@ -631,6 +632,22 @@ namespace WellCooked
 
             _log.LogInfo("takeover: 用户 客户端=" + ClientUserSystem.m_Users.Count
                          + " 服务端=" + ServerUserSystem.m_Users.Count);
+
+            // 回合计时开始的条件之一是每个用户的状态到了 RunKitchen 之后；
+            // 卡在更早的状态就说明"占位"没走完游戏自己的用户注册流程。
+            try
+            {
+                var server = ServerUserSystem.m_Users;
+                for (int i = 0; i < server.Count; i++)
+                {
+                    _log.LogInfo("takeover: 服务端用户 " + (i + 1) + " 玩家位=" + server._items[i].Engagement
+                                 + " 状态=" + server._items[i].GameState);
+                }
+            }
+            catch (Exception e)
+            {
+                _log.LogWarning("takeover: 读服务端用户失败: " + e.Message);
+            }
 
             try
             {

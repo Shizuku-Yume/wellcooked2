@@ -275,7 +275,8 @@ namespace WellCooked
                 "ClientIngredientContainer", "ClientPlateStation", "ClientWashingStation",
                 "ClientHeatedStation", "ClientMixingStation", "ClientCleanPlateStack",
                 "ClientDirtyPlateStack", "ClientConveyorStation", "ClientSwitchStation",
-                "ClientCookingStation", "ClientPlate"
+                "ClientCookingStation", "ClientPlate", "ClientCookableContainer",
+                "ClientCookablePreparationContainer", "ClientTrayIngredientContainer"
             };
 
             json.Append(",\"stations\":[");
