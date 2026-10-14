@@ -685,30 +685,40 @@ namespace WellCooked
             return Standable(middle, radius);
         }
 
-        /// <summary>脚下有地面、且以厨师半径在腰间查一圈没有别的东西，才算站得住。</summary>
+        /// <summary>探针用的层掩码：排掉厨师层与 Ignore Raycast 层。</summary>
+        private static int ProbeMask
+        {
+            get
+            {
+                int mask = ~(1 << PlayerLayer);
+                int ignoreRaycast = UnityEngine.LayerMask.NameToLayer("Ignore Raycast");
+                if (ignoreRaycast >= 0)
+                {
+                    mask &= ~(1 << ignoreRaycast);
+                }
+
+                return mask;
+            }
+        }
+
+        /// <summary>
+        /// 脚下有地面、且以厨师半径在腰间查一圈没有别的东西，才算站得住。
+        ///
+        /// 地面射线**必须**用和探针一样的掩码：否则射线先打到厨师自己，
+        /// 把厨师头顶当成地面，探针抬到 2.5 米撞上天花板，厨师站的那一格
+        /// 就被判成不可走（实测 A* 起点不可走、四邻全 False、一律报不可达）。
+        /// </summary>
         private static bool Standable(Vector3 world, float radius)
         {
+            int mask = ProbeMask;
             RaycastHit ground;
-            if (!Physics.Raycast(world + Vector3.up * 2f, Vector3.down, out ground, 4f))
+            if (!Physics.Raycast(world + Vector3.up * 2f, Vector3.down, out ground, 4f, mask))
             {
                 return false;
             }
 
             var probe = new Vector3(world.x, ground.point.y + 0.5f, world.z);
-
-            // 必须排掉厨师自己的碰撞体：否则"厨师站着的这一格"会被判成走不通，
-            // A* 的起点格不可走、一步都扩不出去，一律报"不可达"（实测 288 次）。
-            foreach (var hit in Physics.OverlapSphere(probe, radius, ~(1 << PlayerLayer), QueryTriggerInteraction.Ignore))
-            {
-                if (hit.GetComponentInParent<PlayerControls>() != null)
-                {
-                    continue;
-                }
-
-                return false;
-            }
-
-            return true;
+            return !Physics.CheckSphere(probe, radius, mask, QueryTriggerInteraction.Ignore);
         }
 
         private static string ActiveScene()
