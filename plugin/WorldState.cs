@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Reflection;
 using BepInEx;
 using BepInEx.Logging;
 using HarmonyLib;
@@ -447,69 +448,88 @@ namespace WellCooked
         }
 
         /// <summary>
-        /// 可走格直接取游戏自己的网格：`GridManager.GetGridOccupant(index) == null` 就是空格。
+        /// 可走格直接取游戏自己的导航节点图：`GridNavSpace.m_nodeMap`。
         ///
-        /// 原来是自己拿 `PlayerControls.GroundLayer` 向下打射线采样，实测不行：台面的碰撞体
-        /// 不在这一层，射线从台面旁边穿到台面底下的地板，于是台面被算成可走，路径穿台面、
-        /// 厨师贴着台面推墙（实测 x=20.6 处一动不动、剩余距离不降）。游戏的 `GridNavSpace`
-        /// 用的就是这个 occupant 判据，跟它一致才不会两套说法。
+        /// 走过的弯路：自己拿 `PlayerControls.GroundLayer` 向下打射线采样——台面的碰撞体
+        /// 不在这一层，射线从台面旁穿到台面底下的地板，台面被算成可走，厨师贴着台面推墙
+        /// （实测 x=20.6 一动不动）。改用 `GridManager.GetActive(0)` 的 occupant 判据也不行：
+        /// 拿到的不是厨房那张网格，191 个点互相不连通，A* 全报"不可达"。
+        /// `GridNavSpace` 是游戏自己的导航空间（`GridNavigator`/它自带的 A* 都用它），
+        /// 它的 `m_nodeMap` 就是答案。
         /// </summary>
         private static bool SampleGameGrid()
         {
+            var navSpaceType = AccessTools.TypeByName("GridNavSpace");
             var gridManagerType = AccessTools.TypeByName("GridManager");
             var indexType = AccessTools.TypeByName("GridIndex");
-            if (gridManagerType == null || indexType == null)
+            if (navSpaceType == null || gridManagerType == null || indexType == null)
             {
-                _log.LogWarning("state: 找不到 GridManager/GridIndex");
+                _log.LogWarning("state: 找不到 GridNavSpace/GridManager/GridIndex");
                 return false;
             }
 
-            var getActive = AccessTools.Method(gridManagerType, "GetActive", new[] { typeof(int) });
-            var getOccupant = AccessTools.Method(gridManagerType, "GetGridOccupant", new[] { indexType });
+            var spaces = UnityEngine.Object.FindObjectsOfType(navSpaceType);
+            if (spaces.Length == 0)
+            {
+                _log.LogWarning("state: 场上没有 GridNavSpace");
+                return false;
+            }
+
+            object space = spaces[0];
+            var flags = BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public;
+            var nodeMapField = navSpaceType.GetField("m_nodeMap", flags);
+            var managerField = navSpaceType.GetField("m_gridManager", flags);
+            var offsetField = navSpaceType.GetField("m_mapOffset", flags);
+            if (nodeMapField == null || managerField == null || offsetField == null)
+            {
+                _log.LogWarning("state: GridNavSpace 字段名对不上（m_nodeMap/m_gridManager/m_mapOffset）");
+                return false;
+            }
+
+            var nodeMap = (bool[,])nodeMapField.GetValue(space);
+            object manager = managerField.GetValue(space);
+            object offset = offsetField.GetValue(space);
+            if (nodeMap == null || manager == null || offset == null)
+            {
+                _log.LogWarning("state: GridNavSpace 还没初始化好");
+                return false;
+            }
+
+            var offsetType = offset.GetType();
+            int offX = System.Convert.ToInt32(offsetType.GetField("X").GetValue(offset));
+            int offY = System.Convert.ToInt32(offsetType.GetField("Y").GetValue(offset));
+
             var getPos = AccessTools.Method(gridManagerType, "GetPosFromGridLocation", new[] { indexType });
-            var getHalf = AccessTools.Method(gridManagerType, "GetGridHalfSize", Type.EmptyTypes);
             var indexCtor = indexType.GetConstructor(new[] { typeof(int), typeof(int), typeof(int) });
-            if (getActive == null || getOccupant == null || getPos == null || getHalf == null || indexCtor == null)
+            if (getPos == null || indexCtor == null)
             {
-                _log.LogWarning("state: GridManager 接口对不上");
+                _log.LogWarning("state: GridManager.GetPosFromGridLocation 找不到");
                 return false;
             }
 
-            object manager = getActive.Invoke(null, new object[] { 0 });
-            if (manager == null)
-            {
-                _log.LogWarning("state: 场上没有 GridManager");
-                return false;
-            }
-
-            object half = getHalf.Invoke(manager, null);
-            var halfType = half.GetType();
-            int hx = System.Convert.ToInt32(halfType.GetField("X").GetValue(half));
-            int hz = System.Convert.ToInt32(halfType.GetField("Z").GetValue(half));
-
-            _cellsX = 2 * hx + 1;
-            _cellsZ = 2 * hz + 1;
-            _cellOffsetX = -hx;
-            _cellOffsetZ = -hz;
+            _cellsX = nodeMap.GetLength(0);
+            _cellsZ = nodeMap.GetLength(1);
+            _cellOffsetX = 0;
+            _cellOffsetZ = 0;
             _walkable = new bool[_cellsX, _cellsZ];
 
             var cells = new StringBuilder();
             var free = new List<Vector3>();
-            float minX = float.MaxValue, minZ = float.MaxValue, step = 0f;
+            float minX = float.MaxValue, minZ = float.MaxValue;
             int count = 0;
 
-            for (int ix = -hx; ix <= hx; ix++)
+            for (int i = 0; i < _cellsX; i++)
             {
-                for (int iz = -hz; iz <= hz; iz++)
+                for (int j = 0; j < _cellsZ; j++)
                 {
-                    object index = indexCtor.Invoke(new object[] { ix, 0, iz });
-                    if (getOccupant.Invoke(manager, new[] { index }) != null)
+                    if (!nodeMap[i, j])
                     {
-                        continue; // 这一格被台面/工位/墙占着
+                        continue;
                     }
 
+                    object index = indexCtor.Invoke(new object[] { i - offX, 0, j - offY });
                     var world = (Vector3)getPos.Invoke(manager, new[] { index });
-                    _walkable[ix + hx, iz + hz] = true;
+                    _walkable[i, j] = true;
                     free.Add(world);
                     minX = Math.Min(minX, world.x);
                     minZ = Math.Min(minZ, world.z);
@@ -523,7 +543,7 @@ namespace WellCooked
                 return false;
             }
 
-            // 格距从相邻两格的实际间距取，不写死
+            float step = 0f;
             foreach (var p in free)
             {
                 float d = Math.Abs(p.x - minX);
@@ -549,13 +569,14 @@ namespace WellCooked
 
             var text = new StringBuilder();
             text.Append("{\"scene\":\"").Append(ActiveScene()).Append('"');
-            text.Append(",\"source\":\"game-grid\"");
+            text.Append(",\"source\":\"game-navspace\"");
             text.Append(",\"step\":").Append(_step.ToString("F2"));
-            text.Append(",\"half\":[").Append(hx).Append(',').Append(hz).Append(']');
+            text.Append(",\"map\":[").Append(_cellsX).Append(',').Append(_cellsZ).Append(']');
+            text.Append(",\"offset\":[").Append(offX).Append(',').Append(offY).Append(']');
             text.Append(",\"cells\":[").Append(cells.ToString()).Append("]}");
             File.WriteAllText(Path.Combine(Paths.BepInExRootPath, "wellcooked-terrain.json"), text.ToString());
-            _log.LogInfo("state: 游戏网格可走格 " + count + " 个（半宽 " + hx + "×" + hz
-                         + "，格距 " + _step.ToString("F2") + "，场景 " + ActiveScene() + "）");
+            _log.LogInfo("state: 游戏导航节点图 " + count + "/" + (_cellsX * _cellsZ) + " 个可走格（格距 "
+                         + _step.ToString("F2") + "，场景 " + ActiveScene() + "）");
             return true;
         }
 
