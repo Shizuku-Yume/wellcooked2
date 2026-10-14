@@ -552,23 +552,26 @@ namespace WellCooked
         private static void Drive(float now)
         {
             float elapsed = now - _drivingSince;
-            float direction = elapsed % (WalkHalfPeriod * 2f) < WalkHalfPeriod ? 1f : -1f;
+            bool forward = elapsed % (WalkHalfPeriod * 2f) < WalkHalfPeriod;
             bool action = elapsed % ActionPeriod < ActionLength;
 
+            // 每个厨师走自己的方向：全给同一个方向会让他们挤成一团互相堵死
             foreach (var owned in OwnedPads)
             {
-                owned.Pad.Want(action, false, new Vector2(direction, 0f));
+                var vector = DirectionFor(owned.Slot, forward);
+                owned.Pad.Want(action, false, vector);
             }
 
             foreach (var player in LogicalPlayers)
             {
-                LogicalInput.Set(player, direction, action);
+                var vector = DirectionFor((int)player, forward);
+                LogicalInput.Set(player, vector.x, action);
             }
 
             if (now >= _nextDriveLog)
             {
                 _nextDriveLog = now + 2f;
-                _log.LogInfo("takeover: 驱动中 方向=" + direction + " 交互=" + action
+                _log.LogInfo("takeover: 驱动中 方向=" + (forward ? "正" : "反") + " 交互=" + action
                              + " 设备层=" + OwnedPads.Count + " 逻辑层=" + LogicalPlayers.Count);
                 foreach (var owned in OwnedPads)
                 {
@@ -577,6 +580,22 @@ namespace WellCooked
                 }
 
                 LogChefs();
+            }
+        }
+
+        /// <summary>
+        /// 每个玩家位一个固定方向，正反交替：0 号走 x、1 号走 -x、2 号走 y、3 号走 -y。
+        /// 这样一眼能看出"哪个厨师在动、动的是谁"，也不会互相挤。
+        /// </summary>
+        private static Vector2 DirectionFor(int index, bool forward)
+        {
+            float sign = forward ? 1f : -1f;
+            switch (((index % 4) + 4) % 4)
+            {
+                case 0: return new Vector2(sign, 0f);
+                case 1: return new Vector2(-sign, 0f);
+                case 2: return new Vector2(0f, sign);
+                default: return new Vector2(0f, -sign);
             }
         }
 

@@ -178,7 +178,8 @@ namespace WellCooked
                         }
                     }
 
-                    // 菜谱条目：能拿到菜名与分数，作为订单内容的补充
+                    // 菜谱条目单独一个键：能拿到菜名与单份分数
+                    json.Append(",\"recipes\":[");
                     var recipes = AsEnumerable(Get(controller, "ActiveRecipes"));
                     if (recipes == null)
                     {
@@ -186,11 +187,20 @@ namespace WellCooked
                     }
                     else
                     {
+                        bool firstRecipe = true;
                         foreach (var recipe in recipes)
                         {
-                            json.Append(",\"recipe\":").Append(DescribeRecipe(recipe));
+                            if (!firstRecipe)
+                            {
+                                json.Append(',');
+                            }
+
+                            firstRecipe = false;
+                            json.Append(DescribeRecipe(recipe));
                         }
                     }
+
+                    json.Append(']');
                 }
             }
 

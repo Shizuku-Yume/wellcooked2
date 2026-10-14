@@ -26,6 +26,7 @@ namespace WellCooked
 
         private sealed class Drive
         {
+            public bool Active;
             public float MoveX;
             public bool Action;
         }
@@ -33,6 +34,19 @@ namespace WellCooked
         public static void Install(ManualLogSource log)
         {
             _log = log;
+
+            // 关键：从插件加载起就把四个玩家的包装准备好。
+            // 游戏在关卡加载时会把 GetValue/GetButton 返回的对象缓存进玩家的控制映射，
+            // 那一次调用如果发生在"我们开始驱动"之前，缓存到的就是原对象，之后再补也没用。
+            // 未开始驱动时包装原样透传，所以不影响正常游玩。
+            foreach (PlayerInputLookup.Player player in new[]
+                     {
+                         PlayerInputLookup.Player.One, PlayerInputLookup.Player.Two,
+                         PlayerInputLookup.Player.Three, PlayerInputLookup.Player.Four
+                     })
+            {
+                Drives[player] = new Drive();
+            }
             var harmony = new Harmony("wellcooked.logical-input");
 
             var valuePostfix = new HarmonyMethod(typeof(LogicalInput).GetMethod(
@@ -87,18 +101,36 @@ namespace WellCooked
                 Drives[player] = drive;
             }
 
+            drive.Active = true;
             drive.MoveX = moveX;
             drive.Action = action;
         }
 
         public static void Clear()
         {
-            Drives.Clear();
+            foreach (var drive in Drives.Values)
+            {
+                drive.Active = false;
+                drive.MoveX = 0f;
+                drive.Action = false;
+            }
         }
 
         public static int Driving
         {
-            get { return Drives.Count; }
+            get
+            {
+                int count = 0;
+                foreach (var drive in Drives.Values)
+                {
+                    if (drive.Active)
+                    {
+                        count++;
+                    }
+                }
+
+                return count;
+            }
         }
 
         // 补丁签名按 spike 里验证过的那种写法：用 __args 取参数，避免 Harmony 生成包装时踩类型坑
@@ -160,7 +192,7 @@ namespace WellCooked
 
             public float GetValue()
             {
-                return _drive.MoveX;
+                return _drive.Active ? _drive.MoveX : _inner.GetValue();
             }
 
             public void GetLogicTreeData(out AcyclicGraph<ILogicalElement, LogicalLinkInfo> graph,
@@ -191,17 +223,17 @@ namespace WellCooked
 
             public bool JustPressed()
             {
-                return _drive.Action && !_claimed;
+                return _drive.Active ? _drive.Action && !_claimed : _inner.JustPressed();
             }
 
             public bool JustReleased()
             {
-                return !_drive.Action && _claimed;
+                return _drive.Active ? !_drive.Action && _claimed : _inner.JustReleased();
             }
 
             public bool HasUnclaimedPressEvent()
             {
-                return _drive.Action && !_claimed;
+                return _drive.Active ? _drive.Action && !_claimed : _inner.HasUnclaimedPressEvent();
             }
 
             public void ClaimPressEvent()
@@ -220,12 +252,12 @@ namespace WellCooked
 
             public float GetHeldTimeLength()
             {
-                return _drive.Action ? 1f : 0f;
+                return _drive.Active ? (_drive.Action ? 1f : 0f) : _inner.GetHeldTimeLength();
             }
 
             public bool IsDown()
             {
-                return _drive.Action;
+                return _drive.Active ? _drive.Action : _inner.IsDown();
             }
         }
     }
