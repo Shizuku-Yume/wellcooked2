@@ -49,6 +49,7 @@ namespace WellCooked
 
         private sealed class Owned
         {
+            public string ChefName = "?";
             public int Slot;
             public int PadNumber;
             public VirtualPad Pad;
@@ -258,6 +259,13 @@ namespace WellCooked
         }
 
         /// <summary>这个玩家位是否已经有我们的手柄（已占位或在等枚举）。</summary>
+        /// <summary>玩家位的显示名，和游戏里 PlayerID 的取值顺序一致。</summary>
+        private static string SlotName(int slot)
+        {
+            string[] names = { "One", "Two", "Three", "Four" };
+            return slot >= 0 && slot < names.Length ? names[slot] : ("#" + slot);
+        }
+
         private static bool HasPadFor(int slot)
         {
             foreach (var owned in OwnedPads)
@@ -309,7 +317,13 @@ namespace WellCooked
                 // 游戏自己已经把这只手柄加入了（pad 号即玩家位号）
                 if (manager.GetUser((EngagementSlot)padNumber) != null)
                 {
-                    OwnedPads.Add(new Owned { Slot = padNumber, PadNumber = padNumber, Pad = pad });
+                    OwnedPads.Add(new Owned
+                    {
+                        Slot = padNumber,
+                        PadNumber = padNumber,
+                        Pad = pad,
+                        ChefName = SlotName(padNumber)
+                    });
                     PendingPads.RemoveAt(i);
                     _log.LogInfo("takeover: 游戏已自己加入 pad " + padNumber + " → 玩家位 " + (padNumber + 1));
                     continue;
@@ -345,7 +359,13 @@ namespace WellCooked
                     continue;
                 }
 
-                OwnedPads.Add(new Owned { Slot = slot, PadNumber = padNumber, Pad = pad });
+                OwnedPads.Add(new Owned
+                {
+                    Slot = slot,
+                    PadNumber = padNumber,
+                    Pad = pad,
+                    ChefName = SlotName(slot)
+                });
                 PendingPads.RemoveAt(i);
                 _log.LogInfo("takeover: 已占玩家位 " + (slot + 1) + "（pad " + padNumber + "）");
                 RegenerateControls();
@@ -644,7 +664,7 @@ namespace WellCooked
 
                     if (now >= _nextDriveLog)
                     {
-                        _log.LogInfo("takeover: 走位 玩家位=" + (owned.Slot + 1) + " " + status
+                        _log.LogInfo("takeover: 走位 玩家位=" + (owned.Slot + 1) + " 厨师=" + owned.ChefName + " " + status
                                      + " 方向=(" + direction.x.ToString("F2") + "," + direction.y.ToString("F2") + ")"
                                      + " 位置=(" + position.x.ToString("F2") + "," + position.y.ToString("F2") + ")");
                     }
@@ -786,19 +806,53 @@ namespace WellCooked
 
             int index;
             TargetIndex.TryGetValue(owner, out index);
-            // 挑一个离当前位置至少 3 格的目标，免得在脚边打转
+
+            Vector2 current;
+            bool hasCurrent = Navigation.TryTarget(owner, out current);
+
+            // 挑一个"离当前位置至少 3 格、且不是当前目标"的点。
+            // 必须排除当前目标：到达后 Drive 会再来要下一个目标，如果又挑回同一个，
+            // Navigation.Assign 会因为"目标没变"直接返回、Arrived 一直是 true，
+            // 于是每帧都换目标、每帧都把路径清零，厨师就永远走不出去
+            // （实测 换目标次数每秒 2 次、到达 0 次、坐标不动）。
+            int chosen = -1;
+            float farthest = -1f;
+            int farthestIndex = -1;
             for (int attempt = 0; attempt < Targets.Count; attempt++)
             {
                 index = (index + 1) % Targets.Count;
-                if (Vector2.Distance(position, Targets[index]) > 3f)
+                float distance = Vector2.Distance(position, Targets[index]);
+                if (hasCurrent && (Targets[index] - current).sqrMagnitude < 0.01f)
                 {
+                    continue;
+                }
+
+                if (distance > farthest)
+                {
+                    farthest = distance;
+                    farthestIndex = index;
+                }
+
+                if (distance > 3f)
+                {
+                    chosen = index;
                     break;
                 }
             }
 
-            TargetIndex[owner] = index;
+            if (chosen < 0)
+            {
+                chosen = farthestIndex;
+            }
+
+            if (chosen < 0)
+            {
+                return;
+            }
+
+            TargetIndex[owner] = chosen;
             _retargets++;
-            Navigation.Assign(owner, Targets[index]);
+            Navigation.Assign(owner, Targets[chosen]);
         }
 
         /// <summary>

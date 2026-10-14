@@ -71,6 +71,20 @@ namespace WellCooked
             Agents.Clear();
         }
 
+        /// <summary>当前目标（没登记过返回 false）。</summary>
+        public static bool TryTarget(object owner, out Vector2 target)
+        {
+            Agent agent;
+            if (Agents.TryGetValue(owner, out agent))
+            {
+                target = agent.Target;
+                return true;
+            }
+
+            target = Vector2.zero;
+            return false;
+        }
+
         public static bool HasArrived(object owner)
         {
             Agent agent;
