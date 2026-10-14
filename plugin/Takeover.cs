@@ -378,7 +378,55 @@ namespace WellCooked
             _driving = true;
             _drivingSince = now;
             _log.LogInfo("takeover: 检测到 " + chefCount + " 名厨师，开始接管驱动（我们占了 " + OwnedPads.Count + " 位）");
+            _log.LogInfo("takeover: 系统手柄槽位数=" + PlayerInputLookup.GetSystemControllerMaximum());
+            LogDevices();
             LogPadInventory();
+            LogUsers();
+        }
+
+        /// <summary>InControl 认得的所有设备：键盘、物理手柄、我们挂的虚拟手柄都在这里。</summary>
+        private static void LogDevices()
+        {
+            try
+            {
+                foreach (var device in InputManager.Devices)
+                {
+                    bool ours = false;
+                    foreach (var owned in OwnedPads)
+                    {
+                        if (ReferenceEquals(owned.Pad, device))
+                        {
+                            ours = true;
+                        }
+                    }
+
+                    _log.LogInfo("takeover: 设备 " + device.Name + " 附加=" + device.IsAttached
+                                 + (ours ? "（我们的）" : ""));
+                }
+            }
+            catch (Exception e)
+            {
+                _log.LogWarning("takeover: 列设备失败: " + e.Message);
+            }
+        }
+
+        /// <summary>客户端用户表：每个玩家位上是哪个用户、是否本地。</summary>
+        private static void LogUsers()
+        {
+            try
+            {
+                var users = ClientUserSystem.m_Users;
+                for (int i = 0; i < users.Count; i++)
+                {
+                    var user = users._items[i];
+                    _log.LogInfo("takeover: 用户 " + (i + 1) + " 玩家位=" + user.Engagement
+                                 + " 本地=" + user.IsLocal + " 半边=" + user.PadSide);
+                }
+            }
+            catch (Exception e)
+            {
+                _log.LogWarning("takeover: 列用户失败: " + e.Message);
+            }
         }
 
         /// <summary>
