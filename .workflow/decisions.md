@@ -95,3 +95,12 @@ user may overturn on sight. `Revisit when` of "never" is allowed but suspicious;
 - **Mine:** yes.
 - **Revisit when:** 该仓库补上许可证，或我们自己实现了状态读取和输入注入后不再需要参考它。
 - **Effort:** game-bridge
+
+## 2026-10-14 - 输入注入走进程内 InControl 设备
+
+- **Decided:** 插件在游戏进程里建一个 `InControl.InputDevice`（`AddControl` 注册控制项），用 `InputManager.AttachDevice` 挂上，每帧设置按键状态；不动 `PlayerInputLookup` 的逻辑按钮层。
+- **Instead of:** Harmony 补 `PlayerInputLookup.GetButton/GetValue`，返回自己的 `ILogicalButton`/`ILogicalValue` 包装对象（supercharged 的 `InputPatching.cs`、TAS 的 `TASControl.cs` 都这么做）。
+- **Because:** spike `game-bridge/06` 实测：逻辑层替换本身成立（游戏把我们的对象轮询了 2400 多次），但标题画面的"按 A 继续"完全不响应，画面不动；换成进程内虚拟手柄后，A 键立刻把游戏推进开场过场（两次独立运行都成立）。前端走的是设备/加入流程，不是逻辑按钮层。
+- **Mine:** yes.
+- **Revisit when:** 关卡内的动作指令（移动、交互）在设备层表达不了，或游戏改版换掉 InControl。
+- **Effort:** game-bridge
