@@ -209,7 +209,12 @@ namespace WellCooked
             return direction.normalized;
         }
 
-        private const float ArriveRadius = 0.45f;
+        /// <summary>
+        /// "到了"的判定半径。目标点是工位中心（台面里），厨师站不上去，
+        /// 用 0.45 格永远不成立。一格（0.6 米）出头的距离就是"站在工位旁边"，
+        /// 之后能按交互键即可——具体阈值要跟任务 09 的工序一起定。
+        /// </summary>
+        private const float ArriveRadius = 1.2f;
 
         /// <summary>
         /// "算到了这个路点"的半径。取格距的一半左右：厨师是连续移动的，
