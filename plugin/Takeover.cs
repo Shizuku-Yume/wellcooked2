@@ -818,7 +818,31 @@ namespace WellCooked
             if (now >= _nextDriveLog)
             {
                 _nextDriveLog = now + 2f;
-                _log.LogInfo("takeover: 工序模式 " + WorkOrder.Status + " 完成单数=" + WorkOrder.CompletedOrders);
+                var detail = new StringBuilder("takeover: 工序模式 " + WorkOrder.Status);
+                foreach (var owned in OwnedPads)
+                {
+                    Vector2 position;
+                    if (!TryPosition(owned.Slot, out position))
+                    {
+                        continue;
+                    }
+
+                    Vector2 target;
+                    bool interact;
+                    if (!WorkOrder.DesireFor(owned.Slot, out target, out interact))
+                    {
+                        continue;
+                    }
+
+                    string status;
+                    Navigation.Steer(owned.Slot, position, now, out status);
+                    detail.Append(" | 厨师位=").Append(owned.Slot + 1)
+                        .Append(" 位置=(").Append(position.x.ToString("F1")).Append(',').Append(position.y.ToString("F1"))
+                        .Append(") 距目标=").Append(Vector2.Distance(position, target).ToString("F1"))
+                        .Append(" 寻路=").Append(status);
+                }
+
+                _log.LogInfo(detail.ToString());
             }
         }
 
