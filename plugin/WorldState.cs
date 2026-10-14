@@ -366,6 +366,11 @@ namespace WellCooked
         private static int _cellOffsetX;
         private static int _cellOffsetZ;
 
+        // 格子空着不等于走得过去：台面占了格心，它的碰撞体可能伸到两格之间的空隙里。
+        // 所以相邻两格之间还要单独判一次"边通不通"（实测厨师卡在两格正中间）。
+        private static bool[,] _passableX;
+        private static bool[,] _passableZ;
+
         public static bool HasTerrain
         {
             get { return _walkable != null; }
@@ -391,6 +396,24 @@ namespace WellCooked
         public static bool IsWalkableCell(int ix, int iz)
         {
             return _walkable != null && ix >= 0 && iz >= 0 && ix < _cellsX && iz < _cellsZ && _walkable[ix, iz];
+        }
+
+        /// <summary>从 (ix,iz) 朝 (dx,dz)（只允许单步正交）走不走得过去。</summary>
+        public static bool CanStep(int ix, int iz, int dx, int dz)
+        {
+            if (!IsWalkableCell(ix, iz))
+            {
+                return false;
+            }
+
+            if (dx != 0)
+            {
+                return _passableX != null && ix >= 0 && ix < _cellsX && iz >= 0 && iz < _cellsZ
+                       && _passableX[ix, iz] && IsWalkableCell(ix + dx, iz);
+            }
+
+            return _passableZ != null && ix >= 0 && ix < _cellsX && iz >= 0 && iz < _cellsZ
+                   && _passableZ[ix, iz] && IsWalkableCell(ix, iz + dz);
         }
 
         public static bool IsWalkablePoint(float x, float z)
@@ -573,6 +596,27 @@ namespace WellCooked
             _originX = minX;
             _originZ = minZ;
             _step = step > 0.01f ? step : 1f;
+
+            // 边：两格都空，且两格中点的物理检查也过
+            _passableX = new bool[_cellsX, _cellsZ];
+            _passableZ = new bool[_cellsX, _cellsZ];
+            for (int i = 0; i < _cellsX - 1; i++)
+            {
+                for (int j = 0; j < _cellsZ; j++)
+                {
+                    _passableX[i, j] = _walkable[i, j] && _walkable[i + 1, j]
+                                       && StandableBetween(CellCenter(i, j), CellCenter(i + 1, j), chefRadius);
+                }
+            }
+
+            for (int i = 0; i < _cellsX; i++)
+            {
+                for (int j = 0; j < _cellsZ - 1; j++)
+                {
+                    _passableZ[i, j] = _walkable[i, j] && _walkable[i, j + 1]
+                                       && StandableBetween(CellCenter(i, j), CellCenter(i, j + 1), chefRadius);
+                }
+            }
             // 数组下标是游戏网格的绝对下标，而 origin 取的是"可走格"的左上角：
             // 左上角被台面占掉几格，两者就差几格。之前忘了这一步，整张表错位，
             // 厨师所在格查出来全不可走，A* 一律报"不可达"（实测 178 次）。
@@ -597,8 +641,32 @@ namespace WellCooked
             text.Append(",\"offset\":[").Append(offX).Append(',').Append(offY).Append(']');
             text.Append(",\"cells\":[").Append(cells.ToString()).Append("]}");
             File.WriteAllText(Path.Combine(Paths.BepInExRootPath, "wellcooked-terrain.json"), text.ToString());
-            _log.LogInfo("state: 可走格 " + count + "/" + (_cellsX * _cellsZ) + "（游戏节点图 + 物理检查，格距 "
-                         + _step.ToString("F2") + "，厨师半径 " + MeasureChefRadius().ToString("F2")
+            int edges = 0;
+            for (int i = 0; i < _cellsX - 1; i++)
+            {
+                for (int j = 0; j < _cellsZ; j++)
+                {
+                    if (_passableX[i, j])
+                    {
+                        edges++;
+                    }
+                }
+            }
+
+            for (int i = 0; i < _cellsX; i++)
+            {
+                for (int j = 0; j < _cellsZ - 1; j++)
+                {
+                    if (_passableZ[i, j])
+                    {
+                        edges++;
+                    }
+                }
+            }
+
+            _log.LogInfo("state: 可走格 " + count + "/" + (_cellsX * _cellsZ) + "，可走边 " + edges
+                         + "（游戏节点图 + 物理检查，格距 " + _step.ToString("F2")
+                         + "，厨师半径 " + MeasureChefRadius().ToString("F2")
                          + "，场景 " + ActiveScene() + "）");
             return true;
         }
@@ -621,6 +689,13 @@ namespace WellCooked
             }
 
             return 0.35f;
+        }
+
+        /// <summary>两格之间的空隙也要能过：在中点按厨师半径查一圈。</summary>
+        private static bool StandableBetween(Vector2 a, Vector2 b, float radius)
+        {
+            var middle = new Vector3((a.x + b.x) * 0.5f, 0f, (a.y + b.y) * 0.5f);
+            return Standable(middle, radius);
         }
 
         /// <summary>脚下有地面、且以厨师半径在腰间查一圈没有别的东西，才算站得住。</summary>

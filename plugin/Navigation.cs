@@ -247,7 +247,7 @@ namespace WellCooked
                 {
                     int nx = cx + offset[0];
                     int nz = cz + offset[1];
-                    if (!WorldState.IsWalkableCell(nx, nz))
+                    if (!WorldState.CanStep(cx, cz, offset[0], offset[1]))
                     {
                         continue;
                     }
