@@ -38,6 +38,9 @@ namespace WellCooked
         private static float _nextFrontendPress;
         private static bool _frontendHeld;
 
+        /// <summary>`trace=true` 时每帧把喂出去的方向与厨师位置打进日志（卡住时看抖动从哪来）。</summary>
+        private static bool _trace;
+
         private static readonly List<int> Slots = new List<int> { 0, 1 };
         private static readonly List<PlayerInputLookup.Player> LogicalPlayers = new List<PlayerInputLookup.Player>();
         private static bool _frontendPress;
@@ -107,6 +110,10 @@ namespace WellCooked
                             Slots.AddRange(parsed);
                             _log.LogInfo("takeover: 占位改成 " + string.Join(",", Slots.ConvertAll(x => (x + 1).ToString()).ToArray()));
                         }
+                    }
+                    else if (key == "trace")
+                    {
+                        _trace = value == "true" || value == "1";
                     }
                     else if (key == "frontend_press")
                     {
@@ -625,6 +632,14 @@ namespace WellCooked
                     string status;
                     var direction = Navigation.Steer(owned.Slot, position, now, out status);
                     owned.Pad.Want(action, false, direction);
+                    if (_trace)
+                    {
+                        _log.LogInfo("trace 玩家位=" + (owned.Slot + 1)
+                                     + " 方向=(" + direction.x.ToString("F2") + "," + direction.y.ToString("F2") + ")"
+                                     + " 位置=(" + position.x.ToString("F3") + "," + position.y.ToString("F3") + ")"
+                                     + " " + status);
+                    }
+
                     if (now >= _nextDriveLog)
                     {
                         _log.LogInfo("takeover: 走位 玩家位=" + (owned.Slot + 1) + " " + status
