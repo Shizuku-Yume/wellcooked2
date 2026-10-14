@@ -3,7 +3,6 @@ using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Reflection;
 using System.Text;
 using BepInEx;
 using BepInEx.Logging;
@@ -13,13 +12,15 @@ using UnityEngine;
 namespace WellCooked
 {
     /// <summary>
-    /// 读厨房世界状态（任务 game-bridge/07 的数据面）：厨师坐标与朝向、手持物、锅的进度、
-    /// 订单与剩余时间、得分、计时。每 0.5 秒写一份 `BepInEx/wellcooked-state.json`，
+    /// 读厨房世界状态（调度算法的输入面）：厨师坐标与朝向、手持物、锅的进度与烧焦、
+    /// 订单与剩余时间、得分、回合计时。每 0.5 秒写一份 `BepInEx/wellcooked-state.json`，
     /// 每 2 秒往日志打一行摘要。
     ///
-    /// 这是调度算法的输入面：寻路要用厨师坐标，派单要用订单的截止时间，资源锁要用厨具状态。
-    /// 字段名来自对游戏程序集的导出（`BepInEx/welcooked-inventory.txt`）和参考项目的读取点；
-    /// 拿不到的东西不打日志假装拿到了，而是写进 `missing` 列表。
+    /// 取值路径来自对游戏程序集的导出（`BepInEx/welcooked-inventory.txt`）：
+    /// `ServerKitchenFlowControllerBase.GetMonitorForTeam/GetPoints/RoundTimer` →
+    /// `ServerTeamMonitor.Score/OrdersController` → `ServerOrderControllerBase.ActiveRecipes`，
+    /// 锅走静态的 `ServerCookingHandler.GetCookingHandlers()`。
+    /// 取不到的字段进 `missing`，不假装拿到了。
     /// </summary>
     public static class WorldState
     {
@@ -27,6 +28,7 @@ namespace WellCooked
         private static float _nextSnapshot;
         private static float _nextSummary;
         private static string _lastSummary = "";
+        private static object _teamId;
 
         public static void Install(ManualLogSource log)
         {
@@ -58,6 +60,40 @@ namespace WellCooked
             json.Append("{\"t\":").Append(now.ToString("F2"));
             json.Append(",\"scene\":\"").Append(UnityEngine.SceneManagement.SceneManager.GetActiveScene().name).Append('"');
 
+            int chefCount = AppendChefs(json);
+            AppendKitchen(json, missing);
+            AppendCooking(json, missing);
+
+            json.Append(",\"missing\":[");
+            for (int i = 0; i < missing.Count; i++)
+            {
+                if (i > 0)
+                {
+                    json.Append(',');
+                }
+
+                json.Append('"').Append(missing[i]).Append('"');
+            }
+
+            json.Append("]}");
+
+            File.WriteAllText(Path.Combine(Paths.BepInExRootPath, "wellcooked-state.json"), json.ToString());
+
+            if (now >= _nextSummary)
+            {
+                _nextSummary = now + 2f;
+                var summary = "state: 厨师=" + chefCount
+                              + (missing.Count == 0 ? "" : " 缺=" + string.Join(",", missing.ToArray()));
+                if (summary != _lastSummary)
+                {
+                    _lastSummary = summary;
+                    _log.LogInfo(summary);
+                }
+            }
+        }
+
+        private static int AppendChefs(StringBuilder json)
+        {
             json.Append(",\"chefs\":[");
             var chefs = UnityEngine.Object.FindObjectsOfType<PlayerControls>();
             for (int i = 0; i < chefs.Length; i++)
@@ -82,173 +118,169 @@ namespace WellCooked
             }
 
             json.Append(']');
+            return chefs.Length;
+        }
 
-            // 得分与订单：ServerTeamMonitor 是每队的监视器，Score 与 OrdersController 都在它上面
+        /// <summary>得分、订单、回合计时：都在厨房流程控制器上。</summary>
+        private static void AppendKitchen(StringBuilder json, List<string> missing)
+        {
+            var flow = FindAll("ServerKitchenFlowControllerBase").FirstOrDefault();
+            if (flow == null)
+            {
+                missing.Add("ServerKitchenFlowControllerBase");
+                json.Append(",\"score\":null,\"orders\":[],\"timer\":null");
+                return;
+            }
+
+            object team = TeamId();
+            if (team == null)
+            {
+                missing.Add("TeamID");
+            }
+
             json.Append(",\"score\":");
-            var monitors = FindAll("ServerTeamMonitor");
-            if (monitors.Count == 0)
+            var points = team == null ? null : Invoke(flow, "GetPoints", team);
+            json.Append(points == null ? "null" : points.ToString());
+
+            json.Append(",\"orders\":[");
+            var monitor = team == null ? null : Invoke(flow, "GetMonitorForTeam", team);
+            if (monitor == null)
             {
                 missing.Add("ServerTeamMonitor");
+            }
+            else
+            {
+                var controller = Get(monitor, "OrdersController");
+                var recipes = controller == null ? null : AsEnumerable(Get(controller, "ActiveRecipes"));
+                if (recipes == null)
+                {
+                    missing.Add("ActiveRecipes");
+                }
+                else
+                {
+                    bool first = true;
+                    foreach (var recipe in recipes)
+                    {
+                        if (!first)
+                        {
+                            json.Append(',');
+                        }
+
+                        first = false;
+                        json.Append(Describe(recipe));
+                    }
+                }
+            }
+
+            json.Append(']');
+
+            json.Append(",\"timer\":");
+            var timer = Get(flow, "RoundTimer");
+            if (timer == null)
+            {
+                missing.Add("RoundTimer");
                 json.Append("null");
             }
             else
             {
-                var scoreStats = Get(monitors[0], "Score");
-                var total = Get(scoreStats, "GetTotalScore");
-                json.Append(total == null ? "null" : total.ToString());
+                json.Append("{\"elapsed\":").Append(Num(Get(timer, "TimeElapsed")))
+                    .Append(",\"limit\":").Append(Num(Get(flow, "m_timeLimit")))
+                    .Append('}');
+            }
+        }
+
+        /// <summary>锅、加热、搅拌：静态枚举拿全部烹饪工位。</summary>
+        private static void AppendCooking(StringBuilder json, List<string> missing)
+        {
+            json.Append(",\"cooking\":[");
+            var handlers = AsEnumerable(InvokeStatic("ServerCookingHandler", "GetCookingHandlers"));
+            if (handlers == null)
+            {
+                missing.Add("ServerCookingHandler.GetCookingHandlers");
+                json.Append(']');
+                return;
             }
 
-            json.Append(",\"orders\":[");
-            bool firstOrder = true;
-            foreach (var monitor in monitors)
+            bool first = true;
+            foreach (var handler in handlers)
             {
-                var controller = Get(monitor, "OrdersController");
-                var recipes = AsEnumerable(Get(controller, "ActiveRecipes"));
-                if (recipes == null)
+                var component = handler as Component;
+                if (component == null)
                 {
                     continue;
                 }
 
-                foreach (var recipe in recipes)
-                {
-                    if (!firstOrder)
-                    {
-                        json.Append(',');
-                    }
-
-                    firstOrder = false;
-                    json.Append(Describe(recipe));
-                }
-            }
-
-            json.Append(']');
-
-            // 锅/加热/搅拌：ServerCookingHandler 提供静态枚举，进度和烧焦状态都在它上面
-            json.Append(",\"cooking\":[");
-            var handlers = AsEnumerable(InvokeStatic("ServerCookingHandler", "GetCookingHandlers"));
-            bool firstCook = true;
-            int cookingCount = 0;
-            if (handlers != null)
-            {
-                foreach (var handler in handlers)
-                {
-                    var component = handler as Component;
-                    if (component == null)
-                    {
-                        continue;
-                    }
-
-                    if (!firstCook)
-                    {
-                        json.Append(',');
-                    }
-
-                    firstCook = false;
-                    cookingCount++;
-                    var p = component.transform.position;
-                    json.Append("{\"pos\":[").Append(p.x.ToString("F2")).Append(',').Append(p.y.ToString("F2")).Append(']')
-                        .Append(",\"progress\":").Append(Num(Get(handler, "GetCookingProgress")))
-                        .Append(",\"cooked\":").Append(Bool(Get(handler, "IsCooked")))
-                        .Append(",\"burning\":").Append(Bool(Get(handler, "IsBurning")))
-                        .Append('}');
-                }
-            }
-            else
-            {
-                missing.Add("ServerCookingHandler.GetCookingHandlers");
-            }
-
-            json.Append(']');
-
-            // 计时：厨房流程控制器上挂着回合计时器
-            json.Append(",\"timer\":");
-            var flow = FindAll("ServerKitchenFlowControllerBase").FirstOrDefault()
-                       ?? FindAll("ClientKitchenFlowControllerBase").FirstOrDefault();
-            if (flow == null)
-            {
-                missing.Add("KitchenFlowController");
-                json.Append("null");
-            }
-            else
-            {
-                var timer = Get(flow, "RoundTimer");
-                if (timer == null)
-                {
-                    missing.Add("RoundTimer");
-                    json.Append("null");
-                }
-                else
-                {
-                    json.Append("{\"elapsed\":").Append(Num(Get(timer, "TimeElapsed")))
-                        .Append(",\"limit\":").Append(Num(Get(flow, "m_timeLimit")))
-                        .Append('}');
-                }
-            }
-
-            json.Append(",\"missing\":[");
-            for (int i = 0; i < missing.Count; i++)
-            {
-                if (i > 0)
+                if (!first)
                 {
                     json.Append(',');
                 }
 
-                json.Append('"').Append(missing[i]).Append('"');
+                first = false;
+                var p = component.transform.position;
+                json.Append("{\"pos\":[").Append(p.x.ToString("F2")).Append(',').Append(p.y.ToString("F2")).Append(']')
+                    .Append(",\"progress\":").Append(Num(Invoke(handler, "GetCookingProgress")))
+                    .Append(",\"cooked\":").Append(Bool(Invoke(handler, "IsCooked")))
+                    .Append(",\"burning\":").Append(Bool(Invoke(handler, "IsBurning")))
+                    .Append('}');
             }
 
-            json.Append("]}");
-
-            File.WriteAllText(Path.Combine(Paths.BepInExRootPath, "wellcooked-state.json"), json.ToString());
-
-            if (now >= _nextSummary)
-            {
-                _nextSummary = now + 2f;
-                var summary = "state: 厨师=" + chefs.Length + " 订单=" + CountOrders(monitors)
-                              + " 灶=" + cookingCount + " " + (flow == null ? "无计时" : "计时有")
-                              + (missing.Count == 0 ? "" : " 缺=" + string.Join(",", missing.ToArray()));
-                if (summary != _lastSummary)
-                {
-                    _lastSummary = summary;
-                    _log.LogInfo(summary);
-                }
-            }
+            json.Append(']');
         }
 
-        private static int CountOrders(List<object> monitors)
+        private static object TeamId()
         {
-            int count = 0;
-            foreach (var monitor in monitors)
+            if (_teamId != null)
             {
-                var recipes = AsEnumerable(Get(Get(monitor, "OrdersController"), "ActiveRecipes"));
-                if (recipes != null)
+                return _teamId;
+            }
+
+            var type = AccessTools.TypeByName("TeamID");
+            if (type == null || !type.IsEnum)
+            {
+                return null;
+            }
+
+            // 合作模式只有一个队，取第一个非 None 的值
+            foreach (var value in Enum.GetValues(type))
+            {
+                if (value.ToString() != "None")
                 {
-                    count += recipes.Count();
+                    _teamId = value;
+                    return _teamId;
                 }
             }
 
-            return count;
+            return null;
         }
 
-        // ---- 取值的反射小工具：拿不到就返回 null，由调用方记进 missing ----
+        // ---- 反射小工具：拿不到返回 null，由调用方记进 missing ----
 
         private static List<object> FindAll(string typeName)
         {
             var result = new List<object>();
             var type = AccessTools.TypeByName(typeName);
-            if (type == null)
+            if (type == null || !typeof(UnityEngine.Object).IsAssignableFrom(type))
             {
-                return result;
+                return result; // 不是组件，FindObjectsOfType 用不了
             }
 
             foreach (var found in UnityEngine.Object.FindObjectsOfType(type))
             {
-                result.Add(found);
+                if (found != null)
+                {
+                    result.Add(found);
+                }
             }
 
             return result;
         }
 
         private static object Get(object target, string name)
+        {
+            return Invoke(target, name, null);
+        }
+
+        private static object Invoke(object target, string name, params object[] args)
         {
             if (target == null)
             {
@@ -258,20 +290,25 @@ namespace WellCooked
             try
             {
                 var type = target.GetType();
-                var property = AccessTools.Property(type, name);
-                if (property != null)
+                var arguments = args ?? new object[0];
+                if (arguments.Length == 0)
                 {
-                    return property.GetValue(target, null);
+                    var property = AccessTools.Property(type, name);
+                    if (property != null)
+                    {
+                        return property.GetValue(target, null);
+                    }
+
+                    var field = AccessTools.Field(type, name);
+                    if (field != null)
+                    {
+                        return field.GetValue(target);
+                    }
                 }
 
-                var field = AccessTools.Field(type, name);
-                if (field != null)
-                {
-                    return field.GetValue(target);
-                }
-
-                var method = AccessTools.Method(type, name, Type.EmptyTypes);
-                return method == null ? null : method.Invoke(target, null);
+                var method = AccessTools.Method(type, name,
+                    arguments.Select(a => a.GetType()).ToArray());
+                return method == null ? null : method.Invoke(target, arguments);
             }
             catch (Exception)
             {
@@ -282,7 +319,12 @@ namespace WellCooked
         private static object InvokeStatic(string typeName, string methodName)
         {
             var type = AccessTools.TypeByName(typeName);
-            var method = type == null ? null : AccessTools.Method(type, methodName, Type.EmptyTypes);
+            if (type == null)
+            {
+                return null;
+            }
+
+            var method = AccessTools.Method(type, methodName, Type.EmptyTypes);
             try
             {
                 return method == null ? null : method.Invoke(null, null);
@@ -296,12 +338,7 @@ namespace WellCooked
         private static IEnumerable<object> AsEnumerable(object value)
         {
             var enumerable = value as IEnumerable;
-            if (enumerable == null)
-            {
-                return null;
-            }
-
-            return enumerable.Cast<object>();
+            return enumerable == null ? null : enumerable.Cast<object>();
         }
 
         private static string Num(object value)
@@ -353,12 +390,7 @@ namespace WellCooked
                 parts.Add("\"lifetime\":" + Num(lifetime));
             }
 
-            if (parts.Count == 0)
-            {
-                return "\"" + Clean(item.ToString()) + "\"";
-            }
-
-            return "{" + string.Join(",", parts.ToArray()) + "}";
+            return parts.Count == 0 ? "\"" + Clean(item.ToString()) + "\"" : "{" + string.Join(",", parts.ToArray()) + "}";
         }
 
         private static string Clean(string value)

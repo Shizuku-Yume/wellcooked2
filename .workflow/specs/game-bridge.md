@@ -21,6 +21,7 @@
 四个部分，边界固定：
 
 - **游戏插件（C#，BepInEx 5.4.x + Harmony 2）** — 跑在游戏进程内，负责状态读取、输入注入、TCP 客户端。它不做任何调度决策，只执行"某厨师做某动作"。工程放 `plugin/`，构建产物拷进游戏目录的 `BepInEx/plugins/`。输入注入走**设备层**：进程内建一个 `InControl.InputDevice`（`AddControl` 注册控制项）用 `InputManager.AttachDevice` 挂上，每帧设置按键状态（spike game-bridge/06 实测，见 Notes）。
+- **数据面（世界状态）** — 插件每 0.5 秒读一次并写 `BepInEx/wellcooked-state.json`：厨师坐标/朝向/手持物（`PlayerControls` + `PlayerIDProvider` + `ServerPlayerAttachmentCarrier.InspectCarriedItem()`）、锅的进度与烧焦（`ServerCookingHandler.GetCookingHandlers()`）、订单（`ServerKitchenFlowControllerBase.GetMonitorForTeam` → `ServerTeamMonitor.OrdersController` → `ActiveRecipes`）、得分（`GetPoints`）、回合计时（`RoundTimer.TimeElapsed` + `m_timeLimit`）。取不到的字段进 `missing`。这是调度算法的输入面；发给 Linux 侧（TCP 上报）归任务 03。
 - **接管时机** — 插件每 0.5 秒检查一次：玩家位空着就用虚拟手柄占上（`PCPlayerManager.EngagePadToSlot`，protected，反射调；pad 号靠 `PCPadInputProvider.GetActionSet` 反查），所以关卡是按多人加载的；场景里一出现本地厨师控制器（`PlayerControls`）就开始驱动，离开关卡就停止并清掉按键状态。用户自己占着的那一位不动。
 - **Bridge（C11，Linux）** — TCP 服务端，唯一连接游戏的进程。解析上报、写日志、回发控制指令；后续版本把世界状态写进共享内存供 Scheduler 和 Worker 读。源码放 `bridge/`。
 - **协议（`protocol/`）** — JSON 行协议，四种消息 `state_update`、`action`、`heartbeat`、`config`，字段按方案 §5.2。schema、示例和字段含义落在 `protocol/protocol.md`，两侧各自实现序列化（方案 §5.3）。
