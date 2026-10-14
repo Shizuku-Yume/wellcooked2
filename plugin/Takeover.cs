@@ -4,6 +4,7 @@ using System.Reflection;
 using BepInEx.Logging;
 using HarmonyLib;
 using InControl;
+using Team17.Online;
 using UnityEngine;
 
 namespace WellCooked
@@ -363,9 +364,44 @@ namespace WellCooked
             if (now >= _nextDriveLog)
             {
                 _nextDriveLog = now + 2f;
-                var first = OwnedPads.Count > 0 ? OwnedPads[0].Pad.Wanted : "（没有我们占的位）";
-                _log.LogInfo("takeover: 驱动中 方向=" + direction + " 交互=" + action + " 第一个手柄 " + first);
+                _log.LogInfo("takeover: 驱动中 方向=" + direction + " 交互=" + action
+                             + " | " + VirtualPad.Diagnostics);
+                LogChefs();
             }
+        }
+
+        /// <summary>
+        /// 客观证据：把每名厨师的位置、玩家号、是否本地控制、绑在哪个手柄上打出来。
+        /// 只看"我们想按什么"会骗人——写不进游戏时日志一模一样。
+        /// </summary>
+        private static void LogChefs()
+        {
+            var chefs = UnityEngine.Object.FindObjectsOfType<PlayerControls>();
+            foreach (var chef in chefs)
+            {
+                var provider = chef.GetComponent<PlayerIDProvider>();
+                string id = provider == null ? "?" : provider.GetID().ToString();
+                string local = provider == null ? "?" : provider.IsLocallyControlled().ToString();
+                string pad = "?";
+                try
+                {
+                    if (provider != null)
+                    {
+                        pad = PlayerInputLookup.GetPadForPlayer(provider.GetID()).ToString();
+                    }
+                }
+                catch (Exception e)
+                {
+                    pad = "取不到(" + e.GetType().Name + ")";
+                }
+
+                var p = chef.transform.position;
+                _log.LogInfo("takeover: 厨师 玩家=" + id + " 本地=" + local + " 手柄=" + pad
+                             + " 位置=(" + p.x.ToString("F2") + "," + p.y.ToString("F2") + ")");
+            }
+
+            _log.LogInfo("takeover: 用户 客户端=" + ClientUserSystem.m_Users.Count
+                         + " 服务端=" + ServerUserSystem.m_Users.Count);
         }
     }
 }

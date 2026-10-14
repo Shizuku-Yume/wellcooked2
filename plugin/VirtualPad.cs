@@ -50,6 +50,10 @@ namespace WellCooked
 
             _action1 = GetInputControlTypeByName("Action1");
             _action2 = GetInputControlTypeByName("Action2");
+            CacheDirectionType("LeftStickLeft");
+            CacheDirectionType("LeftStickRight");
+            CacheDirectionType("LeftStickUp");
+            CacheDirectionType("LeftStickDown");
 
             if (SetControlState == null)
             {
@@ -67,16 +71,58 @@ namespace WellCooked
 
         public override void Update(ulong updateTick, float deltaTime)
         {
-            SetControlState.Invoke(this, new object[] { _action1, _wantAction1, updateTick, deltaTime });
-            SetControlState.Invoke(this, new object[] { _action2, _wantAction2, updateTick, deltaTime });
-
-            if (SetStickValue != null)
+            try
             {
-                SetStickValue.Invoke(this, new object[] { _wantStick, updateTick, deltaTime });
-                if (CommitStick != null)
+                SetControlState.Invoke(this, new object[] { _action1, _wantAction1, updateTick, deltaTime });
+                SetControlState.Invoke(this, new object[] { _action2, _wantAction2, updateTick, deltaTime });
+                ButtonWrites++;
+
+                if (SetStickValue != null)
                 {
-                    CommitStick.Invoke(this, null);
+                    SetStickValue.Invoke(this, new object[] { _wantStick, updateTick, deltaTime });
+                    if (CommitStick != null)
+                    {
+                        CommitStick.Invoke(this, null);
+                    }
+
+                    StickWrites++;
                 }
+
+                // 双保险：这套 InControl 把摇杆拆成方向控制项，模拟量和数字方向一起给，
+                // 免得只写其中一条路而游戏读的是另一条。
+                PressDirection("LeftStickLeft", _wantStick.x < -0.3f, updateTick, deltaTime);
+                PressDirection("LeftStickRight", _wantStick.x > 0.3f, updateTick, deltaTime);
+                PressDirection("LeftStickUp", _wantStick.y > 0.3f, updateTick, deltaTime);
+                PressDirection("LeftStickDown", _wantStick.y < -0.3f, updateTick, deltaTime);
+            }
+            catch (Exception e)
+            {
+                LastError = e.GetType().Name + ": " + e.Message;
+            }
+        }
+
+        private void PressDirection(string controlName, bool pressed, ulong updateTick, float deltaTime)
+        {
+            InputControlType type;
+            if (!_directionTypes.TryGetValue(controlName, out type))
+            {
+                return;
+            }
+
+            SetControlState.Invoke(this, new object[] { type, pressed, updateTick, deltaTime });
+        }
+
+        private readonly Dictionary<string, InputControlType> _directionTypes = new Dictionary<string, InputControlType>();
+
+        private void CacheDirectionType(string controlName)
+        {
+            try
+            {
+                _directionTypes[controlName] = GetInputControlTypeByName(controlName);
+            }
+            catch (ArgumentException)
+            {
+                // 这套 InControl 里没有这个名字，跳过
             }
         }
 
@@ -84,6 +130,24 @@ namespace WellCooked
         public string Wanted
         {
             get { return "A1=" + _wantAction1 + " A2=" + _wantAction2 + " stick=" + _wantStick; }
+        }
+
+        /// <summary>
+        /// 反射调用是否真的成功过。日志只写"想要什么"会骗人：写不进游戏时看起来一样。
+        /// </summary>
+        public static int ButtonWrites;
+        public static int StickWrites;
+        public static string LastError = "";
+
+        public static string Diagnostics
+        {
+            get
+            {
+                return "按键写入=" + ButtonWrites
+                       + " 摇杆写入=" + StickWrites
+                       + " 摇杆方法=" + (SetStickValue == null ? "缺" : "有")
+                       + (LastError.Length == 0 ? "" : " 最近错误=" + LastError);
+            }
         }
 
         /// <summary>没有摇杆 API 时退回到方向控制项（保留给调试）。</summary>
