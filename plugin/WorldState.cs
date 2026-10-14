@@ -509,13 +509,12 @@ namespace WellCooked
 
             _cellsX = nodeMap.GetLength(0);
             _cellsZ = nodeMap.GetLength(1);
-            _cellOffsetX = 0;
-            _cellOffsetZ = 0;
             _walkable = new bool[_cellsX, _cellsZ];
 
             var cells = new StringBuilder();
             var free = new List<Vector3>();
             float minX = float.MaxValue, minZ = float.MaxValue;
+            int minI = int.MaxValue, minJ = int.MaxValue;
             int count = 0;
 
             for (int i = 0; i < _cellsX; i++)
@@ -533,6 +532,8 @@ namespace WellCooked
                     free.Add(world);
                     minX = Math.Min(minX, world.x);
                     minZ = Math.Min(minZ, world.z);
+                    minI = Math.Min(minI, i);
+                    minJ = Math.Min(minJ, j);
                     count++;
                 }
             }
@@ -556,6 +557,11 @@ namespace WellCooked
             _originX = minX;
             _originZ = minZ;
             _step = step > 0.01f ? step : 1f;
+            // 数组下标是游戏网格的绝对下标，而 origin 取的是"可走格"的左上角：
+            // 左上角被台面占掉几格，两者就差几格。之前忘了这一步，整张表错位，
+            // 厨师所在格查出来全不可走，A* 一律报"不可达"（实测 178 次）。
+            _cellOffsetX = minI;
+            _cellOffsetZ = minJ;
 
             foreach (var p in free)
             {
@@ -576,7 +582,8 @@ namespace WellCooked
             text.Append(",\"cells\":[").Append(cells.ToString()).Append("]}");
             File.WriteAllText(Path.Combine(Paths.BepInExRootPath, "wellcooked-terrain.json"), text.ToString());
             _log.LogInfo("state: 游戏导航节点图 " + count + "/" + (_cellsX * _cellsZ) + " 个可走格（格距 "
-                         + _step.ToString("F2") + "，场景 " + ActiveScene() + "）");
+                         + _step.ToString("F2") + "，左上角下标 " + _cellOffsetX + "," + _cellOffsetZ
+                         + "，场景 " + ActiveScene() + "）");
             return true;
         }
 
