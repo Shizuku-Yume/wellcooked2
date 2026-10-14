@@ -358,6 +358,12 @@ namespace WellCooked
         public const float SampleStep = 0.5f;
         private const float SampleMargin = 6f;
 
+        /// <summary>厨师体积半径：可走格要求中心与前后左右各偏这么多都是地面。</summary>
+        private const float BodyRadius = 0.25f;
+
+        /// <summary>命中高度和地面高度差多少以内算同一层（台面顶面一般高 1 米左右）。</summary>
+        private const float FloorTolerance = 0.25f;
+
         // 采样出来的可走格，寻路直接查这张表
         private static bool[,] _walkable;
         private static float _originX;
@@ -477,14 +483,34 @@ namespace WellCooked
                 int count = 0;
                 float top = 5f;
                 float distance = 10f;
+
+                // 只打没打到地面层是不够的：台面顶面也会被打到，采出来就成了"可走"，
+                // 于是路径穿台面、厨师贴着台面推墙（实测 20.6 处 x 一动不动）。
+                // 先按命中高度估一下地面高度（众数），只有落在地面高度上的才算可走。
+                float floorY = EstimateFloorY(top, distance, mask);
+
                 for (int ix = 0; ix < _cellsX; ix++)
                 {
                     for (int iz = 0; iz < _cellsZ; iz++)
                     {
                         float x = _originX + ix * SampleStep;
                         float z = _originZ + iz * SampleStep;
-                        RaycastHit hit;
-                        if (!Physics.Raycast(new Vector3(x, top, z), Vector3.down, out hit, distance, mask))
+                        if (!IsFloorAt(x, z, floorY, top, distance, mask))
+                        {
+                            continue;
+                        }
+
+                        // 厨师是有体积的：中心加上前后左右各偏 BodyRadius 都得是地面，
+                        // 否则这一格实际进不去，算进可走格就会把厨师送进墙角。
+                        bool room = true;
+                        for (int d = 0; d < 4 && room; d++)
+                        {
+                            float ox = d == 0 ? BodyRadius : (d == 1 ? -BodyRadius : 0f);
+                            float oz = d == 2 ? BodyRadius : (d == 3 ? -BodyRadius : 0f);
+                            room = IsFloorAt(x + ox, z + oz, floorY, top, distance, mask);
+                        }
+
+                        if (!room)
                         {
                             continue;
                         }
@@ -496,7 +522,7 @@ namespace WellCooked
                         }
 
                         count++;
-                        cells.Append('[').Append(x.ToString("F2")).Append(',').Append(hit.point.z.ToString("F2")).Append(']');
+                        cells.Append('[').Append(x.ToString("F2")).Append(',').Append(z.ToString("F2")).Append(']');
                     }
                 }
 
@@ -514,6 +540,55 @@ namespace WellCooked
             {
                 _log.LogWarning("state: 地形采样失败: " + e.Message);
             }
+        }
+
+        /// <summary>地面高度取所有命中的众数（0.1 一档）：台面顶面是少数派，会被筛掉。</summary>
+        private static float EstimateFloorY(float top, float distance, int mask)
+        {
+            var buckets = new Dictionary<int, int>();
+            for (int ix = 0; ix < _cellsX; ix += 2)
+            {
+                for (int iz = 0; iz < _cellsZ; iz += 2)
+                {
+                    float x = _originX + ix * SampleStep;
+                    float z = _originZ + iz * SampleStep;
+                    RaycastHit hit;
+                    if (!Physics.Raycast(new Vector3(x, top, z), Vector3.down, out hit, distance, mask))
+                    {
+                        continue;
+                    }
+
+                    int bucket = (int)Math.Round(hit.point.y * 10f);
+                    int seen;
+                    buckets.TryGetValue(bucket, out seen);
+                    buckets[bucket] = seen + 1;
+                }
+            }
+
+            int best = 0;
+            int bestCount = -1;
+            foreach (var pair in buckets)
+            {
+                if (pair.Value > bestCount)
+                {
+                    best = pair.Key;
+                    bestCount = pair.Value;
+                }
+            }
+
+            return best / 10f;
+        }
+
+        /// <summary>这个点上打到的是不是地面（而不是台面顶面或根本没有地面）。</summary>
+        private static bool IsFloorAt(float x, float z, float floorY, float top, float distance, int mask)
+        {
+            RaycastHit hit;
+            if (!Physics.Raycast(new Vector3(x, top, z), Vector3.down, out hit, distance, mask))
+            {
+                return false;
+            }
+
+            return Math.Abs(hit.point.y - floorY) <= FloorTolerance;
         }
 
         private static object TeamId()
