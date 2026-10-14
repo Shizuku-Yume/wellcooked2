@@ -378,6 +378,51 @@ namespace WellCooked
             _driving = true;
             _drivingSince = now;
             _log.LogInfo("takeover: 检测到 " + chefCount + " 名厨师，开始接管驱动（我们占了 " + OwnedPads.Count + " 位）");
+            LogPadInventory();
+        }
+
+        /// <summary>
+        /// 把游戏认得的手柄槽位逐个列出来：哪个槽是我们的、还有别的什么设备在里面。
+        /// 1P 不动时，这份清单能区分"我们的手柄没占住槽"和"占了槽但游戏没读它"。
+        /// </summary>
+        private static void LogPadInventory()
+        {
+            var lookup = AccessTools.Method(typeof(PCPadInputProvider), "GetActionSet",
+                new[] { typeof(ControlPadInput.PadNum) });
+            if (lookup == null)
+            {
+                _log.LogWarning("takeover: 拿不到 PCPadInputProvider.GetActionSet，槽位清单跳过");
+                return;
+            }
+
+            int maximum = PlayerInputLookup.GetSystemControllerMaximum();
+            for (int pad = 0; pad < maximum; pad++)
+            {
+                object actions = null;
+                try
+                {
+                    actions = lookup.Invoke(null, new object[] { (ControlPadInput.PadNum)pad });
+                }
+                catch (Exception e)
+                {
+                    _log.LogWarning("takeover: pad 槽 " + pad + " 取不到: " + e.Message);
+                    continue;
+                }
+
+                var set = actions as PlayerActionSet;
+                var device = set == null ? null : set.Device;
+                bool ours = false;
+                foreach (var owned in OwnedPads)
+                {
+                    if (ReferenceEquals(owned.Pad, device))
+                    {
+                        ours = true;
+                    }
+                }
+
+                _log.LogInfo("takeover: pad 槽 " + pad + " → "
+                             + (device == null ? "空" : device.Name + (ours ? "（我们的）" : "（不是我们的）")));
+            }
         }
 
         private static void StopDriving()

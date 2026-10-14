@@ -175,7 +175,10 @@ namespace WellCooked
                              "ServerPlayerAttachmentCarrier", "ServerWashingStation", "ServerHeatedStation",
                              "PlateReturnController", "ServerPlateStation", "EntitySerialisationRegistry",
                              "RoundTimer", "ServerRoundTimer", "OrderDefinitionNode", "RecipeListEntry",
-                             "PlayerIDProvider", "PlayerControls", "GameUtils", "MultiplayerController"
+                             "PlayerIDProvider", "PlayerControls", "GameUtils", "MultiplayerController",
+                             "RecipeList", "RecipeList+Entry", "CookingHandler", "IServerRoundTimer",
+                             "ServerRoundTimer", "TeamMonitor", "ServerKitchenFlowController",
+                             "OrderController", "OrderController+OrderID", "PCPadInputProvider", "TeamID"
                          })
                 {
                     var focus = AccessTools.TypeByName(wanted)

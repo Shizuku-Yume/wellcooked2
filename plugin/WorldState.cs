@@ -151,23 +151,45 @@ namespace WellCooked
             else
             {
                 var controller = Get(monitor, "OrdersController");
-                var recipes = controller == null ? null : AsEnumerable(Get(controller, "ActiveRecipes"));
-                if (recipes == null)
+                if (controller == null)
                 {
-                    missing.Add("ActiveRecipes");
+                    missing.Add("OrdersController");
                 }
                 else
                 {
-                    bool first = true;
-                    foreach (var recipe in recipes)
+                    // 活跃订单：控制器私有 m_activeOrders 上有剩余时间与寿命
+                    var active = AsEnumerable(Get(controller, "m_activeOrders"));
+                    if (active == null)
                     {
-                        if (!first)
+                        missing.Add("m_activeOrders");
+                    }
+                    else
+                    {
+                        bool first = true;
+                        foreach (var order in active)
                         {
-                            json.Append(',');
-                        }
+                            if (!first)
+                            {
+                                json.Append(',');
+                            }
 
-                        first = false;
-                        json.Append(Describe(recipe));
+                            first = false;
+                            json.Append(DescribeOrder(order));
+                        }
+                    }
+
+                    // 菜谱条目：能拿到菜名与分数，作为订单内容的补充
+                    var recipes = AsEnumerable(Get(controller, "ActiveRecipes"));
+                    if (recipes == null)
+                    {
+                        missing.Add("ActiveRecipes");
+                    }
+                    else
+                    {
+                        foreach (var recipe in recipes)
+                        {
+                            json.Append(",\"recipe\":").Append(DescribeRecipe(recipe));
+                        }
                     }
                 }
             }
@@ -184,6 +206,8 @@ namespace WellCooked
             else
             {
                 json.Append("{\"elapsed\":").Append(Num(Get(timer, "TimeElapsed")))
+                    .Append(",\"round\":").Append(Num(Get(timer, "m_roundTimer")))
+                    .Append(",\"left\":").Append(Num(Get(timer, "m_timeLeft")))
                     .Append(",\"limit\":").Append(Num(Get(flow, "m_timeLimit")))
                     .Append('}');
             }
@@ -204,9 +228,11 @@ namespace WellCooked
             bool first = true;
             foreach (var handler in handlers)
             {
-                var component = handler as Component;
+                // ServerCookingHandler 不是 UnityEngine.Component，位置从它交出的 CookingHandler 上取
+                var component = handler as Component ?? Get(handler, "GetCookingHandler") as Component;
                 if (component == null)
                 {
+                    missing.Add("CookingHandler 位置");
                     continue;
                 }
 
@@ -355,6 +381,61 @@ namespace WellCooked
         private static string Bool(object value)
         {
             return value == null ? "null" : value.ToString().ToLowerInvariant();
+        }
+
+        /// <summary>订单：ID、剩余时间、寿命。</summary>
+        private static string DescribeOrder(object order)
+        {
+            if (order == null)
+            {
+                return "null";
+            }
+
+            var parts = new List<string>();
+            var id = Get(order, "ID");
+            if (id != null)
+            {
+                parts.Add("\"id\":\"" + Clean(Get(id, "m_id").ToString()) + "\"");
+            }
+
+            var remaining = Get(order, "Remaining");
+            if (remaining != null)
+            {
+                parts.Add("\"remaining\":" + Num(remaining));
+            }
+
+            var lifetime = Get(order, "Lifetime");
+            if (lifetime != null)
+            {
+                parts.Add("\"lifetime\":" + Num(lifetime));
+            }
+
+            return parts.Count == 0 ? "\"" + Clean(order.ToString()) + "\"" : "{" + string.Join(",", parts.ToArray()) + "}";
+        }
+
+        /// <summary>菜谱条目：RecipeList+Entry 里是 m_order（菜谱节点）与 m_scoreForMeal。</summary>
+        private static string DescribeRecipe(object entry)
+        {
+            if (entry == null)
+            {
+                return "null";
+            }
+
+            var order = Get(entry, "m_order");
+            var parts = new List<string>();
+            if (order != null)
+            {
+                var unity = order as UnityEngine.Object;
+                parts.Add("\"dish\":\"" + Clean(unity != null ? unity.name : order.ToString()) + "\"");
+            }
+
+            var score = Get(entry, "m_scoreForMeal");
+            if (score != null)
+            {
+                parts.Add("\"score\":" + score);
+            }
+
+            return parts.Count == 0 ? "\"" + Clean(entry.ToString()) + "\"" : "{" + string.Join(",", parts.ToArray()) + "}";
         }
 
         /// <summary>把订单/菜谱这类对象压成一行：有名字用名字，有剩余时间就用它。</summary>
