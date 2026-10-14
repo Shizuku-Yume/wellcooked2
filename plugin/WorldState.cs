@@ -890,7 +890,7 @@ namespace WellCooked
 
         // ---- 反射小工具：拿不到返回 null，由调用方记进 missing ----
 
-        private static List<object> FindAll(string typeName)
+        public static List<object> FindAll(string typeName)
         {
             var result = new List<object>();
             var type = AccessTools.TypeByName(typeName);
@@ -915,7 +915,7 @@ namespace WellCooked
             return Invoke(target, name, null);
         }
 
-        private static object Invoke(object target, string name, params object[] args)
+        public static object Invoke(object target, string name, params object[] args)
         {
             if (target == null)
             {
@@ -1093,6 +1093,98 @@ namespace WellCooked
 
             steps.Add("{\"node\":\"" + name + "\",\"type\":\"" + type.Name + "\",\"children\":["
                       + string.Join(",", parts.ToArray()) + "]}");
+        }
+
+        /// <summary>当前这一局的订单控制器（工序状态机用它读活跃订单与菜谱）。</summary>
+        public static object FirstOrderController()
+        {
+            var flow = FindAll("ServerKitchenFlowControllerBase").FirstOrDefault();
+            if (flow == null)
+            {
+                return null;
+            }
+
+            var team = TeamId();
+            if (team == null)
+            {
+                return null;
+            }
+
+            var monitor = Invoke(flow, "GetMonitorForTeam", team);
+            return monitor == null ? null : Get(monitor, "OrdersController");
+        }
+
+        /// <summary>当前活跃订单的菜名（一个订单一个）。</summary>
+        public static List<string> ActiveRecipes(object controller)
+        {
+            var result = new List<string>();
+            if (controller == null)
+            {
+                return result;
+            }
+
+            var recipes = AsEnumerable(Get(controller, "ActiveRecipes"));
+            if (recipes == null)
+            {
+                return result;
+            }
+
+            foreach (var entry in recipes)
+            {
+                var order = Get(entry, "m_order");
+                var unity = order as UnityEngine.Object;
+                if (unity != null)
+                {
+                    result.Add(Clean(unity.name));
+                }
+            }
+
+            return result;
+        }
+
+        /// <summary>当前订单要的"叶子"步骤名（如 SushiFish）：工序状态机靠它找料箱。</summary>
+        public static List<string> OrderStepLeaves(object controller)
+        {
+            var result = new List<string>();
+            if (controller == null)
+            {
+                return result;
+            }
+
+            var recipes = AsEnumerable(Get(controller, "ActiveRecipes"));
+            if (recipes == null)
+            {
+                return result;
+            }
+
+            foreach (var entry in recipes)
+            {
+                CollectLeaves(Get(entry, "m_order"), result, 0);
+            }
+
+            return result;
+        }
+
+        private static void CollectLeaves(object node, List<string> leaves, int depth)
+        {
+            if (node == null || depth > 4)
+            {
+                return;
+            }
+
+            var raw = AsEnumerable(Get(node, "m_composition"));
+            var children = raw == null ? null : new List<object>(raw);
+            if (children == null || children.Count == 0)
+            {
+                var unity = node as UnityEngine.Object;
+                leaves.Add(unity != null && !string.IsNullOrEmpty(unity.name) ? Clean(unity.name) : node.GetType().Name);
+                return;
+            }
+
+            foreach (var child in children)
+            {
+                CollectLeaves(child, leaves, depth + 1);
+            }
         }
 
         /// <summary>把订单/菜谱这类对象压成一行：有名字用名字，有剩余时间就用它。</summary>

@@ -40,6 +40,9 @@ namespace WellCooked
 
         /// <summary>`trace=true` 时每帧把喂出去的方向与厨师位置打进日志（卡住时看抖动从哪来）。</summary>
         private static bool _trace;
+
+        /// <summary>`work=auto` 时不再随便挑工位，改由工序状态机（`WorkOrder`）决定去哪、按不按交互。</summary>
+        private static bool _workMode;
         private static int _arrivals;
         private static int _retargets;
 
@@ -113,6 +116,10 @@ namespace WellCooked
                             Slots.AddRange(parsed);
                             _log.LogInfo("takeover: 占位改成 " + string.Join(",", Slots.ConvertAll(x => (x + 1).ToString()).ToArray()));
                         }
+                    }
+                    else if (key == "work")
+                    {
+                        _workMode = value == "auto";
                     }
                     else if (key == "trace")
                     {
@@ -652,6 +659,12 @@ namespace WellCooked
             float elapsed = now - _drivingSince;
             bool action = elapsed % ActionPeriod < ActionLength;
             ScanChefPositions(now);
+
+            if (_workMode)
+            {
+                DriveWorkOrder(now);
+                return;
+            }
             if (now >= _nextTargetScan)
             {
                 _nextTargetScan = now + 3f;
@@ -744,11 +757,77 @@ namespace WellCooked
             }
         }
 
+        /// <summary>
+        /// 工序模式：目标与交互都听 `WorkOrder` 的（任务 09）。走位仍然交给 `Navigation`。
+        /// 这里不做任何"该做什么"的判断，只把状态机的决定喂成输入。
+        /// </summary>
+        private static void DriveWorkOrder(float now)
+        {
+            var states = new List<WorkOrder.ChefState>();
+            foreach (var owned in OwnedPads)
+            {
+                Vector2 position;
+                if (!TryPosition(owned.Slot, out position))
+                {
+                    continue;
+                }
+
+                PlayerControls chef;
+                ChefControllers.TryGetValue(owned.Slot, out chef);
+                states.Add(new WorkOrder.ChefState
+                {
+                    Slot = owned.Slot,
+                    Position = position,
+                    Held = chef == null ? "" : Kitchen.HeldName(chef)
+                });
+            }
+
+            WorkOrder.Tick(now, states);
+
+            foreach (var owned in OwnedPads)
+            {
+                Vector2 position;
+                if (!TryPosition(owned.Slot, out position))
+                {
+                    continue;
+                }
+
+                Vector2 target;
+                bool interact;
+                if (!WorkOrder.DesireFor(owned.Slot, out target, out interact))
+                {
+                    owned.Pad.Want(false, false, Vector2.zero);
+                    continue;
+                }
+
+                Navigation.Assign(owned.Slot, target);
+                string status;
+                var direction = Navigation.Steer(owned.Slot, position, now, out status);
+                owned.Pad.Want(interact, false, direction);
+
+                if (_trace)
+                {
+                    _log.LogInfo("trace 工序 玩家位=" + (owned.Slot + 1)
+                                 + " 交互=" + interact
+                                 + " 方向=(" + direction.x.ToString("F2") + "," + direction.y.ToString("F2") + ")"
+                                 + " 位置=(" + position.x.ToString("F2") + "," + position.y.ToString("F2") + ")"
+                                 + " " + status);
+                }
+            }
+
+            if (now >= _nextDriveLog)
+            {
+                _nextDriveLog = now + 2f;
+                _log.LogInfo("takeover: 工序模式 " + WorkOrder.Status + " 完成单数=" + WorkOrder.CompletedOrders);
+            }
+        }
+
         // ---- 导航：目标点由这里挑，走位交给 Navigation ----
 
         private static readonly List<Vector2> Targets = new List<Vector2>();
         private static readonly Dictionary<object, int> TargetIndex = new Dictionary<object, int>();
         private static readonly Dictionary<int, Vector3> ChefPositions = new Dictionary<int, Vector3>();
+        private static readonly Dictionary<int, PlayerControls> ChefControllers = new Dictionary<int, PlayerControls>();
         private static float _nextChefScan;
         private static float _nextTargetScan;
         private static int _targetCursor;
@@ -799,12 +878,15 @@ namespace WellCooked
 
             _nextChefScan = now + 0.1f;
             ChefPositions.Clear();
+            ChefControllers.Clear();
             foreach (var chef in UnityEngine.Object.FindObjectsOfType<PlayerControls>())
             {
                 var provider = chef.GetComponent<PlayerIDProvider>();
                 if (provider != null)
                 {
-                    ChefPositions[(int)provider.GetID()] = chef.transform.position;
+                    int id = (int)provider.GetID();
+                    ChefPositions[id] = chef.transform.position;
+                    ChefControllers[id] = chef;
                 }
             }
         }
