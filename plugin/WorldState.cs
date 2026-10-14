@@ -63,6 +63,8 @@ namespace WellCooked
             int chefCount = AppendChefs(json);
             AppendKitchen(json, missing);
             AppendCooking(json, missing);
+            int stationCount = AppendMap(json, missing);
+            DumpTerrainOnce();
 
             json.Append(",\"missing\":[");
             for (int i = 0; i < missing.Count; i++)
@@ -82,7 +84,7 @@ namespace WellCooked
             if (now >= _nextSummary)
             {
                 _nextSummary = now + 2f;
-                var summary = "state: 厨师=" + chefCount
+                var summary = "state: 厨师=" + chefCount + " 工位=" + stationCount
                               + (missing.Count == 0 ? "" : " 缺=" + string.Join(",", missing.ToArray()));
                 if (summary != _lastSummary)
                 {
@@ -261,6 +263,142 @@ namespace WellCooked
             }
 
             json.Append(']');
+        }
+
+        /// <summary>
+        /// 地图上的工位与物品：砧板/锅/盘子/水槽/加热台/传送带各自的位置和内容物。
+        /// 内容是 `ClientIngredientContainer.GetContents()` 给出的物品节点，位置取组件自己的 transform。
+        /// 调度要用它做资源预订（谁占了哪口锅、哪块砧板上有东西）。
+        /// </summary>
+        private static int AppendMap(StringBuilder json, List<string> missing)
+        {
+            var stationTypes = new[]
+            {
+                "ClientIngredientContainer", "ClientPlateStation", "ClientWashingStation",
+                "ClientHeatedStation", "ClientMixingStation", "ClientCleanPlateStack",
+                "ClientDirtyPlateStack", "ClientConveyorStation", "ClientSwitchStation",
+                "ClientCookingStation", "ClientPlate"
+            };
+
+            json.Append(",\"stations\":[");
+            bool first = true;
+            int count = 0;
+            foreach (var typeName in stationTypes)
+            {
+                var found = FindAll(typeName);
+                if (found.Count == 0)
+                {
+                    continue;
+                }
+
+                foreach (var component in found)
+                {
+                    var unity = component as Component;
+                    if (unity == null)
+                    {
+                        continue;
+                    }
+
+                    if (!first)
+                    {
+                        json.Append(',');
+                    }
+
+                    first = false;
+                    count++;
+                    var p = unity.transform.position;
+                    json.Append("{\"type\":\"").Append(typeName)
+                        .Append("\",\"pos\":[").Append(p.x.ToString("F2")).Append(',').Append(p.y.ToString("F2"))
+                        .Append("],\"contents\":[");
+
+                    var contents = AsEnumerable(Invoke(component, "GetContents"));
+                    bool firstItem = true;
+                    if (contents != null)
+                    {
+                        foreach (var item in contents)
+                        {
+                            if (!firstItem)
+                            {
+                                json.Append(',');
+                            }
+
+                            firstItem = false;
+                            json.Append(Describe(item));
+                        }
+                    }
+
+                    json.Append(']');
+
+                    var heat = Invoke(component, "HeatValue");
+                    if (heat != null)
+                    {
+                        json.Append(",\"heat\":").Append(Num(heat));
+                    }
+
+                    json.Append('}');
+                }
+            }
+
+            json.Append(']');
+            if (count == 0)
+            {
+                missing.Add("地图工位");
+            }
+
+            return count;
+        }
+
+        /// <summary>
+        /// 地形：Unity 导航网格就是"人能走的地方"，障碍（台面、墙）自然被排除。
+        /// 每个场景导一次，写 `wellcooked-terrain.json`，寻路拿它当可走区域。
+        /// </summary>
+        private static string _terrainScene;
+
+        private static void DumpTerrainOnce()
+        {
+            var scene = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
+            if (scene == _terrainScene || scene == "StartScreen")
+            {
+                return;
+            }
+
+            _terrainScene = scene;
+            try
+            {
+                var triangulation = UnityEngine.AI.NavMesh.CalculateTriangulation();
+                var text = new StringBuilder();
+                text.Append("{\"scene\":\"").Append(scene).Append('"');
+                text.Append(",\"vertices\":[");
+                for (int i = 0; i < triangulation.vertices.Length; i++)
+                {
+                    var v = triangulation.vertices[i];
+                    if (i > 0)
+                    {
+                        text.Append(',');
+                    }
+
+                    text.Append('[').Append(v.x.ToString("F2")).Append(',').Append(v.z.ToString("F2")).Append(']');
+                }
+
+                text.Append("],\"triangles\":[");
+                for (int i = 0; i < triangulation.indices.Length; i++)
+                {
+                    if (i > 0)
+                    {
+                        text.Append(',');
+                    }
+
+                    text.Append(triangulation.indices[i]);
+                }
+
+                text.Append("]}");
+                File.WriteAllText(Path.Combine(Paths.BepInExRootPath, "wellcooked-terrain.json"), text.ToString());
+                _log.LogInfo("state: 地形导出 " + triangulation.vertices.Length + " 个可走顶点（场景 " + scene + "）");
+            }
+            catch (Exception e)
+            {
+                _log.LogWarning("state: 地形导出失败: " + e.Message);
+            }
         }
 
         private static object TeamId()
