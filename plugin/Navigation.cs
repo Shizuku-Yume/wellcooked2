@@ -117,7 +117,11 @@ namespace WellCooked
             }
             else if (!agent.StuckReported && now - agent.LastMovedAt > 1.5f)
             {
+                // 报一次卡住，同时把路径清掉让上层换目标。只报不清的话，
+                // 下一帧又会朝同一面墙推（实测贴墙站着不动、日志里只剩不可达）。
                 agent.StuckReported = true;
+                agent.Path = null;
+                agent.NextRepath = 0f;
                 status = "卡住（" + (now - agent.LastMovedAt).ToString("F1") + " 秒没动）";
                 return Vector2.zero;
             }

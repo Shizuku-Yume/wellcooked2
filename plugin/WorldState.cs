@@ -559,8 +559,10 @@ namespace WellCooked
 
             // 探针半径比厨师实际半径略小：贴着台面走时厨师能蹭过去，
             // 用足半径会把贴着台面的一整圈都判死，路就断了。
-            float nodeRadius = chefRadius * 0.75f;
-            float edgeRadius = chefRadius * 0.6f;
+            // 格子用略小的半径（贴着台面能站住），但**边**用足半径：
+            // 厨师是沿边走过去的，缝比厨师窄就不该算通。
+            float nodeRadius = chefRadius * 0.7f;
+            float edgeRadius = chefRadius;
 
             for (int i = 0; i < _cellsX; i++)
             {
