@@ -26,10 +26,15 @@ namespace WellCooked
             _log = Logger;
             _log.LogInfo("WellCooked.Smoke loaded; Unity " + UnityEngine.Application.unityVersion
                          + ", BepInEx " + typeof(BaseUnityPlugin).Assembly.GetName().Version);
+            // 游戏失焦就暂停：调试时人在终端、答辩时 Supervisor 在终端，游戏都在后台，
+            // 不打开这个开关厨师就一步不走（实测：窗口激活后立刻开始移动，失焦则完全冻结）。
+            UnityEngine.Application.runInBackground = true;
             ApplySmokePatches();
+            ApplyFocusPausePatch();
             WorldState.Install(_log);
             LogicalInput.Install(_log);
             Navigation.Install(_log);
+            Commands.Install(_log);
             Takeover.Install(_log);
             DumpGameInventory();
         }
@@ -87,6 +92,38 @@ namespace WellCooked
                     _log.LogWarning("smoke patch failed on " + Describe(target) + ": " + e.Message);
                 }
             }
+        }
+
+        /// <summary>
+        /// 游戏自己在失焦时暂停：`InGamePauseMenu.OnApplicationFocus(false)`。
+        /// 补丁只在"失去焦点"时跳过原方法（获得焦点照常走），这样后台运行不会把游戏按停。
+        /// </summary>
+        private static void ApplyFocusPausePatch()
+        {
+            var type = AccessTools.TypeByName("InGamePauseMenu");
+            if (type == null)
+            {
+                _log.LogWarning("失焦暂停: 找不到 InGamePauseMenu");
+                return;
+            }
+
+            var target = AccessTools.Method(type, "OnApplicationFocus", new[] { typeof(bool) });
+            if (target == null)
+            {
+                _log.LogWarning("失焦暂停: InGamePauseMenu 上没有 OnApplicationFocus(bool)");
+                return;
+            }
+
+            var prefix = new HarmonyMethod(typeof(SmokePlugin).GetMethod(
+                nameof(SkipPauseOnFocusLost), BindingFlags.Static | BindingFlags.NonPublic));
+            new Harmony("wellcooked.focus").Patch(target, prefix: prefix);
+            _log.LogInfo("失焦暂停: 已让 InGamePauseMenu.OnApplicationFocus(false) 不再暂停游戏");
+        }
+
+        /// <summary>失去焦点时跳过原方法（返回 true 时才执行原方法）。</summary>
+        private static bool SkipPauseOnFocusLost(bool focus)
+        {
+            return focus;
         }
 
         private static string Describe(MethodBase method)

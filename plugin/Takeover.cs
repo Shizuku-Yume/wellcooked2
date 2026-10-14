@@ -145,6 +145,7 @@ namespace WellCooked
         private static void Tick()
         {
             var now = Time.realtimeSinceStartup;
+            Commands.Tick();
             WorldState.Tick(now);
             if (now < _nextCheck)
             {
