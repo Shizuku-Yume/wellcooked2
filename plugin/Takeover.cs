@@ -698,7 +698,6 @@ namespace WellCooked
                 {
                     // 到达是"走到路径终点"就成立，而走位日志每 2 秒才一行，正好会错过它。
                     // 所以到达单独计数、单独打日志，别让它看起来像"0 次到达"。
-                    _arrivals++;
                     Vector2 reached;
                     string reachedText = Navigation.TryTarget(owned.Slot, out reached)
                         ? "目标=(" + reached.x.ToString("F1") + "," + reached.y.ToString("F1") + ") 距离="
@@ -881,6 +880,10 @@ namespace WellCooked
             if (last.Length > 0)
             {
                 _log.LogInfo("takeover: 目标结束 " + last);
+                if (last.Contains("结束原因=到达") || last.Contains("结束原因=路径终点"))
+                {
+                    _arrivals++;
+                }
             }
 
             TargetIndex[owner] = chosen;
