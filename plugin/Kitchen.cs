@@ -102,6 +102,16 @@ namespace WellCooked
                     continue; // 台面上有东西
                 }
 
+                // 料箱、盘子堆、出菜台身上也挂着 ClientAttachStation：
+                // 挑到它们会把料放回料箱（实测"空台面"选中的就是料箱本身）。
+                if (unity.GetComponent("ClientPickupItemSpawner") != null
+                    || unity.GetComponent("ClientCleanPlateStack") != null
+                    || unity.GetComponent("ClientPlateStation") != null
+                    || unity.GetComponent("ClientDirtyPlateStack") != null)
+                {
+                    continue;
+                }
+
                 var p = unity.transform.position;
                 var position = new Vector2(p.x, p.z);
                 float distance = Vector2.Distance(position, near);
