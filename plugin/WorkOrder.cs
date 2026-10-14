@@ -42,6 +42,7 @@ namespace WellCooked
         private static bool _arrivedLogged;
         private static ChefState _lastChef;
         private static string _facingName = "?";
+        private static string _stationName = "";
         private static float _closestDistance = float.MaxValue;
         private static float _closestAt;
         private static bool _interacted;
@@ -49,6 +50,7 @@ namespace WellCooked
         private static string _expectContents = "";
         private static Vector2 _target;
         private static Vector2 _counter;
+        private static string _counterName = "";
         private static Vector2 _station;   // 真正要交互的工位位置（朝向它）
         private static Vector2 _faceDirection;
         private static float _faceUntil;
@@ -61,7 +63,7 @@ namespace WellCooked
         private const float StepTimeout = 20f;
 
         /// <summary>到达判定半径：工位都在台面里，厨师只能站到旁边一格。</summary>
-        private const float ReachRadius = 1.6f;
+        private const float ReachRadius = 0.25f;
 
         /// <summary>交互按下的时长（秒）。游戏只认按下的边沿，必须松开。</summary>
         private const float InteractHold = 0.25f;
@@ -161,76 +163,6 @@ namespace WellCooked
             float toStation = Vector2.Distance(chef.Position, _station);
             string heldNow = chef.Held;
 
-            // 最后一段不用寻路，直接朝工位推：像人一样顶着台面站到它旁边那一格，
-            // 推的过程顺便把朝向也对准了（交互按的是"面前那一格"，见 GetFacingGridOccupant）。
-            // 寻路停在哪一格是"我们网格"说了算，未必正好是游戏网格的相邻格（实测差 1.48 米）。
-            if (toStation <= 2.4f)
-            {
-                if (!_arrivedLogged)
-                {
-                    _arrivedLogged = true;
-                    _log.LogInfo("工序: " + _step + " 接近工位（" + toStation.ToString("F2") + " 米），直接朝它推");
-                }
-
-                if (!_facing)
-                {
-                    _nextPress = now + 0.35f; // 先转 0.35 秒身再按
-                }
-
-                _facing = true;
-                _facingName = chef.FacingName;
-
-                // 先朝工位推，推到推不动（离工位最近距离 0.35 秒没再变近）就停下再按：
-                // 一边顶一边按，游戏那边不认（实测面前确实是料箱、按了很多次也拿不到料）。
-                if (toStation < _closestDistance - 0.02f)
-                {
-                    _closestDistance = toStation;
-                    _closestAt = now;
-                }
-
-                bool blocked = now - _closestAt > 0.35f;
-                _faceDirection = blocked || (chef.Position - _station).sqrMagnitude <= 0.0001f
-                    ? Vector2.zero
-                    : (_station - chef.Position).normalized;
-
-                if (!_pressing && now >= _nextPress)
-                {
-                    _nextPress = now + PressInterval;
-                    _pressUntil = now + InteractHold;
-                    _pressing = true;
-                    _lastCheckAt = now + InteractHold + 0.2f;
-                    _log.LogInfo("工序: " + _step + " 按交互（手上「" + heldNow + "」，距工位 "
-                                 + toStation.ToString("F2") + " 米，面前是「" + _facingName + "」）");
-                }
-
-                if (_pressing && now >= _pressUntil)
-                {
-                    _pressing = false;
-                }
-
-                if (now >= _lastCheckAt)
-                {
-                    if (Matches(heldNow))
-                    {
-                        Next(now);
-                        return;
-                    }
-
-                    // 检查过了就作废这次检查，别每帧都往后推"下一次按"——那样永远按不出去
-                    _lastCheckAt = float.MaxValue;
-                    _nextPress = now + PressInterval;
-                }
-
-                if (!_warned && now - _stepStart > 8f)
-                {
-                    _warned = true;
-                    _log.LogWarning("工序: " + _step + " 推了几次没效果（手上「" + heldNow
-                                    + "」，期望「" + (_expectHeld.Length == 0 ? "空手" : _expectHeld) + "」），继续试");
-                }
-
-                return;
-            }
-
             // 已经到位了：先朝着工位站好，再按交互
             if (distance <= ReachRadius)
             {
@@ -265,13 +197,35 @@ namespace WellCooked
                 // 按一次 → 等效果 → 没效果才再按。
                 // 不能按完就接着按：0.5 秒后又按一次会把刚拿到的东西放下
                 // （实测 手上在「」和「SushiFish」之间反复跳，永远判不出成功）。
+                // 游戏挑的是"最对齐的邻居格"，站错格就会挑到别的东西（实测挑到垃圾桶，
+                // 一按就把盘子丢了）。所以先问游戏面前是什么，不是工位就只转身不按。
+                string facing = chef.FacingName;
+                bool facingStation = facing == _stationName;
+
+                if (!facingStation)
+                {
+                    _faceDirection = (chef.Position - _station).sqrMagnitude > 0.0001f
+                        ? (_station - chef.Position).normalized
+                        : Vector2.zero;
+
+                    if (!_warned && now - _stepStart > 4f)
+                    {
+                        _warned = true;
+                        _log.LogWarning("工序: " + _step + " 面前是「" + facing + "」不是「"
+                                        + _stationName + "」，先不按，继续转身/挪位");
+                    }
+
+                    return;
+                }
+
                 if (!_pressing && now >= _nextPress)
                 {
                     _nextPress = now + PressInterval;
                     _pressUntil = now + InteractHold;
                     _pressing = true;
                     _lastCheckAt = now + InteractHold + 0.2f;
-                    _log.LogInfo("工序: " + _step + " 按交互（手上「" + heldNow + "」）");
+                    _log.LogInfo("工序: " + _step + " 按交互（手上「" + heldNow + "」，面前是「"
+                                 + facing + "」）");
                 }
 
                 if (_pressing && now >= _pressUntil)
@@ -315,9 +269,10 @@ namespace WellCooked
         }
 
         /// <summary>把目标设成"工位相邻格"，并记住工位本身（到点后要朝它）。</summary>
-        private static void AimAt(Vector2 station)
+        private static void AimAt(Vector2 station, string name)
         {
             _station = station;
+            _stationName = name ?? "";
             Vector2 approach;
             var chef = _lastChef;
             Vector2 from = chef == null ? station : chef.Position;
@@ -370,7 +325,7 @@ namespace WellCooked
                         return;
                     }
 
-                    AimAt(crate.Position);
+                    AimAt(crate.Position, crate.Name);
                     _hasTarget = true;
                     _expectHeld = want;
                     _expectContents = "";
@@ -389,7 +344,8 @@ namespace WellCooked
                     }
 
                     _counter = counter.Position;
-                    AimAt(counter.Position);
+                    _counterName = counter.Name;
+                    AimAt(counter.Position, counter.Name);
                     _hasTarget = true;
                     _expectHeld = ""; // 放下后空手
                     _expectContents = "";
@@ -407,7 +363,7 @@ namespace WellCooked
                         return;
                     }
 
-                    AimAt(stack.Position);
+                    AimAt(stack.Position, stack.Name);
                     _hasTarget = true;
                     _expectHeld = "Plate";
                     _expectContents = "";
@@ -418,7 +374,7 @@ namespace WellCooked
 
                 case Step.PlateIt:
                 {
-                    AimAt(_counter);
+                    AimAt(_counter, _counterName);
                     _hasTarget = true;
                     _expectHeld = "Plate";                  // 装盘后手上是"装着料的盘子"
                     _expectContents = WantedIngredient();
@@ -436,7 +392,7 @@ namespace WellCooked
                         return;
                     }
 
-                    AimAt(station.Position);
+                    AimAt(station.Position, station.Name);
                     _hasTarget = true;
                     _expectHeld = ""; // 交付后应该空手
                     _expectContents = "";
