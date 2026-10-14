@@ -111,6 +111,9 @@ namespace WellCooked
                 case "session":
                     StartSession(value);
                     break;
+                case "path":
+                    ProbePath(value);
+                    break;
                 case "probe":
                     Probe(value);
                     break;
@@ -442,6 +445,46 @@ namespace WellCooked
                              + " 距离=" + distance.ToString("F2")
                              + " 尺寸=" + bounds.size.x.ToString("F2") + "×" + bounds.size.y.ToString("F2") + "×" + bounds.size.z.ToString("F2"));
             }
+        }
+
+        /// <summary>path=x1,z1,x2,z2：直接问一次 A*，把起点/终点格与结果打出来。</summary>
+        private static void ProbePath(string value)
+        {
+            var parts = value.Split(',');
+            if (parts.Length < 4)
+            {
+                _log.LogWarning("指令: path=x1,z1,x2,z2");
+                return;
+            }
+
+            float x1, z1, x2, z2;
+            if (!float.TryParse(parts[0], out x1) || !float.TryParse(parts[1], out z1)
+                || !float.TryParse(parts[2], out x2) || !float.TryParse(parts[3], out z2))
+            {
+                _log.LogWarning("指令: path 坐标看不懂");
+                return;
+            }
+
+            int sx, sz, tx, tz;
+            WorldState.WorldToCell(x1, z1, out sx, out sz);
+            WorldState.WorldToCell(x2, z2, out tx, out tz);
+            _log.LogInfo("指令: path 起点格 " + sx + "," + sz + " 可走=" + WorldState.IsWalkableCell(sx, sz)
+                         + " 格心=" + WorldState.CellCenter(sx, sz)
+                         + "；终点格 " + tx + "," + tz + " 可走=" + WorldState.IsWalkableCell(tx, tz)
+                         + " 格心=" + WorldState.CellCenter(tx, tz));
+            _log.LogInfo("指令: 起点四邻可走=" + WorldState.CanStep(sx, sz, 1, 0) + "/"
+                         + WorldState.CanStep(sx, sz, -1, 0) + "/"
+                         + WorldState.CanStep(sx, sz, 0, 1) + "/"
+                         + WorldState.CanStep(sx, sz, 0, -1));
+
+            var path = Navigation.FindPath(new Vector2(x1, z1), new Vector2(x2, z2));
+            if (path == null)
+            {
+                _log.LogInfo("指令: A* 返回 null（不可达）");
+                return;
+            }
+
+            _log.LogInfo("指令: A* 返回 " + path.Count + " 个路点: " + string.Join(" ", path.ConvertAll(v => "(" + v.x.ToString("F1") + "," + v.y.ToString("F1") + ")").ToArray()));
         }
 
         private static void DumpType(string name)
