@@ -665,7 +665,20 @@ namespace WellCooked
             }
 
             var probe = new Vector3(world.x, ground.point.y + 0.5f, world.z);
-            return !Physics.CheckSphere(probe, radius, ~0, QueryTriggerInteraction.Ignore);
+
+            // 必须排掉厨师自己的碰撞体：否则"厨师站着的这一格"会被判成走不通，
+            // A* 的起点格不可走、一步都扩不出去，一律报"不可达"（实测 288 次）。
+            foreach (var hit in Physics.OverlapSphere(probe, radius, ~0, QueryTriggerInteraction.Ignore))
+            {
+                if (hit.GetComponentInParent<PlayerControls>() != null)
+                {
+                    continue;
+                }
+
+                return false;
+            }
+
+            return true;
         }
 
         private static string ActiveScene()
