@@ -345,6 +345,48 @@ namespace WellCooked
             return true;
         }
 
+        /// <summary>
+        /// 游戏自己怎么看这个工位：`ClientWorkstation.IsBeingUsed()`（有没有厨师正在用）
+        /// 和交互键状态。用来区分"我们的按键没到游戏"和"到了但没开始工作"。
+        /// </summary>
+        public static string WorkstationDebug(Vector2 station, int slot)
+        {
+            var parts = new List<string>();
+            int ix, iz;
+            if (WorldState.GameCellOf(station, out ix, out iz))
+            {
+                var occupant = WorldState.GameCellOccupant(ix, iz);
+                if (occupant != null)
+                {
+                    var workstation = occupant.GetComponent("ClientWorkstation");
+                    if (workstation != null)
+                    {
+                        var beingUsed = WorldState.Get(workstation, "IsBeingUsed");
+                        parts.Add("在用=" + (beingUsed ?? "?"));
+                    }
+                }
+            }
+
+            var lookup = AccessTools.TypeByName("PlayerInputLookup");
+            var buttonId = AccessTools.TypeByName("PlayerInputLookup+LogicalButtonID");
+            var playerType = AccessTools.TypeByName("PlayerInputLookup+Player");
+            if (lookup != null && buttonId != null && playerType != null)
+            {
+                var id = Enum.Parse(buttonId, "WorkstationInteract");
+                var player = Enum.ToObject(playerType, slot);
+                var getButton = AccessTools.Method(lookup, "GetButton", new[] { buttonId, playerType });
+                var button = getButton == null ? null : getButton.Invoke(null, new[] { id, player });
+                if (button != null)
+                {
+                    var isDown = WorldState.Get(button, "IsDown");
+                    var justPressed = WorldState.Get(button, "JustPressed");
+                    parts.Add("游戏看到 X=" + (isDown ?? "?") + "/刚按=" + (justPressed ?? "?"));
+                }
+            }
+
+            return parts.Count == 0 ? "?" : string.Join(" ", parts.ToArray());
+        }
+
         /// <summary>工位那一格上放着什么（`ClientAttachStation.m_item` 的名字）。</summary>
         public static string StationItemName(Vector2 station)
         {

@@ -303,13 +303,15 @@ namespace WellCooked
                 if (!_chopStarted)
                 {
                     _chopStarted = true;
-                    _log.LogInfo("工序: 3/6 开始切（按住 X，当前 " + workState + "）");
+                    _log.LogInfo("工序: 3/6 开始切（按住 X，当前 " + workState + "｜"
+                                 + Kitchen.WorkstationDebug(_station, _slot) + "）");
                 }
 
                 if (now >= _chopLogAt)
                 {
                     _chopLogAt = now + 3f;
-                    _log.LogInfo("工序: 3/6 切料中（" + workState + "，手上「" + heldNow + "」）");
+                    _log.LogInfo("工序: 3/6 切料中（" + workState + "，手上「" + heldNow + "」｜"
+                                 + Kitchen.WorkstationDebug(_station, _slot) + "）");
                 }
 
                 return true;
