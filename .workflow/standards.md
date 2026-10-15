@@ -50,6 +50,15 @@ grep -E 'BepInEx 5|WellCooked\.Smoke|smoke patch alive' "$GAME_DIR/BepInEx/LogOu
 
 跑测试命令之前不要声称任何东西能用。
 
+自动进关卡（重启游戏 → 虚拟手柄在前端按 A 把玩家位占上 → 进关卡 → 打位置/走位日志）：
+
+```sh
+bash scripts/dev-cycle.sh 20 s_sushi_1_1   # 第二参数是要进的关卡（场景名）；省略时进存档里世界地图光标停着的那一关
+```
+
+给了场景名才是可复现的：不给的时候进哪一关由存档决定（实测进过带矿车轨道的 `s_mine_4_6`）。
+脚本会自己写 `wellcooked-takeover.txt` 的 `frontend_press`（不开的话游戏停在标题画面）并在退出时还原。
+
 进关卡与调试（游戏跑起来后，往 `$GAME_DIR/BepInEx/wellcooked-command.txt` 写一行，1 秒内执行并删文件）：
 
 ```sh
