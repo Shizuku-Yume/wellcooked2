@@ -49,6 +49,7 @@ namespace WellCooked
         private static float _faceNextPulse;
         private static float _facePulseUntil;
         private static bool _chopStarted;
+        private static bool _work;
         private static float _chopLogAt;
         private static bool _interacted;
         private static string _expectHeld = "";
@@ -87,10 +88,11 @@ namespace WellCooked
         }
 
         /// <summary>这一步要哪个厨师、去哪、要不要按交互。驱动层照这个喂输入。</summary>
-        public static bool DesireFor(int slot, out Vector2 target, out bool interact)
+        public static bool DesireFor(int slot, out Vector2 target, out bool interact, out bool work)
         {
             target = _target;
             interact = _slot == slot && _pressing;
+            work = _slot == slot && _work;   // X 键：切菜/用台面
             return _slot == slot && _hasTarget;
         }
 
@@ -289,23 +291,22 @@ namespace WellCooked
             {
                 _faceDirection = Vector2.zero; // 站着别动
 
-                if (!_chopStarted && !_pressing && now >= _nextPress)
+                // 切按的是 **X（WorkstationInteract）**，不是 A：PlayerControls 里
+                // m_worksurfaceUseButton = LogicalButtonID.WorkstationInteract，
+                // 而 A 是 PickupAndDrop——空手按 A 只会把料拿走（实测就是这么丢的）。
+                // 而且交互是 sticky 的，要**按住**，厨师才会一直切（动画事件驱动 OnChop 加进度）。
+                _work = true;
+                _pressing = false;
+
+                if (!_chopStarted)
                 {
                     _chopStarted = true;
-                    _nextPress = now + PressInterval;
-                    _pressUntil = now + InteractHold;
-                    _pressing = true;
-                    _log.LogInfo("工序: 3/6 开始切（进度 " + progress.ToString("F2") + "）");
-                }
-
-                if (_pressing && now >= _pressUntil)
-                {
-                    _pressing = false;
+                    _log.LogInfo("工序: 3/6 开始切（按住交互，进度 " + progress.ToString("F2") + "）");
                 }
 
                 if (now >= _chopLogAt)
                 {
-                    _chopLogAt = now + 4f;
+                    _chopLogAt = now + 3f;
                     _log.LogInfo("工序: 3/6 切料中（进度 " + progress.ToString("F2") + "，手上「"
                                  + heldNow + "」）");
                 }
@@ -403,6 +404,7 @@ namespace WellCooked
             _faceNextPulse = 0f;
             _facePulseUntil = 0f;
             _chopStarted = false;
+            _work = false;
             _chopLogAt = 0f;
             _hasTarget = false;
 

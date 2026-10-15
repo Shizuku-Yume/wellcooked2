@@ -27,9 +27,11 @@ namespace WellCooked
 
         private readonly InputControlType _action1;
         private readonly InputControlType _action2;
+        private readonly InputControlType _action3;
 
         private bool _wantAction1;
         private bool _wantAction2;
+        private bool _wantAction3;
         private Vector2 _wantStick;
 
         /// <summary>这个手柄是给哪个玩家位挂的（0 基）。</summary>
@@ -54,6 +56,7 @@ namespace WellCooked
 
             _action1 = GetInputControlTypeByName("Action1");
             _action2 = GetInputControlTypeByName("Action2");
+            _action3 = GetInputControlTypeByName("Action3"); // X：游戏的 WorkstationInteract（切菜/用台面）
             CacheDirectionType("LeftStickLeft");
             CacheDirectionType("LeftStickRight");
             CacheDirectionType("LeftStickUp");
@@ -68,8 +71,19 @@ namespace WellCooked
         /// <summary>策略每帧调这两个方法声明想要的输入，真正的写入在 Update 里做。</summary>
         public void Want(bool action1, bool action2, Vector2 stick)
         {
+            Want(action1, action2, false, stick);
+        }
+
+        /// <summary>
+        /// action3 = X 键：游戏把"用台面"（WorkstationInteract）绑在 X 上
+        /// （PlayerInputLookup: LogicalButtonID.WorkstationInteract → AmbiPadButton.Two → ControlPad.Button.X）。
+        /// 切菜就是按它，不是按 A。
+        /// </summary>
+        public void Want(bool action1, bool action2, bool action3, Vector2 stick)
+        {
             _wantAction1 = action1;
             _wantAction2 = action2;
+            _wantAction3 = action3;
             _wantStick = stick;
         }
 
@@ -79,6 +93,7 @@ namespace WellCooked
             {
                 SetControlState.Invoke(this, new object[] { _action1, _wantAction1, updateTick, deltaTime });
                 SetControlState.Invoke(this, new object[] { _action2, _wantAction2, updateTick, deltaTime });
+                SetControlState.Invoke(this, new object[] { _action3, _wantAction3, updateTick, deltaTime });
                 OwnButtonWrites++;
 
                 if (SetStickValue != null)
@@ -133,7 +148,7 @@ namespace WellCooked
         /// <summary>调试用：当前想要的输入，日志里读它。</summary>
         public string Wanted
         {
-            get { return "A1=" + _wantAction1 + " A2=" + _wantAction2 + " stick=" + _wantStick; }
+            get { return "A1=" + _wantAction1 + " A2=" + _wantAction2 + " A3=" + _wantAction3 + " stick=" + _wantStick; }
         }
 
         /// <summary>

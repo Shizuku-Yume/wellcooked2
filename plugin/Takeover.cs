@@ -800,7 +800,8 @@ namespace WellCooked
 
                 Vector2 target;
                 bool interact;
-                if (!WorkOrder.DesireFor(owned.Slot, out target, out interact))
+                bool work;
+                if (!WorkOrder.DesireFor(owned.Slot, out target, out interact, out work))
                 {
                     owned.Pad.Want(false, false, Vector2.zero);
                     continue;
@@ -812,13 +813,14 @@ namespace WellCooked
                     // 朝向阶段：直接喂方向让厨师转身（交互按的是"面前那一格"），
                     // 但交互键必须照样写下去——之前这里写死 false，导致 A 从来没到过手柄，
                     // 表现就是"面前明明是料箱、日志一直说在按，游戏那边一点反应没有"。
-                    owned.Pad.Want(interact, false, face);
+                    owned.Pad.Want(interact, false, work, face);
 
-                    if (_trace || interact)
+                    if (_trace || interact || work)
                     {
                         _log.LogInfo("trace 工序 玩家位=" + (owned.Slot + 1)
                                      + " 手柄=" + owned.Pad.State
                                      + " 交互=" + interact
+                                     + " 用台面=" + work
                                      + " 朝向=(" + face.x.ToString("F2") + "," + face.y.ToString("F2") + ")"
                                      + " 位置=(" + position.x.ToString("F2") + "," + position.y.ToString("F2") + ")");
                     }
@@ -838,13 +840,14 @@ namespace WellCooked
                     direction = toTarget < 0.05f ? Vector2.zero : (target - position).normalized;
                     status = "收尾 " + toTarget.ToString("F2") + " 米";
                 }
-                owned.Pad.Want(interact, false, direction);
+                owned.Pad.Want(interact, false, work, direction);
 
-                if (_trace || interact)
+                if (_trace || interact || work)
                 {
                     _log.LogInfo("trace 工序 玩家位=" + (owned.Slot + 1)
                                  + " 手柄=" + owned.Pad.State
                                  + " 交互=" + interact
+                                 + " 用台面=" + work
                                  + " 方向=(" + direction.x.ToString("F2") + "," + direction.y.ToString("F2") + ")"
                                  + " 位置=(" + position.x.ToString("F2") + "," + position.y.ToString("F2") + ")"
                                  + " " + status);
@@ -865,7 +868,8 @@ namespace WellCooked
 
                     Vector2 target;
                     bool interact;
-                    if (!WorkOrder.DesireFor(owned.Slot, out target, out interact))
+                    bool work;
+                    if (!WorkOrder.DesireFor(owned.Slot, out target, out interact, out work))
                     {
                         continue;
                     }
