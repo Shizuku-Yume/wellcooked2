@@ -104,6 +104,60 @@ Supervisor/Scheduler/Worker 全都无处落脚。
 值得测的边界：空 `chefs` 数组、`resources` 里出现未知键（如 `pot_7`）、超大 `orders`、
 只连上不发任何消息就断开、连续快速断开重连、`plate_stack.count` 为 0。
 
+## 验收结果
+
+除 W8 外全部实测通过。**最强的一条证据**：`git archive HEAD | tar -x -C /tmp/verify`
+导出**已提交**的内容到全新目录，从零构建并跑完两套验证 —— 证明交付物自洽、不依赖工作区里的
+未跟踪文件或陈旧产物：
+
+```
+干净构建 make exit=0        （0 个 error）
+干净构建 make test exit=0   （=== 5 test suites, 0 failed ===）
+干净树套件 exit=0            （合计: 5 个场景, 通过 5, 失败 0 ── 结论: 全部通过）
+```
+
+| 项 | 状态 | 证据 |
+|---|---|---|
+| **W1** | ✅ | 5 套件全绿：framing 151 + json 166 + protocol 210 + net 202 + shm 95 = **824 项检查**，`make test` 退出码 0 |
+| **W2** | ✅ | `happy`：连上、`hello`、60 Hz `state_update`、480 个动作、`echo_reply` 往返、写共享内存，退出码 0 |
+| **W3** | ✅ | `one-slot`：缺槽厨师 **240/240 全 `stop`**；活跃槽稳定收到 `move`；日志点名 `missing=1` |
+| **W4** | ✅ | `no-heartbeat`：`plugin_timeout silent_ms=801` → 暂停下发（0 动作）→ 重连 → `plugin_resumed` → 恢复 |
+| **W5** | ✅ | `bad-frames`：>1 MiB 帧、非法 JSON、截断帧各一次，进程存活、连接保持、随后照常处理 |
+| **W6** | ✅ | SIGTERM 后 **0.05 s**（无插件时 0.020 s）退出、退出码 0、端口立即可重绑、`/dev/shm` 无残留 |
+| **W7** | ✅ | `happy`（Bridge 监听 12345）+ `connect-mode`（Bridge 拨号插件 14455）各完成完整帧交换 |
+| **W8** | ⏳ | 唯一需要启动游戏的一次，由 `tools/run-real-game.sh` 一条命令完成并自动判定 |
+
+### 与文档的逐条对照
+
+| 文档位置 | 要求 | 实现 |
+|---|---|---|
+| §834-842「Bridge 进程」 | 唯一连游戏的进程、按帧写共享内存、读输入槽汇总下发、按帧同步、崩溃时发 idle 保持连接 | 全部实现；其中"阻塞等待"实现为**有界等待**，理由见下 |
+| §543-553「共享内存 + 信号量」 | `shm_open("/kitchenos_state")` | 默认名一致 |
+| §6.2.3（951-966） | "使用 **seqlock 或** 读写信号量保护"；Bridge 独占写、Scheduler/Worker 并发读、Worker 独占写各自输入槽；"这是典型的读者写者问题" | 选 seqlock；权限划分与文档逐条一致 |
+| §6.2.4（968-975） | "BepInEx 插件在游戏进程内启动 TCP 服务器（localhost:14455）；Linux 侧 Bridge 作为客户端连接" | `--link connect --port 14455`，实测 PASS |
+| §2.2.1 / §5.1 | Bridge 作 TCP 服务端 `0.0.0.0:12345` | `--link listen --port 12345`，实测 PASS |
+| §5.2 | 消息类型名与字段 | 与 `Messages.cs` 九个类型名逐字相同，测试里做双向映射校验 |
+| §5.3 | 解析失败 ⇒ 记录并丢弃；断开 ⇒ 等待重连 | 逐条实现，`bad-frames` / `no-heartbeat` 覆盖 |
+| §6.3 | 用 `sigaction`（不用 `signal`） | `sigaction` + 处理函数只置 `volatile sig_atomic_t` |
+| §6.6 | 日志目录与可读性 | `logs/bridge.log`（超集），`ISO8601(毫秒) 级别 事件名 key=value` |
+
+**两处措辞差异，均为有意为之：**
+
+1. **"每帧阻塞等待"实现为有界等待。** 文档同一节还要求"保持连接不断"与 1 秒内响应 SIGTERM；
+   真阻塞在系统调用里就同时做不到这两条（心跳与信号都收不到）。语义未变 —— 每帧仍然等齐
+   N 个 Worker 的输入，等到发真的、等不到发 idle；变的是等待期间进程还能服务 socket。
+   已记入 `.workflow/decisions.md`。
+2. **`/kitchenos_sem` 未被采用为默认名。** 文档 553 行那个初始值为 1 的信号量是**保护临界区的
+   互斥量**，而 §6.2.3 允许用 seqlock 替代，本文选的就是 seqlock；"通知 Bridge 本帧输入已就绪"
+   的信号量（869 行）文档**没有给名字**，故用 `/kitchenos_input_ready`。
+
+**过程中发现的两个真实缺陷**（都会在实机上静默劣化，不崩溃）：
+
+- `kos_shm_wait_frame_after` 的缺格判定不累积：推进水位后才重算"谁不新"，导致**按时响应的
+  厨师被判为缺失并收到 idle**。表现为"调度算出了动作但角色不动"，且没有任何错误日志。
+- 零长帧被当作失步而断链：`framing.h` 与参考实现 `TcpLink.cs:287` 都认为它是合法空帧，
+  §5.3 也把"消息畸形"与"失步"分开。已改为交付空帧、由解析器拒绝该消息、连接保持。
+
 ## Open questions
 
 - **Landing 模式**：`standards.md` 现填 `local-merge`。仓库有一个共享远端
