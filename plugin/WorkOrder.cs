@@ -167,7 +167,9 @@ namespace WellCooked
 
             // 已经到位了：站住、把朝向对准工位、按 A。
             // 到位之后不再寻路（Takeover 见到 _facing 就只喂朝向不导航）。
-            if (distance <= ReachRadius)
+            // 带滞回：到位过之后放宽到 0.6 米，否则在半径边上反复横跳
+            // （实测停在 0.28 米：既回不到 0.25 的到位判定、也不按、也不超时）。
+            if (distance <= (_arrivedLogged ? ReachRadius * 2.4f : ReachRadius))
             {
                 _facing = true;
                 Vector2 toward = (chef.Position - _station).sqrMagnitude > 0.0001f
