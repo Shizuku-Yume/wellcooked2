@@ -298,11 +298,12 @@ class Link:
         self.rx_bytes = 0
         self.tx_bytes = 0
         self.rx_frames = 0
+        self.stash = []          # probe_closed 期间收到的消息，下次 pump 一起交出去
 
     # -- 收 --
     def pump(self, timeout):
         """最多等 timeout 秒，返回这一轮解出来的消息（dict）。"""
-        out = []
+        out = self.take_stash()
         if self.closed:
             time.sleep(min(max(timeout, 0.0), 0.05))
             return out
@@ -344,6 +345,27 @@ class Link:
             # 长度越界 = 流已失步，后面再读都是垃圾，直接判连接不可用
             self._die("framing: %s" % exc)
         return out
+
+    def take_stash(self):
+        items = self.stash
+        self.stash = []
+        return items
+
+    def probe_closed(self, timeout=0.4):
+        """主动探活，返回 True 表示连接已断。
+
+        对端发的 FIN 只有 recv 才看得见：刚被断开时 send() 往往还能成功、self.closed
+        也还是 False，只看标志位会把"已经被断开的连接"当成"还连着"。而且 recv 一次未必
+        就撞上 EOF —— Bridge 的心跳可能排在前头，所以要在 timeout 内反复收到没数据为止。
+        探活期间收到的消息先存起来，下次 pump() 原样交出去，不丢。
+        """
+        deadline = time.monotonic() + max(0.0, timeout)
+        while not self.closed:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                break
+            self.stash.extend(self.pump(left))
+        return self.closed
 
     # -- 发 --
     def send_raw(self, data, timeout=5.0):
@@ -1219,12 +1241,18 @@ def scenario_bad_frames(ctx, checks):
     link.send_json(msg_hello())
     oversize = MAX_FRAME_BYTES + 1
     link.send_raw(struct.pack(">I", oversize) + b"x" * 65536)
-    time.sleep(1.0)
+    time.sleep(0.6)
     checks.hard("bridge_alive_after_oversize_frame", ctx.bridge.alive(),
                 "sent declared length %d (>%d) + 64 KiB; exit=%s"
                 % (oversize, MAX_FRAME_BYTES, ctx.bridge.exit_code()))
-    checks.note("oversize_reaction",
-                "connection %s by bridge" % ("closed" if link.closed else "kept open"))
+    # specs/bridge.md:56 —— 帧长越界 = 流已失步，必须断开重连并记录。
+    # 探活是必须的：对端发来的 FIN 不 recv 就看不见，光看标志位会误判成"还连着"。
+    dropped = link.probe_closed(0.6)
+    oversize_dropped = dropped
+    checks.hard("oversize_frame_drops_link", dropped,
+                "declared length %d is out of range, so the stream is desynced and the "
+                "bridge must drop the link (specs/bridge.md:56); link=%s"
+                % (oversize, link.error or "still open"))
     link.close()
 
     # C1) 非法 JSON（分帧本身正确）：只丢这条消息，连接必须保留。
@@ -1244,19 +1272,23 @@ def scenario_bad_frames(ctx, checks):
                 "same connection: %s; link=%s" % (stats.describe(), link.error or "open"))
     link.close()
 
-    # C2) 零长帧：长度 0 在上限之内，参考实现 TcpLink 把它当"正文为空的一帧"照常走完
-    #     （解析失败 → 丢弃），所以断不断连只记录、不当断言；进程存活是硬要求。
+    # C2) 零长帧：长度 0 在上限之内，分帧本身没有失步（下一个长度前缀就在原处），
+    #     参考实现 TcpLink.ExtractFrames 会照常切出"正文为空的一帧"，正文解析失败
+    #     按 specs/bridge.md:55 属于"丢弃该消息并记录，不断连接"。所以：进程存活是
+    #     硬要求，断不断连按 soft 记录（这条是当前实现对不上 spec 的地方之一）。
     link = Link(connect(args.host, port, args.ready_timeout))
     link.send_json(msg_hello())
     link.send_raw(encode_frame(b""))
     time.sleep(0.4)
     checks.hard("bridge_alive_after_zero_length_frame", ctx.bridge.alive(),
                 "exit=%s" % ctx.bridge.exit_code())
-    kept = not link.closed
-    checks.soft("zero_length_frame_keeps_connection", kept,
-                "bridge %s；零长帧的长度 0 未越界，参考实现按『正文为空的一帧』走完并丢弃，"
-                "不该据此断流（link=%s）"
-                % ("kept the connection" if kept else "dropped the connection",
+    dropped = link.probe_closed(0.6)
+    zero_dropped = dropped
+    checks.soft("zero_length_frame_keeps_connection", not dropped,
+                "bridge %s；零长帧的长度 0 未越界，分帧没有失步，"
+                "参考实现按『正文为空的一帧』走完并丢弃（specs/bridge.md:55 不断连接）；"
+                "link=%s"
+                % ("kept the connection" if not dropped else "dropped the connection",
                    link.error or "open"))
     link.close()
 
@@ -1280,10 +1312,11 @@ def scenario_bad_frames(ctx, checks):
     hits = ctx.log_grep("json_error") + ctx.log_grep("frame_error")
     checks.soft("log_records_bad_input", bool(hits),
                 "log evidence: %s" % (hits[:3] or "none"))
-    return ("baseline=%d, oversize->alive, bad-json->%d actions same connection, "
-            "zero-length->%s, truncated->alive, after-all=%d actions"
-            % (len(base.actions), len(stats.actions),
-               "kept" if kept else "dropped", len(after.actions)))
+    return ("baseline=%d, oversize->alive+link dropped=%s, bad-json->%d actions same "
+            "connection, zero-length->link %s, truncated->alive, after-all=%d actions"
+            % (len(base.actions), "yes" if oversize_dropped else "no",
+               len(stats.actions), "dropped" if zero_dropped else "kept",
+               len(after.actions)))
 
 
 def scenario_connect_mode(ctx, checks):
