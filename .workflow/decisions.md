@@ -370,3 +370,55 @@ user may overturn on sight. `Revisit when` of "never" is allowed but suspicious;
 - **Revisit when:** 组员那边的 `scripts/` 与这边的 `tools/` 需要合并成一套，或每帧上报在实机上
   产生明显开销（那时限流阈值一行配置即可回调）。
 - **Effort:** bridge
+## 2026-10-15 - 相似项目只作设计参考，不新增代码来源
+
+- **Decided:** 本轮调研（`.workflow/maps/prior-art.md`）发现的相似项目一律只作设计参考，不复制代码：
+  `Phantivia/cortico-world-overcooked2`（MIT）、`ArchipelagoMW/Archipelago` 的 OC2 关卡表（MIT）、
+  `hdd-robot/gAgent`、`zehuilu/CBBA-Python`、`ArthurSonzogni/FTXUI`（MIT）、
+  `bold-lab-ai/JaxMARL`（Apache-2.0）、`rosewang2008/gym-cooking`（MIT）、
+  `HumanCompatibleAI/overcooked_ai`（MIT）；监督器与 IPC 库（runit/s6/supervisord/systemd、libuv/libev、
+  libcgroup）只读不引。可复用的代码来源仍只有
+  `decisions.md: 2026-10-14 - 不复制 overcooked-supercharged 的代码，只借用游戏类型与字段名`
+  批准的那两处 MIT。
+- **Instead of:** 从 cortico 拿状态与事件代码（它是最像我们的 BepInEx 插件）、从 Archipelago 拿关卡 ID
+  表、引 FTXUI 做监控面板、把 overcooked_ai 或 JaxMARL 当策略预筛平台。
+- **Because:** 状态、输入、导航、关卡扫描我们都已有能跑的等价实现（`plugin/WorldState.cs`、
+  `Takeover.cs`、`Navigation.cs`、`scripts/scan-levels.py`），而 cortico 只有 3242 行 C#、建仓三天、
+  只跑单 bot；Archipelago 只有 ID 对照，关卡扫描已经覆盖；FTXUI 是 C++，会把依赖带进 C11 核心；
+  overcooked_ai 一年没提交、锁 Python 3.10、没有切菜工序与限时订单队列，当预筛平台要重写状态与计分
+  语义；监督器与 IPC 原语是答辩主体，不能引库代写。关卡几何没有"许可证可接受 + 覆盖本体 144 包"的
+  现成数据集（supercharged 只有 4 份手工标注，LevelEditor 的 35 个场景是 OC1/测试场景），我们自己的
+  运行时导出是更好的来源。
+- **Mine:** yes.
+- **Revisit when:** 状态或事件层需要重写、面板成为阶段 E 的瓶颈、或预筛实验量超出自写模拟器的能力，
+  并且愿意为此补一条新的许可决策。
+
+## 2026-10-15 - Bridge 端口可配置，默认 14455
+
+- **Decided:** Bridge 的监听端口做成可配置（环境变量或配置文件），默认仍是 `127.0.0.1:14455`，
+  并把默认值与覆盖方式写进 `protocol/protocol.md`。
+- **Instead of:** 端口写死在 Bridge 和插件两侧。
+- **Because:** `hpmv/overcooked-supercharged` 的插件在同一个 loopback 端口上跑它的 Thrift 服务
+  （`patch/Injection/InjectorServer.cs:46`，可用 `OC2SC_PORT` 覆盖）。同机装了两个 mod 时写死的端口
+  会撞，而演示机器是谁的笔记本事先不知道。
+- **Mine:** yes.
+- **Revisit when:** 插件侧也改成可配置并约定固定端口，或确认演示机器不会装其它 mod。
+- **Effort:** game-bridge
+
+## 2026-10-15 - 固定菜单复用 TAS 的 GetNextRecipe Prefix
+
+- **Decided:** 固定订单的菜谱顺序复用 `gua248/Overcooked2-TAS`（MIT，版权行是未填的模板，保留原
+  LICENSE 与来源说明）的 Harmony Prefix：接管 `RoundData.GetNextRecipe` /
+  `DynamicRoundData.GetNextRecipe`，按 `script.menu[phase][menuCount]` 返回原生 `RecipeList.Entry`。
+  方案 §4.2 要的"到达时间与时限"不在这个接口里，先用自制关卡的全局 `timeBetweenOrders` +
+  `orderLifeTime` 起一局量实际值，不够再去找订单创建入口。
+- **Instead of:** 自己写一个完整的订单生成器（Harmony 接管订单到达与时限，按 `config/orders.json`
+  逐单生成）。
+- **Because:** TAS 已经把这套补丁写完并实测过（`plugin/Patch.cs:189-241`），MIT 允许保留声明后复用；
+  `GetNextRecipe` 决定"生成哪道菜"，调用时机由订单控制器掌握，在同一个 Prefix 里按时钟挑 Entry
+  保证不了任意到达时刻，还会破坏调用方对调用次数的假设。先用现成的把"每阶段固定菜单"拿下来，
+  把自研成本留给真正缺的那一层。
+- **Mine:** yes.
+- **Revisit when:** 实验需要逐单的到达时刻或时限（EDF/HRRN 对比需要），或换关卡/换玩家数后 `menu`
+  索引不再适用。
+- **Effort:** game-bridge

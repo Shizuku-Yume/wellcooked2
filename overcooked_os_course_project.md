@@ -907,10 +907,13 @@ NetworkStream stream = client.GetStream();
 - 启动TCP服务器（localhost:14455）与Bridge通信；
 - 每帧发送状态消息，阻塞等待输入响应（帧同步）。
 
-参考现成项目：
-- hpmv/overcooked-supercharged的patch目录提供状态序列化和输入注入框架；
-- 但该项目当前处于活跃开发中，最新master包含复杂的时间回溯机制；
-- 建议锁定一个稳定的旧commit，或提取InjectorServer和ControllerHandler核心逻辑自己实现。
+参考现成项目（2026-10-15 复检，详见 §7 与 `.workflow/maps/prior-art.md`）：
+- hpmv/overcooked-supercharged **没有许可证**，不能提取它的 `InjectorServer`/`ControllerHandler` 代码，
+  只用来查游戏自身的类型名、字段名，以及看帧同步握手的形状（`decisions.md: 2026-10-14 - 不复制
+  overcooked-supercharged 的代码，只借用游戏类型与字段名`）；
+- 可复制的只有两处 MIT：`gua248/Overcooked2-TAS`（分阶段固定菜单补丁、输入状态 schema）与
+  `toasterparty/oc2-modding`（固定随机源、场景目录查询、配置分层）；
+- 插件侧的状态读取、虚拟手柄入座、A* 导航已经自己实现（`plugin/`），不再从这些仓库搬这一层。
 
 注意事项：
 - 不要把游戏DLL文件（Assembly-CSharp.dll等）提交到Gitee；
@@ -1177,178 +1180,191 @@ logs/
 
 ## 7. 参考项目与使用边界
 
-### 7.1 首选：hpmv/overcooked-supercharged
+本节结论来自 2026-10-15 的复检：逐个浅克隆读源码，并用 GitHub API 核对许可证、最后提交与活跃度；
+证据、逐项判定和"未验证的东西"在 `.workflow/maps/prior-art.md`。判定分四档：**直接拿来用**
+（保留许可声明）、**作为基础改造**、**只学设计**（不复制代码）、**不用**。
 
-链接：<https://github.com/hpmv/overcooked-supercharged>
+三条边界：
 
-用途：原作画面、状态捕获、动作注入和外部控制架构参考。
+- 可复制的代码来源只有两处 MIT：`gua248/Overcooked2-TAS` 与 `toasterparty/oc2-modding`
+  （`decisions.md: 2026-10-14 - 不复制 overcooked-supercharged 的代码，只借用游戏类型与字段名`）。
+  gua248 的 MIT 文件版权行是没填的模板（`Copyright (c) [year] [fullname]`），复制片段要保留原文本，
+  并写明来源与提交号。
+- 没有许可证的仓库（supercharged、LevelEditor、DIYLevelFastInit、py-thok/overcooked2-ai、
+  polus314/OvercookedBot）只能用来查游戏自身的类型与字段名，不能复制代码。
+- GPL-3.0 的 `Extremelyd1/OvercookedAI` 不能抄代码，只能按自己的数据模型重写其中的想法。
 
-已确认能力：
+### 7.1 直接复用：gua248/Overcooked2-TAS（MIT）
 
-- BepInEx 5插件；
-- 游戏状态发送到Controller；
-- Controller向游戏回传输入；
-- 暂停、恢复和帧级控制；
-- `common/game.thrift`定义通信结构；
-- `patch/Injection/InjectorServer.cs`负责游戏端通信；
-- `patch/ControllerHandler.cs`处理每帧状态和控制；
-- `controller/Data/RealGameSimulator.cs`重建游戏状态；
-- `controller/Data/GameAction.cs`提供高层动作结构。
+链接：<https://github.com/gua248/Overcooked2-TAS>；提交 `946aea0`（2025-06-13），4★，近一年无提交。
 
-局限：
+能直接拿的：
 
-- 需要安装原版游戏和BepInEx；
-- 关卡几何和实体标注并不完全自动化；
-- README说明部分关卡支持过时；
-- 工程本质是TAS开发框架，不是现成调度算法；
-- 版本和平台需要在组员机器上重新验证。
+- **分阶段固定菜单**：`plugin/Patch.cs:189-241` 用 Harmony Prefix 接管 `RoundData.GetNextRecipe` /
+  `DynamicRoundData.GetNextRecipe`，按 `script.menu[phase][menuCount]` 返回原生 `RecipeList.Entry`。
+  它决定"第几阶段出哪道菜"，**不决定订单何时生成**（调用时机在订单控制器手里）；`menu` 索引绑定
+  关卡、阶段和玩家数，换关卡或换人数要重录。方案 §4.2 要的到达时间与时限不在这个接口里。
+- **输入状态 schema**：`plugin/TASControl.cs:116-125,458-475` 的 `TASScript`（`level`/`menu[][]`/
+  `gamepadStates`/`rngAssigners`/`positionCorrections`），每帧每玩家
+  `[b_pickup,b_interact,b_dash,b_emote,x,y,(b_shift)]`；`:263-395` 的逐帧边沿计算与 `:398-419` 的
+  冻结/单帧。我们只借结构，不搬它的 Regex 手解析和 Windows 路径。
+- **游戏类型/字段事实**：`DebugItemOverlay.cs:42-99,390-417`、`Extension.cs:11-69` 里的反射路径
+  （锅/搅拌/洗/加热进度、盘子计时、`GridManager.m_gridOccupancy`、`RoundData.m_recipes`）。
+  **这两个文件不能整份复制**：`DebugItemOverlay.cs:1-3` 自己标注来源是无许可证的
+  `hpmv/overcooked-supercharged`，TAS 根目录的 MIT 覆盖不到它。只取字段事实，自己写状态快照；
+  引用其它 TAS 文件前先看文件头的来源声明。
 
-结论：**最接近目标的原作控制底座，优先研究。**
+不要拿：Python 侧的 `vgamepad`/ViGEm 虚拟手柄（Windows 驱动；我们用进程内 `VirtualPad`）、录制器里
+写死的 Windows 路径。
 
-### 7.2 gua248/Overcooked2-TAS
+### 7.2 作为基础改造：toasterparty/oc2-modding（MIT）
 
-链接：<https://github.com/gua248/Overcooked2-TAS>
+链接：<https://github.com/toasterparty/oc2-modding>；提交 `bd60579`（2026-05-20），10★，近一年 10 次。
+`LICENSE` 原文是 `Copyright (c) 2022 toasterparty`。
 
-许可证：仓库包含MIT许可证文本，但许可证文件中的版权字段为占位形式，正式使用前应保留原仓库说明并核对具体版本。
+- **固定随机源**：`OC2Modding/FixedRNG.cs:59-140` 在 `GetNextRecipe` 前后设置/恢复 Unity RNG。
+  固定 seed ≠ 指定菜谱序列（仍受人数、阶段、菜谱池影响）。
+- **场景目录查询**：`OC2Helpers.cs:155-235` 反射 `T17FrontendFlow.m_CoopGameSessionPrefabs` 取
+  `GameProgress.GetSceneDirectory().Scenes`（DLC 数组 `{-1,2,3,5,7,8}`），可补 `scripts/scan-levels.py`。
+- **配置分层**：`OC2ModdingConfiguration.cs:101-120,485-509`（`CustomLevelOrder`/`PseudoSave`/事件）与
+  `ArchipelagoClient.cs:552-573` 把 SlotData 落成 `OC2Modding-INIT.json` 的做法：初始实验配置与本次
+  运行结果分开存。
+- **工程事实**：steam 工程是 net35 + BepInEx 5.4.21 + UnityEngine 2017.4.8（与我们的环境一致），
+  epic 工程是 net46 + BepInEx 6，不要混用；`tools/*.bat` 是 Windows 脚本，不能当我们的构建脚本。
 
-已确认能力：
+不要整包安装：它默认改订单、开作弊、改 `fixedDeltaTime`，会污染"真实得分是唯一指标"的实验。
 
-- BepInEx 5 x86；
-- Python 3.10；
-- 最多四个虚拟手柄/厨师；
-- 游戏内按帧输入接管；
-- `replay.json`静态脚本回放；
-- 通过Debug代码读取部分角色、物品、加工状态。
+### 7.3 只当事实来源：hpmv/overcooked-supercharged（无许可证）
 
-局限：
+链接：<https://github.com/hpmv/overcooked-supercharged>；提交 `3db24d3`（2026-09-16），11★，近一年 26 次。
+仓库根没有 `LICENSE`，`gh api repos/hpmv/overcooked-supercharged --jq .license` 返回 `null`。
 
-- 主要是离线预录脚本，并非实时状态到调度算法的闭环；
-- 外部Python控制器主要用于录制，回放时不需要实时通信；
-- 虚拟手柄依赖Windows和ViGEmBus；
-- 目标是Steam版32位Mono，不应默认支持AYCE；
-- 低层输入与高层任务之间仍需自己实现寻路和动作执行。
+现状：master 已经不是"patch + controller"两件套，还有 `planner/`、`headless/`、`tas-plugin/`、
+`modules/`、`native/`；`patch/Injection/InjectorServer.cs:46` 在 loopback **14455** 上跑 Thrift
+（可用 `OC2SC_PORT` 覆盖），另有 17636 长度前缀 JSON 与 17637 HTTP；`modules/body-restore/` 用 32 位
+指针偏移、`NativeWindowControl` 用 user32/kernel32，整体不能当跨平台底座。
 
-结论：**适合提取四角色输入接管和插件结构，不应直接当成成品调度器。**
+能学的（只看，不复制）：握手形状（每帧 Flush 状态 → 收控制 → Pause/Resume → CommitFrame，
+`patch/ControllerHandler.cs:14-69`）、用 `TimeManager.PauseLayer` 暂停（`patch/Helpers.cs:13-37`）、
+单个 outstanding exchange + epoch 防旧回复（`InjectorServer.cs:30-84`）、高层动作集
+（`controller/Data/GameAction.cs:19-62`）与 Dijkstra 寻路（`Action/GotoAction.cs:19-78`、
+`GameMap.cs:151-230`）、四玩家 InControl 本地用户注册（`bridge/SessionSetup.cs:157-207`）。
 
-### 7.3 Extremelyd1/OvercookedAI
+关卡数据：`controller/Data/Levels/` 只有 4 个手工标注文件（Story 1-1、Carnival 3-1/3-2/3-4），
+README 自己说 `capture_map` 只记厨师轨迹、多边形要手描——**不能当 144 关几何来源**。
 
-链接：<https://github.com/Extremelyd1/OvercookedAI>
+结论：**只查游戏类型/字段名与设计形状，不复制代码。**
 
-许可证：GPL-3.0。
+### 7.4 只学设计：Extremelyd1/OvercookedAI（GPL-3.0）
 
-已确认能力：
+链接：<https://github.com/Extremelyd1/OvercookedAI>；提交 `4916b55`（2020-05-20），9★，近一年无提交。
 
-- 在商业原作内部进行Mono注入；
-- Bot读取订单并创建动作；
-- 包含移动、寻路、拿放、切菜、烹饪、装盘、交付等动作类；
-- 有订单取消和动作暂停处理。
+- 动作分层：`Action/HandleOrderAction`（单订单状态机，烹饪等待期间做别的食材）→
+  `HandleIngredientAction` → `GetRawIngredient`/`Process`/`Chop`/`Cook`/`PlateHolding`/`DeliverPlate`，
+  以及 `PickDropAction` 用"手持物变化"判拾放成功。
+- 注入方式与我们的 BepInEx 5 不兼容：`Loader.cs:9-12` 是旧式 Mono 注入，输入走 Windows
+  `user32.dll!SendInput`（`Keyboard.cs:75`）。
+- 寻路调游戏自己的 `GridNavSpace.FindPath`（`Action/PathFindAction.cs:21-38`），仓库里没有 A*。
+- 只取第一个厨师（`Util/ObjectUtil.cs:10-12`），`Bot.cs:20-24` 停止时不清动作、丢单的暂停也没有实现
+  ——它的取消机制不能当范例。
 
-局限：
+结论：**动作分层与"等待烹饪时让出执行"值得学；GPL-3.0 下零拷贝。**
 
-- README明确标注为proof of concept；
-- 仓库可见提交集中在2019—2020年；
-- `ObjectUtil.GetBotControls()`直接取第一个PlayerControls，现成代码不是多厨师调度；
-- 依赖本地游戏DLL和旧Mono注入方式；
-- GPL-3.0带来更严格的复用和发布要求。
+### 7.5 只学设计：视觉与桌面注入类
 
-结论：**适合参考高层动作分解，不适合直接作为可靠底座。**
+- `gua248/coc34robot`（MIT 占位，2024-08-19）：Win32 桌面 DC 截图 + 模板/颜色匹配 + `keybd_event`，
+  写死 1080/16:9 与固定 ROI（`robot.py:26-37,61-86,93-116`），Proton 下不可直接用；匹配是逐像素
+  平均绝对差与颜色差（`robot.py:131-155`），不是 OpenCV 模板匹配；`inputs.py` 另有 BSD-3 来源。
+- `polus314/OvercookedBot`（无许可证，2023-06-18）、`Robben-Ge/overcooked2-replay-robot`（MIT，
+  2026-08-02）：pynput/pydirectinput 桌面注入与录放，弱于我们已有的进程内注入。
 
-### 7.4 gua248/coc34robot
+结论：**视觉路线只作对照，不进我们的实现。**
 
-链接：<https://github.com/gua248/coc34robot>
+### 7.6 新发现：与我们架构最像的项目
 
-许可证：MIT文本。
+- **`Phantivia/cortico-world-overcooked2`**（MIT，`Copyright (c) 2026 Phantivia`，提交 `68843ad`
+  2026-10-14，建仓三天，0★）：BepInEx 5 / net35 / 0Harmony，插件监听 `127.0.0.1:47640`
+  （`plugin/Plugin.cs:39` 可配），行式 UTF-8 JSON，收包排队到主线程；`plugin/Kitchen.cs:456-538` 导出
+  分数、订单、厨师与工位；`Hooks.cs` 用 Harmony 拦游戏服务端操作形成拾取/交付事件；`Seat.cs` +
+  `VirtualPad.cs` 挂虚拟手柄占玩家位。规模 12 个 C# 文件 3242 行，只跑单 bot + 操作员。
+  **判定：只学设计**（我们的 `WorldState.cs`/`Takeover.cs`/`Navigation.cs` 已覆盖它的能力）。
+- **`py-thok/overcooked2-ai`**（**无许可证**，近一年 86 次提交）：Python RL + 进程内 C# 状态/输入桥，
+  TCP 8765；`SemanticActions.cs:9-48` 直接调 `ChefEventMessage` 绕过按钮管线，正是我们不该走的路。
+  **判定：只学设计，零拷贝。**
+- `Shyngyskhan-333/overcooked2-eight-players`（MIT，2026-10-12）：5–8 人 IL 改写与文件驱动的多虚拟
+  手柄；我们最多 4 厨师，**不用**。
+- 不要装的 mod：`Lyall/Overcooked2Fix`（改物理更新频率）、`MuelsyseKen/Overcooked2-Menu-Mod`
+  （直接改 `TotalBaseScore/TotalTipsScore`）、`gua248/Overcooked2-ManyRecipes`（替换 `GetNextRecipe`
+  扩池、改变订单分布）、`BryanLDC/OC2ControllerIcons`（只改图标）。它们都会污染分数实验。
 
-已确认能力：
+### 7.7 仿真与 3D 外壳
 
-- 针对《胡闹厨房2》马戏团3-4的二号位机器人；
-- 外部Python程序截屏并识别画面区域；
-- 模拟键盘输入；
-- 针对固定关卡脚本处理切菜、洗盘和等待事件；
-- 有实机视频链接。
+- `HumanCompatibleAI/overcooked_ai`（MIT，提交 `739950a` 2025-03-22，1020★，近一年 0 次）：
+  `mdp/overcooked_mdp.py:1375-1430` 的确定性 `get_state_transition(state, joint_action)`、
+  `OvercookedState.to_dict/from_dict`、46 个字符网格 layout 值得抄状态表示；但 `pyproject.toml:9` 锁
+  `>=3.10,<3.11`，没有砧板工序、盘子无限、交付不消费限时订单、没有按序小费连击。
+  **判定：只学状态表示，不当预筛平台。**
+- `bold-lab-ai/JaxMARL`（Apache-2.0，近一年 152 次）：`overcooked_v2` 支持多食材、配方与自定义 ASCII
+  布局，但奖励是 ±20 而不是原作计分，且要 Python ≥3.11 + JAX。**备选，本次不引。**
+- `rosewang2008/gym-cooking`（MIT，2021）：`recipe_planner/stripsworld.py` 的 STRIPS 前置条件/效果
+  是工序 DAG 的好参照；运行环境锁 gym 0.17.2，不引。
+- `Farfi55/CookedUp`（MIT，Unity 2022.3.8，提交 2023-10-04，有 Linux 发布包）：Bot 规则在
+  `Assets/StreamingAssets/ThinkEngineer/.../Brains/*.asp`，ThinkEngine 上游没有明确许可、
+  `Assets/_Assets/` 素材授权不明。**判定：只学设计，不作兜底首选。**
 
-局限：
+结论：**模拟器自己写最小离散事件模型**（`decisions.md: 2026-10-15 - 相似项目只作设计参考`）。
 
-- 只支持固定关卡和固定角色位置；
-- 需要分辨率和窗口条件；
-- 视觉识别会受黑边、遮挡和UI缩放影响；
-- 没有通用订单调度、全局状态或多厨师任务分配。
+### 7.8 关卡与菜谱数据
 
-结论：**适合观察原作自动化画面效果，不适合做通用调度基础。**
+- 没有"许可证可接受 + 覆盖本体 144 包"的现成工位坐标数据集：supercharged 只有 4 关手工标注；
+  `gua248/Overcooked2-LevelEditor` 的 35 个场景是 OC1/测试场景（且无 LICENSE）；
+  `ArchipelagoMW/Archipelago` 的 `worlds/overcooked2/Overcooked2Levels.py:35-91` 只有 140 条
+  ID ↔ 显示名（根 LICENSE 为 MIT），没有坐标。
+- 我们自己的导出已经是更好的来源：`plugin/WorldState.cs:283-334`（工位 `type/name/pos/height/gives`）、
+  `:594-738`（地形采样）、`:1078-1148`（菜谱 `m_composition` 展开）、`Kitchen.cs:66-96`。
+  **下一步是把它们转成 `config/kitchen.json` 与工序 DAG，不是再找数据源。** 已知缺口：工位去重与
+  稳定 ID、订单未关联菜谱 ID、菜谱缺 `m_cookingStep`/`m_progress` 与工时、`WorldState.cs:720-729`
+  过滤最大连通块后 cells 可能仍用过滤前的列表。
+- DIY 关卡：用 `Overcooked2-LevelEditor` 的**发布工具**（无 LICENSE，Unity 2017.4.8f1，构建目标
+  `StandaloneWindows`，产物 `info_xxx` + `s_xxx_1` 放 `BepInEx/plugins/OC2DIYLevel/levels/xxx`）；
+  它没有 `load=<场景名>` 接口，进关走 OC2DIYLevel 自己的菜单/SceneDirectory。
+  `kfyangc/Overcooked2-DIYLevelFastInit`（无 LICENSE）只是加速初始化，**不用**。
+- 离线工具：`K0lb3/UnityPy`（MIT）已用于 `scripts/scan-levels.py`；AssetRipper 只作为外部工具
+  （当前主分支 GPL-3.0，LevelEditor 教程要求 ≤1.3.14）。反编译产物与游戏资源包都不进仓库。
 
-### 7.5 toasterparty/oc2-modding
+### 7.9 OS 侧：只学设计，不引库
 
-链接：<https://github.com/toasterparty/oc2-modding>
+- 监督器：runit 的 self-pipe 收 SIGCHLD + 主循环 `wait_nohang` 批量回收、s6 的防快速重启与日志解耦、
+  supervisord 的 BACKOFF/RUNNING/FATAL 状态机（`supervisor/process.py:177-182,670-715`）、systemd 的
+  启动限流与 TERM→CONT→超时强杀顺序。**都不进仓库**：课设要求自写 `fork/setsid/umask/chdir/dup2`
+  与 `SIGCHLD` 回收。注意 runit 的 `lock_exnb.c:10-14` 是 `flock`/`lockf` 条件选择，不是纯 `fcntl` 范例。
+- 调度算法：`MaximeCheramy/simso` 的 EDF/RM（CeCILL，只读）、`hdd-robot/gAgent` 的 Contract Net
+  状态机（MIT）、`zehuilu/CBBA-Python` 的边际收益竞价（MIT）、Linux `SCHED_DEADLINE` 文档（只读）。
+  **不要用 `sched_setattr` 给 Worker 设实时策略来冒充订单 EDF。**
+- IPC 与事件循环：TLPI 的 `pmsg_*`（GPL，只读）、`sysprog21/concurrent-programs` 的
+  `ringbuf-shm/ringbuffer.c`（BSD-2，单生产者单消费者）、Valkey `src/ae_epoll.c`（BSD-3）只作形状
+  参考；我们的 fd 很少，自写 `poll`/`pselect` 处理 TCP、心跳与 self-pipe，不引 libuv/libev。
+- `fcntl` 追加日志的权威依据是 `fcntl_locking(2)`：记录锁不随 `fork` 继承、进程退出自动释放、
+  同进程关闭指向该文件的任意 fd 会释放它持有的锁；短临界区要包住真正的 `write(2)`，不要在 stdio
+  缓冲还没提交时解锁。
+- 验证工具在仓库外直接用：`strace -ff -ttt`（看 setsid/umask/dup2/fcntl/wait4/execve）、`pidstat`、
+  `stress-ng`、Valgrind（`--track-fds`）。Helgrind 不覆盖跨进程共享内存竞争，跨进程 IPC 要定向并发
+  测试加退出后的对象检查。
+- 监控面板（§8.1）没有开箱可用的：supervisord Web、htop、Glances 都没有订单、厨房锁与游戏分数。
+  渲染层可选 FTXUI（MIT，C++）或纯 C ANSI 面板，业务数据必须自己接。
 
-许可证：MIT。
+### 7.10 落地清单
 
-已确认能力：
+现在就能做：
 
-- 原作PC版通用BepInEx/Harmony Mod框架；
-- Archipelago随机化和MultiWorld；
-- 关卡、存档和规则修改；
-- Windows Steam/Epic等PC部署说明。
+1. 分阶段固定菜单接进 `plugin/`（TAS 的 `GetNextRecipe` Prefix，见 7.1）；
+2. 订单随机源固定并记录 seed（oc2-modding 的 `FixedRNG.cs`）；
+3. 写 `wellcooked-state.json` / `wellcooked-terrain.json` → `config/kitchen.json` 的转换器；
+4. 菜谱展成工序 DAG（补工时与依赖边）；
+5. Bridge 端口可配置，默认 14455（`decisions.md: 2026-10-15 - Bridge 端口可配置`）。
 
-局限：
-
-- 没有现成厨师Bot；
-- 没有角色移动控制RPC；
-- 随机化、自动完成关卡和QoL功能不等于自动调度。
-
-结论：**适合参考插件工程和构建方式，不是现成AI。**
-
-### 7.6 Farfi55/CookedUp
-
-链接：<https://github.com/Farfi55/CookedUp>
-
-许可证：MIT。
-
-项目特点：
-
-- Unity 3D厨房游戏；
-- README介绍了双Bot游戏演示；
-- 有限时订单和Bot AI；
-- 使用ASP/ThinkEngine；
-- README称使用Unity 2022.3.8在Windows 10和Linux测试。
-
-风险：
-
-- 不是《胡闹厨房》原作；
-- 需要组内实际打开Unity工程并验证构建；
-- 原有ASP Bot与自研OS调度器之间的控制边界需要重新设计；
-- 保留其画面可以降低原作注入风险，但仍要投入Unity联调时间。
-
-结论：**如果原作Mod路线验证失败，这是最值得尝试的高质量3D外壳备选；不能称为已在本项目环境验证。**
-
-### 7.7 HumanCompatibleAI/overcooked_ai
-
-链接：<https://github.com/HumanCompatibleAI/overcooked_ai>
-
-许可证：MIT。
-
-项目特点：
-
-- 二维离散网格世界；
-- 底层MDP提供确定性状态转移；
-- 可读取厨师、锅具、物品和订单状态；
-- 可直接提交多厨师动作；
-- 自带Pygame/字符渲染。
-
-实际验证结果：
-
-- 使用Python 3.10隔离环境安装成功；
-- 两名厨师完成取料、烹饪、装盘和交付；
-- 47个仿真步获得20分；
-- 可以输出Pygame画面。
-
-局限：
-
-- 画面明显不如商业原作；
-- 当前版本`pyproject.toml`要求`>=3.10,<3.11`；
-- 上层Env/Planner有双人硬编码；
-- 原生订单模型不是完整的动态订单和截止期调度模型。
-
-结论：**适合作为调度算法和IPC的安全验证底座，不建议作为最终画面。**
+不要做：不装会改订单/物理/分数的 mod；不引监督器与 IPC 库；不把 overcooked_ai / JaxMARL 当预筛平台；
+不复制无许可证或 GPL 仓库的代码。
 
 ## 8. 最终形态建议
 
