@@ -29,6 +29,8 @@ GAME_DIR = os.environ.get(
 DEFAULT_STATE = os.path.join(GAME_DIR, "BepInEx", "wellcooked-state.json")
 DEFAULT_TERRAIN = os.path.join(GAME_DIR, "BepInEx", "wellcooked-terrain.json")
 DEFAULT_OUT = "config/kitchen.json"
+DEFAULT_MENU = os.path.join(GAME_DIR, "BepInEx", "wellcooked-menu.json")
+DEFAULT_OUT_RECIPES = "config/recipes.json"
 
 # 组件类型 → 资源语义。优先级从上到下：一个物体上挂多个组件时取最上面那个当 kind。
 KINDS = [
@@ -82,7 +84,7 @@ def group_stations(raw):
         if key is None:
             key = (name, pos)
             groups[key] = {"name": name, "pos": pos, "height": station.get("height", 0.0),
-                           "types": [], "gives": None, "contents": []}
+                           "types": [], "gives": None, "contents": [], "prefab_components": []}
             order.append(key)
         group = groups[key]
         station_type = station.get("type")
@@ -92,6 +94,9 @@ def group_stations(raw):
             group["gives"] = station["gives"]
         if station.get("contents") and not group["contents"]:
             group["contents"] = station["contents"]
+        for component in station.get("prefab_components") or []:
+            if component not in group["prefab_components"]:
+                group["prefab_components"].append(component)
     return [groups[key] for key in order]
 
 
@@ -110,7 +115,7 @@ def build_stations(raw):
         for station_type in group["types"]:
             if station_type not in TYPE_TO_KIND and station_type not in unknown:
                 unknown.append(station_type)
-        merged.append({
+        station = {
             "kind": kind,
             "name": group["name"],
             "types": group["types"],
@@ -118,7 +123,11 @@ def build_stations(raw):
             "height": round(float(group["height"]), 2),
             "gives": group["gives"],
             "contents": group["contents"],
-        })
+        }
+        if group["prefab_components"]:
+            # 料箱才有：这个料的 prefab 上挂了哪些组件（`WorkableItem` = 能加工）
+            station["prefab_components"] = group["prefab_components"]
+        merged.append(station)
     merged.sort(key=lambda s: (KIND_ORDER.index(s["kind"]) if s["kind"] in KIND_ORDER else 99,
                                s["pos"][0], s["pos"][1], s["name"]))
     seen = {}
@@ -178,11 +187,181 @@ def areas_of(cells, mask, lookup):
     return sorted(sizes.values(), reverse=True)
 
 
+# 菜谱节点类型 → 工序。类型名来自游戏自己的菜谱节点（`Cooked*` 要加热、`Mixed*` 要搅拌）。
+OP_BY_NODE_TYPE = {
+    "IngredientOrderNode": "fetch",
+    "ItemOrderNode": "fetch",
+    "WildcardOrderNode": "fetch",
+    "CookedCompositeOrderNode": "cook",
+    "MixedCompositeOrderNode": "mix",
+    "CompositeOrderNode": "assemble",
+    "CacheAssembledOrderNode": "assemble",
+}
+
+# 工序 → 用哪种工位（与 kitchen.json 的 `kind` 对齐）
+RESOURCE_BY_OP = {
+    "fetch": "dispenser",
+    "cook": "cooker",
+    "mix": "mixer",
+    "assemble": "counter",
+    "plate": "plate_stack",
+    "deliver": "serving",
+}
+
+# 工时：没有实测值，先给方案 §6.5 的默认值，并在文件里写清来源。
+DURATION_BY_OP = {"fetch": 1.0, "cook": 5.0, "mix": 5.0, "assemble": 1.0, "plate": 2.0, "deliver": 1.0}
+DURATION_SOURCE = "plan-§6.5-default（未实测；任务 12 拿到真实进度后再改）"
+
+# 工序的先后顺序：只在拓扑排序并列时用来定序（写进文件时便于人读）
+OP_ORDER = ["fetch", "cook", "mix", "assemble", "plate", "deliver"]
+
+
+def chop_ingredients(state):
+    """料 → 要不要切。
+
+    菜谱树里看不出"要不要切"（树只写"由什么组成"），判据取料箱导出的 prefab 组件名：
+    这个料能加工（`WorkableItem`）就要切。实测 `Fish`/`Prawn`/`Carrot`/`Meat` 有 `WorkableItem`、
+    `Flour` 没有；任务 09 在游戏里实测过"鱼要切"，与之一致。
+    """
+    result = {}
+    for station in state.get("stations") or []:
+        gives = station.get("gives")
+        if not gives:
+            continue
+        components = station.get("prefab_components") or []
+        result[gives.lower()] = any(name == "WorkableItem" for name in components)
+    return result
+
+
+def match_ingredient(node_name, chop_flags):
+    """菜谱叶子名（UncookedFish）对上料名（Fish）：按后缀/包含匹配，取最长命中。"""
+    lower = node_name.lower()
+    best = None
+    for ingredient in chop_flags:
+        if lower == ingredient or lower.endswith(ingredient) or ingredient in lower:
+            if best is None or len(ingredient) > len(best):
+                best = ingredient
+    return best
+
+
+def topo_order(keys, edges, nodes):
+    """给定节点集合与"子 → 父"的边，排出可执行顺序；并列时按工序顺序、再按 id。"""
+    pending = {key: 0 for key in keys}
+    parents = {key: [] for key in keys}
+    for child, parent in edges:
+        if child in pending and parent in pending:
+            parents[child].append(parent)
+    # 统计每个节点还剩几个前置没排（用"父的入度"表示：父要等子）
+    remaining = {key: 0 for key in keys}
+    children_of = {key: [] for key in keys}
+    for child, parent in edges:
+        if child in pending and parent in pending:
+            children_of[parent].append(child)
+            remaining[parent] += 1
+    ready = sorted([key for key in keys if remaining[key] == 0],
+                   key=lambda k: (OP_ORDER.index(nodes[k]["op"]), k))
+    out = []
+    while ready:
+        key = ready.pop(0)
+        out.append(key)
+        for parent in parents[key]:
+            remaining[parent] -= 1
+            if remaining[parent] == 0:
+                ready.append(parent)
+                ready.sort(key=lambda k: (OP_ORDER.index(nodes[k]["op"]), k))
+    # 有环或漏排时兜底：把剩下的按工序顺序接上（不该发生）
+    for key in sorted(keys - set(out), key=lambda k: (OP_ORDER.index(nodes[k]["op"]), k)):
+        out.append(key)
+    return out
+
+
+def build_recipes(menu, state):
+    """菜谱表 → 工序 DAG：节点按"工序 + 游戏里的节点名"去重，所以两道菜共用中间产物时只有一个节点。"""
+    chop_flags = chop_ingredients(state)
+    nodes = {}
+    edges = set()
+    dishes = []
+
+    def node_id(op, name):
+        return "%s:%s" % (op, name)
+
+    def add_node(op, name, **extra):
+        key = node_id(op, name)
+        if key not in nodes:
+            node = {"id": key, "op": op, "label": name, "resource": RESOURCE_BY_OP[op],
+                    "duration": DURATION_BY_OP[op]}
+            node.update(extra)
+            nodes[key] = node
+        return key
+
+    def walk(node):
+        """返回这个菜谱节点对应的工序 id；子节点先建（前置依赖）。"""
+        name = node.get("node") or "?"
+        node_type = node.get("type") or ""
+        op = OP_BY_NODE_TYPE.get(node_type, "assemble")
+        children = [walk(child) for child in (node.get("children") or [])]
+
+        ingredient = match_ingredient(name, chop_flags) if op == "fetch" else None
+        extra = {}
+        if ingredient:
+            extra["ingredient"] = ingredient
+            # 能不能加工（`WorkableItem`）是事实；"这道菜要不要切"不是——菜谱树里没有这道工序，
+            # 所以不替游戏做决定（早先按 WorkableItem 自动插 chop 节点会给出多余的工序）。
+            extra["workable"] = bool(chop_flags.get(ingredient))
+        key = add_node(op, name, **extra)
+        for child in children:
+            edges.add((child, key))
+        return key
+
+    for dish in menu.get("dishes") or []:
+        dish_name = dish.get("dish") or "?"
+        roots = [walk(node) for node in (dish.get("steps") or [])]
+        # 装盘 → 交付：游戏里必须先装盘再送到出菜口
+        plate = add_node("plate", dish_name)
+        deliver = add_node("deliver", dish_name)
+        for root in roots:
+            edges.add((root, plate))
+        edges.add((plate, deliver))
+
+        # 这道菜要做的工序：从根沿"子 → 父"边往回走，再拓扑排序（并列时按 OP_ORDER）
+        seen = set()
+        stack = list(roots)
+        while stack:
+            key = stack.pop()
+            if key in seen or key not in nodes:
+                continue
+            seen.add(key)
+            stack.extend([child for child, parent in edges if parent == key])
+        seen.add(plate)      # 装盘、交付是根的后续（在边的另一头），别漏
+        seen.add(deliver)
+        dishes.append({
+            "dish": dish_name,
+            "score": dish.get("score"),
+            "root": roots[0] if roots else None,
+            "nodes": topo_order(seen, edges, nodes),
+        })
+
+    return {
+        "nodes": [nodes[key] for key in sorted(nodes)],
+        "edges": sorted([list(pair) for pair in edges]),
+        "dishes": dishes,
+        "durations": {"source": DURATION_SOURCE, "seconds": DURATION_BY_OP},
+        "notes": [
+            "节点 id = 工序:游戏里的节点名，两道菜共用同一中间产物时只有一个节点",
+            "工时是方案 §6.5 的默认值，不是实测值",
+            "菜谱树里没有\"切\"这道工序：`fetch` 节点带 `workable`（料箱 prefab 上有没有 WorkableItem）作为事实，",
+            "要不要切由游戏决定，本文件不替它下结论（早先按 WorkableItem 自动插 chop 节点会给出多余的工序）",
+        ],
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--state", default=DEFAULT_STATE)
     parser.add_argument("--terrain", default=DEFAULT_TERRAIN)
     parser.add_argument("--out", default=DEFAULT_OUT)
+    parser.add_argument("--menu", default=DEFAULT_MENU)
+    parser.add_argument("--out-recipes", default=DEFAULT_OUT_RECIPES)
     args = parser.parse_args()
 
     for path in (args.state, args.terrain):
@@ -243,6 +422,29 @@ def main():
     if unknown:
         print("  !! 没归类的组件类型：" + ", ".join(unknown))
     print("写到 %s" % args.out)
+
+    # 菜谱 → 工序 DAG。菜单是插件用 `menu=1` 导出的（游戏自己的 RecipeList）。
+    if not os.path.exists(args.menu):
+        print("没有 %s：进关卡后发一次 menu=1 再跑（这次只写了 kitchen.json）" % args.menu,
+              file=sys.stderr)
+        return 0
+
+    menu = load(args.menu)
+    recipes = build_recipes(menu, state)
+    recipes["scene"] = menu.get("scene") or kitchen["scene"]
+    recipes["generated"] = kitchen["generated"]
+    with open(args.out_recipes, "w", encoding="utf-8") as handle:
+        json.dump(recipes, handle, ensure_ascii=False, indent=2)
+        handle.write("\n")
+
+    shared = [n["id"] for n in recipes["nodes"]
+              if sum(1 for d in recipes["dishes"] if n["id"] in d["nodes"]) > 1]
+    print("菜谱 %d 道、工序节点 %d 个、边 %d 条，写到 %s"
+          % (len(recipes["dishes"]), len(recipes["nodes"]), len(recipes["edges"]), args.out_recipes))
+    for dish in recipes["dishes"]:
+        print("  %-24s %s" % (dish["dish"], " → ".join(dish["nodes"])))
+    if shared:
+        print("  共用的中间产物：" + ", ".join(sorted(shared)))
     return 0
 
 

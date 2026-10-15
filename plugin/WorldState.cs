@@ -332,8 +332,35 @@ namespace WellCooked
                     if (typeName == "ClientPickupItemSpawner")
                     {
                         // 料箱给什么：PickupItemSpawner.m_itemPrefab 的名字就是料名（如 SushiFish）
-                        var prefab = Invoke(component, "GetItemPrefab") as UnityEngine.Object;
-                        json.Append(",\"gives\":\"").Append(Clean(prefab == null ? "" : prefab.name)).Append('"');
+                        var prefab = Invoke(component, "GetItemPrefab");
+                        var unityPrefab = prefab as UnityEngine.Object;
+                        json.Append(",\"gives\":\"").Append(Clean(unityPrefab == null ? "" : unityPrefab.name)).Append('"');
+                        // 这个料的 prefab 上挂了哪些组件：`Choppable*`/`Cookable*` 决定它要不要切/煮，
+                        // 菜谱树里看不出来（树只写"由什么组成"）。OS 侧据此补"切"这道工序。
+                        json.Append(",\"prefab_components\":[");
+                        var prefabObject = prefab as GameObject;
+                        if (prefabObject != null)
+                        {
+                            var components = prefabObject.GetComponents<Component>();
+                            bool firstComponent = true;
+                            for (int c = 0; c < components.Length; c++)
+                            {
+                                if (components[c] == null)
+                                {
+                                    continue;
+                                }
+
+                                if (!firstComponent)
+                                {
+                                    json.Append(',');
+                                }
+
+                                firstComponent = false;
+                                json.Append('"').Append(Clean(components[c].GetType().Name)).Append('"');
+                            }
+                        }
+
+                        json.Append(']');
                     }
 
                     json.Append(",\"contents\":[");
@@ -950,7 +977,7 @@ namespace WellCooked
             return !Physics.CheckSphere(probe, radius, mask, QueryTriggerInteraction.Ignore);
         }
 
-        private static string ActiveScene()
+        public static string ActiveScene()
         {
             return UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
         }
@@ -1116,7 +1143,7 @@ namespace WellCooked
         }
 
         /// <summary>菜谱条目：RecipeList+Entry 里是 m_order（菜谱节点）与 m_scoreForMeal。</summary>
-        private static string DescribeRecipe(object entry)
+        public static string DescribeRecipe(object entry)
         {
             if (entry == null)
             {

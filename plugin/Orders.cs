@@ -51,6 +51,7 @@ namespace WellCooked
         private static int _generated;   // 本局已按配置生成的单数
         private static int _phase = -1;  // 当前阶段（静态关卡恒为 0）
         private static int _phaseBase;   // 进入当前阶段时 CumulativeFrequencies 的和
+        private static readonly List<object> _menu = new List<object>();   // 当前关卡的菜谱表（`menu=` 导出用）
 
         public static void Install(ManualLogSource log)
         {
@@ -61,8 +62,8 @@ namespace WellCooked
             var harmony = new Harmony(SmokePlugin.Guid + ".orders");
             Patch(harmony, typeof(RoundData), "GetNextRecipe", nameof(BeforeRoundDataGetNextRecipe), null);
             Patch(harmony, typeof(DynamicRoundData), "GetNextRecipe", nameof(BeforeDynamicRoundDataGetNextRecipe), null);
-            Patch(harmony, typeof(RoundData), "InitialiseRound", nameof(BeforeInitialiseRound), null);
-            Patch(harmony, typeof(DynamicRoundData), "InitialiseRound", nameof(BeforeInitialiseRound), null);
+            Patch(harmony, typeof(RoundData), "InitialiseRound", nameof(BeforeRoundDataInitialiseRound), null);
+            Patch(harmony, typeof(DynamicRoundData), "InitialiseRound", nameof(BeforeDynamicRoundDataInitialiseRound), null);
         }
 
         /// <summary>重新读一次配置文件（`orders=reload` 用）。</summary>
@@ -104,6 +105,66 @@ namespace WellCooked
 
             _log.LogInfo("订单: 已读 " + _configPath + "，seed=" + (_config.seed < 0 ? "不固定" : _config.seed.ToString())
                          + "，" + string.Join("；", parts.ToArray()));
+        }
+
+        /// <summary>记下这一关的菜谱表（分阶段关卡每个阶段各有一份，按菜名去重）。</summary>
+        private static void SetMenu(object list)
+        {
+            var entries = list == null ? null : list.GetType().GetField("m_recipes")?.GetValue(list) as Array;
+            if (entries == null)
+            {
+                return;
+            }
+
+            for (int i = 0; i < entries.Length; i++)
+            {
+                var entry = entries.GetValue(i);
+                if (entry == null || _menu.Contains(entry))
+                {
+                    continue;
+                }
+
+                var dish = DishName(entry);
+                if (dish != "(null)" && _menu.Exists(delegate(object e) { return DishName(e) == dish; }))
+                {
+                    continue;
+                }
+
+                _menu.Add(entry);
+            }
+        }
+
+        /// <summary>
+        /// `menu=1` 指令：把当前关卡的整张菜谱表写成 `BepInEx/wellcooked-menu.json`
+        /// （`config/recipes.json` 的输入）。菜谱表来自游戏自己的 `RecipeList`，不是我们编的。
+        /// </summary>
+        public static void DumpMenu()
+        {
+            if (_menu.Count == 0)
+            {
+                _log.LogWarning("订单: 还没拿到关卡菜谱表——先进关卡（`load=` 或 `restart=`）再发 menu=1");
+                return;
+            }
+
+            var seen = new List<string>();
+            var dishes = new List<string>();
+            for (int i = 0; i < _menu.Count; i++)
+            {
+                var described = WorldState.DescribeRecipe(_menu[i]);
+                if (described == null)
+                {
+                    continue;
+                }
+
+                dishes.Add(described);
+            }
+
+            var text = new StringBuilder();
+            text.Append("{\"scene\":\"").Append(WorldState.ActiveScene()).Append('"');
+            text.Append(",\"dishes\":[").Append(string.Join(",", dishes.ToArray())).Append("]}");
+            var path = Path.Combine(Paths.BepInExRootPath, "wellcooked-menu.json");
+            File.WriteAllText(path, text.ToString());
+            _log.LogInfo("订单: 菜谱表 " + dishes.Count + " 道菜写到 " + path);
         }
 
         /// <summary>`orders=` 指令：打印当前配置与已生成几单。</summary>
@@ -427,8 +488,29 @@ namespace WellCooked
             return typeof(Orders).GetMethod(name, BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public);
         }
 
+        /// <summary>回合开始（RoundData 路径）：记菜谱表、清计数、固定随机源。</summary>
+        private static void BeforeRoundDataInitialiseRound(RoundData __instance)
+        {
+            SetMenu(__instance.m_recipes);
+            ResetRound();
+        }
+
+        /// <summary>回合开始（动态关卡路径）：菜谱表按阶段收集。</summary>
+        private static void BeforeDynamicRoundDataInitialiseRound(DynamicRoundData __instance)
+        {
+            if (__instance.Phases != null)
+            {
+                for (int i = 0; i < __instance.Phases.Length; i++)
+                {
+                    SetMenu(__instance.Phases[i].Recipes);
+                }
+            }
+
+            ResetRound();
+        }
+
         /// <summary>回合开始：计数清零，随机源按配置固定（`seed &lt; 0` 时不碰）。</summary>
-        private static void BeforeInitialiseRound()
+        private static void ResetRound()
         {
             _generated = 0;
             _phase = -1;
@@ -480,6 +562,7 @@ namespace WellCooked
                 }
 
                 Note(true, null, raw);
+                SetMenu(roundData.m_recipes);
                 int recipeCount = instance.RecipeCount;
                 return TakeNext(0, roundData.m_recipes, instance.CumulativeFrequencies, recipeCount,
                                 delegate(int recipeIndex)
@@ -517,6 +600,7 @@ namespace WellCooked
                 }
 
                 Note(true, null, raw);
+                SetMenu(roundData.Phases[phase].Recipes);
                 int recipeCount = instance.RecipeCount;
                 return TakeNext(phase, roundData.Phases[phase].Recipes, instance.CumulativeFrequencies, recipeCount,
                                 delegate(int recipeIndex)
