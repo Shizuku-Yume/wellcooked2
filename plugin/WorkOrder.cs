@@ -181,7 +181,7 @@ namespace WellCooked
             // 到位之后不再寻路（Takeover 见到 _facing 就只喂朝向不导航）。
             // 带滞回：到位过之后放宽到 0.6 米，否则在半径边上反复横跳
             // （实测停在 0.28 米：既回不到 0.25 的到位判定、也不按、也不超时）。
-            float reach = _looseApproach ? 1.0f : ReachRadius;
+            float reach = _looseApproach ? 1.4f : ReachRadius; // 出菜口的碰撞会把厨师挡在 1 米外
             if (distance <= (_arrivedLogged ? reach * 2.4f : reach))
             {
                 _facing = true;
