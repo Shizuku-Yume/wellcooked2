@@ -118,6 +118,9 @@ namespace WellCooked
                 case "order":
                     DumpOrder();
                     break;
+                case "unlock":
+                    UnlockAllLevels();
+                    break;
                 case "mech":
                     DumpMechanics();
                     break;
@@ -137,6 +140,74 @@ namespace WellCooked
                     _log.LogWarning("指令: 不认识 " + key);
                     break;
             }
+        }
+
+        /// <summary>
+        /// 解锁全部关卡：把存档里每一关标成已通关，再用游戏自己的 `IsLevelUnlocked` 校验一遍。
+        ///
+        /// 为什么要走存档数据：`GameProgressData.IsLevelUnlocked(i)` 判的是"前一关通关了没"
+        /// （`IsLevelChainComplete`），所以把所有关卡标成 `Completed` 就等于全解锁；
+        /// 直接改存档文件不行——`.save` 是加密的。
+        /// </summary>
+        private static void UnlockAllLevels()
+        {
+            var session = GameUtils.GetGameSession();
+            if (session == null)
+            {
+                _log.LogWarning("解锁: 还没进游戏（拿不到 GameSession）");
+                return;
+            }
+
+            var progress = session.Progress;
+            if (progress == null)
+            {
+                _log.LogWarning("解锁: 拿不到 GameProgress");
+                return;
+            }
+
+            var data = progress.SaveableData;
+            if (data == null || data.Levels == null || data.Levels.Length == 0)
+            {
+                _log.LogWarning("解锁: 存档里没有关卡表");
+                return;
+            }
+
+            int changed = 0;
+            foreach (var level in data.Levels)
+            {
+                if (!level.Completed)
+                {
+                    changed++;
+                }
+
+                level.Completed = true;
+                level.Revealed = true;
+                level.Purchased = true;
+                if (level.ScoreStars < 1)
+                {
+                    level.ScoreStars = 1;
+                }
+
+                if (level.HighScore == int.MinValue)
+                {
+                    level.HighScore = 0;
+                }
+            }
+
+            session.SaveSession();
+            _log.LogInfo("解锁: 关卡表 " + data.Levels.Length + " 关，本次新置已通关 " + changed
+                         + " 关，已存盘（槽位 " + session.SaveSlot + "）");
+
+            int unlocked = 0;
+            for (int i = 0; i < data.Levels.Length; i++)
+            {
+                if (progress.SaveData.IsLevelUnlocked(i))
+                {
+                    unlocked++;
+                }
+            }
+
+            _log.LogInfo("解锁: 游戏自己判 IsLevelUnlocked = " + unlocked + "/" + data.Levels.Length);
         }
 
         /// <summary>
