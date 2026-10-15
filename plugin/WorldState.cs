@@ -643,7 +643,6 @@ namespace WellCooked
             ClearBlockedSteps();
 
             var cells = new StringBuilder();
-            var free = new List<Vector2>();
             int count = 0;
 
             // 探针半径比厨师实际半径略小：贴着台面走时厨师能蹭过去，
@@ -668,7 +667,6 @@ namespace WellCooked
                     }
 
                     _walkable[i, j] = true;
-                    free.Add(new Vector2(world.x, world.z));
                     count++;
                 }
             }
@@ -719,14 +717,25 @@ namespace WellCooked
             int blocks;
             int dropped = KeepLargestComponent(out blocks);
 
-            foreach (var p in free)
+            // 只写保留下来的格子：过滤前那份列表会把丢掉的格子也写进文件，
+            // 而导航用的是过滤后的 `_walkable`——两边对不上，OS 侧读到的地图就多出孤岛。
+            for (int i = 0; i < _cellsX; i++)
             {
-                if (cells.Length > 0)
+                for (int j = 0; j < _cellsZ; j++)
                 {
-                    cells.Append(',');
-                }
+                    if (!_walkable[i, j])
+                    {
+                        continue;
+                    }
 
-                cells.Append('[').Append(p.x.ToString("F2")).Append(',').Append(p.y.ToString("F2")).Append(']');
+                    if (cells.Length > 0)
+                    {
+                        cells.Append(',');
+                    }
+
+                    cells.Append('[').Append((minX + i * step).ToString("F2")).Append(',')
+                         .Append((minZ + j * step).ToString("F2")).Append(']');
+                }
             }
 
             var text = new StringBuilder();
