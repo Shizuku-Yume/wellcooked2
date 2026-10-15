@@ -53,6 +53,7 @@ namespace WellCooked
         private static bool _work;
         private static bool _expectStationPlate;
         private static float _arriveLogAt;
+        private static float _arriveAt;
         private static float _chopLogAt;
         private static bool _interacted;
         private static string _expectHeld = "";
@@ -195,6 +196,7 @@ namespace WellCooked
                 if (!_arrivedLogged)
                 {
                     _arrivedLogged = true;
+                    _arriveAt = now;
                     _log.LogInfo("工序: " + _step + " 到位（距目标 " + distance.ToString("F2")
                                  + " 米），对准工位");
                 }
@@ -215,7 +217,10 @@ namespace WellCooked
                                     && fx == sx && fz == sz;
                 }
 
-                if (!facingStation)
+                // 朝向校验只是"尽量对准"的辅助：出菜口这种嵌在墙里的工位，
+                // 面前永远不是它本身，一直转身反而把自己推出就位点（实测 20 秒里反复横跳）。
+                // 所以最多对准 3 秒，之后就照按（参考项目 Extremelyd1/OvercookedAI 根本不校验朝向）。
+                if (!facingStation && now - _arriveAt < 3f)
                 {
                     // 转身要短促：一直喂方向会顶着工位沿它滑走（实测滑出 2.6 米）。
                     if (now >= _faceNextPulse)
@@ -421,6 +426,7 @@ namespace WellCooked
             _work = false;
             _expectStationPlate = false;
             _arriveLogAt = 0f;
+            _arriveAt = 0f;
             _chopLogAt = 0f;
             _hasTarget = false;
 
