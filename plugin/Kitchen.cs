@@ -311,25 +311,28 @@ namespace WellCooked
             }
 
             var occupant = WorldState.GameCellOccupant(ix, iz);
-            if (occupant == null || occupant.GetComponent("ClientWorkstation") == null)
+            var workstation = occupant == null ? null : occupant.GetComponent("ClientWorkstation");
+            if (workstation == null)
             {
                 return false;
             }
 
-            var attach = occupant.GetComponent("ClientAttachStation");
-            var item = attach == null ? null : WorldState.Get(attach, "m_item");
-            if (item == null)
+            // 进度在 ClientWorkableItem 上，不在 attach station 的 m_item 上
+            // （那个是 ClientPhysicalAttachment，读 m_progress 只会得到一堆 AccessTools 警告）。
+            // 参考项目也是读 workstation.m_item（ReflectionUtil.GetValue(workstation, "m_item")）。
+            var workableItem = WorldState.Get(workstation, "m_item");
+            if (workableItem == null)
             {
                 return false;
             }
 
-            var progressValue = WorldState.Get(item, "m_progress");
-            var subValue = WorldState.Get(item, "m_subProgress");
+            var progressValue = WorldState.Get(workableItem, "m_progress");
+            var subValue = WorldState.Get(workableItem, "m_subProgress");
             int progress = progressValue is int p0 ? p0 : 0;
             int sub = subValue is int s0 ? s0 : 0;
 
             int stages = 0;
-            var workable = WorldState.Get(item, "m_workable");
+            var workable = WorldState.Get(workableItem, "m_workable");
             if (workable != null)
             {
                 var stagesValue = WorldState.Get(workable, "m_stages");
@@ -339,7 +342,7 @@ namespace WellCooked
                 }
             }
 
-            finished = WorldState.Get(item, "HasFinished") is bool done && done;
+            finished = WorldState.Get(workableItem, "HasFinished") is bool done && done;
             description = "阶段 " + progress + "/" + Mathf.Max(stages - 1, 1)
                           + " 子进度 " + sub + (finished ? " 已切好" : "");
             return true;
