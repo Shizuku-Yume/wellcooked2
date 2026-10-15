@@ -256,6 +256,31 @@ namespace WellCooked
             return collider == null ? "（空）" : collider.gameObject.name;
         }
 
+        /// <summary>工位那一格上放着什么（`ClientAttachStation.m_item` 的名字）。</summary>
+        public static string StationItemName(Vector2 station)
+        {
+            int ix, iz;
+            if (!WorldState.GameCellOf(station, out ix, out iz))
+            {
+                return "?";
+            }
+
+            var occupant = WorldState.GameCellOccupant(ix, iz);
+            if (occupant == null)
+            {
+                return "（没东西）";
+            }
+
+            var stationComponent = occupant.GetComponent("ClientAttachStation");
+            if (stationComponent == null)
+            {
+                return "（不是台面）";
+            }
+
+            var item = WorldState.Get(stationComponent, "m_item") as Component;
+            return item == null ? "（空台面）" : item.gameObject.name;
+        }
+
         /// <summary>厨师面前那个东西的位置（判"是不是工位"用它比格子，比名字靠谱）。</summary>
         public static bool FacingObjectPosition(PlayerControls chef, out Vector2 position)
         {

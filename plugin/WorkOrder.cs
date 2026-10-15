@@ -232,7 +232,7 @@ namespace WellCooked
                     _pressing = true;
                     _lastCheckAt = now + InteractHold + 0.2f;
                     _log.LogInfo("工序: " + _step + " 按交互（手上「" + heldNow + "」，面前是「"
-                                 + facing + "」）");
+                                 + facing + "」，台面上是「" + Kitchen.StationItemName(_station) + "」）");
                 }
 
                 if (_pressing && now >= _pressUntil)
