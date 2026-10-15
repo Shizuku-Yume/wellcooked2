@@ -196,6 +196,10 @@ Horde 20 / Campfire 15 / Carnival 15 / Surf 13）、DLC 与排除关信息。只
 
 ## 现在就能落地的事（别再重造）
 
+已经切成任务：**14** = 第 1、2 条（固定菜单 + 固定随机源），**15** = 第 3 条（`config/kitchen.json`），
+**16** = 第 4 条（菜谱 DAG，Blocked by 15），**17** = 第 5 条（地形 JSON 一致性）。第 6 条（把场景目录查询
+补进 `scripts/scan-levels.py`）暂时不排任务——下次真正要批量扫关卡时再做。第 7 条是边界，不是任务。
+
 1. **固定菜单序列**：把 TAS 的 `GetNextRecipe` Prefix 方案接进 `plugin/`，输入改成 `protocol/` 的
    `config` 消息（方案 §4.2 第 1 条）。它给的是"第几阶段出哪道菜"，不是到达时刻；先量全局
    `timeBetweenOrders` + `orderLifeTime` 能不能满足实验需要，不能再去查订单创建入口。
