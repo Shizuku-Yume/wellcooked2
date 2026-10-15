@@ -50,6 +50,26 @@ grep -E 'BepInEx 5|WellCooked\.Smoke|smoke patch alive' "$GAME_DIR/BepInEx/LogOu
 
 跑测试命令之前不要声称任何东西能用。
 
+进关卡与调试（游戏跑起来后，往 `$GAME_DIR/BepInEx/wellcooked-command.txt` 写一行，1 秒内执行并删文件）：
+
+```sh
+printf 'load=s_sushi_1_2\n' > "$GAME_DIR/BepInEx/wellcooked-command.txt"  # 进指定关卡（场景名 = 资源包名）
+printf 'restart=1\n' ...        # 重开当前关
+printf 'mech=1\n' ...           # 数当前场景真实存在的机制组件与工位
+printf 'levels=city\n' ...      # 打印关卡表（菜单位置 ↔ 场景名 ↔ 解锁/通关），可按场景名过滤
+printf 'unlock=1\n' ...         # 解锁当前存档全部关卡（含 IsLevelUnlocked 自检）
+```
+
+挑关卡（本体 144 个关卡资源包，包名就是场景名）：
+
+```sh
+/tmp/.ocenv/bin/python scripts/scan-levels.py          # 离线按物体名统计工位/机制，先筛掉明显不能用的
+bash scripts/eval-levels.sh s_city_h5                  # 每关重开一局，量菜谱 + 连通性 + 机制组件
+```
+
+注意两点：`load` 只换场景，**菜谱要新进程才刷新**；`load` 前要等虚拟手柄被游戏自己加入，否则没有厨师，
+地形采样会退化成兜底半径（连通性数字不可信）。
+
 ## Layout
 
 - `overcooked_os_course_project.md` — 课设方案：需求、调度模型、IPC、协议、排期

@@ -26,7 +26,18 @@ namespace WellCooked
             _log = Logger;
             _log.LogInfo("WellCooked.Smoke loaded; Unity " + UnityEngine.Application.unityVersion
                          + ", BepInEx " + typeof(BaseUnityPlugin).Assembly.GetName().Version);
+            // 游戏失焦就暂停：调试时人在终端、答辩时 Supervisor 在终端，游戏都在后台，
+            // 不打开这个开关厨师就一步不走（实测：窗口激活后立刻开始移动，失焦则完全冻结）。
+            UnityEngine.Application.runInBackground = true;
             ApplySmokePatches();
+            ApplyFocusPausePatch();
+            ApplyAlwaysFocusedPatch();
+            WorldState.Install(_log);
+            LogicalInput.Install(_log);
+            Navigation.Install(_log);
+            Commands.Install(_log);
+            WorkOrder.Install(_log);
+            Takeover.Install(_log);
             DumpGameInventory();
         }
 
@@ -83,6 +94,66 @@ namespace WellCooked
                     _log.LogWarning("smoke patch failed on " + Describe(target) + ": " + e.Message);
                 }
             }
+        }
+
+        /// <summary>
+        /// 游戏自己在失焦时暂停：`InGamePauseMenu.OnApplicationFocus(false)`。
+        /// 补丁只在"失去焦点"时跳过原方法（获得焦点照常走），这样后台运行不会把游戏按停。
+        /// </summary>
+        private static void ApplyFocusPausePatch()
+        {
+            var type = AccessTools.TypeByName("InGamePauseMenu");
+            if (type == null)
+            {
+                _log.LogWarning("失焦暂停: 找不到 InGamePauseMenu");
+                return;
+            }
+
+            var target = AccessTools.Method(type, "OnApplicationFocus", new[] { typeof(bool) });
+            if (target == null)
+            {
+                _log.LogWarning("失焦暂停: InGamePauseMenu 上没有 OnApplicationFocus(bool)");
+                return;
+            }
+
+            var prefix = new HarmonyMethod(typeof(SmokePlugin).GetMethod(
+                nameof(SkipPauseOnFocusLost), BindingFlags.Static | BindingFlags.NonPublic));
+            new Harmony("wellcooked.focus").Patch(target, prefix: prefix);
+            _log.LogInfo("失焦暂停: 已让 InGamePauseMenu.OnApplicationFocus(false) 不再暂停游戏");
+        }
+
+        /// <summary>失去焦点时跳过原方法（返回 true 时才执行原方法）。</summary>
+        private static bool SkipPauseOnFocusLost(bool focus)
+        {
+            return focus;
+        }
+
+        /// <summary>
+        /// 游戏把所有本地输入都卡在 `Application.isFocused` 上（反编译证据）：
+        ///   PlayerControls.cs:455、LogicalButtonBase.cs:76、LogicalPCEngagementButton.cs:23、
+        ///   LogicalPadValue.cs:26 —— 失焦时直接丢弃输入。
+        /// 所以光有 runInBackground 没用：游戏在后台照样不认手柄、不认"按 A"。
+        /// 直接把 getter 改成恒真，游戏就当自己一直在前台。
+        /// </summary>
+        private static void ApplyAlwaysFocusedPatch()
+        {
+            var getter = AccessTools.PropertyGetter(typeof(UnityEngine.Application), "isFocused");
+            if (getter == null)
+            {
+                _log.LogWarning("前台伪装: 找不到 Application.isFocused");
+                return;
+            }
+
+            var prefix = new HarmonyMethod(typeof(SmokePlugin).GetMethod(
+                nameof(AlwaysFocused), BindingFlags.Static | BindingFlags.NonPublic));
+            new Harmony("wellcooked.focused").Patch(getter, prefix: prefix);
+            _log.LogInfo("前台伪装: Application.isFocused 恒为 true（后台也认输入）");
+        }
+
+        private static bool AlwaysFocused(ref bool __result)
+        {
+            __result = true;
+            return false;
         }
 
         private static string Describe(MethodBase method)
@@ -160,6 +231,39 @@ namespace WellCooked
                     if (lines > 40000)
                     {
                         break;
+                    }
+                }
+
+                text.AppendLine();
+                text.AppendLine("# 关注类型（世界状态读取要用到的完整成员）");
+                foreach (var wanted in new[]
+                         {
+                             "ServerKitchenFlowControllerBase", "ClientKitchenFlowControllerBase",
+                             "ServerTeamMonitor", "ServerOrderControllerBase", "ServerOrderData",
+                             "ServerCookingHandler", "ServerWorkstation", "ServerWorkableItem",
+                             "ServerPlayerAttachmentCarrier", "ServerWashingStation", "ServerHeatedStation",
+                             "PlateReturnController", "ServerPlateStation", "EntitySerialisationRegistry",
+                             "RoundTimer", "ServerRoundTimer", "OrderDefinitionNode", "RecipeListEntry",
+                             "PlayerIDProvider", "PlayerControls", "GameUtils", "MultiplayerController",
+                             "RecipeList", "RecipeList+Entry", "CookingHandler", "IServerRoundTimer",
+                             "ServerRoundTimer", "TeamMonitor", "ServerKitchenFlowController",
+                             "OrderController", "OrderController+OrderID", "PCPadInputProvider", "TeamID"
+                         })
+                {
+                    var focus = AccessTools.TypeByName(wanted)
+                                ?? SafeTypes(game).FirstOrDefault(t => t.FullName == wanted || t.Name == wanted);
+                    if (focus == null)
+                    {
+                        text.AppendLine(wanted + " : 没找到");
+                        continue;
+                    }
+
+                    text.AppendLine(focus.FullName + (focus.IsEnum ? " (enum)" : ""));
+                    foreach (var member in focus.GetMembers(BindingFlags.Public | BindingFlags.NonPublic
+                                                            | BindingFlags.Instance | BindingFlags.Static
+                                                            | BindingFlags.DeclaredOnly))
+                    {
+                        text.AppendLine("    " + member);
                     }
                 }
 
