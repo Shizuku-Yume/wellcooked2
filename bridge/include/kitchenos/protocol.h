@@ -1,19 +1,19 @@
 /*
  * protocol.h -- the KitchenOS message layer (bridge <-> game plugin).
  *
- * Field names are the cross-end contract. Its home is protocol/README.md plus
+ * Field names are the cross-end contract. Its home is protocol/protocol.md plus
  * protocol/schema/; §5.2 of the project document is where they came from. Both
- * implementations follow it: core/src/protocol.c here and
+ * implementations follow it: bridge/src/protocol.c here and
  * plugin/WellCooked.Plugin/Protocol/Messages.cs. Note that the plugin was written
  * by this same effort, so "both ends agree" is agreement by construction; the
  * independent checks are plugin/tools/conformance/ (a peer compiled from the
  * plugin's own sources) and the real-game run. This module only converts between
  * JSON documents and C structs -- it makes no decisions about what to send.
  *
- * Collections are bounded: a frame is at most 1 MiB, and a fixed layout keeps the
- * bridge allocation-free on the hot path. Overflow never fails a parse, it is
- * counted in proto_diag so the caller can log "dropped N orders" and carry on
- * with the part it understood.
+ * Collections are bounded: one line is at most 1 MiB (framing.h), and a fixed
+ * layout keeps the bridge allocation-free on the hot path. Overflow never fails a
+ * parse, it is counted in proto_diag so the caller can log "dropped N orders" and
+ * carry on with the part it understood.
  */
 #ifndef KITCHENOS_PROTOCOL_H
 #define KITCHENOS_PROTOCOL_H

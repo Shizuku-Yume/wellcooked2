@@ -1,6 +1,6 @@
 /*
  * protocol.c -- KitchenOS message encode/decode. See protocol.h for the contract
- * and protocol/README.md for the field-by-field agreement with the game plugin.
+ * and protocol/protocol.md for the field-by-field agreement with the game plugin.
  */
 #include <kitchenos/protocol.h>
 

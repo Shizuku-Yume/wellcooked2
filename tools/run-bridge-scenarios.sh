@@ -18,8 +18,8 @@ set -u -o pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 PY=${PYTHON:-python3}
-BRIDGE=${KITCHENOS_BRIDGE:-$ROOT/core/build/kitchenos-bridge}
-STUB=${KITCHENOS_WORKER_STUB:-$ROOT/core/build/kitchenos-worker-stub}
+BRIDGE=${KITCHENOS_BRIDGE:-$ROOT/bridge/build/kitchenos-bridge}
+STUB=${KITCHENOS_WORKER_STUB:-$ROOT/bridge/build/kitchenos-worker-stub}
 LOGDIR=${KITCHENOS_LOG_DIR:-$ROOT/logs}
 PREFIX=kitchenos_c04
 RUN_ID=${KITCHENOS_RUN_ID:-$$}
@@ -112,7 +112,7 @@ mkdir -p "$LOGDIR"
 
 if [ ! -f "$BRIDGE" ]; then
     echo "FAIL: Bridge 二进制不存在: $BRIDGE" >&2
-    echo "      先构建: cd core && make   （或 --bridge PATH / KITCHENOS_BRIDGE 指定）" >&2
+    echo "      先构建: cd bridge && make   （或 --bridge PATH / KITCHENOS_BRIDGE 指定）" >&2
     exit 2
 fi
 if [ ! -x "$BRIDGE" ]; then

@@ -49,8 +49,8 @@ bash plugin/tools/conformance/run-conformance.sh 12402 3 pickup,dash pickup,dash
 都按 `InboundMessage` 的字段与 `MsgType` 的名字解析。判据是桥自己的 verbose 日志与对端退出码：
 
 - **阶段 1：分帧探针**（裸 socket，故意不发 hello）
-  - 一帧拆成两次写（先 7 字节，150 ms 后 615 字节）→ 桥必须缓存重组；
-  - 两帧并在一次写里（`hello` 141 B + `state_update` 626 B，共 767 B）→ 桥必须切成两帧；
+  - 一行拆成两次写（2026-10-15 实测：先 7 字节，150 ms 后 612 字节，整行 619 字节）→ 桥必须缓存重组；
+  - 两行并在一次写里（`hello` 138 B + `state_update` 623 B，共 761 B）→ 桥必须切成两行；
   - 心跳、`echo` 往返（token 里带引号、反斜杠和中文，验转义与 UTF-8）；
   - 容量探针：50 个资源键 + 一个 41 字符长键 → 桥的 `resources=48 dropped=2 truncated=1` 必须
     与预测值完全一致（计数器没接上会被抓住，而不是永远显示 0）。
@@ -62,7 +62,7 @@ bash plugin/tools/conformance/run-conformance.sh 12402 3 pickup,dash pickup,dash
   - 以 60 Hz 发写实的 `state_update`（两个厨师含坐标与手持物、两张订单其中一张菜谱为 null、
     锅/灶/工位/`plate_stack` 等五种资源形状，外加一个 C 侧归不了类的键）；
   - 解码桥回的每一条 `action`：`action` 名必须在 `Plugin.HostActions` 的 8 个之内（线上的
-    枚举是其中 5 个：`move`/`stop`/`interact`/`pickup`/`dash`，见 `protocol/README.md` §3.6）、
+    枚举是其中 5 个：`move`/`stop`/`interact`/`pickup`/`dash`，见 `protocol/protocol.md` §3.6）、
     `chef_id` 必须是本对端上报过的、`move` 必须带有限数值的 `x`/`y`；同时按 `Plugin.HandleAction`
     的做法回 `Msg.Ack`（这条路径也因此被 C 侧的 `plugin_ack` 覆盖到）；
   - 桥日志要求：`parse_error=0`、`frame_error=0`、`plugin_timeout=0`。
@@ -81,7 +81,9 @@ bash plugin/tools/conformance/run-conformance.sh 12402 3 pickup,dash pickup,dash
   `stop`）。`-StubKind` 能把 `move`/`stop`/`interact`/`pickup`/`dash` 里的一到两个写进 slot 0/1：
   2026-10-15 实测 `-StubKind pickup,dash` 一轮，对端各解出 109/110 条、0 条被拒，`VERDICT: PASS`。
   插件的 `press`/`release`/`tap` 没有线上表达，所以谁也产生不了它们。
-- 未覆盖：1 MiB 帧上限的边界、心跳超时真正触发后的暂停/恢复、非有限浮点数。
+- 未覆盖：1 MiB **行**上限的边界（本对端不发超长行；这一条由 C 侧单测
+  `bridge/tests/test_framing.c` 与 `tools/fake_plugin.py` 的 `bad-frames` 场景覆盖）、
+  心跳超时真正触发后的暂停/恢复、非有限浮点数。
 
 ## 5. 证据文件（`logs/`，已 gitignore）
 
@@ -114,14 +116,14 @@ bash plugin/tools/conformance/run-conformance.sh 12402 3 pickup,dash pickup,dash
 
 1. **已修**：`protocol/schema/state_update.schema.json` 的 `orders[].recipe` 改成
    `["string","null"]`。两端实现都接受 JSON `null`（`StateReader` 对解析不出的菜谱就发 null，
-   C 侧 `json_object_get_string` 明确接受 null，`protocol/README.md` §3 也说 null 表示缺省），
+   C 侧 `json_object_get_string` 明确接受 null，`protocol/protocol.md` §3 也说 null 表示缺省），
    所以该改的是 schema，不是代码。`holding` / `content` 早就是可空的，这三处现在一致了；
    其余非必填标量字段的 `null` 也按缺省处理，schema 还没逐个标注（README §3 已写明）。
-2. **已修文档**：`protocol/README.md` §3.6 原先只说 `interact` 的 `target_object` 必填，容易被
+2. **已修文档**：`protocol/protocol.md` §3.6 原先只说 `interact` 的 `target_object` 必填，容易被
    读成"插件按它挑目标"。插件 `InputInjector` 处理 `interact` 时确实不读它（对厨师脚下的工位
    按键），契约表里现在写明了这一点；桥仍然总会带上，所以不炸。
-3. **已记入契约与决策**：桥的存活判定**只看心跳**（`core/src/bridge.c`：`last_heartbeat_ms`
-   只被心跳刷新），`state_update` 一直流也不算活着。桥默认 3000 ms，插件默认 `HeartbeatMs=2000`，
-   余量 1 秒；插件若把心跳配到 ≥3 s，就会边发状态边被判失联。`protocol/README.md` §3.2/§4
+3. **已记入契约与决策**：桥的存活判定**只看心跳**（`bridge/src/bridge.c`：`last_heartbeat_ms`
+   只被心跳刷新），`state_update` 一直流也不算活着。桥默认 5000 ms，插件默认 `HeartbeatMs=2000`，
+   余量 3 秒；插件若把心跳配到 ≥5 s，就会边发状态边被判失联。`protocol/protocol.md` §3.2/§4
    原先写的"任何消息"已改成与两端实现一致，配对与余量记进
    `decisions.md`: 2026-10-15 - 链路存活只看心跳。

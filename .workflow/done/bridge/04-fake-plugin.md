@@ -18,7 +18,7 @@
 - [x] 每个场景自己判定并通过/失败退出码报告，不需要人看日志下结论
 - [x] 退出码：0 通过；非 0 表示该场景断言失败，并在 stderr 说明失败点
 
-**Check:** `cd core && make && bash ../tools/run-bridge-scenarios.sh` 全部场景退出码 0。
+**Check:** `cd bridge && make && bash ../tools/run-bridge-scenarios.sh` 全部场景退出码 0。
 
 ## Progress
 
@@ -42,7 +42,7 @@ SUITE_EXIT=0
 
 ### 设计取舍
 
-- **只认 C 的 worker stub，没有 Python 兜底。** `core/build/kitchenos-worker-stub` 不存在时
+- **只认 C 的 worker stub，没有 Python 兜底。** `bridge/build/kitchenos-worker-stub` 不存在时
   `one-slot` 直接 SKIP（77）并说明原因，而不是用 Python 假装写槽。代价是一次 `make clean`
   会让 W3 失去证据；收益是"输入槽由 C 代码按 shm.h 的真实布局写入"这件事没有被偷换。
   这个代价真实发生过，见下。
@@ -94,3 +94,16 @@ SUITE_EXIT=0
 （run-id = runner pid），且只清理自己的对象，因此并行运行互不可见、互不可删；
 `wait_listen` 还会校验监听 socket 的 inode 确实属于本次的 Bridge pid，
 从根本上杜绝"连到了别人的 Bridge 上"（这种情况真实发生过一次，当时 12345 被占）。
+
+**后续修正（2026-10-15，integrator 记录）：** 分帧改成一行一条 JSON 后
+（decisions.md: 2026-10-15 - 分帧改成一行一条 JSON），`bad-frames` 的三个探针换了形状，
+断言名也跟着改：`bridge_alive_after_oversize_frame`/`oversize_frame_drops_link` →
+`bridge_alive_after_oversize_line`/`oversize_line_drops_link`（发 >1 MiB 且**没有** `\n` 的流）、
+`bridge_alive_after_zero_length_frame`/`zero_length_frame_keeps_connection` →
+`bridge_alive_after_zero_length_line`/`zero_length_line_keeps_connection`（只发一个 `\n`）、
+`bridge_alive_after_truncated_frame` → `bridge_alive_after_truncated_line`（发 64 字节半行后断开）。
+`reconnect-storm` 的 `hello+half-frame+RST` 形态同样改名为 `hello+half-line+RST`。
+新增的分帧边界断言在 `--selftest` 里（`unterminated_line_at_cap_waits`、
+`unterminated_oversize_line_rejected`、`terminated_oversize_line_rejected`、
+`encode_refuses_raw_newline_in_payload`）。10 个场景整轮实测仍为 10/10 PASS（见
+`logs/`）。

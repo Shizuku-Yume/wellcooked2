@@ -13,7 +13,7 @@ namespace WellCooked
     /// 插件入口（BepInEx 5，Windows 主机侧）：
     /// - 控制注入：Harmony patch PlayerInputLookup 输入层（InputInjector）
     /// - 状态外传：按间隔读取场景并上报 state_update（StateReader）
-    /// - 链路：TCP 长度前缀帧（TcpLink）；字节收发放后台线程，
+    /// - 链路：TCP 行分帧，一行一条 JSON（TcpLink）；字节收发放后台线程，
     ///   入站 JSON 全部在主线程 Update 里用 JsonUtility 解析（JsonUtility 线程受限）。
     /// </summary>
     [BepInPlugin(PluginGuid, PluginName, PluginVersion)]
@@ -56,7 +56,7 @@ namespace WellCooked
         private readonly StateReader _state = new StateReader();
 
         private float _nextStateAt;
-        private int _stateIntervalMs = 500;
+        private int _stateIntervalMs = 0;
         private bool _statePushEnabled = true;
         private bool _wasConnected;
         private bool _stateErrorLogged;
@@ -118,7 +118,8 @@ namespace WellCooked
             if (connected && _statePushEnabled)
             {
                 float now = Time.realtimeSinceStartup;
-                if (now >= _nextStateAt)
+                /* 0 = 每帧：这时 _nextStateAt 永远追不上 now，等价于不设闸门。 */
+                if (_stateIntervalMs <= 0 || now >= _nextStateAt)
                 {
                     _nextStateAt = now + _stateIntervalMs / 1000f;
                     SendState();
@@ -266,13 +267,14 @@ namespace WellCooked
                 "链路层 heartbeat 发送间隔毫秒（0=禁用）");
             _netHeartbeatTimeoutMs = Config.Bind("Network", "HeartbeatTimeoutMs", 0,
                 "超过该毫秒数未收到任何消息则断开重连（0=禁用）");
-            _netReconnectDelayMs = Config.Bind("Network", "ReconnectDelayMs", 3000,
-                "client 断线重连间隔毫秒");
+            _netReconnectDelayMs = Config.Bind("Network", "ReconnectDelayMs", 2000,
+                "client 断线重连间隔毫秒（game-bridge spec：连接失败 2 秒后重试）");
 
             _stateEnabled = Config.Bind("State", "Enabled", true,
-                "是否按间隔主动上报 state_update");
-            _stateIntervalMsConfig = Config.Bind("State", "IntervalMs", 500,
-                "state_update 上报间隔毫秒（50~60000）");
+                "是否主动上报 state_update");
+            _stateIntervalMsConfig = Config.Bind("State", "IntervalMs", 0,
+                "state_update 上报间隔毫秒；0 = 每帧上报（默认，game-bridge spec 要求每帧），" +
+                "正数则钳到 50~60000 用于限流");
             _stateDumpToLog = Config.Bind("State", "DumpToLog", false,
                 "把 state_update 原文写入 BepInEx 日志（联调期可用）");
 
@@ -323,6 +325,7 @@ namespace WellCooked
 
         private static int ClampInterval(int ms)
         {
+            if (ms <= 0) return 0;   /* 0 保留原意：每帧上报。限流才会钳到下限。 */
             if (ms < 50) return 50;
             if (ms > 60000) return 60000;
             return ms;

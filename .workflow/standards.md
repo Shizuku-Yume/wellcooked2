@@ -13,9 +13,9 @@ WellCooked / KitchenOS：《胡闹厨房2》的订单、工序、厨具被当作
 
 ```sh
 # OS 核心 / Bridge（Linux，C + GNU make）
-cd core && make            # 构建全部二进制
-cd core && make test       # 单元测试，全部通过为绿
-cd core && make test-san   # 同上，带 ASan/UBSan；对象写 build/san/，不污染普通 make
+cd bridge && make            # 构建全部二进制
+cd bridge && make test       # 单元测试，全部通过为绿
+cd bridge && make test-san   # 同上，带 ASan/UBSan；对象写 build/san/，不污染普通 make
 
 # 无游戏联调：协议级模拟插件，替代反复启动游戏
 python3 tools/fake_plugin.py --scenario happy
@@ -55,9 +55,9 @@ grep -E 'BepInEx 5|WellCooked\.Smoke|smoke patch alive' "$GAME_DIR/BepInEx/LogOu
 - `overcooked_os_course_project.md` — 课设方案：需求、调度模型、IPC、协议、排期
 - `1.txt` — 课堂汇报口播稿
 - `represent/` — 课堂汇报材料（pptx、生成脚本、SVG、UML、思维导图），不是运行时依赖
-- `core/` — Linux 侧 OS 核心（C，纯 POSIX，GNU make）。`core/include/kitchenos/` 下的头文件就是
-  模块契约。组员的 standards 把这一层命名为 `bridge/`，改名对齐尚未做，见 technical-debt。
-- `core/tests/` — C 单元测试，`make test` 驱动
+- `bridge/` — Linux 侧 OS 核心（C，纯 POSIX，GNU make）。`bridge/include/kitchenos/` 下的头文件就是
+  模块契约。目录名取自组员 standards 的命名；原先叫 `core/`，2026-10-15 改名对齐。
+- `bridge/tests/` — C 单元测试，`make test` 驱动
 - `protocol/` — 两端共享的协议说明与 JSON Schema，是跨端唯一契约
 - `tools/` — 开发期工具，最重要的是不依赖游戏的协议级模拟插件与场景 harness
 - `plugin/` — Windows 侧 BepInEx 插件。`plugin/WellCooked.Plugin/`（net46，bridge effort 写的，

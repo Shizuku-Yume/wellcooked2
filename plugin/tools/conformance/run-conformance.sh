@@ -65,8 +65,8 @@ PEER_EXE="plugin/tools/conformance/bin/PluginPeer.exe"
 MESSAGES_SRC="plugin/WellCooked.Plugin/Protocol/Messages.cs"
 TCPLINK_SRC="plugin/WellCooked.Plugin/Net/TcpLink.cs"
 
-BRIDGE_BIN="core/build/kitchenos-bridge"
-STUB_BIN="core/build/kitchenos-worker-stub"
+BRIDGE_BIN="bridge/build/kitchenos-bridge"
+STUB_BIN="bridge/build/kitchenos-worker-stub"
 
 # ---- 证据文件（logs/ 已 gitignore：这些都是运行产物）------------------------
 LOG="logs/conformance-bridge.log"
@@ -144,13 +144,13 @@ ok "$PEER_EXE （$(stat -c %s "$PEER_EXE") 字节）比它所依据的源文件�
 # ============================================================ 2. 编译 C 核心
 say ""
 say "== 2. 编译 C 核心 =="
-if ! make -C core > /dev/null 2>&1; then
-    say "make -C core 失败："
-    make -C core 2>&1 | sed 's/^/  /'
+if ! make -C bridge > /dev/null 2>&1; then
+    say "make -C bridge 失败："
+    make -C bridge 2>&1 | sed 's/^/  /'
     exit 3
 fi
 for bin in "$BRIDGE_BIN" "$STUB_BIN"; do
-    [ -x "$bin" ] || { say "missing $bin (run: cd core && make)"; exit 3; }
+    [ -x "$bin" ] || { say "missing $bin (run: cd bridge && make)"; exit 3; }
 done
 ok "$BRIDGE_BIN 与 $STUB_BIN 都在"
 

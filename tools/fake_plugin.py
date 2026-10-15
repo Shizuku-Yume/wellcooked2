@@ -3,9 +3,10 @@
 """协议级模拟插件：不启动游戏就能把 Bridge 的全部场景跑完。
 
 本文件扮演 Windows 侧插件在 PROTOCOL 层的对端，说的是同一套话：
-4 字节大端长度前缀 + UTF-8 JSON，字段名以 plugin/WellCooked.Plugin/ 与
-overcooked_os_course_project.md §5.2 为基准（分帧基准是 Net/TcpLink.cs 的
-MaxFrameBytes/ExtractFrames，消息基准是 Protocol/Messages.cs）。
+一行一条 UTF-8 JSON，'\n' 结尾（protocol/protocol.md §1），字段名以
+plugin/WellCooked.Plugin/ 与 overcooked_os_course_project.md §5.2 为基准
+（分帧基准是 Net/TcpLink.cs 的 MaxFrameBytes/ExtractFrames，消息基准是
+Protocol/Messages.cs）。
 
 每个场景自己判定成败并用退出码表达结论，失败点写 stderr，不需要人翻日志：
 
@@ -38,14 +39,14 @@ from pathlib import Path
 # 协议常量：这些数字与名字来自插件实现，改了就不再是同一个协议
 # --------------------------------------------------------------------------
 
-MAX_FRAME_BYTES = 1024 * 1024   # TcpLink.cs 的 MaxFrameBytes，超出即越界
+MAX_FRAME_BYTES = 1024 * 1024   # TcpLink.cs 的 MaxFrameBytes：一行的上限，不含结尾的 '\n'
 DEFAULT_LISTEN_PORT = 12345     # Bridge 作服务端时的默认端口
 DEFAULT_CONNECT_PORT = 14455    # 插件作服务端时的默认端口，Bridge --link connect 去连它
 HELLO_INSTANCE = "windows-host"
 HELLO_VERSION = "0.1.0"
 HELLO_ACTIONS = ("move", "stop", "press", "release", "tap", "pickup", "dash", "interact")
 IDLE_ACTION = "stop"            # 输入槽缺失时 Bridge 下发的空闲动作
-# 线上 action 枚举（protocol/README.md §3.6 + schema/action.schema.json）：插件会做八个，
+# 线上 action 枚举（protocol/protocol.md §3.6 + schema/action.schema.json）：插件会做八个，
 # 但能调度到的只有这五个。收到别的名字说明 Bridge 与契约不一致，要当硬错误。
 WIRE_ACTIONS = ("move", "stop", "interact", "pickup", "dash")
 
@@ -58,7 +59,7 @@ SCENARIOS = ("happy", "one-slot", "no-heartbeat", "bad-frames", "connect-mode",
              "reconnect-storm", "silent-connect", "data-shapes", "second-peer",
              "pickup-dash")
 
-# 日志行 = "ISO8601(毫秒) 级别 事件名 key=value ..."（core/src/log.c）。
+# 日志行 = "ISO8601(毫秒) 级别 事件名 key=value ..."（bridge/src/log.c）。
 # 只认行首这个位置上的事件名：key=value 里出现同名词不算一次事件。
 LOG_LINE = re.compile(r"^\d{4}-\d\d-\d\dT[\d:.]+ +\w+ +(\S+)")
 
@@ -104,23 +105,29 @@ def _tail(path, lines=25):
 
 
 # --------------------------------------------------------------------------
-# 分帧：4 字节大端长度前缀 + UTF-8 JSON，单帧上限 1 MiB
+# 分帧：一行一条 UTF-8 JSON，'\n' 结尾，单行上限 1 MiB
 # --------------------------------------------------------------------------
 
 
 def encode_frame(payload):
-    """把 str/dict/bytes 打成一个帧；越界直接报错，免得发出不该发的字节。"""
+    """把 str/dict/bytes 打成一帧：载荷 + 一个 '\n'。
+
+    载荷里带裸换行符就没法分帧（对端只会把它读成两行），所以这里与越界一样直接报错，
+    而不是悄悄发出去。上限与 C# 侧 MaxFrameBytes 一样，不含结尾的 '\n'。
+    """
     if isinstance(payload, dict):
         payload = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
     if isinstance(payload, str):
         payload = payload.encode("utf-8")
     if len(payload) > MAX_FRAME_BYTES:
         raise FramingError("payload %d > %d" % (len(payload), MAX_FRAME_BYTES))
-    return struct.pack(">I", len(payload)) + payload
+    if b"\n" in payload:
+        raise FramingError("payload contains a raw newline")
+    return payload + b"\n"
 
 
 class FrameDecoder:
-    """增量解帧器：喂多少字节都行，吐出一条条完整 payload。"""
+    """增量解帧器：喂多少字节都行，吐出一条条完整的行。"""
 
     def __init__(self, max_frame=MAX_FRAME_BYTES):
         self._buf = bytearray()
@@ -134,20 +141,23 @@ class FrameDecoder:
         return len(self._buf)
 
     def next_payload(self):
-        """返回下一个 payload（str）；不完整返回 None；长度越界抛 FramingError。
+        """返回下一行的 payload（str）；不完整返回 None；超长行抛 FramingError。
 
-        注意零长帧返回空串而不是 None，调用方必须用 `is None` 判断。
+        注意零长行（一个孤立的换行符）返回空串而不是 None，调用方必须用 `is None` 判断。
+        超长行是不可恢复的：没有换行符就没有重新同步的位置，所以这里报错让调用方断链，
+        而不是像坏 JSON 那样丢掉这一条继续读。
         """
-        if len(self._buf) < 4:
+        nl = self._buf.find(b"\n")
+        if nl < 0:
+            # 还在收；只有连上限都过了才说明这一行永远不会结束
+            if len(self._buf) > self._max:
+                raise FramingError("unterminated line of %d bytes exceeds limit %d"
+                                   % (len(self._buf), self._max))
             return None
-        (length,) = struct.unpack(">I", self._buf[:4])
-        # C# 侧把长度当有符号 int 读，负数在无符号视角下就是 >2^31，同样落在越界里
-        if length > self._max:
-            raise FramingError("frame length %d exceeds limit %d" % (length, self._max))
-        if len(self._buf) - 4 < length:
-            return None
-        payload = bytes(self._buf[4:4 + length])
-        del self._buf[:4 + length]
+        if nl > self._max:
+            raise FramingError("line length %d exceeds limit %d" % (nl, self._max))
+        payload = bytes(self._buf[:nl])
+        del self._buf[:nl + 1]
         return payload.decode("utf-8", errors="replace")
 
     def reset(self):
@@ -350,7 +360,7 @@ class Link:
                     break
                 self.rx_frames += 1
                 if not payload:
-                    # 零长帧：按 W1 属于"要能承受"的输入，记下来但不当作消息
+                    # 零长行（空行）：按 W1 属于"要能承受"的输入，记下来但不当作消息
                     out.append({"_frame_error": "zero-length frame"})
                     continue
                 try:
@@ -359,7 +369,7 @@ class Link:
                     out.append({"_frame_error": "invalid JSON: %s" % exc,
                                 "_raw": payload[:160]})
         except FramingError as exc:
-            # 长度越界 = 流已失步，后面再读都是垃圾，直接判连接不可用
+            # 行超长 = 流已失步（没有换行符就没有重新同步的位置），直接判连接不可用
             self._die("framing: %s" % exc)
         return out
 
@@ -431,8 +441,8 @@ class Link:
         """强制 RST 关闭：SO_LINGER=0 让 close() 直接发 RST，而不是 FIN。
 
         游戏崩溃、进程被杀时对端看到的就是这个；RST 会把还没读走的字节一起丢掉，
-        所以"Bridge 重连时把解码器复位"这件事只有这条路径能验：残留的半帧若没被
-        清掉，下一条流的长度前缀就会被读成上一帧的尾巴。
+        所以"Bridge 重连时把解码器复位"这件事只有这条路径能验：残留的半行若没被
+        清掉，下一条流的第一行就会被读成上一行的尾巴。
         """
         if self.closed:
             return
@@ -1122,7 +1132,7 @@ class Ctx:
                      heartbeat_timeout_ms, verbose=False):
         binary = Path(self.args.bridge)
         if not binary.exists():
-            raise InfraError("bridge binary not found: %s (build it with: cd core && make)"
+            raise InfraError("bridge binary not found: %s (build it with: cd bridge && make)"
                              % binary)
         argv = ["--link", link, "--host", host, "--port", str(port),
                 "--chefs", str(chefs),
@@ -1339,7 +1349,7 @@ def scenario_one_slot(ctx, checks):
     stub_binary = Path(args.worker_stub)
     if not stub_binary.exists():
         raise Skipped("worker-stub not built (%s); this scenario needs a live slot writer "
-                      "— build with: cd core && make" % stub_binary)
+                      "— build with: cd bridge && make" % stub_binary)
 
     ctx.clear_stale_shm()
     port = ctx.start_bridge_and_wait(link="listen", host=args.host, chefs=chefs,
@@ -1411,7 +1421,7 @@ def scenario_pickup_dash(ctx, checks):
     stub_binary = Path(args.worker_stub)
     if not stub_binary.exists():
         raise Skipped("worker-stub not built (%s); this scenario needs a live slot writer "
-                      "— build with: cd core && make" % stub_binary)
+                      "— build with: cd bridge && make" % stub_binary)
 
     ctx.clear_stale_shm()
     port = ctx.start_bridge_and_wait(link="listen", host=args.host, chefs=chefs,
@@ -1585,23 +1595,24 @@ def scenario_bad_frames(ctx, checks):
     checks.hard("baseline_dispatch", len(base.actions) >= 1, base.describe())
     link.close()
 
-    # B) >1 MiB 的帧：长度前缀就是越界的，Bridge 必须记下来而不是吃下去
+    # B) 连换行符都没有的 >1 MiB 流：这一行永远不会结束，Bridge 必须断开重连并记录
     link = Link(connect(args.host, port, args.ready_timeout))
     link.send_json(msg_hello())
-    oversize = MAX_FRAME_BYTES + 1
-    link.send_raw(struct.pack(">I", oversize) + b"x" * 65536)
+    oversize = MAX_FRAME_BYTES + 65536
+    link.send_raw(b"x" * oversize)
     time.sleep(0.6)
-    checks.hard("bridge_alive_after_oversize_frame", ctx.bridge.alive(),
-                "sent declared length %d (>%d) + 64 KiB; exit=%s"
+    checks.hard("bridge_alive_after_oversize_line", ctx.bridge.alive(),
+                "sent %d bytes (>%d) with no '\\n'; exit=%s"
                 % (oversize, MAX_FRAME_BYTES, ctx.bridge.exit_code()))
-    # specs/bridge.md:56 —— 帧长越界 = 流已失步，必须断开重连并记录。
+    # specs/bridge.md:56 —— 行超长 = 流已失步（没有换行符就没有重新同步的位置），
+    # 必须断开重连并记录。
     # 探活是必须的：对端发来的 FIN 不 recv 就看不见，光看标志位会误判成"还连着"。
     dropped = link.probe_closed(0.6)
     oversize_dropped = dropped
-    checks.hard("oversize_frame_drops_link", dropped,
-                "declared length %d is out of range, so the stream is desynced and the "
-                "bridge must drop the link (specs/bridge.md:56); link=%s"
-                % (oversize, link.error or "still open"))
+    checks.hard("oversize_line_drops_link", dropped,
+                "%d bytes with no terminator exceed the %d cap, so the stream is desynced "
+                "and the bridge must drop the link (specs/bridge.md:56); link=%s"
+                % (oversize, MAX_FRAME_BYTES, link.error or "still open"))
     link.close()
 
     # C1) 非法 JSON（分帧本身正确）：只丢这条消息，连接必须保留。
@@ -1621,34 +1632,34 @@ def scenario_bad_frames(ctx, checks):
                 "same connection: %s; link=%s" % (stats.describe(), link.error or "open"))
     link.close()
 
-    # C2) 零长帧：长度 0 在上限之内，分帧本身没有失步（下一个长度前缀就在原处），
-    #     参考实现 TcpLink.ExtractFrames 会照常切出"正文为空的一帧"，正文解析失败
+    # C2) 空行：只有一个换行符，分帧本身没有失步（换行符就是边界），
+    #     参考实现 TcpLink.ExtractFrames 会照常切出"正文为空的一行"，正文解析失败
     #     按 specs/bridge.md:55 属于"丢弃该消息并记录，不断连接"。所以：进程存活是
     #     硬要求，断不断连按 soft 记录（这条是当前实现对不上 spec 的地方之一）。
     link = Link(connect(args.host, port, args.ready_timeout))
     link.send_json(msg_hello())
     link.send_raw(encode_frame(b""))
     time.sleep(0.4)
-    checks.hard("bridge_alive_after_zero_length_frame", ctx.bridge.alive(),
+    checks.hard("bridge_alive_after_zero_length_line", ctx.bridge.alive(),
                 "exit=%s" % ctx.bridge.exit_code())
     dropped = link.probe_closed(0.6)
     zero_dropped = dropped
-    checks.soft("zero_length_frame_keeps_connection", not dropped,
-                "bridge %s；零长帧的长度 0 未越界，分帧没有失步，"
-                "参考实现按『正文为空的一帧』走完并丢弃（specs/bridge.md:55 不断连接）；"
+    checks.soft("zero_length_line_keeps_connection", not dropped,
+                "bridge %s；空行的载荷是空的，分帧没有失步，"
+                "参考实现按『正文为空的一行』走完并丢弃（specs/bridge.md:55 不断连接）；"
                 "link=%s"
                 % ("kept the connection" if not dropped else "dropped the connection",
                    link.error or "open"))
     link.close()
 
-    # D) 截断帧：声明 8192 字节只给 64 字节，然后断开半帧
+    # D) 截断的行：64 字节之后没有换行符就断开，Bridge 只能当成半条消息
     link = Link(connect(args.host, port, args.ready_timeout))
     link.send_json(msg_hello())
-    link.send_raw(struct.pack(">I", 8192) + b"{" * 64)
+    link.send_raw(b"{" * 64)
     time.sleep(0.4)
     link.close()
     time.sleep(0.4)
-    checks.hard("bridge_alive_after_truncated_frame", ctx.bridge.alive(),
+    checks.hard("bridge_alive_after_truncated_line", ctx.bridge.alive(),
                 "exit=%s" % ctx.bridge.exit_code())
 
     # E) 之后仍要能正常处理一帧（W5 的收尾条件）
@@ -1888,9 +1899,9 @@ def scenario_silent_connect(ctx, checks):
 def scenario_reconnect_storm(ctx, checks):
     """边界：连续快速断开重连（关卡重载 / alt-tab 的真实形态，bridge.md:105）。
 
-    四种会话形态轮着来：什么都不发就 FIN、发几帧再 FIN、发半帧后 RST、发一帧后
-    RST。RST 是解码器复位唯一验得到的路径：半帧字节若留在解码器里，下一条流的
-    长度前缀就会被读成上一帧的尾巴，症状是 parse_error / framing desync 而不是干净报错。
+    四种会话形态轮着来：什么都不发就 FIN、发几帧再 FIN、发半行后 RST、发一行后
+    RST。RST 是解码器复位唯一验得到的路径：半行的字节若留在解码器里，下一条流的
+    第一行就会被读成上一行的尾巴，症状是 parse_error / framing desync 而不是干净报错。
 
     硬结论只有两条：进程还活着、还在下发、最后的连接真的还开着；以及
     /proc/<pid>/fd 里 socket 数与整表都不增长。
@@ -1933,9 +1944,9 @@ def scenario_reconnect_storm(ctx, checks):
             link.send_json(msg_state_update(chefs, i))
             link.send_json(msg_state_update(chefs, i + 1))
         elif form == 2:
-            forms["hello+half-frame+RST"] += 1
+            forms["hello+half-line+RST"] += 1
             link.send_json(msg_hello())
-            link.send_raw(struct.pack(">I", 8192) + b"{" * 64)
+            link.send_raw(b"{" * 64)
         else:
             forms["hello+frame+RST"] += 1
             link.send_json(msg_hello())
@@ -2012,14 +2023,14 @@ def scenario_reconnect_storm(ctx, checks):
     checks.hard("final_connection_really_open", still_open,
                 "0.4s 内反复 recv 都没撞到 EOF 才算开着；link=%s" % (link.error or "open"))
 
-    # 解码器若没在重连时复位，残留半帧会让后面的字节被读成帧长：症状是
-    # parse_error（解码器把垃圾当消息交上来）或 framing desync（长度越界）。
+    # 解码器若没在重连时复位，残留半行会让后面的字节被读成上一行的尾巴：症状是
+    # parse_error（解码器把垃圾当消息交上来）或 framing desync（一行超过上限仍没有换行符）。
     text = ctx.log_text()
     desync = re.findall(r"framing desync|stage=framing", text)
     checks.hard("no_framing_desync_during_storm", not desync,
-                "残留半帧没被清掉的信号；命中 %d 次: %s" % (len(desync), desync[:2] or "none"))
+                "残留半行没被清掉的信号；命中 %d 次: %s" % (len(desync), desync[:2] or "none"))
     checks.hard("no_parse_error_during_storm", log_event_counts(ctx)["parse_error"] == 0,
-                "parse_error 次数=%d（半帧在复位后不该被当成消息；命中说明解码器串了流）"
+                "parse_error 次数=%d（半行在复位后不该被当成消息；命中说明解码器串了流）"
                 % log_event_counts(ctx)["parse_error"])
 
     fds_after = proc_fds(pid)
@@ -2415,21 +2426,28 @@ def selftest():
     checks = Checks("selftest", strict=True)
     _say("selftest: 验证 fake_plugin 自己的分帧编解码、消息形状与 ack 回路")
 
-    # 1) 编码布局必须与 TcpLink.cs 一致：4 字节大端长度 + UTF-8
+    # 1) 编码布局必须与 TcpLink.cs 一致：UTF-8 + 一个 '\n'
     payload = '{"type":"heartbeat","timestamp":1}'
     raw = encode_frame(payload)
     bits = payload.encode("utf-8")
     checks.hard("encode_layout",
-                raw == struct.pack(">I", len(bits)) + bits
-                and raw[:4] == bytes([0, 0, 0, len(bits)]),
-                "%d bytes, prefix=%s" % (len(raw), raw[:4].hex()))
+                raw == bits + b"\n" and raw[-1:] == b"\n",
+                "%d bytes, tail=%s" % (len(raw), raw[-4:].hex()))
 
     utf8 = "订单-001 汤 🍲"
     frame = encode_frame(utf8)
-    checks.hard("length_prefix_counts_bytes_not_chars",
-                struct.unpack(">I", frame[:4])[0] == len(utf8.encode("utf-8"))
+    checks.hard("line_length_counts_bytes_not_chars",
+                frame == utf8.encode("utf-8") + b"\n"
                 and len(utf8.encode("utf-8")) != len(utf8),
                 "chars=%d bytes=%d" % (len(utf8), len(utf8.encode("utf-8"))))
+
+    try:
+        encode_frame('{"a":"b\nc"}')
+        newline_ok = False
+    except FramingError:
+        newline_ok = True
+    checks.hard("encode_refuses_raw_newline_in_payload", newline_ok,
+                "a payload with a bare '\\n' cannot be framed and must not be sent")
 
     # 2) 通过一条真的 TCP 连接跑一次往返（自己当对端）
     small = '{"type":"action","chef_id":0,"action":"stop"}'
@@ -2499,9 +2517,9 @@ def selftest():
     link.close()
     thread.join(timeout=5)
 
-    # 5) 截断帧：只留在缓冲区，不吐半条消息
+    # 5) 半行：只留在缓冲区，不吐半条消息
     def truncate(conn):
-        conn.sendall(encode_frame(small) + struct.pack(">I", 100) + b"{" * 40)
+        conn.sendall(encode_frame(small) + b"{" * 40)
         time.sleep(0.6)
 
     port, thread, errors = _start_peer(truncate)
@@ -2511,31 +2529,38 @@ def selftest():
     while time.monotonic() < deadline:
         got.extend(link.pump(0.1))
     pending = link.dec.pending
-    checks.hard("truncated_frame_stays_pending",
-                len(got) == 1 and pending == 44,
-                "frames=%d pending_bytes=%d (expected 4+40)" % (len(got), pending))
+    checks.hard("truncated_line_stays_pending",
+                len(got) == 1 and pending == 40,
+                "frames=%d pending_bytes=%d (expected 40)" % (len(got), pending))
     link.close()
     thread.join(timeout=5)
 
-    # 6) 越界与"负数"长度必须抛 FramingError（C# 侧读成负数，无符号视角就是 >2^31）
+    # 6) 上限的边界：没有换行符时只有"超过"才算失步，正好等于上限必须继续等
+    #    （否则一条刚好 1 MiB 的合法消息会被判成垃圾）；有换行符时超过上限同样是失步。
     dec = FrameDecoder()
-    dec.feed(struct.pack(">I", MAX_FRAME_BYTES + 1))
+    dec.feed(b"x" * MAX_FRAME_BYTES)
+    checks.hard("unterminated_line_at_cap_waits", dec.next_payload() is None,
+                "%d bytes with no '\\n' may still be arriving" % MAX_FRAME_BYTES)
+
+    dec = FrameDecoder()
+    dec.feed(b"x" * (MAX_FRAME_BYTES + 1))
     try:
         dec.next_payload()
         oversize_ok = False
     except FramingError:
         oversize_ok = True
-    checks.hard("oversize_length_rejected", oversize_ok,
-                "declared %d" % (MAX_FRAME_BYTES + 1))
+    checks.hard("unterminated_oversize_line_rejected", oversize_ok,
+                "%d bytes with no '\\n'" % (MAX_FRAME_BYTES + 1))
 
     dec = FrameDecoder()
-    dec.feed(b"\xff\xff\xff\xff")
+    dec.feed(b"x" * (MAX_FRAME_BYTES + 1) + b"\n")
     try:
         dec.next_payload()
-        negative_ok = False
+        long_line_ok = False
     except FramingError:
-        negative_ok = True
-    checks.hard("negative_length_rejected", negative_ok, "declared 0xFFFFFFFF")
+        long_line_ok = True
+    checks.hard("terminated_oversize_line_rejected", long_line_ok,
+                "%d bytes + '\\n'" % (MAX_FRAME_BYTES + 1))
 
     # 7) §5.2 的 state_update 字段集必须逐字对得上
     state = json.loads(msg_state_update(2, 7))
@@ -2653,12 +2678,12 @@ def parse_args(argv):
     parser.add_argument("--bridge",
                         default=os.environ.get(
                             "KITCHENOS_BRIDGE",
-                            str(REPO_ROOT / "core" / "build" / "kitchenos-bridge")),
+                            str(REPO_ROOT / "bridge" / "build" / "kitchenos-bridge")),
                         help="kitchenos-bridge 路径（或设 $KITCHENOS_BRIDGE）")
     parser.add_argument("--worker-stub",
                         default=os.environ.get(
                             "KITCHENOS_WORKER_STUB",
-                            str(REPO_ROOT / "core" / "build" / "kitchenos-worker-stub")),
+                            str(REPO_ROOT / "bridge" / "build" / "kitchenos-worker-stub")),
                         help="kitchenos-worker-stub 路径（或设 $KITCHENOS_WORKER_STUB）")
     parser.add_argument("--host", default="127.0.0.1", help="listen 模式为绑定地址，connect 模式为拨号目标")
     parser.add_argument("--listen-port", type=int, default=None,

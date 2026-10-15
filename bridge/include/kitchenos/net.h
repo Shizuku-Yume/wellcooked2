@@ -10,13 +10,15 @@
  *
  * Framing is not this module's job. Bytes read from the socket go into a
  * framing_decoder (see framing.h) and come back out of kos_net_recv_frame(); no
- * length prefix is parsed here. A length prefix outside [0, FRAMING_MAX_PAYLOAD]
- * means sync is lost, and a length-prefixed stream offers no way back into sync,
- * so the link drops and the peer has to reconnect. A zero-length frame is not
- * that case: it is a legal frame with an empty payload, i.e. a malformed
- * *message* -- the caller's parser rejects it while the connection stays up,
- * which is how the reference peer behaves too (TcpLink.cs refuses only lengths
- * outside [0, MaxFrameBytes] and lets its JSON layer reject the empty message).
+ * terminator is looked for here. A line longer than FRAMING_MAX_PAYLOAD means
+ * the peer is not speaking this protocol, and there is nothing to
+ * resynchronize *to* -- a terminator inside a payload is indistinguishable from
+ * the one that ends it -- so the link drops and the peer has to reconnect. A
+ * zero-length line is not that case: it is a legal frame with an empty payload,
+ * i.e. a malformed *message* -- the caller's parser rejects it while the
+ * connection stays up, which is how the reference peer behaves too
+ * (TcpLink.cs splits on the terminator without judging the payload and lets its
+ * JSON layer reject the empty string).
  *
  * Single-threaded by contract: the caller drives everything through
  * kos_net_wait() (standards.md: no threads in the core).
@@ -109,24 +111,25 @@ int kos_net_wait(kos_net *net, int timeout_ms);
  *  -1  -> fatal for this call: the buffer cannot hold a legal frame, the decoder
  *         is out of memory. The link is left alone in this case.
  *
- * Peer EOF and a framing desync (a length prefix outside [0,
- * FRAMING_MAX_PAYLOAD], the only failure a length-prefixed stream cannot
- * resynchronize from) are handled here rather than reported: the link drops to
- * KOS_NET_DOWN, the peer fd is closed, the decoder is reset, and the answer is
- * 0. An EOF therefore discards bytes that were buffered but never pulled -- the
- * session they belong to is over, and the next peer's stream must not be parsed
- * as a continuation of it. A *malformed message*, by contrast, is delivered and
- * left to the caller's parser: the connection stays up, as it must.
+ * Peer EOF and a framing desync (a line over FRAMING_MAX_PAYLOAD -- the one
+ * failure a reader cannot tell apart from payload bytes) are handled here rather
+ * than reported: the link drops to KOS_NET_DOWN, the peer fd is closed, the
+ * decoder is reset, and the answer is 0. An EOF therefore discards bytes that
+ * were buffered but never pulled -- the session they belong to is over, and the
+ * next peer's stream must not be parsed as a continuation of it. A *malformed
+ * message*, by contrast, is delivered and left to the caller's parser: the
+ * connection stays up, as it must.
  */
 int kos_net_recv_frame(kos_net *net, char *buf, size_t cap, size_t *len);
 
 /*
  * Encode one frame with framing_encode() and send it.
  * Returns 0 when the whole frame went out, -1 otherwise. Anything that leaves a
- * partial frame on the wire (EPIPE, ECONNRESET, EAGAIN, a short send) drops the
- * link first: the peer's decoder would be stuck mid-prefix with no way to
- * resynchronize, so an honest disconnect beats a silent desync. A payload over
- * FRAMING_MAX_PAYLOAD is a local bug and returns -1 without touching the link.
+ * partial line on the wire (EPIPE, ECONNRESET, EAGAIN, a short send) drops the
+ * link first: the peer is left holding a line whose terminator will never come,
+ * and the next frame would be read as its continuation, so an honest disconnect
+ * beats a silent desync. A payload over FRAMING_MAX_PAYLOAD, or one carrying a
+ * raw terminator, is a local bug and returns -1 without touching the link.
  * Never blocks and never raises SIGPIPE.
  */
 int kos_net_send_frame(kos_net *net, const char *json, size_t len);

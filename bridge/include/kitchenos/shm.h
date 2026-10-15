@@ -125,7 +125,7 @@ const char *kos_strerror(int code);
 /* ========================================================== 动作与槽 */
 
 /* 输入动作种类。字符串名字由 kos_action_kind_name() 给出，与插件协议里的 action 取值同名：
- * move / stop / interact / pickup / dash 五个都上线（protocol/README.md §3.6 +
+ * move / stop / interact / pickup / dash 五个都上线（protocol/protocol.md §3.6 +
  * protocol/schema/action.schema.json），bridge.c 的 build_action_from_slot() 各有一个构造器，
  * 所以 Worker 往槽里写什么，插件就收到什么。NONE 不是动作，是"这个 Worker 本帧没话说"，
  * Bridge 按 idle 的 stop 处理。插件的 press/release/tap 不在这里 —— 要按帧调度原始按键时，

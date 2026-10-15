@@ -39,7 +39,7 @@ spec 的 W8 行里。
 - **action 枚举扩到 5 个** —— 插件能执行 8 种动作，线上只表达了 3 种，`pickup`/`dash` 被
   静默降级；复查时用户选择补齐而不是收窄。
 - **链路存活只看心跳** —— 课程文档 §5.3 的措辞是"超时未收到心跳"，代码照此实现；此前
-  `protocol/README.md` 写反了，已改正。
+  `protocol/protocol.md` 写反了，已改正。
 - **插件由本 effort 补写** —— 见下"计划 vs 实际"第 1 条，这是本次复查翻出来最重要的一件事。
 
 ## Plan versus actual
@@ -54,7 +54,7 @@ spec 的 W8 行里。
 - **计划里最大的错误是前提本身。** 拆分时写的 spec 说"现在仓库里只有游戏侧插件"，而基线
   `b61b6f7` 里 `plugin/` 一个文件都没有（`git ls-tree -r b61b6f7 | grep -c '^plugin/'` = 0）：
   插件是这个 effort 自己写的（`a67ea3b`，挂在任务 05 名下，而 05 的 `Files:` 只写了
-  `plugin/tools/`）。于是 `specs/bridge.md`、`protocol/README.md`、`protocol.h`、
+  `plugin/tools/`）。于是 `specs/bridge.md`、`protocol/protocol.md`、`protocol.h`、
   `decisions.md` 四处的"以插件**现有**实现为基准"全部落空 —— 跨端一致成了自证循环，唯一的
   独立证据只剩那次实机运行。计划里既没有这条转向的记录，也没有把"插件从零写"当成一件事排期。
 
@@ -66,7 +66,7 @@ CONVENTIONS §7 要求的 `Review boundary` 行在 5 个任务的 `## Progress` 
 
 - **文档陈述与代码不符（4 条，同一个模式，也是本轮最大的类别）**
   1. 四处"以插件现有实现为基准"，而插件是本 effort 写的；
-  2. `protocol/README.md` 说"没有任何消息即判定断开（不是只看心跳）"，代码只看心跳
+  2. `protocol/protocol.md` 说"没有任何消息即判定断开（不是只看心跳）"，代码只看心跳
      （错的是文档：课程文档 §5.3 写的就是"未收到心跳"）；
   3. `state_update.schema.json` 的 `recipe` 只允许 string，而代码发 `null`、README 也说 null 合法；
   4. `shm.h` 说动作名"Bridge 下发时可以直接用"，实际 `pickup`/`dash` 被静默降级成 idle。
@@ -86,7 +86,7 @@ CONVENTIONS §7 要求的 `Review boundary` 行在 5 个任务的 `## Progress` 
    检查"。标准写法：新增或修改一条检查时，先拿已知坏掉的输入让它失败一次，再让它通过。
 2. **关于代码行为的文档陈述必须指出哪条检查锁住它。** 写不出检查就写明"未验证" —— 文档说错
    话比没有文档更糟，因为它会被相信。本轮四条假陈述里，有两条已经被写进了同一个仓库的另一
-   份文档（`conformance/README.md` 说对了心跳规则，`protocol/README.md` 说错了），说明这类
+   份文档（`conformance/README.md` 说对了心跳规则，`protocol/protocol.md` 说错了），说明这类
    错误靠"再读一遍"是发现不了的。
 
 两条都属于判断类，因此落在 `standards.md` 而没有做成 lint。

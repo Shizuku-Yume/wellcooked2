@@ -16,7 +16,7 @@
 set -u
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BIN="${REPO_ROOT}/core/build/kitchenos-bridge"
+BIN="${REPO_ROOT}/bridge/build/kitchenos-bridge"
 LOG="${REPO_ROOT}/logs/bridge.log"
 PORT="${PORT:-12345}"
 HOST="${HOST:-0.0.0.0}"
@@ -46,7 +46,7 @@ say() { printf '%s\n' "$*"; }
 # ---------------------------------------------------------------- 前置检查
 if [ ! -x "$BIN" ]; then
     say "找不到 Bridge 可执行文件：$BIN"
-    say "先构建：cd core && make"
+    say "先构建：cd bridge && make"
     exit 2
 fi
 

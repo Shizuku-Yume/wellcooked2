@@ -32,13 +32,13 @@ effort 里不成立，跨端契约的基准是 `protocol/`。）
 
 ## How it is built
 
-模块与各自职责（头文件在 `core/include/kitchenos/`，即模块契约；表里的 `bridge` 是可执行
+模块与各自职责（头文件在 `bridge/include/kitchenos/`，即模块契约；表里的 `bridge` 是可执行
 程序而不是库模块，所以没有 `bridge.h` —— 它的契约是命令行开关加 `logs/bridge.log` 的事件名）：
 
 | 模块 | 负责 | 不负责 |
 |---|---|---|
 | `json` | 递归下降解析与写入，覆盖对象/数组/字符串/数字/布尔/null 子集 | schema 校验、流式解析 |
-| `framing` | 4 字节大端长度前缀 + UTF-8 的分帧与解帧，1 MiB 上限 | 语义、重传 |
+| `framing` | 一行一条 UTF-8 JSON、`\n` 结尾的分帧与解帧，单行 1 MiB 上限 | 语义、重传 |
 | `protocol` | 消息类型常量；解析 `state_update`/`hello`/`ack`/`heartbeat`/`echo`/`config`；构造 `action`（`move`/`stop`/`interact`/`pickup`/`dash` 五种）、`ack`/`echo_reply`/`heartbeat`/`hello` | 业务决策 |
 | `shm` | `/kitchenos_state` 的布局、seqlock、输入槽与就绪信号量 `/kitchenos_input_ready` | 谁该占哪口锅（Scheduler 的事） |
 | `net` | TCP 监听/连接、断线重连、把 socket 接进 `framing` | 消息语义 |
@@ -59,10 +59,10 @@ effort 里不成立，跨端契约的基准是 `protocol/`。）
   "每帧阻塞等待 → 有界等待"那条相同。
   这两条直接对应文档 §5.1"共享内存 + 信号量"和 §6.1 的读者写者与屏障要求。
 
-失败行为：分帧或 JSON 解析失败 → 丢弃该消息并记录，不断连接；帧长越界或负数 → 视为流已
-失步，断开重连并记录；跨进程读写 shm 前核对魔数/结构版本/尺寸，不匹配就**拒绝挂接**并给出
-明确错误（Bridge 自己启动时遇到的旧对象走 `KOS_SHM_RECREATE` 清掉，见 `shm.h` 与
-decisions.md: 2026-10-15 - 重启时清掉崩溃残留的共享内存）。
+失败行为：分帧或 JSON 解析失败 → 丢弃该消息并记录，不断连接；一行超过 1 MiB（无论有没有
+`\n` 收尾）→ 视为流已失步，断开重连并记录；跨进程读写 shm 前核对魔数/结构版本/尺寸，不匹配就
+**拒绝挂接**并给出明确错误（Bridge 自己启动时遇到的旧对象走 `KOS_SHM_RECREATE` 清掉，见
+`shm.h` 与 decisions.md: 2026-10-15 - 重启时清掉崩溃残留的共享内存）。
 
 ## What it must not do
 
@@ -90,7 +90,7 @@ decisions.md: 2026-10-15 - 重启时清掉崩溃残留的共享内存）。
 
 ## How we will know it works
 
-- **W1.** `cd core && make test` 全部通过：解析器（空对象、嵌套、转义、非法输入）、分帧
+- **W1.** `cd bridge && make test` 全部通过：解析器（空对象、嵌套、转义、非法输入）、分帧
   （粘包、拆包、超长帧、零长帧）、协议解析与构造、seqlock 读写一致性。
 - **W2.** 无游戏联调：`tools/fake_plugin.py --scenario happy` 与 Bridge 对跑，Bridge 日志出现
   收到 `state_update`、写入共享内存、下发动作，双方退出码 0。
@@ -107,7 +107,7 @@ decisions.md: 2026-10-15 - 重启时清掉崩溃残留的共享内存）。
 - **W8.** 实机：Windows 游戏启动后，Bridge 日志出现 `hello` 与 `state_update`（**唯一需要
   启动游戏的一次验证**）。
 
-测试层次：`core/tests/` 是 C 单元测试，覆盖纯函数与共享内存原语（W1）；协议级端到端由
+测试层次：`bridge/tests/` 是 C 单元测试，覆盖纯函数与共享内存原语（W1）；协议级端到端由
 `tools/fake_plugin.py` 驱动（W2–W5、W7，含动作枚举五个的端到端：`pickup-dash` 场景让两个
 Worker 分别写 `pickup`/`dash`，断言它们原样到达对端），它替代反复启动游戏；游戏实机只留 W8
 一次。出问题时的可观察信号：Bridge 进程退出码非 0、日志停止增长、`/dev/shm/kitchenos*` 残留、

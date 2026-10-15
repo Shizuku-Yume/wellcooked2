@@ -5,14 +5,14 @@
  *
  * What is proven here (numbered as in the task):
  *   1. LISTEN mode on port 0 -- ephemeral port, several frames both ways,
- *      byte-identical payloads, one frame split over two send()s, two frames in
+ *      byte-identical payloads, one line split over two send()s, two lines in
  *      one buffer, and a reconnecting client replacing a dead session.
- *   2. A zero-length frame is an empty *message*: it is delivered with len == 0
+ *   2. A zero-length line is an empty *message*: it is delivered with len == 0
  *      and the connection stays up (the caller's parser rejects it, as
  *      TcpLink.cs and the framing contract both imply), and the same connection
- *      still carries the next frame. A length prefix above 1 MiB is the real
- *      desync: it drops the link to DOWN, keeps the listener alive and stays
- *      recoverable.
+ *      still carries the next frame. A line that outgrows the 1 MiB cap is the
+ *      real desync: it drops the link to DOWN, keeps the listener alive and
+ *      stays recoverable.
  *   3. CONNECT mode against a closed port: wait() keeps answering 0, retries
  *      happen, and the link comes up once a listener appears.
  *   4. Peer close is detected as DOWN and a reconnect in LISTEN mode succeeds.
@@ -23,6 +23,7 @@
 
 #include <arpa/inet.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <netinet/in.h>
 #include <poll.h>
 #include <signal.h>
@@ -673,9 +674,10 @@ static void test_zero_length_frame_is_delivered(void)
     CHECKF(wait_for_state(net, KOS_NET_UP, 2000), "no link for the zero-length case");
 
     {
-        unsigned char zero[FRAMING_HEADER_LEN] = { 0, 0, 0, 0 };
+        static const unsigned char terminator[FRAMING_TERMINATOR_LEN] = { '\n' };
 
-        CHECK(write_all(client, zero, sizeof zero) == 0);
+        /* One terminator and nothing else: the empty line. */
+        CHECK(write_all(client, terminator, sizeof terminator) == 0);
     }
 
     /* it must come up as a frame of length 0 ... */
@@ -727,6 +729,69 @@ static void test_zero_length_frame_is_delivered(void)
 
 /* ------------------------------------------ 2b. a real desync costs the link */
 
+static int64_t monotonic_ms(void)
+{
+    struct timespec ts;
+
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0)
+        return 0;
+    return (int64_t)ts.tv_sec * 1000 + (int64_t)(ts.tv_nsec / 1000000);
+}
+
+/*
+ * Pushes one line that never ends until the Bridge gives up on it, driving
+ * wait()+recv_frame() itself the way the Bridge's own loop does: the decoder only
+ * sees the over-long line when recv_frame() is called, so a test that merely
+ * wrote the bytes would wait for a drop that nothing is there to produce.
+ *
+ * The loop is bounded by a wall clock, never by a number of rounds. TCP hands the
+ * bytes over at the receiver's pace, so how much of the flood is in flight at any
+ * moment is not the sender's decision: measured here, 1.1 MiB was accepted by
+ * send() while only 462 KiB had been read, and 50 further wait/read rounds moved
+ * another ~495 KiB. A fixed number of rounds turns that into a coin flip, and the
+ * losing run reports "the link never dropped" for a link that drops 100 ms later.
+ *
+ * The socket must be non-blocking: a blocking send() would sit in the kernel
+ * while the drop it is waiting for needs this process to keep polling. EPIPE and
+ * ECONNRESET are the expected end, not failures -- that is what a drop looks like
+ * from the peer's side.
+ */
+static int flood_unterminated_line(kos_net *net, int fd, size_t total, int timeout_ms)
+{
+    unsigned char chunk[65536];
+    char rbuf[4096];
+    int64_t deadline = monotonic_ms() + timeout_ms;
+    size_t sent = 0;
+
+    memset(chunk, 'x', sizeof chunk);
+    for (;;) {
+        size_t rlen = 0;
+
+        if (kos_net_state_of(net) == KOS_NET_DOWN)
+            return 0;
+        if (monotonic_ms() >= deadline)
+            return -1;
+        if (sent < total) {
+            size_t want = total - sent < sizeof chunk ? total - sent : sizeof chunk;
+            ssize_t n = send(fd, chunk, want, MSG_NOSIGNAL);
+
+            if (n > 0) {
+                sent += (size_t)n;
+            } else if (n < 0) {
+                if (errno == EINTR)
+                    continue;
+                if (errno == EPIPE || errno == ECONNRESET)
+                    return 0; /* the peer dropped us: that is the point */
+                if (errno != EAGAIN && errno != EWOULDBLOCK)
+                    return -1;
+            }
+        }
+        if (kos_net_wait(net, 2) != 0)
+            return -1;
+        (void)kos_net_recv_frame(net, rbuf, sizeof rbuf, &rlen);
+    }
+}
+
 static void test_desync_drops_link(void)
 {
     kos_net_opts opts;
@@ -734,8 +799,7 @@ static void test_desync_drops_link(void)
     kos_error err;
     char buf[4096];
     size_t len = 0;
-    unsigned char bogus[FRAMING_HEADER_LEN];
-    int port, client, i, rc;
+    int port, client, flags, i, rc;
 
     memset(&err, 0, sizeof err);
     kos_net_opts_init(&opts);
@@ -746,21 +810,31 @@ static void test_desync_drops_link(void)
     port = fd_port(kos_net_listen_fd(net));
     CHECK(port > 0);
 
-    /* a length prefix above the 1 MiB cap is a lost stream: no resynchronization
-     * is possible, so the session is over */
+    /* A line that never ends is an unframeable stream, and unlike a bad *message*
+     * it costs the session: past the cap there is no terminator to resynchronize
+     * at, and no way to tell the next message from the tail of this one. */
     client = dial_local(port);
     CHECK(client >= 0);
-    CHECKF(wait_for_state(net, KOS_NET_UP, 2000), "no link for the oversize case");
-    bogus[0] = 0x00;
-    bogus[1] = 0x40; /* 0x00400000 = 4 MiB */
-    bogus[2] = 0x00;
-    bogus[3] = 0x00;
-    CHECK(write_all(client, bogus, sizeof bogus) == 0);
-    CHECKF(wait_for_state(net, KOS_NET_DOWN, 1000), "a 4 MiB prefix did not drop the link");
+    CHECKF(wait_for_state(net, KOS_NET_UP, 2000), "no link for the over-long line case");
+    flags = fcntl(client, F_GETFL, 0);
+    CHECKF(flags >= 0 && fcntl(client, F_SETFL, flags | O_NONBLOCK) == 0,
+           "fcntl(O_NONBLOCK): %s", strerror(errno));
+    CHECKF(flood_unterminated_line(net, client, (size_t)FRAMING_MAX_FRAME + 65536, 10000) == 0,
+           "the flood never ended in a drop: %s", kos_net_last_error(net));
+    /* The flood returns only once the link is DOWN, so this asserts the same fact
+     * its return value carries -- without the iteration count that used to make the
+     * outcome depend on how fast TCP handed the bytes over. */
+    CHECKF(kos_net_state_of(net) == KOS_NET_DOWN,
+           "a line over the 1 MiB cap did not drop the link: %s", kos_net_last_error(net));
     CHECK(kos_net_peer_fd(net) == -1);
     CHECK(kos_net_listen_fd(net) >= 0);
     CHECKF(kos_net_last_error(net)[0] != '\0', "the drop left no reason behind");
-    printf("  4 MiB length prefix -> DOWN: %s\n", kos_net_last_error(net));
+    /* bridge.c classifies the cause by that word (reason_is_framing_failure):
+     * lose it and the drop stops being logged as frame_error, which is the only
+     * signal the harness has for this class of failure. */
+    CHECKF(strstr(kos_net_last_error(net), "framing") != NULL,
+           "the drop reason no longer says \"framing\": %s", kos_net_last_error(net));
+    printf("  line over the 1 MiB cap -> DOWN: %s\n", kos_net_last_error(net));
     CHECK(kos_net_recv_frame(net, buf, sizeof buf, &len) == 0); /* nothing, no crash */
     for (i = 0; i < 3; i++)
         CHECK(kos_net_wait(net, 10) == 0); /* and no spin */
@@ -784,6 +858,7 @@ static void test_desync_drops_link(void)
     }
     close(client);
     kos_net_close(net);
+
 }
 
 /* ---------------------------------------------- 3. CONNECT retry behaviour */

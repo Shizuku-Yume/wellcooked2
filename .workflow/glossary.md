@@ -37,8 +37,9 @@ competing names, omit the line rather than inventing fake synonyms.
 - **idle**: 让某个厨师不动的输入，用于 Scheduler/Worker 缺席时保持连接和局面不失控。
 - **state_update**: 插件上报世界状态的 JSON 消息类型名，字段见 `protocol/`。
 - **action**: Bridge（源自 Scheduler）下发给插件控制某个厨师的动作消息类型名。
-- **分帧（framing）**: TCP 字节流上的消息边界：4 字节大端长度前缀 + UTF-8 JSON，单帧上限
-  1 MiB。两端必须完全一致，见 `plugin/WellCooked.Plugin/Net/TcpLink.cs`。
+- **分帧（framing）**: TCP 字节流上的消息边界：一行一条 UTF-8 JSON，`\n` 结尾，单行上限
+  1 MiB（不含 `\n`）。两端必须完全一致，契约见 `protocol/protocol.md` §1，三个实现对
+  `bridge/src/framing.c`、`plugin/WellCooked.Plugin/Net/TcpLink.cs`、`tools/fake_plugin.py`。
 - **effort bridge**: 这一轮把 Bridge 进程及其共享内存、协议、无游戏联调工具做出来的工作单元。
 
 - **订单（Order）**: 游戏里的一条菜谱需求，在系统里是作业（job），带到达时间、截止时间、预计工时和收益。

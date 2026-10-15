@@ -66,7 +66,9 @@
 #define DEFAULT_SEM_NAME KOS_SHM_DEFAULT_SEM_NAME
 #define DEFAULT_LOG_PATH "logs/bridge.log"
 #define DEFAULT_FRAME_TIMEOUT_MS 100
-#define DEFAULT_HEARTBEAT_TIMEOUT_MS 3000
+/* 5000 来自 game-bridge spec 的失败行为约定（"心跳超时 5 秒判定对端断开"）。存活判定仍然
+ * 只看心跳 —— 见 decisions.md: 存活判定只看心跳。 */
+#define DEFAULT_HEARTBEAT_TIMEOUT_MS 5000
 #define DEFAULT_HEARTBEAT_INTERVAL_MS 1000
 
 /* The loop refuses to sleep longer than this even when nothing is due: it is
@@ -132,7 +134,7 @@ typedef struct {
 
     /* ---- misc ---- */
     const char *stop_reason;
-    char frame_buf[FRAMING_MAX_PAYLOAD + 1]; /* one whole inbound frame */
+    char frame_buf[FRAMING_MAX_PAYLOAD + 1]; /* one inbound line, NUL included */
 } bridge;
 
 /* Signals may only touch these two. The loop turns them into log events and an

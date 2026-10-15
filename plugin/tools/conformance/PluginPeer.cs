@@ -8,7 +8,7 @@
  * 
  *
  *   plugin/WellCooked.Plugin/Protocol/Messages.cs   JsonBuilder, Msg, MsgType, InboundMessage
- *   plugin/WellCooked.Plugin/Net/TcpLink.cs         4 字节大端分帧 + TCP 链路
+ *   plugin/WellCooked.Plugin/Net/TcpLink.cs         行分帧（一行一条 JSON）+ TCP 链路
  *
  * 它发到线上的每个字节都由插件自己的构造器产生
  * （Msg.Hello / Msg.Ack / Msg.Heartbeat，state_update 用 JsonBuilder 按
@@ -101,7 +101,7 @@ namespace WellCooked.Conformance
             "对着一个正在跑的 kitchenos-bridge，扮演插件那一侧的线格式。\n" +
             "--require-kinds 指定必须观察到的 action 种类：桥自己会回空转的\n" +
             "\"stop\"，而 \"move\" 需要有一个 Chef Worker（或者\n" +
-            "core/build/kitchenos-worker-stub）先往 slot 0 里发布。\n";
+            "bridge/build/kitchenos-worker-stub）先往 slot 0 里发布。\n";
 
         public static bool TryParse(string[] argv, out Options opt, out string error)
         {
@@ -345,14 +345,15 @@ namespace WellCooked.Conformance
                 Say("  已连接（裸 socket）。故意跳过握手：这里不发 hello。");
                 Say("");
 
-                /* （A）一帧两次写。桥必须先把前半段缓存住，
-                 * 等长度前缀说明整帧到齐了才解析。 */
+                /* （A）一行两次写。桥必须先把前半段缓存住，
+                 * 等结尾的换行符到了才解析。 */
                 string splitJson = StateFrames.BuildAtGameTime(SplitMarkerGameTime);
                 byte[] splitFrame = Framer.Encode(splitJson);
                 int firstHalf = 7;
-                Say("  [split]  state_update game_time={0} 载荷 {1} 字节，整帧 {2} 字节",
+                Say("  [split]  state_update game_time={0} 载荷 {1} 字节，整行 {2} 字节",
                     SplitMarkerGameTime, Encoding.UTF8.GetByteCount(splitJson), splitFrame.Length);
-                Say("           长度前缀 : {0}", Hex(splitFrame, 0, 4));
+                Say("           行尾 : 0x{0:X2} '\\n'（第 {1} 字节；分帧只认这一个字节）",
+                    splitFrame[splitFrame.Length - 1], splitFrame.Length);
                 Say("           第 1/2 次写: {0} 字节  {1}", firstHalf, Hex(splitFrame, 0, firstHalf));
                 sock.Write(splitFrame, 0, firstHalf);
                 Thread.Sleep(150);
@@ -848,7 +849,7 @@ namespace WellCooked.Conformance
                 int n;
                 if (!_actionKinds.TryGetValue(kind, out n) || n == 0)
                 {
-                    Fail("从未观察到 {0} 类型的 action。桥自己会回空转的 'stop'；'move' 需要有 Chef Worker 往 slot 0 里发布（core/build/kitchenos-worker-stub），两者都要求桥正在派发",
+                    Fail("从未观察到 {0} 类型的 action。桥自己会回空转的 'stop'；'move' 需要有 Chef Worker 往 slot 0 里发布（bridge/build/kitchenos-worker-stub），两者都要求桥正在派发",
                         Quote(kind));
                 }
             }
@@ -994,7 +995,7 @@ namespace WellCooked.Conformance
     internal static class Framer
     {
         /// <summary>
-        /// 4 字节大端长度前缀 + UTF-8 JSON，与 TcpLink.FlushOutbound 写出的
+        /// 一行一条 UTF-8 JSON，末尾一个 '\n'，与 TcpLink.FlushOutbound 写出的
         /// 字节完全一致。之所以手写，是因为 TcpLink 每次都给 Socket.Send 交一整帧：
         /// 它造不出 C 解码器必须扛住的拆分写与粘包写。
         /// 只有阶段 1 用它。
@@ -1002,12 +1003,9 @@ namespace WellCooked.Conformance
         public static byte[] Encode(string json)
         {
             byte[] payload = Encoding.UTF8.GetBytes(json);
-            var frame = new byte[4 + payload.Length];
-            frame[0] = (byte)(payload.Length >> 24);
-            frame[1] = (byte)(payload.Length >> 16);
-            frame[2] = (byte)(payload.Length >> 8);
-            frame[3] = (byte)payload.Length;
-            Buffer.BlockCopy(payload, 0, frame, 4, payload.Length);
+            var frame = new byte[payload.Length + 1];
+            Buffer.BlockCopy(payload, 0, frame, 0, payload.Length);
+            frame[payload.Length] = (byte)'\n';
             return frame;
         }
     }
@@ -1015,7 +1013,7 @@ namespace WellCooked.Conformance
     /// <summary>阶段 1 专用的裸 socket。</summary>
     internal sealed class ProbeSocket : IDisposable
     {
-        private const int MaxFrameBytes = 1024 * 1024;
+        private const int MaxFrameBytes = 1024 * 1024;   /* 一行 JSON 的上限，不含 '\n' */
 
         private readonly TcpClient _client;
         private readonly NetworkStream _stream;
@@ -1080,13 +1078,20 @@ namespace WellCooked.Conformance
         private bool Extract(out string json)
         {
             json = null;
-            if (_rxLen < 4) return false;
-            int len = (_rx[0] << 24) | (_rx[1] << 16) | (_rx[2] << 8) | _rx[3];
-            if (len < 0 || len > MaxFrameBytes) throw new IOException("invalid frame length from the bridge: " + len);
-            if (_rxLen - 4 < len) return false;
-            json = Encoding.UTF8.GetString(_rx, 4, len);
-            Buffer.BlockCopy(_rx, 4 + len, _rx, 0, _rxLen - 4 - len);
-            _rxLen -= 4 + len;
+            if (_rxLen == 0) return false;
+            int nl = Array.IndexOf(_rx, (byte)'\n', 0, _rxLen);
+            if (nl < 0)
+            {
+                /* 没有换行符：这条还没收完，或者桥发了一条永远不会结束的行。 */
+                if (_rxLen > MaxFrameBytes)
+                    throw new IOException("inbound line exceeds the 1MB cap: " + _rxLen);
+                return false;
+            }
+            if (nl > MaxFrameBytes)
+                throw new IOException("invalid line length from the bridge: " + nl);
+            json = Encoding.UTF8.GetString(_rx, 0, nl);
+            Buffer.BlockCopy(_rx, nl + 1, _rx, 0, _rxLen - nl - 1);
+            _rxLen -= nl + 1;
             return true;
         }
 

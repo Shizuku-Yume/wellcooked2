@@ -5,7 +5,7 @@
 **Task type:** feature
 **Covers:** W1, W2, W5, W7
 **Delivers:** 把"只在极端时序下才出现"的链路问题钉成可重跑的检查，并给两端一个不依赖游戏的对端。
-**Files:** `plugin/tools/conformance/`、`tools/run-bridge-scenarios.sh`、`tools/fake_plugin.py`、`core/src/bridge.c`、`core/src/net.c`、`core/src/protocol.c`、`core/include/kitchenos/protocol.h`、`core/tests/test_protocol.c`、`core/tools/worker_stub.c`、`protocol/README.md`、`protocol/schema/`
+**Files:** `plugin/tools/conformance/`、`tools/run-bridge-scenarios.sh`、`tools/fake_plugin.py`、`bridge/src/bridge.c`、`bridge/src/net.c`、`bridge/src/protocol.c`、`bridge/include/kitchenos/protocol.h`、`bridge/tests/test_protocol.c`、`bridge/tools/worker_stub.c`、`protocol/protocol.md`、`protocol/schema/`
 **Read first:** `.workflow/specs/bridge.md`、`plugin/tools/conformance/README.md`
 **Done when:**
 - [x] 有一个不用游戏、不用游戏程序集就能跑的跨实现对端，能与真的 Bridge 双向收发
@@ -75,7 +75,7 @@ bash plugin/tools/conformance/run-conformance.sh
 ## Review boundary（Brief A，round 1，2026-10-15）
 
 ```
-Review boundary: b61b6f7 + core/, plugin/, protocol/, tools/, .workflow/; round: 1; briefs: A; boundaries: TCP 链路(0.0.0.0:12345 监听与主动连接)+分帧/JSON/协议解码, 插件侧字节解析与输入注入, 日志与 /dev/shm 路径, shell/ps1 脚本; findings: 7 blocking / 7 nonblocking
+Review boundary: b61b6f7 + bridge/, plugin/, protocol/, tools/, .workflow/; round: 1; briefs: A; boundaries: TCP 链路(0.0.0.0:12345 监听与主动连接)+分帧/JSON/协议解码, 插件侧字节解析与输入注入, 日志与 /dev/shm 路径, shell/ps1 脚本; findings: 7 blocking / 7 nonblocking
 ```
 
 复核对象是 integration diff `git diff b61b6f7..HEAD`（17 个提交、60 个文件），**不是**各任务
@@ -83,8 +83,8 @@ Review boundary: b61b6f7 + core/, plugin/, protocol/, tools/, .workflow/; round:
 
 | # | finding | 处置 |
 |---|---|---|
-| 1 | 插件是本 effort 写的，四份文档却把它当独立基准 | 已改 `protocol/README.md`、`protocol.h`、`specs/bridge.md`（What-this-is-for / must-not-do / Notes）；新增 decisions.md: 插件由本 effort 补写 |
-| 2 | `protocol/README.md` §3.2/§4 的心跳事实与代码不符（写 500ms、"任何消息"） | README 改成四个开关的表格并写明 1 秒余量；新增 decisions.md: 链路存活只看心跳 |
+| 1 | 插件是本 effort 写的，四份文档却把它当独立基准 | 已改 `protocol/protocol.md`、`protocol.h`、`specs/bridge.md`（What-this-is-for / must-not-do / Notes）；新增 decisions.md: 插件由本 effort 补写 |
+| 2 | `protocol/protocol.md` §3.2/§4 的心跳事实与代码不符（写 500ms、"任何消息"） | README 改成四个开关的表格并写明 1 秒余量；新增 decisions.md: 链路存活只看心跳 |
 | 3 | `6b87e6f`/`297961e` 没有任务档案，最强证据只在 gitignore 的 `logs/` | 本文件 + spec 验收结果引用 |
 | 4 | 01–05 都没有 review 轮次记录（CONVENTIONS §7） | 本条 boundary 行 + 本文件；不追改 5 份归档记录的正文，由 `flow-close` 的 retrospective 记下这件事 |
 | 5 | `state_update.schema.json` 的 `orders[].recipe` 拒收两端都接受的 `null` | schema 改为 `["string","null"]`；README §3 写明哪些字段标了 null、其余按缺省处理 |
@@ -101,7 +101,7 @@ Review boundary: b61b6f7 + core/, plugin/, protocol/, tools/, .workflow/; round:
    decisions.md: 重启时清掉崩溃残留的共享内存。
 5. `.gitattributes` 的 `* text=auto eol=lf` 在 bridge 任务里改成、没有记录 → 补记在本文件；
    另加 `.bat`/`.cmd` 的 CRLF 例外。
-6. sanitizer 运行不可复现 → `core/Makefile` 新增 `make test-san`。
+6. sanitizer 运行不可复现 → `bridge/Makefile` 新增 `make test-san`。
 7. 链路无认证 + 日志无轮转 → 新增 decisions.md: 链路不做认证，默认监听 0.0.0.0（写明风险
    边界与代价）。
 
@@ -118,15 +118,15 @@ deletions）：
                                                    "输入槽的动作词表比线上协议宽"随协议扩张删除
  M .workflow/specs/bridge.md                       前提/失败行为/W 表/验收结果/模块表/§5.2 对照行/测试层次
  M .workflow/done/bridge/05-real-game.md           补记：插件作者、"真实插件"的含义、W8 仍缺一半
- M core/Makefile                                   test-san 目标（ASan/UBSan，独立 build 目录）
- M core/include/kitchenos/protocol.h               pickup/dash 常量与构造器声明；跨端契约基准写明
- M core/include/kitchenos/shm.h                    动作词表与线上枚举一比一，写明
- M core/src/bridge.c                               pickup/dash 直接映射 + actions_sent 计数；
+ M bridge/Makefile                                   test-san 目标（ASan/UBSan，独立 build 目录）
+ M bridge/include/kitchenos/protocol.h               pickup/dash 常量与构造器声明；跨端契约基准写明
+ M bridge/include/kitchenos/shm.h                    动作词表与线上枚举一比一，写明
+ M bridge/src/bridge.c                               pickup/dash 直接映射 + actions_sent 计数；
                                                    stop/none 之外的构造失败记 WARN
- M core/src/protocol.c                             build_bare_action() 复用于 stop/pickup/dash
- M core/tests/test_protocol.c                      5 个 action 的构造/往返/缓冲区不足用例（210 → 226 项）
- M core/tools/worker_stub.c                        --kind move|stop|interact|pickup|dash
- M protocol/README.md                              §0 基准、§3 null 规则、§3.2 心跳表、§3.6 五个动作、§4
+ M bridge/src/protocol.c                             build_bare_action() 复用于 stop/pickup/dash
+ M bridge/tests/test_protocol.c                      5 个 action 的构造/往返/缓冲区不足用例（210 → 226 项）
+ M bridge/tools/worker_stub.c                        --kind move|stop|interact|pickup|dash
+ M protocol/protocol.md                              §0 基准、§3 null 规则、§3.2 心跳表、§3.6 五个动作、§4
  M protocol/schema/action.schema.json              action 枚举扩到 5 个 + 例子
  M protocol/schema/hello.schema.json               actions 的描述跟着枚举
  M protocol/schema/state_update.schema.json        orders[].recipe 允许 null
@@ -155,9 +155,9 @@ deletions）：
   "写 interact 但 `target_object` 为空"时，桥记 42 条
   `msg_ignored reason=slot-action-rejected kind=interact chef=0 detail=required field is missing
   (fell back to idle stop)`，对端一条 `interact` 都没收到、只收到降级后的 `stop`。
-- 契约同步：`protocol/README.md` §3.6 的动作列表与"只有名字的动作"段落、
+- 契约同步：`protocol/protocol.md` §3.6 的动作列表与"只有名字的动作"段落、
   `action.schema.json` 的 `enum` + 例子、`hello.schema.json` 的 `actions` 描述。
-- 四层验证：① `core/tests/test_protocol.c` 增 16 项（210 → 226）：两个新构造器的逐字节输出、
+- 四层验证：① `bridge/tests/test_protocol.c` 增 16 项（210 → 226）：两个新构造器的逐字节输出、
   往返解析、"缓冲区装不下要报错"；② 场景套件新增 `pickup-dash`：两个 stub 分别往 slot 0/1 写
   `pickup`/`dash`，断言各 ≥3 条原样到达对端、0 条被对端拒收、Bridge 存活；③ 跨实现对端多跑一轮
   `-RequireKinds pickup,dash -StubKind pickup,dash`，插件自己的 `InboundMessage` 解出
@@ -172,16 +172,16 @@ deletions）：
 下一次裸 `make` 拿这些 `.o` 去链接（命令行里没有 `-fsanitize=address`）就死在一串
 `undefined reference to __asan_init` —— 失败由上一个命令造成，看起来却像当前改动坏了。现在
 sanitizer 的目标文件写到 `build/san/`，正常构建与它互不干扰；`test-san` 之后裸 `make` 退出码 0。
-`build/san` 随 `core/build` 一起被 gitignore 覆盖。
+`build/san` 随 `bridge/build` 一起被 gitignore 覆盖。
 
 ### 验证命令与输出（2026-10-15，本机；最终状态）
 
 ```
-cd core && make clean && make          exit=0（-Wall -Wextra -Werror，0 warning）
-cd core && make test                   exit=0（framing 151 + json 166 + protocol 226
+cd bridge && make clean && make          exit=0（-Wall -Wextra -Werror，0 warning）
+cd bridge && make test                   exit=0（framing 151 + json 166 + protocol 226
                                        + net 202 + shm 95 = 840 项检查，0 失败）
-cd core && make test-san               exit=0（ASan/UBSan 走 build/san，5 套件 0 失败、0 sanitizer 报告）
-cd core && make                        exit=0（紧接 test-san 之后；不再出现 __asan 链接错误）
+cd bridge && make test-san               exit=0（ASan/UBSan 走 build/san，5 套件 0 失败、0 sanitizer 报告）
+cd bridge && make                        exit=0（紧接 test-san 之后；不再出现 __asan 链接错误）
 python3 logs/schema-check.py           exit=0（SCHEMA CHECK: PASS；真实帧 pickup=150 dash=150 全过，
                                        6 条负例全被拒）
 python3 logs/warn-probe.py             exit=0（WARN PROBE: PASS；合法 stop 0 条 WARN，
@@ -198,7 +198,7 @@ powershell -NoProfile -File plugin/tools/conformance/run-conformance.ps1
 本文件头部的 `Check:` 由这次收尾从"9 个场景"改成"10 个场景 + 第二轮一致性"，上面就是改后的实测；
 `### Check 结果` 那一节保留的是 `297961e` 落地当天的原始输出（9 个场景），两者不矛盾，是先后两次运行。
 
-干净目录复现（`tar` 排除 `.git`/`core/build`/`logs` 导出 **203 个文件**到 `/tmp/verify3`）：
+干净目录复现（`tar` 排除 `.git`/`bridge/build`/`logs` 导出 **203 个文件**到 `/tmp/verify3`）：
 
 ```
 clean-dir make exit=0

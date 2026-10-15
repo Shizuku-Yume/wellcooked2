@@ -6,8 +6,8 @@
 **Covers:** W2, W5, W6, W7
 **Delivers:** 可执行的 `kitchenos-bridge`：TCP 双拓扑链路、按帧写共享内存、帧屏障与 idle 降级、
 心跳超时暂停、断线重连、`logs/bridge.log`、SIGTERM/SIGINT 优雅退出与 IPC 清理。
-**Files:** `core/include/kitchenos/{net,log,bridge}.h`, `core/src/{net,log,bridge}.c`,
-`core/tests/test_net.c`
+**Files:** `bridge/include/kitchenos/{net,log,bridge}.h`, `bridge/src/{net,log,bridge}.c`,
+`bridge/tests/test_net.c`
 **Read first:** `.workflow/specs/bridge.md`（全篇）, 本 effort 的 01 与 02 产出的头文件。
 **Done when:**
 - [x] 默认 `--link listen --port 12345`；`--link connect --host H --port P` 可切换（默认 14455）
@@ -18,7 +18,7 @@
 - [x] `SIGTERM` 1 秒内退出，`shm_unlink`/`sem_unlink` 清理干净，端口可立即重新绑定
 - [x] 日志包含：启动退出、连接与断开、每帧摘要、动作下发、缺失槽、心跳超时、解析失败、信号
 
-**Check:** `cd core && make && ./build/kitchenos-bridge --link listen --port 12345 &` 后，
+**Check:** `cd bridge && make && ./build/kitchenos-bridge --link listen --port 12345 &` 后，
 `tools/fake_plugin.py` 能完成 happy 场景；`kill -TERM` 后进程退出且 `ls /dev/shm | grep kitchenos`
 为空。
 
@@ -26,14 +26,14 @@
 
 **状态：完成。**
 
-`core/src/bridge.c`（1387 行）为单线程事件循环：前台运行、不 fork 不 daemonize、在插件/
+`bridge/src/bridge.c`（1387 行）为单线程事件循环：前台运行、不 fork 不 daemonize、在插件/
 Scheduler/Worker 全都不存在时照常运行。`bridge.h` 未创建 —— CLI、状态与屏障辅助函数都是
 文件内静态的，没有跨编译单元需要共享的契约，为它造一个头文件只会是空壳。
 
 ### Check 实测
 
 ```
-$ cd core && make test                    → exit 0，5 套件全绿（test_net 190 项检查）
+$ cd bridge && make test                    → exit 0，5 套件全绿（test_net 190 项检查）
 $ python3 tools/fake_plugin.py --scenario happy --listen-port 12345
   HARD ok  bridge_accepts_plugin_connection — 127.0.0.1:12345
   HARD ok  actions_dispatched — got 480, need >= 20 in 4.0s
@@ -128,3 +128,13 @@ soft ok  zero_length_frame_keeps_connection — bridge kept the connection；
   （每帧平凡完成）。
 - `config` 只记录不执行 —— Bridge 不解释调度策略。
 - 断链时刻意只记录 `net.h` 给出的原因文本，不回捞已解码但未取走的帧（规格如此）。
+
+**后续修正（2026-10-15，integrator 记录）：** 分帧改成一行一条 JSON 后
+（decisions.md: 2026-10-15 - 分帧改成一行一条 JSON），上面"零长帧"一节的措辞与它引用的
+行号（`TcpLink.cs:287`）都过时了，**结论不变**：空行（一个孤立的 `\n`）照样交付 `len == 0`，
+由解析器拒绝该消息、连接保持。真正失步的条件从"长度前缀越界/为负"变成"一行超过 1 MiB
+仍然没有 `\n`"（有 `\n` 但内容超过 1 MiB 同样是失步），`net.c` 的原因文本相应改为
+`framing desync: line exceeds the 1 MiB cap` —— `bridge.c` 仍按其中的 `framing` 字样归类为
+`frame_error`。上面那段实测样本现在的措辞是：
+`soft ok  zero_length_line_keeps_connection — bridge kept the connection；空行的载荷是空的，
+分帧没有失步，参考实现按『正文为空的一行』走完并丢弃（link=open）`。

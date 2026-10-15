@@ -11,7 +11,7 @@ namespace WellCooked.Net
 {
     /// <summary>
     /// TCP 链路（单后台线程）：
-    /// 帧格式 = 4 字节大端（网络序）长度前缀 + UTF-8 JSON，单帧上限 1MB。
+    /// 分帧 = 一行一条 UTF-8 JSON，以 '\n' 结尾（换行符本身不属于载荷），单行载荷上限 1MB。
     /// 字节级收发都在 worker 线程；入站投递到队列由 Unity 主线程消费。
     /// </summary>
     public sealed class TcpLink
@@ -22,6 +22,7 @@ namespace WellCooked.Net
             Server
         }
 
+        /// <summary>一行 JSON 的字节上限，不计结尾的 '\n'。</summary>
         private const int MaxFrameBytes = 1024 * 1024;
         private const int MaxInboundQueue = 64;
         private const int MaxOutboundQueue = 32;
@@ -270,31 +271,41 @@ namespace WellCooked.Net
         private static void Grow(ref byte[] rx)
         {
             int capacity = rx.Length * 2;
-            if (capacity > MaxFrameBytes + 4) capacity = MaxFrameBytes + 4;
-            if (capacity <= rx.Length) throw new IOException("inbound frame exceeds 1MB limit");
+            // 上限要容得下“最大的一行”：1MB 载荷 + 结尾的 '\n'，否则卡在 1MB 的那条
+            // 合法消息会因为缓冲区满而永远等不到换行符。
+            if (capacity > MaxFrameBytes + 1) capacity = MaxFrameBytes + 1;
+            if (capacity <= rx.Length) throw new IOException("inbound line exceeds the 1MB limit");
             var bigger = new byte[capacity];
             Buffer.BlockCopy(rx, 0, bigger, 0, rx.Length);
             rx = bigger;
         }
 
-        /// <summary>从缓冲区抽取完整帧入队，返回剩余字节数（已压缩到头部）。</summary>
+        /// <summary>从缓冲区抽取完整行入队，返回剩余字节数（已压缩到头部）。</summary>
         private int ExtractFrames(byte[] rx, int rxLen)
         {
             int off = 0;
-            while (rxLen - off >= 4)
+            while (off < rxLen)
             {
-                int len = (rx[off] << 24) | (rx[off + 1] << 16) | (rx[off + 2] << 8) | rx[off + 3];
-                if (len < 0 || len > MaxFrameBytes)
-                    throw new IOException("invalid frame length: " + len);
-                if (rxLen - off - 4 < len) break;
-                string json = Encoding.UTF8.GetString(rx, off + 4, len);
+                int nl = Array.IndexOf(rx, (byte)'\n', off, rxLen - off);
+                if (nl < 0)
+                {
+                    // 没有换行符 = 这条消息还没收完，或者对端发了一条永远不会结束的行。
+                    // 后者没法恢复（没有换行符就没有重新同步的位置），只能断开。
+                    if (rxLen - off > MaxFrameBytes)
+                        throw new IOException("inbound line exceeds the 1MB limit");
+                    break;
+                }
+                int len = nl - off;
+                if (len > MaxFrameBytes)
+                    throw new IOException("invalid line length: " + len);
+                string json = Encoding.UTF8.GetString(rx, off, len);
                 _inbound.Enqueue(json);
                 while (_inbound.Count > MaxInboundQueue)
                 {
                     string dropped;
                     _inbound.TryDequeue(out dropped);
                 }
-                off += 4 + len;
+                off = nl + 1;
             }
             if (off > 0)
             {
@@ -304,6 +315,19 @@ namespace WellCooked.Net
             return rxLen;
         }
 
+        /// <summary>
+        /// 组帧：载荷后跟一个 '\n'。载荷里带裸换行符就没法分帧（对端只会把它读成两行），
+        /// 返回 null 让调用方丢掉这条消息——行分帧没有别的转义手段。
+        /// </summary>
+        private static byte[] EncodeFrame(byte[] payload)
+        {
+            if (Array.IndexOf(payload, (byte)'\n') >= 0) return null;
+            var frame = new byte[payload.Length + 1];
+            Buffer.BlockCopy(payload, 0, frame, 0, payload.Length);
+            frame[payload.Length] = (byte)'\n';
+            return frame;
+        }
+
         private void FlushOutbound(Socket sock)
         {
             string msg;
@@ -311,26 +335,20 @@ namespace WellCooked.Net
             {
                 byte[] payload = Encoding.UTF8.GetBytes(msg);
                 if (payload.Length > MaxFrameBytes) continue;
-                var frame = new byte[4 + payload.Length];
-                frame[0] = (byte)(payload.Length >> 24);
-                frame[1] = (byte)(payload.Length >> 16);
-                frame[2] = (byte)(payload.Length >> 8);
-                frame[3] = (byte)payload.Length;
-                Buffer.BlockCopy(payload, 0, frame, 4, payload.Length);
+                byte[] frame = EncodeFrame(payload);
+                if (frame == null)
+                {
+                    Log("[TcpLink] outbound message contains a raw newline, dropped");
+                    continue;
+                }
                 sock.Send(frame, 0, frame.Length, SocketFlags.None);
             }
         }
 
         private void SendHeartbeat(Socket sock)
         {
-            string json = Msg_Heartbeat();
-            byte[] payload = Encoding.UTF8.GetBytes(json);
-            var frame = new byte[4 + payload.Length];
-            frame[0] = (byte)(payload.Length >> 24);
-            frame[1] = (byte)(payload.Length >> 16);
-            frame[2] = (byte)(payload.Length >> 8);
-            frame[3] = (byte)payload.Length;
-            Buffer.BlockCopy(payload, 0, frame, 4, payload.Length);
+            byte[] payload = Encoding.UTF8.GetBytes(Msg_Heartbeat());
+            byte[] frame = EncodeFrame(payload);
             sock.Send(frame, 0, frame.Length, SocketFlags.None);
         }
 

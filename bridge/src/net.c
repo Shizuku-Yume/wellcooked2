@@ -29,9 +29,11 @@
 #define KOS_NET_READ_CHUNK 8192
 
 /* How much a single wait may pull from the socket before handing the decoder
- * back to recv_frame(): enough for a maximum-size frame plus its prefix, so a
- * peer that is faster than the caller cannot grow the decoder without bound. */
-#define KOS_NET_DECODER_LIMIT ((size_t)FRAMING_MAX_PAYLOAD + FRAMING_HEADER_LEN)
+ * back to recv_frame(): one whole line, terminator included, so a peer that is
+ * faster than the caller cannot grow the decoder without bound. The terminator
+ * has to fit inside the limit -- stopping at the payload cap instead would leave
+ * a complete maximum-size line unreadable and the link stalled. */
+#define KOS_NET_DECODER_LIMIT ((size_t)FRAMING_MAX_FRAME)
 
 struct kos_net {
     kos_net_mode mode;
@@ -736,8 +738,10 @@ int kos_net_recv_frame(kos_net *net, char *buf, size_t cap, size_t *len)
     if (rc == FRAMING_NEED_MORE)
         return 0;
     if (rc == FRAMING_ERR_LENGTH) {
-        /* Out of range (negative, or above the 1 MiB cap): the stream lost sync. */
-        net_drop(net, "framing desync: length prefix out of range");
+        /* A line over the 1 MiB cap: the peer is not speaking this protocol (or
+         * the stream is not where we think it is), and a reader that guessed at
+         * the next message boundary would hand garbage to the parser. */
+        net_drop(net, "framing desync: line exceeds the 1 MiB cap");
         return 0;
     }
     if (rc != FRAMING_OK) {
@@ -745,14 +749,14 @@ int kos_net_recv_frame(kos_net *net, char *buf, size_t cap, size_t *len)
         return -1;
     }
     /*
-     * A zero-length frame is a legal frame with an empty payload, and it is a
+     * A zero-length line is a legal frame with an empty payload, and it is a
      * malformed *message*, not a lost stream: the reference peer (TcpLink.cs)
-     * only rejects lengths outside [0, MaxFrameBytes] and hands the empty
-     * payload up for its JSON layer to refuse, and framing.h promises len == 0
+     * splits on the terminator without judging the payload and hands the empty
+     * string up for its JSON layer to refuse, and framing.h promises len == 0
      * here. The two failure classes are not interchangeable -- the course
-     * requirements drop a bad message and keep the connection, and only a length
-     * prefix that cannot be resynchronized costs the session. So this returns a
-     * frame of length 0 and lets the caller's parser reject it.
+     * requirements drop a bad message and keep the connection, and only a line
+     * that cannot be framed costs the session. So this returns a frame of
+     * length 0 and lets the caller's parser reject it.
      */
     if (plen >= cap) {
         /* A caller that cannot hold a legal frame is a programming error, and
@@ -788,7 +792,7 @@ int kos_net_send_frame(kos_net *net, const char *json, size_t len)
     }
     if (len > (size_t)FRAMING_MAX_PAYLOAD) {
         /* Our own bug, not the peer's: keep the session usable. */
-        net_error(net, "send_frame: %zu bytes exceeds the %u byte frame limit",
+        net_error(net, "send_frame: %zu bytes exceeds the %u byte line limit",
                   len, (unsigned)FRAMING_MAX_PAYLOAD);
         return -1;
     }
@@ -807,7 +811,14 @@ int kos_net_send_frame(kos_net *net, const char *json, size_t len)
 
     rc = framing_encode(json, len, net->encbuf, net->encbuf_cap, &written);
     if (rc != FRAMING_OK || written != need) {
-        net_error(net, "framing_encode: rc=%d", rc);
+        /* FRAMING_ERR_CONTENT is the one failure the caller can act on: the
+         * message carries the terminator itself, so it would leave here as two
+         * lines. Say that in words instead of only "rc=-4". */
+        if (rc == FRAMING_ERR_CONTENT)
+            net_error(net, "send_frame: payload of %zu bytes contains a raw "
+                      "line terminator", len);
+        else
+            net_error(net, "framing_encode: rc=%d", rc);
         return -1;
     }
 
@@ -824,8 +835,10 @@ int kos_net_send_frame(kos_net *net, const char *json, size_t len)
         return -1;
     }
     if ((size_t)n != written) {
-        /* A partial frame cannot be resumed: the peer is left mid-prefix with no
-         * way to resynchronize, so an honest reconnect beats a silent desync. */
+        /* A partial line cannot be resumed: this frame has no terminator on the
+         * wire, so the peer would read the rest of it plus the next frame as one
+         * message, or wait forever for an end that never comes. An honest
+         * reconnect beats a silent desync. */
         net_error(net, "send: short write (%zd of %zu bytes)", n, written);
         net_drop(net, NULL);
         return -1;
