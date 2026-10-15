@@ -2,7 +2,9 @@
 
 **Effort:** game-bridge
 **Task type:** refactor
-**Base commit:** <commit-sha>
+**Base commit:** 9d72d38
+**Started:** 2026-10-16T00:05:00+08:00
+**Status:** active
 
 **Delivers:** `plugin/` 里这一轮为调试堆出来的东西收敛成清晰结构，**行为不变**：诊断输出归位（统一走一个开关）、重复的反射/查找辅助函数合并、临时兜底标注清楚并集中到一处、死代码与过期注释删掉；`scripts/` 下的挑关卡工具（`scan-levels.py`、`eval-levels.sh`）在 `standards.md` 里有位置说明。
 
@@ -26,3 +28,13 @@
 **Done when:** 上面每条打勾，且 Check 的单子能跑完、`git diff` 里没有行为变化。
 
 ## Progress
+
+## Progress
+
+Dirty at start: none（从 main 的 `9d72d38` 起，分支 `game-bridge/10-plugin-cleanup`）。
+
+**Check before**（2026-10-15，同一份代码 `07bb031` 重建的插件，`s_sushi_1_1`，`work=auto`）：
+`bash scripts/dev-cycle.sh 15 s_sushi_1_1` 连跑两次 —— 第 1 次走完 1/6→7/7、日志 `工序: 完成一单（累计 1 单）`、
+`score = 28`；第 2 次卡在 `4/6 去拿盘子`（`GetPlate 超时 20 秒` ×N）、`score = 0`。即 Check 现在**时通时不通**，
+这正是任务 11 要换掉的执行面（见任务 09 的复核 Progress）。refactor 的判据因此按"关键日志行与得分路径不变"来比，
+不按"每次都成一单"。
