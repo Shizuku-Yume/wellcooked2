@@ -24,7 +24,7 @@ LOGDIR=${KITCHENOS_LOG_DIR:-$ROOT/logs}
 PREFIX=kitchenos_c04
 RUN_ID=${KITCHENOS_RUN_ID:-$$}
 SCENARIOS=(happy one-slot no-heartbeat bad-frames connect-mode reconnect-storm
-           silent-connect data-shapes second-peer)
+           silent-connect data-shapes second-peer pickup-dash)
 SCEN_TIMEOUT=90
 STRICT=0
 ALLOW_SKIP=0

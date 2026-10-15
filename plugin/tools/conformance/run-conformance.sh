@@ -5,10 +5,16 @@
 #
 # 在 WSL 里、仓库根目录下运行：
 #
-#     bash plugin/tools/conformance/run-conformance.sh [port] [seconds] [require-kinds]
+#     bash plugin/tools/conformance/run-conformance.sh [port] [seconds] [require-kinds] [stub-kind]
 #
-# 默认：端口 12401，60 Hz 跑 3 秒，要求出现 move+stop。端口特意不用
+# 默认：端口 12401，60 Hz 跑 3 秒，要求出现 move+stop，stub 往 slot 0 写 move。端口特意不用
 # 12345，这样真插件或 W8 运行可以同时在跑。
+#
+# `stub-kind` 可以是逗号分隔的一到两个动作名（move/stop/interact/pickup/dash），逐个写进
+# slot 0、slot 1；用它来让"扩过的 action 枚举"也被插件自己的解码器验一遍，例如：
+#
+#     powershell -NoProfile -File plugin/tools/conformance/run-conformance.ps1 \
+#         -RequireKinds pickup,dash -StubKind pickup,dash
 #
 # 先编译对端（它是 Windows 程序；见 run-conformance.ps1——它用 csc 编译完再来调本脚本）：
 #
@@ -42,6 +48,13 @@ export LC_ALL="${LC_ALL:-C.UTF-8}"
 PORT="${1:-12401}"
 STREAM_SECONDS="${2:-3}"
 REQUIRE_KINDS="${3:-move,stop}"
+STUB_KIND="${4:-move}"
+
+IFS=',' read -r -a STUB_KINDS <<< "$STUB_KIND"
+if [ "${#STUB_KINDS[@]}" -eq 0 ] || [ "${#STUB_KINDS[@]}" -gt 2 ]; then
+    printf 'stub-kind 要给 1 到 2 个动作名（桥只开 2 个厨师），收到：%s\n' "$STUB_KIND"
+    exit 3
+fi
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 cd "$REPO_ROOT" || exit 3
@@ -78,6 +91,7 @@ CAP_TRUNCATED=1
 
 BRIDGE_PID=""
 STUB_PID=""
+STUB_PID2=""
 FAILURES=0
 
 say() { printf '%s\n' "$*"; }
@@ -86,10 +100,12 @@ fail() { FAILURES=$((FAILURES + 1)); say "  FAIL  $*"; }
 ok()   { say "  ok    $*"; }
 
 cleanup() {
-    if [ -n "$STUB_PID" ] && kill -0 "$STUB_PID" 2>/dev/null; then
-        kill -TERM "$STUB_PID" 2>/dev/null
-        wait "$STUB_PID" 2>/dev/null
-    fi
+    for pid in "$STUB_PID" "$STUB_PID2"; do
+        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+            kill -TERM "$pid" 2>/dev/null
+            wait "$pid" 2>/dev/null
+        fi
+    done
     if [ -n "$BRIDGE_PID" ] && kill -0 "$BRIDGE_PID" 2>/dev/null; then
         kill -TERM "$BRIDGE_PID" 2>/dev/null
         wait "$BRIDGE_PID" 2>/dev/null
@@ -170,9 +186,22 @@ ok "$(field 'bridge_start')"
 # 单调的，从 1 重新开始的 stub 对一个 last_frame 已经越过它的桥等于隐形（这样的 worker
 # 在桥眼里永远在空转）。
 "$STUB_BIN" --state-name "$STATE" --sem-name "$SEM" \
-    --chefs 2 --slot 0 --hz "$STUB_HZ" --duration "$STUB_SECONDS" > "$STUB_OUT" 2>&1 &
+    --chefs 2 --slot 0 --hz "$STUB_HZ" --duration "$STUB_SECONDS" \
+    --kind "${STUB_KINDS[0]}" > "$STUB_OUT" 2>&1 &
 STUB_PID=$!
-say "  worker stub pid $STUB_PID（slot 0，${STUB_HZ} Hz；slot 1 故意留空）"
+say "  worker stub pid $STUB_PID（slot 0，${STUB_HZ} Hz，kind=${STUB_KINDS[0]}）"
+STUB_EVIDENCE="$STUB_OUT"
+if [ "${#STUB_KINDS[@]}" -ge 2 ]; then
+    STUB_OUT2="logs/conformance-stub-slot1.out"
+    "$STUB_BIN" --state-name "$STATE" --sem-name "$SEM" \
+        --chefs 2 --slot 1 --hz "$STUB_HZ" --duration "$STUB_SECONDS" \
+        --kind "${STUB_KINDS[1]}" > "$STUB_OUT2" 2>&1 &
+    STUB_PID2=$!
+    say "  worker stub pid $STUB_PID2（slot 1，${STUB_HZ} Hz，kind=${STUB_KINDS[1]}）"
+    STUB_EVIDENCE="$STUB_OUT 与 $STUB_OUT2"
+else
+    say "  （slot 1 故意留空：没人写入的 slot 要收到空转的 stop）"
+fi
 
 # ============================================================ 4. 跑对端
 say ""
@@ -190,11 +219,17 @@ say "对端退出码：$PEER_RC"
 # ============================================================ 5. 停双方
 say ""
 say "== 5. 停双方 =="
-if kill -TERM "$STUB_PID" 2>/dev/null; then
+if [ -n "$STUB_PID" ] && kill -TERM "$STUB_PID" 2>/dev/null; then
     wait "$STUB_PID" 2>/dev/null
     STUB_RC=$?
     STUB_PID=""
-    say "  worker stub 退出码：$STUB_RC"
+    say "  worker stub（slot 0）退出码：$STUB_RC"
+fi
+if [ -n "$STUB_PID2" ] && kill -TERM "$STUB_PID2" 2>/dev/null; then
+    wait "$STUB_PID2" 2>/dev/null
+    STUB_RC2=$?
+    STUB_PID2=""
+    say "  worker stub（slot 1）退出码：$STUB_RC2"
 fi
 kill -TERM "$BRIDGE_PID" 2>/dev/null
 wait "$BRIDGE_PID" 2>/dev/null
@@ -223,8 +258,8 @@ say "  plugin_hello=$HELLO state_update=$STATE_UPDATES actions_sent=$ACTIONS_SEN
 say "  slots_missing=$SLOTS_MISSING plugin_ack=$ACKS state_summary=$SUMMARY plugin_timeout=$TIMEOUTS"
 say "  parse_error=$PARSE_ERR frame_error=$FRAME_ERR"
 say "  派发出的第一帧：$(field 'actions_sent' | sed 's/^.*INFO  //')"
-say "  第一帧带真实输入（slot 0 就绪）：$(grep -m 1 'actions_sent.*move=1' "$LOG" 2>/dev/null | sed 's/^.*INFO  //')"
-say "  没人写入的那个 slot 第一次空转兜底：$(grep -m 1 'slots_missing.*missing=1 ' "$LOG" 2>/dev/null | sed 's/^.*WARN  //')"
+say "  第一帧带真实输入（slot 0 就绪，kind=${STUB_KINDS[0]}）：$(grep -m 1 "actions_sent.*${STUB_KINDS[0]}=1 " "$LOG" 2>/dev/null | sed 's/^.*INFO  //')"
+say "  没人写入的那个 slot 第一次空转兜底：$(grep -m 1 'slots_missing.*missing=1 ' "$LOG" 2>/dev/null | sed 's/^.*WARN  //' || true)"
 say ""
 
 [ "$LINK_UP" -ge 2 ] && ok "两次连接都被接受（阶段 1 的探针、阶段 2 的 TcpLink 会话）" \

@@ -23,6 +23,7 @@ param(
     [int]$Port = 12401,
     [double]$Seconds = 3.0,
     [string]$RequireKinds = 'move,stop',
+    [string]$StubKind = 'move',
     [switch]$SkipBuild
 )
 
@@ -87,7 +88,7 @@ if (-not $SkipBuild) {
 }
 
 Write-Output '== 把运行交给 WSL（桥 + worker stub + 对端）=='
-& wsl.exe -e bash plugin/tools/conformance/run-conformance.sh $Port $Seconds $RequireKinds
+& wsl.exe -e bash plugin/tools/conformance/run-conformance.sh $Port $Seconds $RequireKinds $StubKind
 $rc = $LASTEXITCODE
 Write-Output ''
 Write-Output "run-conformance.sh 退出码：$rc"

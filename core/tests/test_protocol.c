@@ -494,6 +494,41 @@ static void test_actions(void)
         CHECK_STR(action.target_object, "cutting_board_0");
         json_free(root);
     }
+
+    /* pickup/dash: same bare shape as stop, different name. `kos_action_kind` has
+     * always had these two and the plugin's InputInjector implements them; these
+     * builders are what makes them reachable on the wire at all. */
+    CHECK_INT(protocol_build_action_pickup(0, buf, sizeof buf, &len), PROTO_OK);
+    CHECK_STR(buf, "{\"type\":\"action\",\"chef_id\":0,\"action\":\"pickup\"}");
+    root = parse_ok(buf, len);
+    CHECK(root != NULL);
+    if (root != NULL) {
+        proto_action action;
+
+        CHECK_INT(protocol_parse_action(root, &action, NULL), PROTO_OK);
+        CHECK_INT(action.chef_id, 0);
+        CHECK_STR(action.action, PROTO_ACTION_PICKUP);
+        CHECK_INT(action.has_target, 0);
+        CHECK_STR(action.target_object, "");
+        json_free(root);
+    }
+
+    CHECK_INT(protocol_build_action_dash(2, buf, sizeof buf, &len), PROTO_OK);
+    CHECK_STR(buf, "{\"type\":\"action\",\"chef_id\":2,\"action\":\"dash\"}");
+    root = parse_ok(buf, len);
+    CHECK(root != NULL);
+    if (root != NULL) {
+        proto_action action;
+
+        CHECK_INT(protocol_parse_action(root, &action, NULL), PROTO_OK);
+        CHECK_INT(action.chef_id, 2);
+        CHECK_STR(action.action, PROTO_ACTION_DASH);
+        CHECK_INT(action.has_target, 0);
+        json_free(root);
+    }
+
+    /* A buffer that cannot hold the message fails loudly instead of truncating. */
+    CHECK(protocol_build_action_pickup(0, buf, 8, &len) != PROTO_OK);
 }
 
 static void test_type_names(void)

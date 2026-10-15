@@ -39,7 +39,7 @@ else
 TOOL_BINS := $(BUILD)/kitchenos-worker-stub
 endif
 
-.PHONY: all test clean
+.PHONY: all test test-san clean
 
 # $(OBJS) is a prerequisite so that `make` really means "every module compiles".
 # Without it, a tree with sources but no test suite or bridge yet would build
@@ -73,6 +73,21 @@ test: $(TEST_BINS)
 	done; \
 	echo "=== $$total test suites, $$failed failed ==="; \
 	test $$failed -eq 0
+
+# The parsers take bytes off the network, so the suites have to be runnable under the
+# sanitizers with one committed command. Doing it by hand with a CFLAGS override on the
+# command line left no trace in the tree, which made the result unreproducible.
+#
+# Sanitizer objects get their own build directory instead of reusing build/. Sharing one
+# directory left sanitized .o files behind after this target, and the next plain `make`
+# then linked them without -fsanitize=address and died with "undefined reference to
+# __asan_init" -- a failure caused by the previous command, not by the change at hand.
+# BUILD is a command-line override, so it carries into OBJ_DIR and the test binaries too.
+SAN_FLAGS := -std=c99 -Wall -Wextra -Werror -O1 -g -Iinclude -pthread \
+             -D_POSIX_C_SOURCE=200809L -fsanitize=address,undefined -fno-omit-frame-pointer
+
+test-san:
+	$(MAKE) BUILD=$(BUILD)/san CFLAGS="$(SAN_FLAGS)" test
 
 clean:
 	rm -rf $(BUILD)

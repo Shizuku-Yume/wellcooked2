@@ -23,12 +23,17 @@ powershell -NoProfile -File plugin/tools/conformance/run-conformance.ps1
 
 # 换端口/时长/必须出现的 action 种类
 powershell -NoProfile -File plugin/tools/conformance/run-conformance.ps1 -Port 12401 -Seconds 3 -RequireKinds move,stop
+
+# 让 stub 去写别的动作（最多两个，依次进 slot 0 / slot 1），用来把扩过的 action 枚举
+# 也交给插件自己的解码器验一遍：
+powershell -NoProfile -File plugin/tools/conformance/run-conformance.ps1 -RequireKinds pickup,dash -StubKind pickup,dash
 ```
 
 对端已编译过时，WSL 半场可以单跑：
 
 ```bash
 bash plugin/tools/conformance/run-conformance.sh 12401 3 move,stop
+bash plugin/tools/conformance/run-conformance.sh 12402 3 pickup,dash pickup,dash
 ```
 
 退出码：**0** 全部通过；**1** 两端对不上（脚本会打印是哪一项）；**3** 前置条件不成立
@@ -56,9 +61,10 @@ bash plugin/tools/conformance/run-conformance.sh 12401 3 move,stop
   - 连上后延迟一帧发 `hello`（与 `Plugin.Update()` 的时序一致，避开 TcpLink 清空队列的竞态）；
   - 以 60 Hz 发写实的 `state_update`（两个厨师含坐标与手持物、两张订单其中一张菜谱为 null、
     锅/灶/工位/`plate_stack` 等五种资源形状，外加一个 C 侧归不了类的键）；
-  - 解码桥回的每一条 `action`：`action` 名必须在 `Plugin.HostActions` 的 8 个之内、`chef_id`
-    必须是本对端上报过的、`move` 必须带有限数值的 `x`/`y`；同时按 `Plugin.HandleAction` 的做法
-    回 `Msg.Ack`（这条路径也因此被 C 侧的 `plugin_ack` 覆盖到）；
+  - 解码桥回的每一条 `action`：`action` 名必须在 `Plugin.HostActions` 的 8 个之内（线上的
+    枚举是其中 5 个：`move`/`stop`/`interact`/`pickup`/`dash`，见 `protocol/README.md` §3.6）、
+    `chef_id` 必须是本对端上报过的、`move` 必须带有限数值的 `x`/`y`；同时按 `Plugin.HandleAction`
+    的做法回 `Msg.Ack`（这条路径也因此被 C 侧的 `plugin_ack` 覆盖到）；
   - 桥日志要求：`parse_error=0`、`frame_error=0`、`plugin_timeout=0`。
 
 ## 4. 它没验什么（别当成全覆盖）
@@ -71,18 +77,24 @@ bash plugin/tools/conformance/run-conformance.sh 12401 3 move,stop
   对端是按 `StateReader.BuildStateJson` 的精确形状、用插件的 `JsonBuilder` 自己搭的，源码里每条
   资源都注了对应 `StateReader` 的位置。
 - **没跑真游戏、没有 W8**：真游戏与 W8 的验收仍然是 `tools/run-real-game.sh` 的事，本测试不需要 Unity。
-- 只观察到 `move` 与 `stop` 两种 action（worker stub 只发 `move`，其余是桥的空转 `stop`）；其余 6 种
-  虽在对端的校验表里，本轮没人产生。
+- 默认一轮只观察到 `move` 与 `stop` 两种 action（worker stub 默认写 `move`，其余是桥的空转
+  `stop`）。`-StubKind` 能把 `move`/`stop`/`interact`/`pickup`/`dash` 里的一到两个写进 slot 0/1：
+  2026-10-15 实测 `-StubKind pickup,dash` 一轮，对端各解出 109/110 条、0 条被拒，`VERDICT: PASS`。
+  插件的 `press`/`release`/`tap` 没有线上表达，所以谁也产生不了它们。
 - 未覆盖：1 MiB 帧上限的边界、心跳超时真正触发后的暂停/恢复、非有限浮点数。
 
 ## 5. 证据文件（`logs/`，已 gitignore）
 
 | 文件 | 内容 |
 |---|---|
-| `conformance-run.out` | 一次完整运行的输出（编译 + 两端输出 + 判定） |
+| `conformance-run.out` | 一次完整运行的输出（编译 + 两端输出 + 判定），默认 `-StubKind move` 那一轮 |
+| `conformance-run-pickup-dash.out` | `-RequireKinds pickup,dash -StubKind pickup,dash` 那一轮 |
 | `conformance-peer.out` | 对端 stdout：探针细节、解出的每一条 action、汇总与结论 |
+| `conformance-peer-move.out` / `conformance-peer-pickup-dash.out` | 上面两个文件在各轮结束时的副本（后一轮会覆盖原文件） |
 | `conformance-bridge.log` | 桥的 verbose 日志（唯一权威的解析证据） |
-| `conformance-stub.out` | worker stub 的日志 |
+| `conformance-bridge-move.log` / `conformance-bridge-pickup-dash.log` | 同上，逐轮副本 |
+| `conformance-stub.out` | slot 0 的 worker stub 日志 |
+| `conformance-stub-slot1.out` | slot 1 的 worker stub 日志（只在给了两个 `-StubKind` 时产生） |
 | `conformance-csc.out` | 编译器输出；0 字节表示编译器一声没吭 |
 
 ## 6. 环境事实（踩过的坑，别再踩）
@@ -98,13 +110,18 @@ bash plugin/tools/conformance/run-conformance.sh 12401 3 move,stop
 - **worker stub 必须在桥建好共享段之后再起，而且桥活着时不要重启它**：slot 的 `frame_id` 是单调的，
   从 1 重新开始的 stub 对 `last_frame` 已经越过它的桥等于隐形（表现为该 slot 永远空转）。
 
-## 7. 顺手记下的三处不一致（不影响本测试的结论）
+## 7. 顺手记下的三处不一致（复核后的处置）
 
-1. `protocol/schema/state_update.schema.json` 把 `orders[].recipe` 限定为 `string`，但两端实现都
-   接受 JSON `null`（`StateReader` 对解析不出的菜谱就发 null，C 侧 `json_object_get_string` 明确
-   接受 null，`protocol/README.md` §3 也说 null 表示缺省）。该改的是 schema 或文档，不是代码。
-2. `protocol/README.md` §3.6 说 `interact` 的 `target_object` 必填，而插件
-   `InputInjector` 处理 `interact` 时根本不读它。桥现在总会带上，所以不炸。
-3. 桥的存活判定**只看心跳**（`core/src/bridge.c`：`last_heartbeat_ms` 只被心跳刷新），
-   `state_update` 一直流也不算活着。桥默认 3000 ms，插件默认 `HeartbeatMs=2000`，余量 1 秒；
-   插件若把心跳配到 ≥3 s，就会边发状态边被判失联。
+1. **已修**：`protocol/schema/state_update.schema.json` 的 `orders[].recipe` 改成
+   `["string","null"]`。两端实现都接受 JSON `null`（`StateReader` 对解析不出的菜谱就发 null，
+   C 侧 `json_object_get_string` 明确接受 null，`protocol/README.md` §3 也说 null 表示缺省），
+   所以该改的是 schema，不是代码。`holding` / `content` 早就是可空的，这三处现在一致了；
+   其余非必填标量字段的 `null` 也按缺省处理，schema 还没逐个标注（README §3 已写明）。
+2. **已修文档**：`protocol/README.md` §3.6 原先只说 `interact` 的 `target_object` 必填，容易被
+   读成"插件按它挑目标"。插件 `InputInjector` 处理 `interact` 时确实不读它（对厨师脚下的工位
+   按键），契约表里现在写明了这一点；桥仍然总会带上，所以不炸。
+3. **已记入契约与决策**：桥的存活判定**只看心跳**（`core/src/bridge.c`：`last_heartbeat_ms`
+   只被心跳刷新），`state_update` 一直流也不算活着。桥默认 3000 ms，插件默认 `HeartbeatMs=2000`，
+   余量 1 秒；插件若把心跳配到 ≥3 s，就会边发状态边被判失联。`protocol/README.md` §3.2/§4
+   原先写的"任何消息"已改成与两端实现一致，配对与余量记进
+   `decisions.md`: 2026-10-15 - 链路存活只看心跳。

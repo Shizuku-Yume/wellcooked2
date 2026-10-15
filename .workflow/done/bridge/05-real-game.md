@@ -98,3 +98,16 @@ bug，已修（见下）。
 **游戏侧的 `LogOutput.log` 未受影响**，仍是原始文件。教训：脚本固定写同一个日志路径时，
 用它做自测会吃掉上一次真实运行留下的证据。
 
+### 复核补记（2026-10-15，Brief A round 1）
+
+- **上文说的"真实插件"是本 effort 自己写的插件。** `plugin/` 是在本任务里创建的（`a67ea3b`），
+  effort 起点 `b61b6f7` 里没有任何插件文件 —— 所以这次实机证明的是"本 effort 的两端在真游戏上
+  能连上并互相理解"，**不是**"某个第三方插件与 Bridge 互通"。跨端一致性的独立证据只有
+  `plugin/tools/conformance/`（用插件源码编译出来的对端），而它同样出自本 effort。
+  已记入 decisions.md: 插件由本 effort 补写。
+- **W8 仍然只完成一半**：`Done when` 第 3 条的后半（共享内存里厨师/订单/资源非空）没有满足，
+  补上它只需要一次进关卡的运行，不需要改代码。`specs/bridge.md` 的 W8 行已按此改写。
+- 本文件是 01–05 里唯一逐条记录了 `Done when` 结果的；五份都没有 `Review boundary` 行
+  （CONVENTIONS §7）。本轮的复核边界与 7 条 blocking findings 的处置见
+  `done/bridge/06-link-hardening-and-conformance.md`。
+

@@ -19,7 +19,7 @@
       "type": "array",
       "maxItems": 32,
       "items": { "type": "string" },
-      "description": "本端支持的动作名，例如 move / stop / interact。"
+      "description": "本端支持的动作名，例如 move / stop / interact / pickup / dash（线上枚举见 action.schema.json）；插件宣告的是它实现的八个。"
     }
   },
   "examples": [

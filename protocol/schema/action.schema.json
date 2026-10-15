@@ -13,8 +13,8 @@
       "description": "目标厨师。"
     },
     "action": {
-      "enum": ["move", "stop", "interact"],
-      "description": "move 需要 target；interact 需要 target_object；stop 不需要附加字段。"
+      "enum": ["move", "stop", "interact", "pickup", "dash"],
+      "description": "move 需要 target；interact 需要 target_object；stop / pickup / dash 不带附加字段。pickup 与 dash 是插件本来就实现的动作（它一共八个），2026-10-15 才允许被调度下发。"
     },
     "target": {
       "type": "object",
@@ -45,6 +45,8 @@
   "examples": [
     { "type": "action", "chef_id": 0, "action": "move", "target": { "x": 12, "y": 6 } },
     { "type": "action", "chef_id": 1, "action": "interact", "target_object": "cutting_board_0" },
-    { "type": "action", "chef_id": 1, "action": "stop" }
+    { "type": "action", "chef_id": 1, "action": "stop" },
+    { "type": "action", "chef_id": 0, "action": "pickup" },
+    { "type": "action", "chef_id": 1, "action": "dash" }
   ]
 }

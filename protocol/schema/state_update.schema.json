@@ -58,7 +58,10 @@
         "type": "object",
         "properties": {
           "id": { "type": "string", "description": "例如 order_001。" },
-          "recipe": { "type": "string", "description": "例如 salad。" },
+          "recipe": {
+            "type": ["string", "null"],
+            "description": "例如 salad；玩家还没拿到订单时 StateReader 发 null。"
+          },
           "time_remaining": { "type": "number" },
           "ingredients": {
             "type": "array",

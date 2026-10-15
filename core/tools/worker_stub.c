@@ -41,7 +41,7 @@ static void usage(FILE *out, const char *argv0)
 {
     fprintf(out,
             "usage: %s --state-name NAME --sem-name NAME --chefs N --slot K\n"
-            "          --hz H --duration S\n"
+            "          --hz H --duration S [--kind move|stop|interact|pickup|dash]\n"
             "\n"
             "Publishes one Chef Worker's worth of input into slot K of an existing\n"
             "KitchenOS shared segment. The segment must already exist (start the\n"
@@ -111,6 +111,34 @@ static int ts_before(const struct timespec *a, const struct timespec *b)
     return a->tv_nsec < b->tv_nsec;
 }
 
+/*
+ * The slot's action kind, so a scenario can drive any wire action without a
+ * bespoke stub binary. This is the whole vocabulary kos_action_kind has; `none` is
+ * not offered, because "publish nothing" is what not publishing means.
+ */
+static int parse_kind(const char *text, kos_action_kind *out)
+{
+    static const struct {
+        const char *name;
+        kos_action_kind kind;
+    } table[] = {
+        {"move", KOS_ACTION_MOVE},
+        {"stop", KOS_ACTION_STOP},
+        {"interact", KOS_ACTION_INTERACT},
+        {"pickup", KOS_ACTION_PICKUP},
+        {"dash", KOS_ACTION_DASH},
+    };
+    size_t i;
+
+    for (i = 0; i < sizeof table / sizeof table[0]; i++) {
+        if (strcmp(text, table[i].name) == 0) {
+            *out = table[i].kind;
+            return 0;
+        }
+    }
+    return -1;
+}
+
 int main(int argc, char **argv)
 {
     const char *state_name = NULL;
@@ -119,6 +147,7 @@ int main(int argc, char **argv)
     long slot = 0;
     double hz = 60.0;
     double duration = 4.0;
+    kos_action_kind kind = KOS_ACTION_MOVE;
 
     kos_shm_opts opts;
     kos_shm *shm = NULL;
@@ -168,6 +197,12 @@ int main(int argc, char **argv)
         } else if (strcmp(a, "--duration") == 0) {
             if (parse_double(value, &duration) != 0) {
                 fprintf(stderr, "%s: --duration wants a number\n", argv[0]);
+                return 2;
+            }
+        } else if (strcmp(a, "--kind") == 0) {
+            if (parse_kind(value, &kind) != 0) {
+                fprintf(stderr, "%s: --kind must be move, stop, interact, pickup or dash\n",
+                        argv[0]);
                 return 2;
             }
         } else {
@@ -223,8 +258,8 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    fprintf(stdout, "worker-stub slot=%ld chefs=%ld hz=%.1f duration=%.1fs\n", slot, chefs, hz,
-            duration);
+    fprintf(stdout, "worker-stub slot=%ld chefs=%ld hz=%.1f duration=%.1fs kind=%s\n", slot, chefs,
+            hz, duration, kos_action_kind_name(kind));
     fflush(stdout);
 
     clock_gettime(CLOCK_MONOTONIC, &start);
@@ -253,10 +288,15 @@ int main(int argc, char **argv)
             memset(&action, 0, sizeof action);
             action.frame_id = frame + 1; /* 0 保留给"从没写过" */
             action.chef_id = (int32_t)slot;
-            action.kind = KOS_ACTION_MOVE;
+            action.kind = kind;
             action.target_x = STUB_X0 + t * (STUB_X1 - STUB_X0);
             action.target_y = (float)slot;
             action.target_object[0] = '\0';
+            if (kind == KOS_ACTION_INTERACT) {
+                /* interact 必须带一个非空目标，否则 Bridge 只能把它降级成 idle */
+                snprintf(action.target_object, sizeof action.target_object,
+                         "cutting_board_%ld", slot);
+            }
         }
 
         rc = kos_shm_slot_publish(shm, (uint32_t)slot, &action);

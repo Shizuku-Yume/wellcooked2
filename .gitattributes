@@ -11,3 +11,8 @@
 # 统一声明为文本并锁死 LF：比较和提交时都会归一化，假改动消失，也再不可能被误提交。
 # 图片等二进制文件由 text=auto 自动排除，不受影响。
 * text=auto eol=lf
+
+# 例外：Windows 批处理必须带 CRLF，否则 cmd.exe 连行尾一起吞。仓库里现在没有 .bat/.cmd，
+# 这两行是给将来的人（以及 BepInEx 安装脚本那类东西）准备的，存在也不影响现有文件。
+*.bat text eol=crlf
+*.cmd text eol=crlf

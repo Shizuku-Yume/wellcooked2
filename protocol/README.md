@@ -6,8 +6,11 @@
 C 侧 `core/include/kitchenos/protocol.h` + `core/src/protocol.c`，
 插件侧 `plugin/WellCooked.Plugin/Protocol/Messages.cs`。
 
-分帧的唯一基准是插件现有实现 `plugin/WellCooked.Plugin/Net/TcpLink.cs`；C 侧对应
-`core/src/framing.c`。JSON 子集（对象/数组/字符串/数字/布尔/null）由 `core/src/json.c` 处理。
+分帧的契约就是本文档第 1 节，两端实现分别是插件侧
+`plugin/WellCooked.Plugin/Net/TcpLink.cs` 与 C 侧 `core/src/framing.c`。注意这两端是同一轮
+写成的，所以"两边一致"本身不算独立证据：能证伪它的是 `plugin/tools/conformance/`（拿插件
+自己的源码编译出一个对端，跑跨实现检查）与那次实机运行。JSON 子集（对象/数组/字符串/数字/
+布尔/null）由 `core/src/json.c` 处理。
 
 ## 1. 传输与分帧
 
@@ -42,7 +45,10 @@ C 侧 `core/include/kitchenos/protocol.h` + `core/src/protocol.c`，
 ## 3. 字段
 
 约定：标"必填"的字段缺失时，C 侧解析返回 `PROTO_ERR_MISSING` 并丢弃整条消息；
-非必填字段缺失（或显式为 `null`）时取默认值（数字 0、字符串 `""`）。
+非必填字段缺失（或显式为 `null`）时取默认值（数字 0、字符串 `""`）。`schema/` 里对发送端
+确实会发 `null` 的字段显式标成 `["string","null"]`（`holding`、`content`、`recipe`）；
+其余非必填的标量字段两端实现同样按"缺省"处理 `null`，schema 还没逐个标注，属待补，
+不是拒绝一条消息的理由。
 字段存在但 JSON 类型不对（例如 `"chef_id": "0"`）一律 `PROTO_ERR_RANGE`：那是发送端的 bug，
 要进日志。所有消息都必须带 `type`。
 
@@ -110,7 +116,19 @@ C 侧 `core/include/kitchenos/protocol.h` + `core/src/protocol.c`，
 | `timestamp` | integer | 是（Unix 秒） |
 
 C 侧构造：`{"type":"heartbeat","timestamp":1234567890}`。
-插件侧每 500ms 发一次；对端超过阈值没有**任何**消息即判定断开（不是只看心跳）。
+
+发送间隔与超时都是各端自己的配置，两边默认值不一样：
+
+| 端 | 配置 | 默认 |
+|---|---|---|
+| 插件 | `Network.HeartbeatMs` | **2000 ms**（`Plugin.cs`） |
+| 插件 | `Network.HeartbeatTimeoutMs` | **0 = 关闭该判定**；开着时按"**任何**消息都没来"算 |
+| Bridge | `--heartbeat-interval-ms` | 1000 ms |
+| Bridge | `--heartbeat-timeout-ms` | **3000 ms，且只看心跳**（`state_update` 一直流也不算活着） |
+
+两侧默认余量只有 **1 秒**：插件把 `HeartbeatMs` 配到 ≥3000，就会一边正常上报状态、一边被
+Bridge 判为失联（断链、清空注入、3 秒后重连）。要改这个配对，先看
+`decisions.md`: 2026-10-15 - 链路存活只看心跳。`--heartbeat-timeout-ms 0` 可关掉 Bridge 侧判定。
 
 ### 3.3 `hello`（双向）
 
@@ -158,19 +176,25 @@ C 侧构造样例：
 |---|---|---|---|
 | `type` | string | 是（`"action"`） | |
 | `chef_id` | integer | 是 | 目标厨师 |
-| `action` | string | 是 | `move` / `stop` / `interact` |
+| `action` | string | 是 | `move` / `stop` / `interact` / `pickup` / `dash` |
 | `target` | object `{x,y}` | `move` 时必填 | 目标坐标 |
-| `target_object` | string | `interact` 时必填 | 例如 `cutting_board_0` |
+| `target_object` | string | `interact` 时必填 | 例如 `cutting_board_0`；**插件当前不读它**（`interact` = 对厨师脚下的工位按键），带上是为了日志与将来扩展 |
 | `button` | string | 否 | 附加按键，插件透传给游戏 |
 | `hold_ms` | number | 否 | 长按时长 |
 
-`stop` 是**空转动作**：某个厨师的输入槽缺失或超时时，Bridge 就对他下发
-`{"type":"action","chef_id":N,"action":"stop"}`。
+`stop`、`pickup`、`dash` 都是**只有名字**的动作（不带任何附加字段）：`stop` 是空转，
+某个厨师的输入槽缺失或超时时 Bridge 就对他下发
+`{"type":"action","chef_id":N,"action":"stop"}`；`pickup`（取/放厨师脚下的东西）与 `dash`
+（朝当前朝向冲刺）来自输入槽的 `kos_action_kind`，插件 `InputInjector` 本来就实现了它们
+（它一共八个动作），2026-10-15 起允许被调度下发。插件的 `press`/`release`/`tap` 仍然只在
+插件内部可用 —— 需要按帧精确调度原始按键时再扩这里。
 
-C 侧构造样例（与 §5.2 的两条控制指令一致）：
+C 侧构造样例（前两条与 §5.2 的两条控制指令一致）：
 
 - `{"type":"action","chef_id":0,"action":"move","target":{"x":12,"y":6}}`
 - `{"type":"action","chef_id":1,"action":"interact","target_object":"cutting_board_0"}`
+- `{"type":"action","chef_id":0,"action":"pickup"}`
+- `{"type":"action","chef_id":1,"action":"dash"}`
 
 ### 3.7 `config`（Bridge → 插件）
 
@@ -194,7 +218,7 @@ C 侧构造样例（与 §5.2 的两条控制指令一致）：
 | JSON 合法但字段缺失/类型不对 | 丢弃这一条消息（数组里的坏条目单独丢弃并计数） | Bridge |
 | 数组超过 §5 的上限 | 保留前 N 条，其余丢弃并计数，消息仍然可用 | Bridge |
 | 字符串超过 C 侧字段长度 | 截断并计数 | Bridge |
-| 超时没有收到任何消息 | 判定插件断开，暂停下发，重连后继续 | Bridge |
+| 心跳超时（Bridge 只看心跳；插件侧默认关闭该判定，开着时看"任何消息"） | 判定插件断开，暂停下发，重连后继续 | Bridge |
 | TCP 断开 | 等待重连（客户端模式按间隔重试） | Bridge |
 
 C 侧错误码：`core/include/kitchenos/json.h` 的 `JSON_ERR_*`、

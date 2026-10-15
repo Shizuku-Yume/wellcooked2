@@ -642,10 +642,10 @@ static void format_chef_list(uint64_t mask, int chefs, char *out, size_t cap)
 }
 
 /*
- * Translate one worker slot into the plugin's action message. move/interact are
- * the two actions that carry data; every other kind (stop, and the kinds
- * protocol.h has no builder for) degrades to idle stop rather than inventing a
- * message shape this module does not own.
+ * Translate one worker slot into the plugin's action message. move and interact
+ * carry data; stop, pickup and dash are just a name the plugin switches on. `none`
+ * is not an action at all -- it means this Worker has nothing to say this frame --
+ * so it degrades to idle stop, exactly like a missing slot.
  */
 static int build_action_from_slot(int chef, const kos_input_action *action,
                                   char *out, size_t cap, size_t *len)
@@ -662,8 +662,15 @@ static int build_action_from_slot(int chef, const kos_input_action *action,
             return PROTO_ERR_MISSING; /* interact with nothing is not a message */
         }
         return protocol_build_action_interact(chef, action->target_object, out, cap, len);
+    case KOS_ACTION_PICKUP:
+        return protocol_build_action_pickup(chef, out, cap, len);
+    case KOS_ACTION_DASH:
+        return protocol_build_action_dash(chef, out, cap, len);
+    case KOS_ACTION_STOP:
+    case KOS_ACTION_NONE:
+        return PROTO_ERR_TYPE; /* the idle path: the caller sends `stop` itself */
     default:
-        return PROTO_ERR_TYPE; /* stop/pickup/dash/none -> idle */
+        return PROTO_ERR_TYPE; /* unknown kind (torn or corrupt slot) -> idle */
     }
 }
 
@@ -680,6 +687,8 @@ static void dispatch_pending(bridge *b, uint64_t missing, int timed_out)
     uint64_t mask = missing;
     int moved = 0;
     int interacted = 0;
+    int picked_up = 0;
+    int dashed = 0;
     int idle = 0;
     int sent = 0;
     int k;
@@ -701,16 +710,34 @@ static void dispatch_pending(bridge *b, uint64_t missing, int timed_out)
         } else {
             built = build_action_from_slot(k, &action, buf, sizeof buf, &len);
             if (built != PROTO_OK) {
-                kos_log_debug(b->log, "msg_ignored",
-                              "reason=slot-action kind=%s chef=%d detail=%s",
-                              kos_action_kind_name(action.kind), k,
-                              protocol_strerror(built));
+                /* stop/none mean "nothing to do this frame": routine, and DEBUG is
+                 * the right level, otherwise a quiet Worker would fill the log.
+                 * Anything else failing here is the Worker's problem -- move or
+                 * interact with unusable parameters, or a kind no builder knows --
+                 * and the input is replaced by idle, so it has to be visible
+                 * without turning on --verbose. */
+                if (action.kind == KOS_ACTION_STOP || action.kind == KOS_ACTION_NONE) {
+                    kos_log_debug(b->log, "msg_ignored",
+                                  "reason=slot-action kind=%s chef=%d detail=%s",
+                                  kos_action_kind_name(action.kind), k,
+                                  protocol_strerror(built));
+                } else {
+                    kos_log_warn(b->log, "msg_ignored",
+                                 "reason=slot-action-rejected kind=%s chef=%d detail=%s "
+                                 "(fell back to idle stop)",
+                                 kos_action_kind_name(action.kind), k,
+                                 protocol_strerror(built));
+                }
                 built = protocol_build_action_stop(k, buf, sizeof buf, &len);
                 idle++;
             } else if (action.kind == KOS_ACTION_MOVE) {
                 moved++;
-            } else {
+            } else if (action.kind == KOS_ACTION_INTERACT) {
                 interacted++;
+            } else if (action.kind == KOS_ACTION_PICKUP) {
+                picked_up++;
+            } else if (action.kind == KOS_ACTION_DASH) {
+                dashed++;
             }
         }
         if (built != PROTO_OK) {
@@ -736,8 +763,10 @@ static void dispatch_pending(bridge *b, uint64_t missing, int timed_out)
                      b->pending_frame, b->chefs, mask, list, timed_out);
     }
     kos_log_info(b->log, "actions_sent",
-                 "frame=%" PRIu64 " chefs=%d sent=%d idle=%d move=%d interact=%d timed_out=%d",
-                 b->pending_frame, b->chefs, sent, idle, moved, interacted, timed_out);
+                 "frame=%" PRIu64 " chefs=%d sent=%d idle=%d move=%d interact=%d "
+                 "pickup=%d dash=%d timed_out=%d",
+                 b->pending_frame, b->chefs, sent, idle, moved, interacted, picked_up, dashed,
+                 timed_out);
 
     b->pending = 0;
     b->frames_dispatched++;

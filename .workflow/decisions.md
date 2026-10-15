@@ -158,3 +158,89 @@ user may overturn on sight. `Revisit when` of "never" is allowed but suspicious;
 - **Revisit when:** 插件的默认端口发生变更，或 Bridge 需要一个不与游戏共存的固定端口。
 - **Effort:** bridge
 
+## 2026-10-15 - 插件由本 effort 补写，两端同轮交付
+
+- **Decided:** bridge effort 连 Windows 侧插件一起交付（`plugin/WellCooked.Plugin`，`a67ea3b`），
+  并把 `protocol/`（README + `schema/`）当作两端唯一契约，而不是假定插件已经存在。
+- **Instead of:** 只交付 Bridge 与它依赖的共享层，把 W8 记为"无法运行"，等后续插件 effort 再补。
+- **Because:** 用户要的是能实机跑通；当时仓库里没有任何插件，Bridge 在真游戏上一天也没跑过，
+  `state_update` 只能来自 `tools/fake_plugin.py`，协议就只能是自测自证。补写插件的成本可控
+  （BepInEx + Harmony + 一个自有 TCP 客户端），换来 W8 从"不可运行"变成"可运行"。
+  这条是**补记**：当时没记，随后几份文档因此把插件当成了"现有实现" —— 见
+  `decisions.md: 2026-10-15 - 零长帧当作空消息交付` 里的"参考实现 `TcpLink.cs:287`"、
+  `protocol/README.md` 的开头与 `specs/bridge.md` 的"以插件现有实现为基准"。那些措辞已更正；
+  它们各自的**决定**不受影响。
+- **Mine:** yes
+- **Revisit when:** 出现第三个实现方（例如同学独立写的插件），或课程要求两端由不同人实现 ——
+  那时"两端同轮写成"不再可接受，跨端一致性必须由第三方实现来证。
+- **Effort:** bridge
+
+## 2026-10-15 - 链路存活只看心跳
+
+- **Decided:** Bridge 用"最近一次收到 `heartbeat` 的时间"判断插件是否活着
+  （`--heartbeat-timeout-ms`，默认 3000 ms，0 = 关掉判定），`state_update` 不刷新它；插件侧同理
+  （`Network.HeartbeatTimeoutMs`，默认 0 = 关掉该判定）。
+- **Instead of:** 按文档 §5.3 的字面意思用"任何消息都没来"判定断开（那样 `state_update` 也算
+  活着），或者干脆取消超时判定、只靠 TCP 断连。
+- **Because:** 状态上报高频、心跳低频。若任何消息都算活着，插件持续发状态而心跳线程死掉时
+  Bridge 永远发现不了，"插件还在"与"插件的心跳还在"变成同一件事，暂停/恢复那套逻辑就没意义了。
+  代价是两侧默认余量只有 1 秒（插件 `HeartbeatMs=2000` vs Bridge 3000），已连同四个开关写进
+  `protocol/README.md` §3.2 的表格；要更稳就把 `--heartbeat-timeout-ms` 调到 6000，或把插件的
+  `HeartbeatMs` 调小。README §3.2/§4 原先写的"任何消息"与代码不符，已改。
+- **Mine:** yes
+- **Revisit when:** 实机上出现"状态流正常却被判失联"的误断（先看 `logs/bridge.log` 里的
+  `plugin_timeout silent_ms=`），或插件改成由状态上报本身承担心跳。
+- **Effort:** bridge
+
+## 2026-10-15 - 链路不做认证，默认监听 0.0.0.0
+
+- **Decided:** Bridge 与插件之间不做认证与加密。Bridge 默认监听 `0.0.0.0:12345`，任何连上的
+  对端都会被当成插件（新连接顶掉旧连接），它发来的 `state_update` 会写进 `/kitchenos_state`；
+  `--link connect` 模式下 Bridge 发来的 `action` 会被插件当作游戏输入执行。
+- **Instead of:** 在 `hello` 里带一个共享令牌、两端校验，或默认只绑 `127.0.0.1`。
+- **Because:** 单机课设：两端同机，插件默认连 `127.0.0.1`，文档也没要求认证。加令牌要同时改
+  两端并重做一次实机验证，而插件在本机**无法编译**（缺 BepInEx 与游戏程序集），改了也验不了。
+  风险边界写在复核记录里，明说而不是默认：同机或同网段的任何人都能冒充插件、往共享内存灌
+  伪造世界状态、或把 `logs/bridge.log` 刷满（日志不轮转）。解析路径本身没有内存安全问题
+  （长度上限、深度上限、数组上限、真实原子屏障，ASan/UBSan 下 824 项检查全绿）。
+- **Mine:** yes
+- **Revisit when:** 换到多人共用的机器、需要跨网段演示，或端口要暴露到局域网之外。
+- **Effort:** bridge
+
+## 2026-10-15 - action 枚举扩到 5 个：pickup / dash 上线
+
+- **Decided:** 线上 `action` 从 move/stop/interact 扩到**五个**，补上 `pickup` 与 `dash`：
+  `protocol.h` 加 `PROTO_ACTION_PICKUP` / `PROTO_ACTION_DASH` 与
+  `protocol_build_action_pickup()` / `_dash()`（与 `stop` 共用"只有名字"的构造体），
+  `core/src/bridge.c` 的 `build_action_from_slot()` 直接映射这两个 kind，
+  `protocol/README.md` §3.6 与 `protocol/schema/action.schema.json` 同步放宽；插件的
+  `press`/`release`/`tap` 仍然只留在插件里。
+- **Instead of:** 保持三种动作，让 `build_action_from_slot()` 把 pickup/dash 降级为 idle stop、
+  只把日志从 DEBUG 提到 WARN（这是复核时 agent 先选的那条路，被用户否掉）。
+- **Because:** 缺口只在 C 侧：插件 `InputInjector` 本来就实现八个动作并在 `hello` 里宣告，
+  `kos_action_kind` 也一直有这两个取值，缺的只是 C 侧不去构造它们 —— 所以这次扩张**不需要碰
+  插件、也不需要 C# 工具链**，可以用 `core/tests/test_protocol.c` 的构造/往返用例、
+  `tools/fake_plugin.py` 的 `pickup-dash` 场景（两个 Worker 分别写 pickup/dash，断言原样到达
+  对端）和放宽后的 schema 来验证。只记 WARN 的代价是：Worker 写了 dash 却永远等不到它生效，
+  而那在日志里只是一条"降级"、不是一个错误。
+- **Mine:** no
+- **Revisit when:** 需要按帧精确调度原始按键（`press`/`release`/`tap`），或插件的动作语义与
+  输入槽取值再次分叉。
+- **Effort:** bridge
+
+## 2026-10-15 - 重启时清掉崩溃残留的共享内存，不拒绝启动
+
+- **Decided:** Bridge 启动时用 `KOS_SHM_CREATE` 打开 `/kitchenos_state`；对象已存在就记一条
+  `shm_recreate` WARN、unlink 后重建，而不是报错退出。魔数/结构版本/尺寸校验只用于**挂接**
+  （`KOS_SHM_ATTACH`，Scheduler/Worker 走这条），不匹配就明确拒绝。
+- **Instead of:** 按 spec 早先那句"写 shm 前先确认对端结构版本号，不匹配则拒绝启动"，Bridge
+  遇到任何已存在的段都退出。
+- **Because:** 上一次运行被 SIGKILL 或崩溃之后段会留在 `/dev/shm`。若拒绝启动，用户就得先手工
+  `rm /dev/shm/kitchenos_state*` 才能再跑，而这条命令不在任何文档里 —— 那是个只有作者知道的隐性
+  前置条件。段的唯一写入者就是 Bridge 自己，重建不会破坏别人的数据；真正的多进程读者走 ATTACH，
+  那条路上三项校验一个不少。spec 里那句话已改成这个行为。
+- **Mine:** yes
+- **Revisit when:** 出现第二个长期存活的世界状态写入者，或 Scheduler 需要在 Bridge 重启后沿用
+  上一帧的状态。
+- **Effort:** bridge
+

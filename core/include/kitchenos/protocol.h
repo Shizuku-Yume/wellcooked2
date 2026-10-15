@@ -1,11 +1,14 @@
 /*
  * protocol.h -- the KitchenOS message layer (bridge <-> game plugin).
  *
- * Field names are the cross-end contract and are frozen by
- * plugin/WellCooked.Plugin/Protocol/Messages.cs plus §5.2 of the project
- * document; protocol/README.md documents them for both ends. This module only
- * converts between JSON documents and C structs -- it makes no decisions about
- * what to send.
+ * Field names are the cross-end contract. Its home is protocol/README.md plus
+ * protocol/schema/; §5.2 of the project document is where they came from. Both
+ * implementations follow it: core/src/protocol.c here and
+ * plugin/WellCooked.Plugin/Protocol/Messages.cs. Note that the plugin was written
+ * by this same effort, so "both ends agree" is agreement by construction; the
+ * independent checks are plugin/tools/conformance/ (a peer compiled from the
+ * plugin's own sources) and the real-game run. This module only converts between
+ * JSON documents and C structs -- it makes no decisions about what to send.
  *
  * Collections are bounded: a frame is at most 1 MiB, and a fixed layout keeps the
  * bridge allocation-free on the hot path. Overflow never fails a parse, it is
@@ -30,10 +33,16 @@
 #define PROTO_TYPE_HELLO "hello"
 #define PROTO_TYPE_ACK "ack"
 
-/* Action names understood by the plugin's InputInjector. */
+/* Action names understood by the plugin's InputInjector. The plugin implements
+ * eight (move, stop, press, release, tap, pickup, dash, interact); the wire
+ * carries these five, which is everything `kos_action_kind` can express.
+ * press/release/tap stay plugin-only until something needs to schedule a raw
+ * button at a chosen frame (see decisions.md). */
 #define PROTO_ACTION_MOVE "move"
 #define PROTO_ACTION_STOP "stop" /* the idle action sent for missing input slots */
 #define PROTO_ACTION_INTERACT "interact"
+#define PROTO_ACTION_PICKUP "pickup" /* take/drop what the chef stands on; no payload */
+#define PROTO_ACTION_DASH "dash"     /* sprint in the facing direction; no payload */
 
 /* Identity this side announces in `hello`; the version string is what the plugin
  * sees in its log, so bump it when the wire format changes. */
@@ -223,6 +232,10 @@ int protocol_build_action_stop(long long chef_id, char *out, size_t cap,
                                size_t *out_len);
 int protocol_build_action_interact(long long chef_id, const char *target_object,
                                    char *out, size_t cap, size_t *out_len);
+int protocol_build_action_pickup(long long chef_id, char *out, size_t cap,
+                                 size_t *out_len);
+int protocol_build_action_dash(long long chef_id, char *out, size_t cap,
+                               size_t *out_len);
 
 const char *protocol_strerror(int code);
 

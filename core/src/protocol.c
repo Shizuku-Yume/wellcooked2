@@ -781,7 +781,13 @@ int protocol_build_action_move(long long chef_id, double x, double y,
     return w_done(&w, out_len);
 }
 
-int protocol_build_action_stop(long long chef_id, char *out, size_t cap, size_t *out_len)
+/*
+ * stop/pickup/dash are all "just the name" actions: no target, no object, no
+ * duration. The plugin's InputInjector switches on the name, so one body keeps
+ * the three byte-identical apart from it.
+ */
+static int build_bare_action(long long chef_id, const char *name,
+                             char *out, size_t cap, size_t *out_len)
 {
     json_writer w;
 
@@ -792,9 +798,24 @@ int protocol_build_action_stop(long long chef_id, char *out, size_t cap, size_t 
     json_writer_key(&w, "chef_id");
     json_writer_int(&w, chef_id);
     json_writer_key(&w, "action");
-    json_writer_string(&w, PROTO_ACTION_STOP);
+    json_writer_string(&w, name);
     json_writer_object_end(&w);
     return w_done(&w, out_len);
+}
+
+int protocol_build_action_stop(long long chef_id, char *out, size_t cap, size_t *out_len)
+{
+    return build_bare_action(chef_id, PROTO_ACTION_STOP, out, cap, out_len);
+}
+
+int protocol_build_action_pickup(long long chef_id, char *out, size_t cap, size_t *out_len)
+{
+    return build_bare_action(chef_id, PROTO_ACTION_PICKUP, out, cap, out_len);
+}
+
+int protocol_build_action_dash(long long chef_id, char *out, size_t cap, size_t *out_len)
+{
+    return build_bare_action(chef_id, PROTO_ACTION_DASH, out, cap, out_len);
 }
 
 int protocol_build_action_interact(long long chef_id, const char *target_object,

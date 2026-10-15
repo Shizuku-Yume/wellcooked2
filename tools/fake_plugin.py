@@ -45,6 +45,9 @@ HELLO_INSTANCE = "windows-host"
 HELLO_VERSION = "0.1.0"
 HELLO_ACTIONS = ("move", "stop", "press", "release", "tap", "pickup", "dash", "interact")
 IDLE_ACTION = "stop"            # 输入槽缺失时 Bridge 下发的空闲动作
+# 线上 action 枚举（protocol/README.md §3.6 + schema/action.schema.json）：插件会做八个，
+# 但能调度到的只有这五个。收到别的名字说明 Bridge 与契约不一致，要当硬错误。
+WIRE_ACTIONS = ("move", "stop", "interact", "pickup", "dash")
 
 EXIT_OK = 0
 EXIT_FAIL = 1
@@ -52,7 +55,8 @@ EXIT_ERROR = 2
 EXIT_SKIP = 77
 
 SCENARIOS = ("happy", "one-slot", "no-heartbeat", "bad-frames", "connect-mode",
-             "reconnect-storm", "silent-connect", "data-shapes", "second-peer")
+             "reconnect-storm", "silent-connect", "data-shapes", "second-peer",
+             "pickup-dash")
 
 # 日志行 = "ISO8601(毫秒) 级别 事件名 key=value ..."（core/src/log.c）。
 # 只认行首这个位置上的事件名：key=value 里出现同名词不算一次事件。
@@ -243,6 +247,13 @@ def validate_action(msg):
                 value = target.get(key)
                 if not isinstance(value, (int, float)) or isinstance(value, bool):
                     errs.append("move target.%s is not a number" % key)
+    elif action == "interact":
+        target_object = msg.get("target_object")
+        if not isinstance(target_object, str) or not target_object:
+            errs.append("interact without a target_object")
+    elif action not in WIRE_ACTIONS:
+        errs.append("action %r is not on the wire (allowed: %s)"
+                    % (action, "/".join(WIRE_ACTIONS)))
     return errs
 
 
@@ -1163,16 +1174,17 @@ class Ctx:
         raise InfraError("bridge could not get a usable port after %d attempts (%s)"
                          % (retries, last))
 
-    def start_stub(self, *, slot, chefs, hz, duration):
+    def start_stub(self, *, slot, chefs, hz, duration, kind="move"):
         binary = Path(self.args.worker_stub)
         argv = ["--state-name", self.state_name, "--sem-name", self.sem_name,
                 "--chefs", str(chefs), "--slot", str(slot),
-                "--hz", str(hz), "--duration", str(duration)]
+                "--hz", str(hz), "--duration", str(duration), "--kind", kind]
         console = Path(str(self.log_path) + ".slot%d.console" % slot)
         stub = WorkerStub(binary, argv, console)
         stub.start()
         self.stubs.append(stub)
-        _say("    info       worker-stub slot=%d pid=%d" % (slot, stub.proc.pid))
+        _say("    info       worker-stub slot=%d pid=%d kind=%s"
+             % (slot, stub.proc.pid, kind))
         return stub
 
     def stop_all(self):
@@ -1384,6 +1396,74 @@ def scenario_one_slot(ctx, checks):
                 "log lines mentioning slot/idle and chef 1: %s"
                 % (named[:2] or (idle_hits[:2] or "none")))
     return ("%s in %.1fs; live chef 0 -> %s; missing chef 1 -> %s"
+            % (stats.describe(), window, Counter(seen0) or "none", Counter(seen1) or "none"))
+
+
+def scenario_pickup_dash(ctx, checks):
+    """pickup/dash：槽里写的这两个动作必须原样到对端，不能被降级成 idle。
+
+    这两个 action 是 2026-10-15 按用户的选择补上线的（"补 builder，扩到 5 个动作"）。
+    在那之前 build_action_from_slot 落到 default 分支，槽里写 pickup/dash 的 Worker
+    拿到的是 stop —— 没有任何断言能发现，因为对端只看得到 stop。
+    """
+    args = ctx.args
+    chefs = 2
+    stub_binary = Path(args.worker_stub)
+    if not stub_binary.exists():
+        raise Skipped("worker-stub not built (%s); this scenario needs a live slot writer "
+                      "— build with: cd core && make" % stub_binary)
+
+    ctx.clear_stale_shm()
+    port = ctx.start_bridge_and_wait(link="listen", host=args.host, chefs=chefs,
+                                     frame_timeout_ms=args.frame_timeout_ms,
+                                     heartbeat_timeout_ms=args.heartbeat_timeout_ms,
+                                     port=args.listen_port)
+
+    link = Link(connect(args.host, port, args.ready_timeout))
+    link.send_json(msg_hello())
+    priming = Stats("priming")
+    run_exchange(link, priming, 1.0, chefs=chefs, hz=args.hz,
+                 heartbeat_ms=args.heartbeat_ms, ack_actions=not args.no_ack,
+                 flat_xy=args.flat_xy)
+    checks.hard("bridge_writes_state_shm", ctx.wait_shm(3.0), "%s" % ctx.shm_paths()[0])
+
+    checks.note("worker_stubs", "slot 0 -> pickup, slot 1 -> dash (both live)")
+    ctx.start_stub(slot=0, chefs=chefs, hz=args.stub_hz, duration=args.duration + 6,
+                   kind="pickup")
+    ctx.start_stub(slot=1, chefs=chefs, hz=args.stub_hz, duration=args.duration + 6,
+                   kind="dash")
+
+    warm = Stats("warmup")
+    run_exchange(link, warm, 1.5, chefs=chefs, hz=args.hz, heartbeat_ms=args.heartbeat_ms,
+                 ack_actions=not args.no_ack, flat_xy=args.flat_xy)
+    checks.note("warmup", warm.describe())
+
+    window = max(1.5, args.duration)
+    stats = Stats("measure")
+    run_exchange(link, stats, window, chefs=chefs, hz=args.hz, heartbeat_ms=args.heartbeat_ms,
+                 ack_actions=not args.no_ack, flat_xy=args.flat_xy)
+    link.close()
+
+    # stub 以 stub_hz 往槽里写、Bridge 以 hz 开帧，所以每隔一帧左右才有一格"新输入"，
+    # 其余帧合法地降级为 idle：判据是"这两个动作真的到了"，不是"只出现它们"。
+    seen0 = [a.get("action") for a in stats.actions if a.get("chef_id") == 0]
+    seen1 = [a.get("action") for a in stats.actions if a.get("chef_id") == 1]
+    got0 = seen0.count("pickup")
+    got1 = seen1.count("dash")
+    checks.note("measured_window", "%s; chef0=%s chef1=%s"
+                % (stats.describe(), Counter(seen0) or "none", Counter(seen1) or "none"))
+    checks.hard("pickup_reaches_the_peer", got0 >= 3,
+                "chef 0 (slot writes pickup): %d pickup of %d actions (%s)"
+                % (got0, len(seen0), Counter(seen0) or "none"))
+    checks.hard("dash_reaches_the_peer", got1 >= 3,
+                "chef 1 (slot writes dash): %d dash of %d actions (%s)"
+                % (got1, len(seen1), Counter(seen1) or "none"))
+    checks.hard("no_unknown_action_names", not stats.bad_actions,
+                "%d actions the peer rejected: %s"
+                % (len(stats.bad_actions), stats.bad_actions[:2]))
+    checks.hard("bridge_alive_after_new_actions", ctx.bridge.alive(),
+                "exit=%s" % ctx.bridge.exit_code())
+    return ("%s in %.1fs; chef 0 -> %s; chef 1 -> %s"
             % (stats.describe(), window, Counter(seen0) or "none", Counter(seen1) or "none"))
 
 
@@ -2267,6 +2347,7 @@ SCENARIO_IMPL = {
     "silent-connect": scenario_silent_connect,
     "data-shapes": scenario_data_shapes,
     "second-peer": scenario_second_peer,
+    "pickup-dash": scenario_pickup_dash,
 }
 
 
