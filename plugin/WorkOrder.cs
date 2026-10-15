@@ -54,6 +54,7 @@ namespace WellCooked
         private static bool _expectStationPlate;
         private static float _arriveLogAt;
         private static float _arriveAt;
+        private static bool _looseApproach;
         private static float _chopLogAt;
         private static bool _interacted;
         private static string _expectHeld = "";
@@ -180,7 +181,8 @@ namespace WellCooked
             // 到位之后不再寻路（Takeover 见到 _facing 就只喂朝向不导航）。
             // 带滞回：到位过之后放宽到 0.6 米，否则在半径边上反复横跳
             // （实测停在 0.28 米：既回不到 0.25 的到位判定、也不按、也不超时）。
-            if (distance <= (_arrivedLogged ? ReachRadius * 2.4f : ReachRadius))
+            float reach = _looseApproach ? 1.0f : ReachRadius;
+            if (distance <= (_arrivedLogged ? reach * 2.4f : reach))
             {
                 _facing = true;
 
@@ -220,7 +222,7 @@ namespace WellCooked
                 // 朝向校验只是"尽量对准"的辅助：出菜口这种嵌在墙里的工位，
                 // 面前永远不是它本身，一直转身反而把自己推出就位点（实测 20 秒里反复横跳）。
                 // 所以最多对准 3 秒，之后就照按（参考项目 Extremelyd1/OvercookedAI 根本不校验朝向）。
-                if (!facingStation && now - _arriveAt < 3f)
+                if (!facingStation && !_looseApproach && now - _arriveAt < 3f)
                 {
                     // 转身要短促：一直喂方向会顶着工位沿它滑走（实测滑出 2.6 米）。
                     if (now >= _faceNextPulse)
@@ -427,6 +429,7 @@ namespace WellCooked
             _expectStationPlate = false;
             _arriveLogAt = 0f;
             _arriveAt = 0f;
+            _looseApproach = false;
             _chopLogAt = 0f;
             _hasTarget = false;
 
@@ -540,6 +543,11 @@ namespace WellCooked
                     }
 
                     AimAt(station.Position, station.Name);
+                    // 出菜口嵌在墙里，它的"相邻格"算不准也站不稳（实测到位后转身就把
+                    // 自己推出去、再也回不来）。参考项目就是直接走到工位本身再按，
+                    // 这里照做：目标取工位本身，到位半径放宽，朝向不校验。
+                    _target = station.Position;
+                    _looseApproach = true;
                     _hasTarget = true;
                     _expectHeld = ""; // 交付后应该空手
                     _expectContents = "";
