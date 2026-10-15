@@ -244,3 +244,18 @@ user may overturn on sight. `Revisit when` of "never" is allowed but suspicious;
   上一帧的状态。
 - **Effort:** bridge
 
+## 2026-10-15 - 插件 server 模式单独用 14455，不再与 client 模式共用端口
+
+- **Decided:** 插件新增 `Network.ServerPort`（默认 14455），server 模式监听它；client 模式继续
+  用 `Network.Port`（默认 12345）。Bridge 的 `--link connect` 默认拨 14455 不变。
+- **Instead of:** 把 Bridge 的 `--link connect` 默认端口改成 12345 去迁就插件，让两端继续共用
+  一个端口号。
+- **Because:** 课程文档 §6.2.4 明写"插件在游戏进程内启动 TCP 服务器（localhost:14455）"，而
+  `decisions.md: …实机验收不要求改游戏侧配置` 已经定下"验收不该要求手改游戏侧配置"。共用一个
+  端口号会让这两个要求互相打架：照文档跑相反拓扑必然先撞一次"连不上"，然后才发现要改配置 ——
+  正是那条决策要消灭的假失败。两种模式的默认值各归其位之后，两个方向都按文档默认值直接可用。
+- **Mine:** no
+- **Revisit when:** 需要让同一个游戏实例同时充当 server 与 client，或课程验收要求两种模式共用
+  一个端口号。
+- **Effort:** bridge
+

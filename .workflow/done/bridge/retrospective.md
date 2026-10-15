@@ -93,11 +93,13 @@ CONVENTIONS §7 要求的 `Review boundary` 行在 5 个任务的 `## Progress` 
 
 ## Debt left behind
 
-`technical-debt.md`：
+`technical-debt.md`：**已清空。**
 
-- **插件 server 模式默认端口与文档的 14455 不一致**（worth-doing）。W7 只被模拟对端覆盖，
-  真插件的 server 模式按默认配置跑不起来；修法是给插件加 `Network.ServerPort` 默认 14455，
-  或把 `--link connect` 的默认端口改成 12345 并说明理由。
+- **插件 server 模式默认端口与文档的 14455 不一致** —— 关闭后用户裁定按文档改代码：插件新增
+  `Network.ServerPort`（默认 14455），server 模式用它、client 模式继续用 `Network.Port`
+  （12345）。改动本身很小（一处配置 + 一处按模式取端口），但**它只做到静态对齐**：插件的
+  server 模式仍然没有被任何一次运行覆盖过，所以 W7 那一行的措辞从"插件侧不满足"改成了
+  "两个方向跑过的都是模拟对端"，没有把"默认值对了"说成"验过了"。
 - 本轮修掉的"输入槽的动作词表比线上协议宽"已按约定在同一次改动里删除。
 
 没有遗留的 hotfix follow-up 任务。

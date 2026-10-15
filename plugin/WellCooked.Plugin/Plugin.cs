@@ -32,6 +32,7 @@ namespace WellCooked
         private ConfigEntry<string> _netMode;
         private ConfigEntry<string> _netHost;
         private ConfigEntry<int> _netPort;
+        private ConfigEntry<int> _netServerPort;
         private ConfigEntry<string> _netListenAddress;
         private ConfigEntry<int> _netHeartbeatMs;
         private ConfigEntry<int> _netHeartbeatTimeoutMs;
@@ -255,7 +256,10 @@ namespace WellCooked
                 "client=主动连接 OS 核心（WSL2 侧）；server=监听等待对端接入");
             _netHost = Config.Bind("Network", "Host", "127.0.0.1",
                 "client 模式目标地址（WSL2 的 localhost 转发）");
-            _netPort = Config.Bind("Network", "Port", 12345, "TCP 端口");
+            _netPort = Config.Bind("Network", "Port", 12345,
+                "client 模式目标端口（Bridge 默认监听在这里）");
+            _netServerPort = Config.Bind("Network", "ServerPort", 14455,
+                "server 模式监听端口（Bridge 用 --link connect 时默认拨这里，见文档 §6.2.4）");
             _netListenAddress = Config.Bind("Network", "ListenAddress", "127.0.0.1",
                 "server 模式监听地址（0.0.0.0 表示全部网卡）");
             _netHeartbeatMs = Config.Bind("Network", "HeartbeatMs", 2000,
@@ -300,10 +304,15 @@ namespace WellCooked
                 ? TcpLink.Mode.Server
                 : TcpLink.Mode.Client;
 
+            /* 两种模式各有自己的默认端口：client 连 Bridge 监听的 12345，server 监听文档
+             * §6.2.4 说的 14455 —— Bridge 的 --link connect 默认就拨这里。共用一个端口会让
+             * "相反拓扑"在默认配置下连不上，而那正是文档承诺能直接跑通的形状。 */
+            int port = mode == TcpLink.Mode.Server ? _netServerPort.Value : _netPort.Value;
+
             _link = new TcpLink(
                 mode,
                 _netHost.Value,
-                _netPort.Value,
+                port,
                 _netListenAddress.Value,
                 _netHeartbeatMs.Value,
                 _netHeartbeatTimeoutMs.Value,

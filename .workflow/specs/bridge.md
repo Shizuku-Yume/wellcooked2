@@ -145,7 +145,7 @@ Worker 分别写 `pickup`/`dash`，断言它们原样到达对端），它替代
 | **W4** | ✅ | `no-heartbeat`：`plugin_timeout silent_ms=801` → 暂停下发（0 动作）→ 重连 → `plugin_resumed` → 恢复 |
 | **W5** | ✅ | `bad-frames`：>1 MiB 帧、非法 JSON、截断帧各一次，进程存活、连接保持、随后照常处理 |
 | **W6** | ✅ | SIGTERM 后 **0.05 s**（无插件时 0.020 s）退出、退出码 0、端口立即可重绑、`/dev/shm` 无残留 |
-| **W7** | ✅ | `happy`（Bridge 监听 12345）+ `connect-mode`（Bridge 拨号 14455）各完成完整帧交换；覆盖的对端是协议级模拟插件。**真插件的 server 模式没被这一条覆盖**：插件 `Network.Port` 默认 12345，要按 §6.2.4 那样连它的 server 得先把配置改成 14455 —— 见 technical-debt.md: 插件 server 模式默认端口与文档的 14455 不一致 |
+| **W7** | ✅ | `happy`（Bridge 监听 12345）+ `connect-mode`（Bridge 拨号 14455）各完成完整帧交换。**两个方向跑过的对端都是协议级模拟插件**：真插件的 server 模式从未被任何一次运行覆盖（那需要把游戏切到 server 模式，而实机只跑过 client 方向）。插件侧默认值已按 §6.2.4 对齐（`Network.ServerPort` 默认 14455，见下），所以按文档默认配置直接跑得通，但"跑得通"这一条仍然只是静态对齐、没有运行证据 |
 | **W8** | ⚠️ 一半 | **已达成**：2026-10-15 实机，`hello` ✅、`state_update` **76 条** ✅、解析错误 0 ✅（见 done/bridge/05-real-game.md）。**未达成**：同一份记录里 `state_summary ... chefs=0 orders=0`（游戏停在菜单，没进关卡），即"共享内存里的厨师/订单/资源非空"没有被观察到；再跑一次 `bash tools/run-real-game.sh` 并进关卡即可补上 |
 
 ### 与文档的逐条对照
@@ -155,7 +155,7 @@ Worker 分别写 `pickup`/`dash`，断言它们原样到达对端），它替代
 | §834-842「Bridge 进程」 | 唯一连游戏的进程、按帧写共享内存、读输入槽汇总下发、按帧同步、崩溃时发 idle 保持连接 | 全部实现；其中"阻塞等待"实现为**有界等待**，理由见下 |
 | §543-553「共享内存 + 信号量」 | `shm_open("/kitchenos_state")` | 默认名一致 |
 | §6.2.3（951-966） | "使用 **seqlock 或** 读写信号量保护"；Bridge 独占写、Scheduler/Worker 并发读、Worker 独占写各自输入槽；"这是典型的读者写者问题" | 选 seqlock；权限划分与文档逐条一致 |
-| §6.2.4（968-975） | "BepInEx 插件在游戏进程内启动 TCP 服务器（localhost:14455）；Linux 侧 Bridge 作为客户端连接" | Bridge 侧 `--link connect --port 14455` 实测 PASS；**插件侧不满足**：`Network.Port` 默认 12345，要照文档跑得先改插件配置 —— 见 technical-debt.md: 插件 server 模式默认端口与文档的 14455 不一致 |
+| §6.2.4（968-975） | "BepInEx 插件在游戏进程内启动 TCP 服务器（localhost:14455）；Linux 侧 Bridge 作为客户端连接" | 两侧默认值已对齐：Bridge `--link connect` 默认 `127.0.0.1:14455` 实测 PASS；插件 server 模式改用 `Network.ServerPort`（默认 14455，与 client 模式的 `Network.Port` 12345 分开）。插件这一半是静态对齐，未实机跑过 |
 | §2.2.1 / §5.1 | Bridge 作 TCP 服务端 `0.0.0.0:12345` | `--link listen --port 12345`，实测 PASS |
 | §5.2 | 消息类型名与字段 | 与 `Messages.cs` 九个类型名逐字相同，测试里做双向映射校验；`action` 枚举取插件八个动作里的五个（`move`/`stop`/`interact`/`pickup`/`dash`，见 `decisions.md: 2026-10-15 - action 枚举扩到 5 个`）；schema 另用 `jsonschema` 对 150+150 条真实帧校验，并确认 6 条不合契约的形状被拒（`logs/schema-check.out`） |
 | §5.3 | 解析失败 ⇒ 记录并丢弃；断开 ⇒ 等待重连 | 逐条实现，`bad-frames` / `no-heartbeat` 覆盖 |

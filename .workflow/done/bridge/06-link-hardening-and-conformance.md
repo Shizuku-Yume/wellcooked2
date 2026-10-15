@@ -88,7 +88,7 @@ Review boundary: b61b6f7 + core/, plugin/, protocol/, tools/, .workflow/; round:
 | 3 | `6b87e6f`/`297961e` 没有任务档案，最强证据只在 gitignore 的 `logs/` | 本文件 + spec 验收结果引用 |
 | 4 | 01–05 都没有 review 轮次记录（CONVENTIONS §7） | 本条 boundary 行 + 本文件；不追改 5 份归档记录的正文，由 `flow-close` 的 retrospective 记下这件事 |
 | 5 | `state_update.schema.json` 的 `orders[].recipe` 拒收两端都接受的 `null` | schema 改为 `["string","null"]`；README §3 写明哪些字段标了 null、其余按缺省处理 |
-| 6 | `decisions.md: …实机验收不要求改游戏侧配置` 说插件 server 模式是 14455，代码是 12345 | 已记 technical-debt.md: 插件 server 模式默认端口…；spec 的 W7 行与 §6.2.4 对照行改写。插件代码**未改**：本机无法编译插件，改了也验不了 |
+| 6 | `decisions.md: …实机验收不要求改游戏侧配置` 说插件 server 模式是 14455，代码是 12345 | 关档后用户裁定**按文档改代码**：插件新增 `Network.ServerPort`（默认 14455），server 模式用它、client 继续用 `Network.Port`（12345）；spec 的 W7 行与 §6.2.4 对照行同步改写，`technical-debt.md` 的条目按约定随修复删除。**订正一处此前的判断**：这里原写"本机无法编译插件"，是错的 —— 仓库自带 `.tools/dotnet8/dotnet.exe`，`plugin/tools/deploy-plugin.ps1 -Build` 就是用它编的，只是 PATH 上没有 `dotnet`、系统也没装 .NET SDK。插件已重新编译（0 警告 0 错误）并部署。**仍未运行验证**：插件 server 模式没被任何一次实机覆盖，W7 的措辞只声称静态对齐 |
 | 7 | 输入槽的 PICKUP/DASH 被静默降级为 `stop`，`shm.h` 却写"名字可以直接下发" | 用户选择**扩协议**：`action` 枚举从 3 个扩到 5 个（补 `pickup`/`dash` 的 C 常量与构造器、`build_action_from_slot` 直接映射、README §3.6 与 `action.schema.json` 同步），见 decisions.md: action 枚举扩到 5 个；`shm.h` 措辞一并改正。原先"只记 WARN、不扩协议"的处置已被用户否掉 |
 
 7 条 nonblocking 的处置：
