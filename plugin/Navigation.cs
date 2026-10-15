@@ -153,13 +153,13 @@ namespace WellCooked
                 agent.SlideCount = 0;
             }
             else if (now - agent.LastMovedAt > 0.4f && now >= agent.SlideUntil
-                     && Vector2.Distance(position, agent.Target) < 3f)
+                     && Vector2.Distance(position, agent.Target) < Fallbacks.PassByRadius)
             {
                 // 侧向错身：两个厨师面对面互推时（路点正好在对穿位置），谁都不让、双双卡死
                 // （实测两人坐标完全不动）。按玩家位奇偶决定往哪边让，两边正好相反。
                 //
-                // 只在**离目标很近**时才错身：那是"两个厨师对着同一个点互推"的场景。
-                // 离得远时还错身就成了乱走——错身期间厨师一直在小幅移动，卡住计时攒不够，
+                // 只在**离目标很近**时才错身（`Fallbacks.PassByRadius`）：那是"两个厨师对着同一个点
+                // 互推"的场景。离得远时还错身就成了乱走——错身期间厨师一直在小幅移动，卡住计时攒不够，
                 // 永远不重算路径，20 秒只挪半米（实测）。
                 // 另外错身本身有界：连续 2 次还推不动就丢路径让上层重算。
                 // 同时把"从当前格朝路点方向过不去"记进地图：下次重算就绕开这条路。
@@ -183,8 +183,9 @@ namespace WellCooked
                 if (bx != 0 || bz != 0)
                 {
                     WorldState.BlockStep(cx, cz, bx, bz);
-                    _log.LogInfo("寻路: 记下过不去的边 格(" + cx + "," + cz + ") 方向(" + bx + "," + bz
-                                 + ") —— 位置(" + position.x.ToString("F2") + "," + position.y.ToString("F2") + ")");
+                    // 过程行：错身时每 0.4 秒可能记一次，`diag=true` 才打。
+                    Diag.Trace("寻路: 记下过不去的边 格(" + cx + "," + cz + ") 方向(" + bx + "," + bz
+                               + ") —— 位置(" + position.x.ToString("F2") + "," + position.y.ToString("F2") + ")");
                 }
 
                 agent.SlideCount++;

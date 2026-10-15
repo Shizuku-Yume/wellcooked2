@@ -39,9 +39,6 @@ namespace WellCooked
         private static float _nextFrontendPress;
         private static bool _frontendHeld;
 
-        /// <summary>`trace=true` 时每帧把喂出去的方向与厨师位置打进日志（卡住时看抖动从哪来）。</summary>
-        private static bool _trace;
-
         /// <summary>`work=auto` 时不再随便挑工位，改由工序状态机（`WorkOrder`）决定去哪、按不按交互。</summary>
         private static bool _workMode;
         private static int _arrivals;
@@ -122,9 +119,15 @@ namespace WellCooked
                     {
                         _workMode = value == "auto";
                     }
-                    else if (key == "trace")
+                    else if (key == "diag" || key == "trace")
                     {
-                        _trace = value == "true" || value == "1";
+                        // 过程行总开关（`Diag`）：`diag` 是新名字，`trace` 是这一轮用过的旧名字，等价。
+                        bool on = value == "true" || value == "1" || value == "yes";
+                        if (on != Diag.Verbose)
+                        {
+                            Diag.Set(on);
+                            _log.LogInfo("takeover: 诊断输出 " + (on ? "开" : "关"));
+                        }
                     }
                     else if (key == "frontend_press")
                     {
@@ -685,19 +688,17 @@ namespace WellCooked
                     string status;
                     var direction = Navigation.Steer(owned.Slot, position, now, out status);
                     owned.Pad.Want(action, false, direction);
-                    if (_trace)
-                    {
-                        _log.LogInfo("trace 玩家位=" + (owned.Slot + 1)
-                                     + " 方向=(" + direction.x.ToString("F2") + "," + direction.y.ToString("F2") + ")"
-                                     + " 位置=(" + position.x.ToString("F3") + "," + position.y.ToString("F3") + ")"
-                                     + " " + status);
-                    }
+                    // 每帧一行：`diag=true` 才打（卡住时看抖动从哪来）
+                    Diag.Trace("trace 玩家位=" + (owned.Slot + 1)
+                               + " 方向=(" + direction.x.ToString("F2") + "," + direction.y.ToString("F2") + ")"
+                               + " 位置=(" + position.x.ToString("F3") + "," + position.y.ToString("F3") + ")"
+                               + " " + status);
 
                     if (now >= _nextDriveLog)
                     {
-                        _log.LogInfo("takeover: 走位 玩家位=" + (owned.Slot + 1) + " 厨师=" + owned.ChefName + " " + status
-                                     + " 方向=(" + direction.x.ToString("F2") + "," + direction.y.ToString("F2") + ")"
-                                     + " 位置=(" + position.x.ToString("F2") + "," + position.y.ToString("F2") + ")");
+                        Diag.Trace("takeover: 走位 玩家位=" + (owned.Slot + 1) + " 厨师=" + owned.ChefName + " " + status
+                                   + " 方向=(" + direction.x.ToString("F2") + "," + direction.y.ToString("F2") + ")"
+                                   + " 位置=(" + position.x.ToString("F2") + "," + position.y.ToString("F2") + ")");
                     }
 
                     // 只有"这个目标做完了"才换目标（到达/不可达/卡住都会把 Arrived 置上）。
@@ -745,13 +746,13 @@ namespace WellCooked
             if (now >= _nextDriveLog)
             {
                 _nextDriveLog = now + 2f;
-                _log.LogInfo("takeover: 驱动中 交互=" + action
-                             + " 设备层=" + OwnedPads.Count + " 逻辑层=" + LogicalPlayers.Count
-                             + " 目标点=" + Targets.Count + " 到达次数=" + _arrivals + " 换目标次数=" + _retargets);
+                Diag.Trace("takeover: 驱动中 交互=" + action
+                           + " 设备层=" + OwnedPads.Count + " 逻辑层=" + LogicalPlayers.Count
+                           + " 目标点=" + Targets.Count + " 到达次数=" + _arrivals + " 换目标次数=" + _retargets);
                 foreach (var owned in OwnedPads)
                 {
-                    _log.LogInfo("takeover: 手柄 玩家位=" + (owned.Slot + 1) + " pad=" + owned.PadNumber
-                                 + " 想要 " + owned.Pad.Wanted + " | " + owned.Pad.State);
+                    Diag.Trace("takeover: 手柄 玩家位=" + (owned.Slot + 1) + " pad=" + owned.PadNumber
+                               + " 想要 " + owned.Pad.Wanted + " | " + owned.Pad.State);
                 }
 
                 LogChefs();
@@ -815,15 +816,13 @@ namespace WellCooked
                     // 表现就是"面前明明是料箱、日志一直说在按，游戏那边一点反应没有"。
                     owned.Pad.Want(interact, false, work, face);
 
-                    if (_trace || interact || work)
-                    {
-                        _log.LogInfo("trace 工序 玩家位=" + (owned.Slot + 1)
-                                     + " 手柄=" + owned.Pad.State
-                                     + " 交互=" + interact
-                                     + " 用台面=" + work
-                                     + " 朝向=(" + face.x.ToString("F2") + "," + face.y.ToString("F2") + ")"
-                                     + " 位置=(" + position.x.ToString("F2") + "," + position.y.ToString("F2") + ")");
-                    }
+                    // 每帧一行：`diag=true` 才打（看"键有没有喂出去、朝向对不对"时开）
+                    Diag.Trace("trace 工序 玩家位=" + (owned.Slot + 1)
+                               + " 手柄=" + owned.Pad.State
+                               + " 交互=" + interact
+                               + " 用台面=" + work
+                               + " 朝向=(" + face.x.ToString("F2") + "," + face.y.ToString("F2") + ")"
+                               + " 位置=(" + position.x.ToString("F2") + "," + position.y.ToString("F2") + ")");
 
                     continue;
                 }
@@ -842,16 +841,13 @@ namespace WellCooked
                 }
                 owned.Pad.Want(interact, false, work, direction);
 
-                if (_trace || interact || work)
-                {
-                    _log.LogInfo("trace 工序 玩家位=" + (owned.Slot + 1)
-                                 + " 手柄=" + owned.Pad.State
-                                 + " 交互=" + interact
-                                 + " 用台面=" + work
-                                 + " 方向=(" + direction.x.ToString("F2") + "," + direction.y.ToString("F2") + ")"
-                                 + " 位置=(" + position.x.ToString("F2") + "," + position.y.ToString("F2") + ")"
-                                 + " " + status);
-                }
+                Diag.Trace("trace 工序 玩家位=" + (owned.Slot + 1)
+                           + " 手柄=" + owned.Pad.State
+                           + " 交互=" + interact
+                           + " 用台面=" + work
+                           + " 方向=(" + direction.x.ToString("F2") + "," + direction.y.ToString("F2") + ")"
+                           + " 位置=(" + position.x.ToString("F2") + "," + position.y.ToString("F2") + ")"
+                           + " " + status);
             }
 
             if (now >= _nextDriveLog)
@@ -882,7 +878,7 @@ namespace WellCooked
                         .Append(" 寻路=").Append(status);
                 }
 
-                _log.LogInfo(detail.ToString());
+                Diag.Trace(detail.ToString());
             }
         }
 
@@ -894,7 +890,6 @@ namespace WellCooked
         private static readonly Dictionary<int, PlayerControls> ChefControllers = new Dictionary<int, PlayerControls>();
         private static float _nextChefScan;
         private static float _nextTargetScan;
-        private static int _targetCursor;
 
         /// <summary>目标点取真实工位的位置：食材箱、出菜台、灶、水槽。调度器以后会自己决定去哪，这里先轮着走。</summary>
         private static void CollectTargets()
@@ -1043,6 +1038,13 @@ namespace WellCooked
         /// </summary>
         private static void LogChefs()
         {
+            // 这是"占位/加入"排查用的过程行（每 2 秒一批，含输入映射与用户状态），
+            // `diag=true` 才打；默认不刷屏。
+            if (!Diag.Verbose)
+            {
+                return;
+            }
+
             var chefs = UnityEngine.Object.FindObjectsOfType<PlayerControls>();
             foreach (var chef in chefs)
             {

@@ -721,7 +721,7 @@ namespace WellCooked
                 return "(null)";
             }
 
-            var order = GetMember(entry, "m_order");
+            var order = WorldState.Get(entry, "m_order");
             var unity = order as UnityEngine.Object;
             if (unity != null)
             {
@@ -729,34 +729,6 @@ namespace WellCooked
             }
 
             return order == null ? "(无名)" : order.ToString();
-        }
-
-        private static object GetMember(object target, string name)
-        {
-            if (target == null)
-            {
-                return null;
-            }
-
-            var type = target.GetType();
-            while (type != null)
-            {
-                var field = type.GetField(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                if (field != null)
-                {
-                    return field.GetValue(target);
-                }
-
-                var property = type.GetProperty(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                if (property != null)
-                {
-                    return property.GetValue(target, null);
-                }
-
-                type = type.BaseType;
-            }
-
-            return null;
         }
 
         private static void WarnNoConfigOnce()

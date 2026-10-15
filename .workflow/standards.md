@@ -57,7 +57,20 @@ bash scripts/dev-cycle.sh 20 s_sushi_1_1   # 第二参数是要进的关卡（�
 ```
 
 给了场景名才是可复现的：不给的时候进哪一关由存档决定（实测进过带矿车轨道的 `s_mine_4_6`）。
-脚本会自己写 `wellcooked-takeover.txt` 的 `frontend_press`（不开的话游戏停在标题画面）并在退出时还原。
+脚本会自己写 `wellcooked-takeover.txt` 的 `frontend_press` 与 `diag` 并在退出时还原。
+
+插件的开关都在 `$GAME_DIR/BepInEx/wellcooked-takeover.txt`（改文件 5 秒内生效，不用重新编译）：
+
+```sh
+printf 'work=auto\nslots=1,2\ndiag=true\n' > "$GAME_DIR/BepInEx/wellcooked-takeover.txt"
+# work=auto   工序模式：按订单自动做菜（默认关；关着是"来回走 + 周期按交互"的最小策略）
+# slots=1,2   要占的玩家位（1 基）
+# diag=true   过程行（每帧/每 2 秒的位置、路点、手柄状态、寻路记下的边）——默认关，只留结果行
+# frontend_press=true  虚拟手柄在前端也按 A（进关卡要用；它会抢菜单导航，所以默认关）
+```
+
+`diag` 是任务 10 收敛出来的唯一诊断开关（`plugin/Diag.cs`）：**结果行**（工序每步的开始/结果、失败原因、
+指令执行）不受它管；**过程行**默认不打 —— 收敛前"每帧一行"的代码散在三处、各判各的标志。
 
 进关卡与调试（游戏跑起来后，往 `$GAME_DIR/BepInEx/wellcooked-command.txt` 写一行，1 秒内执行并删文件）：
 

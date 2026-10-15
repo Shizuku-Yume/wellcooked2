@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
-using HarmonyLib;
-using HarmonyLib;
+using System.Reflection;
 using UnityEngine;
 
 namespace WellCooked
@@ -14,6 +13,42 @@ namespace WellCooked
     /// </summary>
     public static class Kitchen
     {
+        // 反射查一次就存下来。下面三个函数每帧都被工序调用（`FacingObjectName`/`FacingObjectPosition`/
+        // `WorkstationDebug`），每次重新 TypeByName + Method 是白花的开销；查不到时更糟 ——
+        // AccessTools 每失败一次就写一行日志，于是"每帧一行警告"。`WorldState.StaticType/StaticMethod`
+        // 自带缓存，也只记一次未命中。
+        private static bool _lookupsDone;
+        private static MethodInfo _facingLookup;
+        private static Type _buttonIdType;
+        private static Type _playerType;
+        private static MethodInfo _getButtonLookup;
+
+        private static void ResolveLookups()
+        {
+            if (_lookupsDone)
+            {
+                return;
+            }
+
+            _lookupsDone = true;
+            _facingLookup = WorldState.StaticMethod("InteractWithItemHelper", "GetFacingGridOccupant",
+                typeof(Transform), typeof(int));
+            _buttonIdType = WorldState.StaticType("PlayerInputLookup+LogicalButtonID");
+            _playerType = WorldState.StaticType("PlayerInputLookup+Player");
+            _getButtonLookup = _buttonIdType == null || _playerType == null
+                ? null
+                : WorldState.StaticMethod("PlayerInputLookup", "GetButton", _buttonIdType, _playerType);
+        }
+
+        /// <summary>厨师面前那个占位物体（`InteractWithItemHelper.GetFacingGridOccupant`），没查到返回 null。</summary>
+        private static Component FacingOccupant(PlayerControls chef)
+        {
+            ResolveLookups();
+            return _facingLookup == null
+                ? null
+                : _facingLookup.Invoke(null, new object[] { chef.transform, -1 }) as Component;
+        }
+
         /// <summary>
         /// 站在工位旁边该去哪：工位所在游戏格的四个邻居里，挑一个我们网格里可走、
         /// 且离当前位置最近的。
@@ -207,92 +242,6 @@ namespace WellCooked
         /// <summary>最近一次已知的厨师位置，用来挑"离我最近的工位"。</summary>
         public static Vector2 LastKnownPosition = new Vector2(0f, 0f);
 
-        /// <summary>
-        /// 空台面（可以放东西的普通台面）。
-        ///
-        /// 为什么需要它：OC2 里**不能拿着盘子直接取料**——得先把料放在台面上，
-        /// 再拿盘子走过去"装盘"（实测：拿着盘子去料箱按 A，盘子被放下、只拿到生鱼，
-        /// 于是交付口不认，得分一直 0）。
-        /// </summary>
-        public static Station FreeCounter(Vector2 near)
-        {
-            Station best = null;
-            float bestDistance = float.MaxValue;
-            foreach (var component in WorldState.FindAll("ClientAttachStation"))
-            {
-                var unity = component as Component;
-                if (unity == null)
-                {
-                    continue;
-                }
-
-                var item = WorldState.Get(component, "m_item");
-                if (item != null)
-                {
-                    continue; // 台面上有东西
-                }
-
-                // 料箱、盘子堆、出菜台身上也挂着 ClientAttachStation：
-                // 挑到它们会把料放回料箱（实测"空台面"选中的就是料箱本身）。
-                if (unity.GetComponent("ClientPickupItemSpawner") != null
-                    || unity.GetComponent("ClientCleanPlateStack") != null
-                    || unity.GetComponent("ClientPlateStation") != null
-                    || unity.GetComponent("ClientDirtyPlateStack") != null)
-                {
-                    continue;
-                }
-
-                // 垃圾桶也挂着 ClientAttachStation，而且离料箱往往很近——实测"空台面"
-                // 挑中的就是它，结果把鱼扔进了垃圾桶（ClientRubbishBin）。
-                if (unity.GetComponent("ClientRubbishBin") != null
-                    || unity.name.IndexOf("Bin", System.StringComparison.OrdinalIgnoreCase) >= 0)
-                {
-                    continue;
-                }
-
-                var p = unity.transform.position;
-                var position = new Vector2(p.x, p.z);
-
-                // 离料箱/盘子堆太近的台面不能用：站在那儿按 A，游戏会在"料箱取料"和
-                // "台面拿放"之间乱选，手上东西在鱼和盘子之间跳（实测就是这么卡住的）。
-                bool tooCloseToCrate = false;
-                foreach (var crate in Crates())
-                {
-                    if (Vector2.Distance(position, crate.Position) < 2.4f)
-                    {
-                        tooCloseToCrate = true;
-                        break;
-                    }
-                }
-
-                if (tooCloseToCrate)
-                {
-                    continue;
-                }
-
-                var stack = PlateStack();
-                if (stack != null && Vector2.Distance(position, stack.Position) < 2.4f)
-                {
-                    continue;
-                }
-
-                float distance = Vector2.Distance(position, near);
-                if (distance < bestDistance)
-                {
-                    bestDistance = distance;
-                    best = new Station
-                    {
-                        Type = "ClientAttachStation",
-                        Name = unity.gameObject.name,
-                        Position = position,
-                        Component = unity
-                    };
-                }
-            }
-
-            return best;
-        }
-
         /// <summary>出菜台（交付口）。</summary>
         public static Station DeliveryStation()
         {
@@ -323,16 +272,13 @@ namespace WellCooked
         /// </summary>
         public static string FacingObjectName(PlayerControls chef)
         {
-            var helper = AccessTools.TypeByName("InteractWithItemHelper");
-            var method = helper == null
-                ? null
-                : AccessTools.Method(helper, "GetFacingGridOccupant", new[] { typeof(Transform), typeof(int) });
-            if (method == null)
+            ResolveLookups();
+            if (_facingLookup == null)
             {
                 return "?";
             }
 
-            var collider = method.Invoke(null, new object[] { chef.transform, -1 }) as Component;
+            var collider = FacingOccupant(chef);
             return collider == null ? "（空）" : collider.gameObject.name;
         }
 
@@ -458,15 +404,12 @@ namespace WellCooked
                 }
             }
 
-            var lookup = AccessTools.TypeByName("PlayerInputLookup");
-            var buttonId = AccessTools.TypeByName("PlayerInputLookup+LogicalButtonID");
-            var playerType = AccessTools.TypeByName("PlayerInputLookup+Player");
-            if (lookup != null && buttonId != null && playerType != null)
+            ResolveLookups();
+            if (_getButtonLookup != null)
             {
-                var id = Enum.Parse(buttonId, "WorkstationInteract");
-                var player = Enum.ToObject(playerType, slot);
-                var getButton = AccessTools.Method(lookup, "GetButton", new[] { buttonId, playerType });
-                var button = getButton == null ? null : getButton.Invoke(null, new[] { id, player });
+                var id = Enum.Parse(_buttonIdType, "WorkstationInteract");
+                var player = Enum.ToObject(_playerType, slot);
+                var button = _getButtonLookup.Invoke(null, new[] { id, player });
                 if (button != null)
                 {
                     var isDown = WorldState.Get(button, "IsDown");
@@ -507,16 +450,13 @@ namespace WellCooked
         public static bool FacingObjectPosition(PlayerControls chef, out Vector2 position)
         {
             position = Vector2.zero;
-            var helper = AccessTools.TypeByName("InteractWithItemHelper");
-            var method = helper == null
-                ? null
-                : AccessTools.Method(helper, "GetFacingGridOccupant", new[] { typeof(Transform), typeof(int) });
-            if (method == null)
+            ResolveLookups();
+            if (_facingLookup == null)
             {
                 return false;
             }
 
-            var collider = method.Invoke(null, new object[] { chef.transform, -1 }) as Component;
+            var collider = FacingOccupant(chef);
             if (collider == null)
             {
                 return false;
@@ -572,25 +512,6 @@ namespace WellCooked
 
             var first = contents.GetValue(0) as UnityEngine.Object;
             return name + "[" + (first == null ? "?" : first.name) + "]";
-        }
-
-        /// <summary>厨师手上拿的东西的名字（空手返回空串）。</summary>
-        public static string HeldName(PlayerControls chef)
-        {
-            var carrier = chef.GetComponent<ServerPlayerAttachmentCarrier>();
-            if (carrier == null)
-            {
-                return "";
-            }
-
-            var item = carrier.InspectCarriedItem();
-            return item == null ? "" : item.name;
-        }
-
-        public static Vector2 PositionOf(PlayerControls chef)
-        {
-            var p = chef.transform.position;
-            return new Vector2(p.x, p.z);
         }
 
         /// <summary>当前订单要的那道菜（取第一个订单的菜名；没有订单返回空串）。</summary>

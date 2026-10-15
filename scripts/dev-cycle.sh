@@ -28,18 +28,23 @@ TAKEOVER="$GAME_DIR/BepInEx/wellcooked-takeover.txt"
 
 cd "$(dirname "$0")/.."
 
-# 只改 frontend_press 这一行，文件里其它配置（slots、work、trace）保持不动。
-ORIGINAL_PRESS="$(grep -E '^[[:space:]]*frontend_press' "$TAKEOVER" 2>/dev/null || true)"
-set_frontend_press() {
+# 只改指定的几行，文件里其它配置（slots、work）保持不动；退出时整份还原（本来没有这个文件就删掉，
+# 否则脚本留下的 `diag=true` 会一直生效，"默认不刷屏"就落空了）。
+TAKEOVER_EXISTED=0
+[ -f "$TAKEOVER" ] && TAKEOVER_EXISTED=1
+ORIGINAL_TAKEOVER="$(cat "$TAKEOVER" 2>/dev/null || true)"
+set_key() { # $1 = 键，$2 = 值
     local tmp
     tmp="$(mktemp)"
-    grep -vE '^[[:space:]]*frontend_press' "$TAKEOVER" > "$tmp" 2>/dev/null || true
-    printf 'frontend_press=%s\n' "$1" >> "$tmp"
+    grep -vE "^[[:space:]]*$1[[:space:]]*=" "$TAKEOVER" > "$tmp" 2>/dev/null || true
+    printf '%s=%s\n' "$1" "$2" >> "$tmp"
     mv "$tmp" "$TAKEOVER"
 }
 restore_takeover() {
-    if [ -n "$ORIGINAL_PRESS" ]; then
-        set_frontend_press "$(printf '%s' "$ORIGINAL_PRESS" | sed -E 's/^[^=]*=[[:space:]]*//')"
+    if [ "$TAKEOVER_EXISTED" = "1" ]; then
+        printf '%s\n' "$ORIGINAL_TAKEOVER" > "$TAKEOVER"
+    else
+        rm -f "$TAKEOVER"
     fi
 }
 trap restore_takeover EXIT
@@ -56,13 +61,17 @@ print(len(v) if isinstance(v,list) else v if v is not None else '')
 " 2>/dev/null || true
 }
 
-set_frontend_press true
+# 前端按键：不开的话游戏停在标题画面（插件只挂手柄，没人按 A）。
+# 诊断输出：这个脚本的产出就是走位/卡住那几行，它们默认不打了（任务 10 把过程行收进 Diag）。
+set_key frontend_press true
+set_key diag true
 pkill -f 'Overcooked2.exe' >/dev/null 2>&1 || true
 sleep 3
 rm -f "$LOG" "$GAME_DIR/BepInEx/wellcooked-command.txt"
 nohup bash scripts/run-game.sh >/tmp/wellcooked-run.out 2>&1 &
 
-for _ in $(seq 1 40); do
+# 游戏的启动时间随机器负载变（实测同一台机器 40 秒到 3 分钟都出现过），等宽一点。
+for _ in $(seq 1 80); do
     grep -q 'takeover: 每帧检查' "$LOG" 2>/dev/null && break
     sleep 3
 done
@@ -71,7 +80,7 @@ grep -E '前台伪装|失焦暂停' "$LOG" || true
 
 if [ -n "$SCENE" ]; then
     # 等游戏自己把两副虚拟手柄都加入：这一步只在前端发生，加入之后才能 load 进关卡。
-    for _ in $(seq 1 90); do
+    for _ in $(seq 1 240); do
         joined="$(grep -ac '游戏已自己加入 pad' "$LOG" 2>/dev/null || true)"
         [ "${joined:-0}" -ge 2 ] && break
         sleep 2
@@ -84,7 +93,7 @@ if [ -n "$SCENE" ]; then
     fi
     grep -a '游戏已自己加入 pad' "$LOG" | tail -2
     # 关掉前端按键：否则虚拟手柄会自己一路按进存档里的那一关。
-    set_frontend_press false
+    set_key frontend_press false
     sleep 2
     printf 'load=%s\n' "$SCENE" > "$GAME_DIR/BepInEx/wellcooked-command.txt"
     for _ in $(seq 1 30); do
