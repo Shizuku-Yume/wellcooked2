@@ -52,6 +52,7 @@ namespace WellCooked
         private static bool _chopStarted;
         private static bool _work;
         private static bool _expectStationPlate;
+        private static float _arriveLogAt;
         private static float _chopLogAt;
         private static bool _interacted;
         private static string _expectHeld = "";
@@ -237,6 +238,13 @@ namespace WellCooked
 
                 _faceDirection = Vector2.zero; // 面前就是工位：站住别动，按 A
 
+                if (now >= _arriveLogAt)
+                {
+                    _arriveLogAt = now + 2f;
+                    _log.LogInfo("工序: " + _step + " 已就位（距目标 " + distance.ToString("F2")
+                                 + " 米，面前是「" + facing + "」，手上「" + heldNow + "」）");
+                }
+
                 // 按一次 → 等效果 → 没效果才再按。
                 // 不能按完就接着按：0.5 秒后又按一次会把刚拿到的东西放下
                 // （实测 手上在「」和「SushiFish」之间反复跳，永远判不出成功）。
@@ -412,6 +420,7 @@ namespace WellCooked
             _chopStarted = false;
             _work = false;
             _expectStationPlate = false;
+            _arriveLogAt = 0f;
             _chopLogAt = 0f;
             _hasTarget = false;
 
