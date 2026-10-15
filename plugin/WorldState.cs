@@ -551,20 +551,20 @@ namespace WellCooked
             }
 
             var found = UnityEngine.Object.FindObjectsOfType<PlayerControls>();
-            if (found.Length == 0)
+            if (found.Length == 0 && FindAll("ClientIngredientContainer").Count == 0)
+            {
+                return; // 既没厨师也没工位，还没进关卡
+            }
+
+            if (scene == _terrainScene && found.Length > 0 && found[0].GetInstanceID() == _terrainChefId)
             {
                 return;
             }
 
-            if (scene == _terrainScene && found[0].GetInstanceID() == _terrainChefId)
-            {
-                return;
-            }
-
-            var chefs = found;
-
+            // 没有厨师也要能采样：给关卡评估用（直接 load 一个关卡时手柄还没占位、没厨师，
+            // 但工位已经在了）。锚点会退化成"工位位置"，厨师半径用最近一次量到的值。
             _terrainScene = scene;
-            _terrainChefId = found[0].GetInstanceID();
+            _terrainChefId = found.Length > 0 ? found[0].GetInstanceID() : 0;
             try
             {
                 if (!SampleGameGrid())
