@@ -27,6 +27,9 @@ NEED_STATE="${NEED_STATE:-10}"
 # 这一行是"插件真的初始化了"与"BepInEx 只是找到了这个类型"之间的分界。
 GAME_DIR="${GAME_DIR:-/mnt/d/EPIC/Games/Overcooked2}"
 BEPINEX_LOG="${BEPINEX_LOG:-${GAME_DIR}/BepInEx/LogOutput.log}"
+# Awake 的第一件事是 BindConfig()，BepInEx 在 Bind 时会写这个文件。它是"Awake 跑过"
+# 的第二个独立证据，与日志行互不依赖 —— 只看日志会把"没启动"和"日志没写出来"混为一谈。
+PLUGIN_CFG="${GAME_DIR}/BepInEx/config/com.wellcooked.plugin.cfg"
 
 BRIDGE_PID=""
 
@@ -137,9 +140,18 @@ while :; do
                 say "     → 插件在跑却连不上，属于网络问题："
                 say "       把插件配置 Network.Host 改成 ${WSL_IP}，或查 Windows 防火墙入站规则。"
             else
-                say "   x 日志里没有插件自己的启动行 '[Plugin] WellCooked ... loaded'"
-                say "     → 插件没有被初始化。BepInEx 打印 'Loading [WellCooked ...]' 只说明"
-                say "       它找到了这个类型，不等于 Awake 跑过了；两者必须分开看。"
+                say "   x 插件没有写出启动行 '[Plugin] WellCooked ... loaded'"
+                if [ -f "$PLUGIN_CFG" ]; then
+                    say "     但它的配置文件已生成（$(basename "$PLUGIN_CFG")）——"
+                    say "     Awake 至少跑到了 BindConfig，所以插件其实启动了，"
+                    say "     更可能是这一行日志没写出来。"
+                else
+                    say "     配置文件也没有生成（$(basename "$PLUGIN_CFG")）。"
+                    say "     Awake 干的第一件事就是 BindConfig，BepInEx 会在那时写这个文件，"
+                    say "     所以两个互相独立的信号都指向同一结论：插件没有被初始化。"
+                fi
+                say "     BepInEx 打印 'Loading [WellCooked ...]' 只说明它扫描到了这个类型，"
+                say "     不等于 Awake 跑过了；两者必须分开看。"
                 say ""
                 say "     游戏侧日志末尾："
                 tail -n 8 "$BEPINEX_LOG" | sed 's/^/       /'
