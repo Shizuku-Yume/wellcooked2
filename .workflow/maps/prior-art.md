@@ -281,6 +281,10 @@ supercharged 的插件在同一个端口跑 Thrift，同机装了两个 mod 会�
 先用自制关卡的全局 `timeBetweenOrders` + `orderLifeTime` 起一局，量出实际到达间隔与时限，看够不够
 支撑 EDF/HRRN 的对比；不够再去找订单创建入口。
 
+任务 14 落地后实测到两条：`s_city_h5` 在有人上场时是"上一单交付或超时之后才要下一单"（一局只看到 1 次
+`GetNextRecipe` 调用）；进关后场上没有玩家/走剧本那条路时，订单不是经 `RoundData.GetNextRecipe` 来的
+（`订单: 接管` 计数为 0，场上却有 4 张订单）。所以"逐单到达时刻"这条更得自己掌握，不能靠游戏出单节奏。
+
 ## Q4: 模拟器做多大？
 
 **Blocks:** 阶段 D 的策略预筛；影响是否要引 `overcooked_ai` 或 JaxMARL。
