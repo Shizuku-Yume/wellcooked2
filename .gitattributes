@@ -2,3 +2,16 @@
 .workflow/decisions.md merge=union
 .workflow/glossary.md merge=union
 # workflow:end
+
+# OS 核心与工具在 WSL/Linux 里执行，而 WSL 直接读写这个 Windows 工作树（/mnt/d）。
+# core.autocrlf=true 会把脚本检出成 CRLF，bash 报 "$'\r': command not found"，make 也可能
+# 在续行处出错，所以这些文件必须锁死 LF：Windows 和 WSL 看到的是同一份字节。
+*.sh                   text eol=lf
+*.c                    text eol=lf
+*.h                    text eol=lf
+Makefile               text eol=lf
+*.mk                   text eol=lf
+*.py                   text eol=lf
+*.json                 text eol=lf
+*.jsonl                text eol=lf
+.workflow/bin/workflow text eol=lf
