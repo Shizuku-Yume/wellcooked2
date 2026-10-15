@@ -118,6 +118,9 @@ namespace WellCooked
                 case "order":
                     DumpOrder();
                     break;
+                case "levels":
+                    DumpLevels(value);
+                    break;
                 case "unlock":
                     UnlockAllLevels();
                     break;
@@ -139,6 +142,48 @@ namespace WellCooked
                 default:
                     _log.LogWarning("指令: 不认识 " + key);
                     break;
+            }
+        }
+
+        /// <summary>
+        /// 打印关卡表：菜单里的位置（世界 + 关卡标签）↔ 场景名 ↔ 解锁/通关状态。
+        /// 挑关卡和"去菜单里找某一关"都靠它（`levels=场景名` 只打匹配的那几条）。
+        /// </summary>
+        private static void DumpLevels(string filter)
+        {
+            var session = GameUtils.GetGameSession();
+            var progress = session == null ? null : session.Progress;
+            if (progress == null)
+            {
+                _log.LogWarning("levels: 还没进游戏");
+                return;
+            }
+
+            var directory = progress.GetSceneDirectory();
+            if (directory == null)
+            {
+                _log.LogWarning("levels: 拿不到关卡表");
+                return;
+            }
+
+            var data = progress.SaveData;
+            for (int i = 0; i < directory.Scenes.Length; i++)
+            {
+                var entry = directory.Scenes[i];
+                var varient = entry.GetSceneVarient(2) ?? entry.GetSceneVarient(1);
+                string scene = varient == null ? "?" : varient.SceneName;
+                if (filter.Length > 0 && scene.IndexOf(filter, StringComparison.OrdinalIgnoreCase) < 0)
+                {
+                    continue;
+                }
+
+                bool unlocked = data.IsLevelUnlocked(i);
+                bool completed = data.IsLevelComplete(i);
+                _log.LogInfo("levels: [" + i.ToString().PadLeft(3) + "] " + entry.World
+                             + "/" + entry.Label + " 场景=" + scene
+                             + (unlocked ? " 已解锁" : " 锁着")
+                             + (completed ? " 已通关" : "")
+                             + (entry.IsHidden ? " 隐藏" : ""));
             }
         }
 
