@@ -309,6 +309,9 @@ user may overturn on sight. `Revisit when` of "never" is allowed but suspicious;
 - **Mine:** yes.
 - **Revisit when:** 关卡内的动作指令（移动、交互）在设备层表达不了，或游戏改版换掉 InControl。
 - **Effort:** game-bridge
+- **Superseded by:** 2026-10-15 - 输入注入改走逻辑层（借 gua248/Overcooked2-TAS 的方案）（正是本条
+  `Revisit when` 的第一个条件触发的：任务 09 在"切菜键是 X 不是 A"上丢过一次交互。本条对**前端**
+  的结论仍然成立 —— 前端加入走设备层）
 
 ## 2026-10-15 - 分帧改成一行一条 JSON，不再用 4 字节长度前缀
 
