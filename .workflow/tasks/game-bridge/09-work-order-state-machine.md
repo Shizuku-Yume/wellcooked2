@@ -55,3 +55,41 @@
 **下一步**：先把导航可靠性做扎实（这是所有工序步骤的地基），再回来跑通 4/5、5/5。
 可选路子见任务 08 的 Findings 末尾（改用游戏自己的 `GridNavSpace.FindPath` 出全局路线，
 或把到达判定与目标点按工序重新定义）。
+
+## Progress（2026-10-15：按真实菜谱重写工序，整单跑通，score 从 0 变正）
+
+上一轮"卡在 4/5 装盘"的根因不是导航，是**流程本身写错了**：这一轮读了参考项目
+[Extremelyd1/OvercookedAI](https://github.com/Extremelyd1/OvercookedAI) 的动作分解，
+再用 `ilspycmd` 反编译核对，把工序改成真实菜谱（**鱼要切**）：
+
+```
+1/7 取料 → 2/7 放砧板 → 3/7 切（按住 X）→ 4/7 拿盘子 → 5/7 装盘 → 6/7 拿走装好的盘子 → 7/7 交付
+```
+
+**证据**：`wellcooked-state.json` 的 `score = 28`（原来一直 0）；另一次日志 `工序: 完成一单（累计 1 单）`。
+装盘成功可从工位内容物看出：砧板 `SushiFish` → `ChoppedSushiFish` → `Plate 1 (4)`，
+而 `ClientIngredientContainer` 里出现 `IngredientAssembledNode`。
+
+**这一轮确认的游戏机制**（都写进代码注释）：
+
+| 机制 | 事实 |
+|---|---|
+| 切菜键 | 是 **X（`WorkstationInteract`）不是 A**：`PlayerControls.ControlSchemeData.m_worksurfaceUseButton`；`PlayerInputLookup.LogicalToAmbiButton` → `AmbiPadButton.Two` → `ControlPad.Button.X` → InControl `Action3`。参考项目用键盘 Ctrl |
+| 切要按住 | `ClientWorkstation.InteractionIsSticky`，按住才持续切；只点一下不会开始，空手点一下反而把料拿走 |
+| 切菜进度 | 在 `ClientWorkableItem` 上（`m_progress` 是**整数阶段**、`m_subProgress` 是当前阶段刀数、`HasFinished()`）；板上有没有料要看 `ClientAttachStation.m_item`（`workstation.m_item` 只在有人用时才非空） |
+| 装盘语义 | 把盘子放下去，料进盘子、**手上变空**，装好的盘子留在台面上；交付前要再拿起来（参考项目 `PlateHoldingAction` 判 `!IsCarrying`） |
+| 交互判定 | `InteractWithItemHelper.GetFacingGridOccupant` 取"最对齐的邻居格"的占位物、**不看距离**；名字不可靠（盘子堆挂在台面上时返回台面本身），要比**格子** |
+| 垃圾桶 | `ClientRubbishBin` 也挂 `ClientAttachStation`，挑台面/工位必须排除（实测把鱼扔进去过） |
+
+**当前不稳的地方**（已记入 `technical-debt.md`）：
+
+- 就位卡住 6 秒后退化成"1.4 米内直接按、不校验朝向"（出菜口嵌在墙里那次的经验），是个兜底不是机制。
+- 切菜那步靠"按住 X + 超时重试"推进，没有按 `HasFinished()` 主动收手。
+- 工序只覆盖"切 + 装"，**没有煮/煎**，所以只做得了寿司 1-1 这类单料菜；卷饼、煮饭类订单走不通。
+
+**这一轮的额外产出**（挑关卡用，见任务 13）：`scripts/scan-levels.py`（离线扫 144 个关卡资源包）、
+`scripts/eval-levels.sh`（每关重开一局量菜谱/连通性/机制），以及插件指令
+`mech`（数场景里真实存在的机制组件）、`levels`（打印关卡表）、`unlock`（解锁全部关卡，游戏自判 52/52）。
+
+**下一步**：任务 10（插件整理）→ 11（接入 Overcooked2-TAS 的控制与进度读取）→ 12（工序补煮/煎）
+→ 13（用 OC2DIYLevel 自建演示关卡）。

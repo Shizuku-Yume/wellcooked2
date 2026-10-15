@@ -191,3 +191,21 @@ user may overturn on sight. `Revisit when` of "never" is allowed but suspicious;
 - **Mine:** yes.
 - **Revisit when:** 指令通道被执行环境禁用（例如发布版不带调试文件），或调试改走单元测试不需要进游戏。
 - **Effort:** game-bridge
+
+## 2026-10-15 - 演示关卡自建，不迁就本体关卡
+
+- **Decided:** 用 `gua248/Overcooked2-LevelEditor` + `OC2DIYLevel` 自制一个演示关卡（单一连通厨房、无机关、菜谱含切+煮/煎、至少两菜共享中间产物），而不是继续从本体 52 关里挑。
+- **Instead of:** 用本体关卡（最接近的是 `s_city_h5`；`s_sushi_1_1` 太简单、`s_city_h4` 可行区碎）。
+- **Because:** 离线扫了 144 个关卡资源包、游戏里又逐关量了机制组件与连通性：本体里"完全无地形物件"的只剩 3 关，其中两关分别太简单与太碎；带矿车轨道（`s_mine_4_6` 的 `mi_rails`×20）、传送带（`sushi_1_3/1_4` 的 ×21/×10）、传送门（`wizard_*`）的整片排除。用户已明确"矿石那关不达标"并拍板自建。
+- **Mine:** yes.
+- **Revisit when:** 编辑器环境（Unity 2017.4.8f1 + AssetRipper 1.3.14）搭不起来，或自制关卡在 Proton 下加载不了。
+- **Effort:** game-bridge
+
+## 2026-10-15 - 输入注入改走逻辑层（借 gua248/Overcooked2-TAS 的方案）
+
+- **Decided:** 插件的游戏内输入改为替换 `PlayerControls.ControlScheme` 的 `m_pickupButton`/`m_worksurfaceUseButton`/`m_dashButton`/`m_moveX`/`m_moveY`（自实现 `ILogicalButton`/`ILogicalValue`，按 `CanButtonBePressed()` 门控）；前端"按 A 加入"仍走设备层虚拟手柄。
+- **Instead of:** 继续用设备层 InControl 反射（`InputDevice.UpdateWithState` + 猜 `Action1`/`Action3`）。
+- **Because:** 任务 09 在"切菜键是 X 不是 A"上丢过一次交互——设备层要猜控制项枚举（`Action3` 是不是 `ControlPad.Button.X`），而逻辑层直接对应 `ControlSchemeData` 的字段（`m_worksurfaceUseButton` 就是 `WorkstationInteract`），且天然 per-player、边沿（`JustPressed`）精确。前端加入必须走设备层：游戏自己枚举手柄，逻辑层替换不驱动加入流程（任务 07/08 实测）。
+- **Mine:** yes.
+- **Revisit when:** 游戏改版换掉 `ControlSchemeData` 的字段，或逻辑层注入影响联机同步。
+- **Effort:** game-bridge
