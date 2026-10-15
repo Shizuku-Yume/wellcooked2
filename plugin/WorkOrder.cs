@@ -26,6 +26,7 @@ namespace WellCooked
             Chop,
             GetPlate,
             PlateIt,
+            TakeDish,
             Deliver,
             Done
         }
@@ -50,6 +51,7 @@ namespace WellCooked
         private static float _facePulseUntil;
         private static bool _chopStarted;
         private static bool _work;
+        private static bool _expectStationPlate;
         private static float _chopLogAt;
         private static bool _interacted;
         private static string _expectHeld = "";
@@ -258,7 +260,8 @@ namespace WellCooked
                     return;
                 }
 
-                if (Matches(heldNow))
+                if (Matches(heldNow) && (!_expectStationPlate
+                                         || Kitchen.StationItemName(_station).Contains("Plate")))
                 {
                     Next(now);
                     return;
@@ -408,6 +411,7 @@ namespace WellCooked
             _facePulseUntil = 0f;
             _chopStarted = false;
             _work = false;
+            _expectStationPlate = false;
             _chopLogAt = 0f;
             _hasTarget = false;
 
@@ -488,9 +492,25 @@ namespace WellCooked
                 {
                     AimAt(_counter, _counterName);
                     _hasTarget = true;
-                    _expectHeld = "Plate";                  // 装盘后手上是"装着料的盘子"
-                    _expectContents = WantedIngredient();
-                    _log.LogInfo("工序: 5/6 回去装盘（砧板 "
+                    // 装盘 = 把盘子放到切好的料上：游戏会把盘子放下去并把料装进去，
+                    // 装好的盘子留在台面上，**厨师手上变空**（参考项目 PlateHoldingAction
+                    // 装完就是判 !IsCarrying）。之后还要再拿起来才能交付。
+                    _expectHeld = "";
+                    _expectContents = "";
+                    _expectStationPlate = true;
+                    _log.LogInfo("工序: 5/7 回去装盘（砧板 "
+                                 + _target.x.ToString("F1") + "," + _target.y.ToString("F1") + "）");
+                    break;
+                }
+
+                case Step.TakeDish:
+                {
+                    // 装好的盘子还留在砧板上，要拿在手上才能去交付。
+                    AimAt(_counter, _counterName);
+                    _hasTarget = true;
+                    _expectHeld = "Plate";
+                    _expectContents = "";   // 切过的料名字会变，这里只认"装好料的盘子"
+                    _log.LogInfo("工序: 6/7 拿走装好的盘子（砧板 "
                                  + _target.x.ToString("F1") + "," + _target.y.ToString("F1") + "）");
                     break;
                 }
@@ -508,7 +528,7 @@ namespace WellCooked
                     _hasTarget = true;
                     _expectHeld = ""; // 交付后应该空手
                     _expectContents = "";
-                    _log.LogInfo("工序: 6/6 去交付（" + station.Name + " "
+                    _log.LogInfo("工序: 7/7 去交付（" + station.Name + " "
                                  + _target.x.ToString("F1") + "," + _target.y.ToString("F1") + "）");
                     break;
                 }
@@ -533,6 +553,10 @@ namespace WellCooked
                     Begin(Step.PlateIt, now);
                     break;
                 case Step.PlateIt:
+                    Begin(Step.TakeDish, now);
+                    break;
+
+                case Step.TakeDish:
                     Begin(Step.Deliver, now);
                     break;
                 case Step.Deliver:
