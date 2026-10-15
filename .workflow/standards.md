@@ -1,57 +1,62 @@
 # Standards
 
-Fill this in once, at the start of the project. Keep it under one screen: it is
-read at the start of every session, so every extra line costs attention that the
-real work needs.
-
-Delete the lines that do not apply. Replace every `<...>`. Where this file
-disagrees with CONVENTIONS.md or STYLE.md, this file wins.
-
 ## What this project is
 
-<One or two sentences. What it does, who uses it. Enough that someone can tell
-whether a change belongs here.>
+KitchenOS：把《胡闹厨房2》的厨房协作抽象成操作系统调度问题。Linux/WSL2 侧是一套纯
+POSIX 多进程系统（Supervisor 守护进程、Scheduler、多个 Chef Worker、Bridge），Windows
+侧是 BepInEx + Harmony 插件，两侧用 TCP + JSON 通信。用于操作系统原理课程设计验收。
+
+设计规格的权威文档是仓库根的 `overcooked_os_course_project.md`；代码与它冲突时以它为准。
 
 ## Running it
 
 ```sh
-<install command>      # e.g. npm install, uv sync, cargo build
-<run command>          # e.g. npm run dev
-<test command>         # e.g. pytest, npm test
-<typecheck command>    # e.g. tsc --noEmit
-<lint command>         # e.g. ruff check .
+# OS 核心（WSL2 / Linux，C + GNU make）
+cd core && make            # 构建全部二进制
+cd core && make test       # 单元测试，全部通过为绿
+
+# Windows 侧插件（需要 .NET SDK）
+dotnet build plugin/WellCooked.Plugin/WellCooked.Plugin.csproj -c Debug
+plugin/tools/deploy-plugin.ps1 -Build    # 编译并部署到游戏目录
+
+# 无游戏联调：协议级模拟插件，替代反复启动游戏
+python3 tools/fake_plugin.py --scenario happy
 ```
 
-Run the test command before claiming anything works.
+本机环境：WSL2 发行版 Ubuntu 26.04，已装 gcc / make / python3；**没有 cmake 和 gdb**。
+仓库在 Windows 盘，WSL 内是 `/mnt/d`（9p 文件系统），因此进程间共享内存与信号量走
+`/dev/shm`（tmpfs），运行时目录（pid、日志）必须可配置，默认指向 Linux 原生路径。
+
+跑测试命令之前不要声称任何东西能用。
 
 ## Layout
 
-<Where the parts live, one line each. Keep it short: `src/api` - HTTP handlers.
-Not a file tree.>
+- `core/` — Linux 侧 OS 核心（C，纯 POSIX）。`core/include/kitchenos/` 下的头文件就是模块契约。
+- `core/tests/` — C 单元测试，`make test` 驱动。
+- `protocol/` — 两端共享的协议说明与 JSON Schema，是跨端唯一契约。
+- `tools/` — 开发期工具，最重要的是不依赖游戏的协议级模拟插件。
+- `plugin/WellCooked.Plugin/` — Windows 侧 BepInEx 插件（C#，net46）。
+- `represent/` — 课程汇报材料，不是运行时依赖。
 
 Workflow files live where CONVENTIONS §2 says.
 
 ## How code is written here
 
-<The rules that a reviewer would enforce and that are not obvious from reading
-three files. Two or three lines each, no more. For example: errors are returned,
-never thrown; every database call goes through the repository layer; tests are
-named after the behaviour, not the function.>
-
-If a rule is long enough to need a section, it belongs in its own document under
-`.workflow/`, linked from here.
+- OS 核心只用纯 POSIX API，不用条件编译区分平台（文档 §2.2.1）。
+- 错误用返回码表达，不 abort；每个失败的系统调用都记录 errno 和上下文。
+- 头文件是模块契约：模块之间只通过头文件声明的函数交互，不跨模块摸对方的结构体内部。
+- 信号处理函数只置 `volatile sig_atomic_t` 标志，实际工作在主循环里做。
+- 跨端消息的字段名以 `protocol/` 为准，两端都不许私自改名。
+- 注释写"为什么"，不写"做了什么"。
 
 ## What we do not do
 
-<The approaches this project has ruled out, with the reason. This is the section
-that stops the same argument from being had again.>
+- **不引入第三方 C 库**。JSON 解析和网络都自己写：实验室机器不能假设能联网装包。
+- **不用线程替代进程**。Worker 必须是独立进程，否则展示不了进程控制和进程间通信。
+- **不让 Bridge 解释调度策略**。策略属于 Scheduler；Bridge 只搬状态、汇总输入、下发动作。
+- **不在插件里做调度**。插件是执行器，收到什么动作就做什么动作。
 
 ## Branches and landing
 
-Landing: <direct | local-merge | pr>
-
-How finished work reaches the main branch: `direct` commits on the current branch,
-`local-merge` (the default) lands a branch locally, `pr` through a pull request.
-Several people sharing a remote: use `pr`.
-`.workflow/merge-strategy.md` describes each. Name the main branch here if it is
-neither `main` nor `master`.
+Landing: local-merge
+Main branch: main
