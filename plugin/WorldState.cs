@@ -290,7 +290,9 @@ namespace WellCooked
                 "ClientCookingStation", "ClientPlate", "ClientCookableContainer",
                 "ClientCookablePreparationContainer", "ClientTrayIngredientContainer",
                 // 料箱：DispenserCrate 上的这个组件给出它发的是哪种料
-                "ClientPickupItemSpawner"
+                "ClientPickupItemSpawner",
+                // 垃圾桶：挑工位时必须排除（实测把鱼扔进去过），导出给 OS 侧的厨房模型用
+                "ClientRubbishBin"
             };
 
             json.Append(",\"stations\":[");
@@ -719,6 +721,9 @@ namespace WellCooked
 
             // 只写保留下来的格子：过滤前那份列表会把丢掉的格子也写进文件，
             // 而导航用的是过滤后的 `_walkable`——两边对不上，OS 侧读到的地图就多出孤岛。
+            // 同时每个格子带一个"哪几个邻居能过去"的掩码：连通性是按边算的，只有格点的话
+            // OS 侧重建不出真实的连通区（实测按 4 邻域重建会得到 1 块，而插件按边算出来是 8 块）。
+            var masks = new StringBuilder();
             for (int i = 0; i < _cellsX; i++)
             {
                 for (int j = 0; j < _cellsZ; j++)
@@ -731,10 +736,34 @@ namespace WellCooked
                     if (cells.Length > 0)
                     {
                         cells.Append(',');
+                        masks.Append(',');
                     }
 
                     cells.Append('[').Append((minX + i * step).ToString("F2")).Append(',')
                          .Append((minZ + j * step).ToString("F2")).Append(']');
+
+                    int mask = 0;
+                    if (i + 1 < _cellsX && _passableX[i, j] && _walkable[i + 1, j])
+                    {
+                        mask |= 1;
+                    }
+
+                    if (i - 1 >= 0 && _passableX[i - 1, j] && _walkable[i - 1, j])
+                    {
+                        mask |= 2;
+                    }
+
+                    if (j + 1 < _cellsZ && _passableZ[i, j] && _walkable[i, j + 1])
+                    {
+                        mask |= 4;
+                    }
+
+                    if (j - 1 >= 0 && _passableZ[i, j - 1] && _walkable[i, j - 1])
+                    {
+                        mask |= 8;
+                    }
+
+                    masks.Append(mask);
                 }
             }
 
@@ -743,7 +772,9 @@ namespace WellCooked
             text.Append(",\"source\":\"physics-0.6\"");
             text.Append(",\"step\":").Append(_step.ToString("F2"));
             text.Append(",\"map\":[").Append(_cellsX).Append(',').Append(_cellsZ).Append(']');
-            text.Append(",\"cells\":[").Append(cells.ToString()).Append("]}");
+            text.Append(",\"edge_bits\":\"1:+x 2:-x 4:+z 8:-z\"");
+            text.Append(",\"cells\":[").Append(cells.ToString()).Append(']');
+            text.Append(",\"mask\":[").Append(masks.ToString()).Append("]}");
             File.WriteAllText(Path.Combine(Paths.BepInExRootPath, "wellcooked-terrain.json"), text.ToString());
             count -= dropped;
             _log.LogInfo("state: 连通块 " + blocks + " 个（丢掉 " + dropped + " 格），可走格 "

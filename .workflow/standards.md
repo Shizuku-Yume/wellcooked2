@@ -80,6 +80,18 @@ grep -E '订单: ' "$GAME_DIR/BepInEx/LogOutput.log"                          # 
 bash scripts/eval-levels.sh s_city_h5                  # 每关重开一局，量菜谱 + 连通性 + 机制组件
 ```
 
+厨房配置（OS 侧的资源与地面模型，方案 §6.6）：
+
+```sh
+python3 scripts/export-kitchen.py                      # 读 BepInEx/wellcooked-{state,terrain}.json → config/kitchen.json
+python3 scripts/export-kitchen.py --out /tmp/k.json    # 换输出位置（同一份输入两次输出字节相同）
+```
+
+`config/kitchen.json` 里：`stations[]` 是工位（`kind` 归类、`id` 稳定、`pos` 是水平面 (x,z)、料箱带 `gives`），
+`grid.cells` 是 0.6 米采样的可走格，`grid.mask` 是每格的邻居掩码（`edge_bits` 说明位含义，掩码对称）。
+仓库里的 `config/kitchen.example.json` 是 `s_city_h5` 的实测导出（20 个工位 / 546 格 / 1 个连通区），
+Scheduler 与模拟器可以直接拿它离线开发。
+
 注意两点：`load` 只换场景，**菜谱要新进程才刷新**；`load` 前要等虚拟手柄被游戏自己加入，否则没有厨师，
 地形采样会退化成兜底半径（连通性数字不可信）。
 
