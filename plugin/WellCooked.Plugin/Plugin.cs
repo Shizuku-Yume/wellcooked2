@@ -257,8 +257,8 @@ namespace WellCooked
                 "client=主动连接 OS 核心（WSL2 侧）；server=监听等待对端接入");
             _netHost = Config.Bind("Network", "Host", "127.0.0.1",
                 "client 模式目标地址（WSL2 的 localhost 转发）");
-            _netPort = Config.Bind("Network", "Port", 12345,
-                "client 模式目标端口（Bridge 默认监听在这里）");
+            _netPort = Config.Bind("Network", "Port", 14455,
+                "client 模式目标端口（Bridge 默认监听在这里；两端默认同一个端口）");
             _netServerPort = Config.Bind("Network", "ServerPort", 14455,
                 "server 模式监听端口（Bridge 用 --link connect 时默认拨这里，见文档 §6.2.4）");
             _netListenAddress = Config.Bind("Network", "ListenAddress", "127.0.0.1",
@@ -306,9 +306,9 @@ namespace WellCooked
                 ? TcpLink.Mode.Server
                 : TcpLink.Mode.Client;
 
-            /* 两种模式各有自己的默认端口：client 连 Bridge 监听的 12345，server 监听文档
-             * §6.2.4 说的 14455 —— Bridge 的 --link connect 默认就拨这里。共用一个端口会让
-             * "相反拓扑"在默认配置下连不上，而那正是文档承诺能直接跑通的形状。 */
+            /* 两种模式共用 14455（decisions.md: 2026-10-15 - 端口按组员决策统一成 14455）：
+             * client 拨 Bridge 监听的 14455，server 监听文档 §6.2.4 说的 14455。谁在听完全
+             * 由 Mode 决定，端口号不再负责区分方向 —— 那才是它本来就不该承担的活。 */
             int port = mode == TcpLink.Mode.Server ? _netServerPort.Value : _netPort.Value;
 
             _link = new TcpLink(

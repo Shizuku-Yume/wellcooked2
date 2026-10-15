@@ -8,7 +8,7 @@
 #     bash plugin/tools/conformance/run-conformance.sh [port] [seconds] [require-kinds] [stub-kind]
 #
 # 默认：端口 12401，60 Hz 跑 3 秒，要求出现 move+stop，stub 往 slot 0 写 move。端口特意不用
-# 12345，这样真插件或 W8 运行可以同时在跑。
+# 14455，这样真插件或 W8 运行可以同时在跑。
 #
 # `stub-kind` 可以是逗号分隔的一到两个动作名（move/stop/interact/pickup/dash），逐个写进
 # slot 0、slot 1；用它来让"扩过的 action 枚举"也被插件自己的解码器验一遍，例如：

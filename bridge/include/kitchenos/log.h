@@ -10,7 +10,7 @@
  * Line format (single spaces, level left-aligned in five columns, then the
  * event token, then the caller's key=value pairs):
  *
- *   2026-10-15T15:29:55.123 INFO  bridge_start pid=1234 link=listen port=12345
+ *   2026-10-15T15:29:55.123 INFO  bridge_start pid=1234 link=listen port=14455
  *
  * Single writer by contract: only the Bridge writes this file, so nothing here
  * is locked (standards.md forbids threads in the core).

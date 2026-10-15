@@ -10,7 +10,7 @@
 #     logs/bridge.log 里有 >=1 条 hello 与 >=10 条 state_update，且没有解析错误。
 #
 # 之所以先起 Bridge 再让你启动游戏：插件是 client（Network.Mode=client，
-# Network.Port=12345），收不到连接就每 ReconnectDelayMs 重试一次。所以顺序反过来
+# Network.Port=14455），收不到连接就每 ReconnectDelayMs 重试一次。所以顺序反过来
 # 也照样能连上，你不用掐时间。
 
 set -u
@@ -18,8 +18,10 @@ set -u
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BIN="${REPO_ROOT}/bridge/build/kitchenos-bridge"
 LOG="${REPO_ROOT}/logs/bridge.log"
-PORT="${PORT:-12345}"
-HOST="${HOST:-0.0.0.0}"
+PORT="${PORT:-14455}"
+# 绑 loopback 就够：WSL2 的 localhost 转发能到只绑 VM 回环的监听器（实测过），而链路
+# 没有认证。跨机跑时用 HOST=0.0.0.0 覆盖。
+HOST="${HOST:-127.0.0.1}"
 WAIT_SECONDS="${WAIT_SECONDS:-120}"
 NEED_HELLO="${NEED_HELLO:-1}"
 NEED_STATE="${NEED_STATE:-10}"

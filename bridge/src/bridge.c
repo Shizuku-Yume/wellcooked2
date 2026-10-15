@@ -59,7 +59,9 @@
 #define BRIDGE_VERSION PROTO_VERSION
 
 #define DEFAULT_HOST "127.0.0.1"
-#define DEFAULT_LISTEN_PORT 12345
+/* 两种模式默认同一个端口：14455。谁在听由 --link 决定，不再按方向分两个号
+ * （decisions.md: 2026-10-15 - 端口按组员决策统一成 14455）。 */
+#define DEFAULT_LISTEN_PORT 14455
 #define DEFAULT_CONNECT_PORT 14455
 #define DEFAULT_CHEFS 2
 #define DEFAULT_STATE_NAME KOS_SHM_DEFAULT_NAME
@@ -297,9 +299,9 @@ static void print_help(void)
            "Options:\n"
            "  --link listen|connect   listen (default): act as the TCP server the plugin\n"
            "                          dials into. connect: dial the plugin's own server.\n"
-           "  --host H                listen: bind address (default: all interfaces\n"
-           "                          0.0.0.0 unless --host is given). connect: peer\n"
-           "                          address. Default 127.0.0.1.\n"
+           "  --host H                listen: bind address (default 127.0.0.1; pass\n"
+           "                          0.0.0.0 for a cross-machine demo). connect: peer\n"
+           "                          address to dial (default 127.0.0.1).\n"
            "  --port P                listen: %d (default). connect: %d (default).\n"
            "  --chefs N               number of input slots, 0..%d (default %d).\n"
            "  --state-name NAME       shared world state object (default %s).\n"
@@ -1268,9 +1270,12 @@ static int open_link(bridge *b)
     opts.host = b->host;
     opts.port = b->port;
     /* listen mode: --host is the bind address only when the user asked for one;
-     * otherwise the net module's default (all interfaces) applies, which is
-     * what the spec's "监听 0.0.0.0:12345" means and what a Windows-side plugin
-     * needs when WSL2 is not on a shared loopback. */
+     * otherwise the net module's default (127.0.0.1) applies. Loopback is enough
+     * for the real-game path -- WSL2's localhost forwarding reaches a listener
+     * bound only to the VM's loopback, which was measured rather than assumed --
+     * and the link carries no authentication, so binding every interface hands
+     * "who gets to be the plugin" to anyone on the LAN. --host 0.0.0.0 is the
+     * escape hatch for a cross-machine demo. */
     if (b->link_mode == KOS_NET_MODE_LISTEN && b->host_given) {
         opts.bind_addr = b->host;
     }

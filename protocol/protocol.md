@@ -14,8 +14,13 @@ C 侧 `bridge/include/kitchenos/protocol.h` + `bridge/src/protocol.c`，
 
 ## 1. 传输与分帧
 
-- TCP。Bridge 默认做服务端监听 `0.0.0.0:12345`（插件连 `127.0.0.1:12345`）；
-  加 `--link connect` 时 Bridge 反过来去连插件开的服务端，默认 `127.0.0.1:14455`。
+- TCP，默认端口 **14455**，两端同一个号，谁在听由模式决定。Bridge 默认 `--link listen`：
+  绑 `127.0.0.1:14455` 等插件拨入；加 `--link connect` 时 Bridge 反过来去连插件开的服务端，
+  插件默认监听 `127.0.0.1:14455`。方向由模式表达，端口号不承担这个责任。
+- 绑定地址默认 **loopback**。链路没有认证，绑 `0.0.0.0` 等于把"谁能当插件"交给同网段的
+  任何人；跨机演示时显式传 `--host 0.0.0.0`。
+- 两端都可配置：Bridge 用 `--port` / `--host`，插件用 `Network.Port`、`Network.ServerPort`、
+  `Network.ListenAddress`（`decisions.md: 2026-10-15 - Bridge 端口可配置，默认 14455`）。
   两种拓扑跑同一套协议。
 - 一帧 = **一行**：UTF-8 JSON 字节，后面跟一个 **`\n`（0x0A）**。换行符是分隔符，不属于载荷。
 - 单行载荷上限 **1048576 字节（1 MiB）**，与 `TcpLink.MaxFrameBytes` 一致（不含结尾的 `\n`）。

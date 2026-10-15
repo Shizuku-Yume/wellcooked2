@@ -40,7 +40,7 @@ from pathlib import Path
 # --------------------------------------------------------------------------
 
 MAX_FRAME_BYTES = 1024 * 1024   # TcpLink.cs 的 MaxFrameBytes：一行的上限，不含结尾的 '\n'
-DEFAULT_LISTEN_PORT = 12345     # Bridge 作服务端时的默认端口
+DEFAULT_LISTEN_PORT = 14455     # Bridge 作服务端时的默认端口（两端同一个号，谁在听由模式决定）
 DEFAULT_CONNECT_PORT = 14455    # 插件作服务端时的默认端口，Bridge --link connect 去连它
 HELLO_INSTANCE = "windows-host"
 HELLO_VERSION = "0.1.0"
@@ -700,7 +700,7 @@ def listen_inodes():
 def pid_owns_socket(pid, inode):
     """这个 pid 是否持有该 socket：靠 /proc/<pid>/fd 反查 inode。
 
-    多 agent 并行跑测试时 12345 上可能蹲着别人的 Bridge，光看"端口在监听"会把
+    多 agent 并行跑测试时 14455 上可能蹲着别人的 Bridge，光看"端口在监听"会把
     对端认成自己的进程，断言就全是错的。
     """
     if pid is None:
@@ -1153,7 +1153,7 @@ class Ctx:
                               heartbeat_timeout_ms, port=None, retries=3, verbose=False):
         """起 Bridge 并等它就绪，返回实际用的端口。
 
-        端口默认由内核分配：多 agent 并行开发时 12345 很可能被别的 Bridge 或
+        端口默认由内核分配：多 agent 并行开发时 14455 很可能被别的 Bridge 或
         net 单元测试占着，抢不到就换一个；而且"端口在监听"不等于"对端是我的
         Bridge"，wait_listen 会核对 socket inode 属于这个 pid，否则连上去聊的
         是别人的进程，断言全无意义。
@@ -2688,7 +2688,7 @@ def parse_args(argv):
     parser.add_argument("--host", default="127.0.0.1", help="listen 模式为绑定地址，connect 模式为拨号目标")
     parser.add_argument("--listen-port", type=int, default=None,
                         help="listen 模式端口；默认由内核挑一个空闲端口，"
-                             "要复现协议默认值就传 12345")
+                             "要复现协议默认值就传 14455")
     parser.add_argument("--connect-port", type=int, default=None,
                         help="connect 模式端口；默认优先 14455，被占则换空闲端口")
     parser.add_argument("--chefs", type=int, default=None, help="厨师数（默认 happy=2, connect-mode=1）")

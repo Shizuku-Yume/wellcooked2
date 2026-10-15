@@ -78,6 +78,8 @@ user may overturn on sight. `Revisit when` of "never" is allowed but suspicious;
 - **Revisit when:** 实机验证证明某一方向在 WSL2 网络模式下不可用（例如 NAT 与 mirrored 模式
   切换导致 Windows 连不进 WSL2）。
 - **Effort:** bridge
+- **Superseded by:** 2026-10-15 - 端口按组员决策统一成 14455（只推翻默认监听地址与端口那一半；
+  "两种拓扑都要有"仍然成立）
 
 ## 2026-10-15 - 帧屏障以 state_update 为帧边界，等待 Worker 而非等待插件
 
@@ -157,6 +159,8 @@ user may overturn on sight. `Revisit when` of "never" is allowed but suspicious;
 - **Mine:** yes
 - **Revisit when:** 插件的默认端口发生变更，或 Bridge 需要一个不与游戏共存的固定端口。
 - **Effort:** bridge
+- **Superseded by:** 2026-10-15 - 端口按组员决策统一成 14455（端口取值那一半；"实机验收不要
+  求改游戏侧配置"仍然成立，而且现在两端默认值相同，更不需要改）
 
 ## 2026-10-15 - 插件由本 effort 补写，两端同轮交付
 
@@ -206,6 +210,8 @@ user may overturn on sight. `Revisit when` of "never" is allowed but suspicious;
 - **Mine:** yes
 - **Revisit when:** 换到多人共用的机器、需要跨网段演示，或端口要暴露到局域网之外。
 - **Effort:** bridge
+- **Superseded by:** 2026-10-15 - 端口按组员决策统一成 14455（只推翻"默认监听 `0.0.0.0`"这一半，
+  也就是"任何连上的对端都成为被服务的插件"那条暴露面；"链路不做认证"本身仍然成立）
 
 ## 2026-10-15 - action 枚举扩到 5 个：pickup / dash 上线
 
@@ -258,6 +264,8 @@ user may overturn on sight. `Revisit when` of "never" is allowed but suspicious;
 - **Revisit when:** 需要让同一个游戏实例同时充当 server 与 client，或课程验收要求两种模式共用
   一个端口号。
 - **Effort:** bridge
+- **Superseded by:** 2026-10-15 - 端口按组员决策统一成 14455（两种模式现在就是共用一个端口号：
+  这正是本条目 `Revisit when` 里那两个条件之一，由用户裁定触发）
 
 ## 2026-10-14 - OS 核心用 C11
 
@@ -347,6 +355,8 @@ user may overturn on sight. `Revisit when` of "never" is allowed but suspicious;
 - **Revisit when:** 组员指出验收环境里 `127.0.0.1:14455` 已由别的服务占用，或课程验收明确要求
   Bridge 监听 14455。
 - **Effort:** bridge
+- **Superseded by:** 2026-10-15 - 端口按组员决策统一成 14455（用户裁定以组员决策为默认值；本条
+  的推理过程保留在这里，因为它是"两份文档冲突时怎么判"的唯一记录）
 
 ## 2026-10-15 - 与 game-bridge 方案对齐目录名、文档名与上报节奏
 
@@ -422,3 +432,34 @@ user may overturn on sight. `Revisit when` of "never" is allowed but suspicious;
 - **Revisit when:** 实验需要逐单的到达时刻或时限（EDF/HRRN 对比需要），或换关卡/换玩家数后 `menu`
   索引不再适用。
 - **Effort:** game-bridge
+
+## 2026-10-15 - 端口按组员决策统一成 14455
+
+- **Decided:** 链路默认端口 **14455**，两种模式同号：Bridge `--link listen` 默认绑
+  `127.0.0.1:14455`，`--link connect` 默认拨 `127.0.0.1:14455`；插件 `Network.Port` 与
+  `Network.ServerPort` 默认也都是 14455。默认绑定地址两侧都是 loopback。课程文档 §5.1 样例里的
+  12345 与 `INADDR_ANY` 不再作默认值，但仍是合法的覆盖值（`--port` / `--host` /
+  `Network.ListenAddress`）。
+- **Instead of:** 保留上一轮按 §5.1 定的 `0.0.0.0:12345`，把组员"默认仍是 `127.0.0.1:14455`"
+  当成需要被纠正的陈旧表述。这是本轮唯一被推翻的自家决策，推理过程留在上一条里。
+- **Because:** 两条推理指向相反方向，都摆出来。
+  - 支持 12345：方案 §5.1 的示例代码（`// 调度器侧（服务端）` + `htons(12345)`）与 §2.2.1 架构图
+    `TCP Server (0.0.0.0:12345)`，以及 `standards.md` 的"代码与课程文档冲突时以课程文档为准"。
+  - 支持 14455：组员的决策条目与 `game-bridge.md` 两处一致，是团队里对这个问题唯一做过的显式
+    决策。而课程文档自相矛盾（§6.1/§6.2.4 说 14455 上起服务端的是插件），所以"以课程文档为准"
+    这条规则在这里指不出方向 —— 它能裁决"代码 vs 文档"，裁决不了"文档 vs 文档"。
+  - 用户裁定取组员决策。好处是组员的 spec 一个字符都不用改：他那行原文就是"Bridge 监听
+    `127.0.0.1:14455`（跨机时改绑定地址），插件作为客户端连接并在 2 秒后重试"，现在代码与它
+    逐字相符，团队文档自洽；代价是课程文档 §5.1 的 4 处 12345 与默认值不一致，已在
+    `specs/bridge.md` 的逐条对照里写明，并给出覆盖方式。
+  - 绑 loopback 那一半是独立判断：链路没有认证，绑 `0.0.0.0` 等于让同网段任何人冒充插件（那条
+    暴露面曾作为已知风险记录在案）。原先"WSL2 的 localhost 转发够不到只绑回环的监听器"的担心
+    **经实测证伪**：WSL2 里绑 `127.0.0.1:12399`、`ss` 确认在听、从 Windows 连接成功，所以 W8 的
+    Windows→WSL2 路径不受影响。`0.0.0.0` 留给跨机演示，由 `--host` 显式选择。
+  - 组员那条的 `Because`（参考项目的插件在同一个 loopback 端口跑 Thrift，写死的端口会撞）其实
+    指向**避开** 14455；但它同时给的缓解办法是"做成可配置"，而本实现已经满足（Bridge `--port`、
+    插件 `Network.Port`/`ServerPort`/`ListenAddress`），真的撞上时改一个配置项即可。
+- **Mine:** no
+- **Revisit when:** 验收明确要求默认值与 §5.1 样例一致，或参考项目 mod 与本实现同机同时运行并
+  真的撞上 14455。
+- **Effort:** bridge

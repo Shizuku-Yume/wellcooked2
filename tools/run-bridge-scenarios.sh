@@ -46,7 +46,7 @@ usage() {
   --log-dir DIR      场景日志目录（默认 <repo>/logs）
   --strict           透传 --strict 给 fake_plugin：soft 检查升级为硬断言
   --allow-skip       有场景被跳过时仍然退出 0（默认跳过算未通过）
-  --listen-port P    固定 listen 模式端口（默认自动挑空闲端口，避免和别的 Bridge 抢 12345）
+  --listen-port P    固定 listen 模式端口（默认自动挑空闲端口，避免和别的 Bridge 抢 14455）
   --connect-port P   固定 connect 模式端口（默认优先 14455，被占则换空闲端口）
   --run-id ID        shm/sem/日志名的运行标识（默认本脚本 pid；同机并发跑要各不相同）
   --retry-killed N   场景被外部信号杀掉（不是超时、不是断言失败）时自动重跑几次（默认 1）

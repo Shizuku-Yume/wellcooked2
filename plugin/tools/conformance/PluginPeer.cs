@@ -86,7 +86,7 @@ namespace WellCooked.Conformance
     internal sealed class Options
     {
         public string Host = "127.0.0.1";
-        public int Port = 12345;              /* the plugin's Network.Port default */
+        public int Port = 14455;              /* the plugin's Network.Port default */
         public double Seconds = 3.0;
         public int Hz = 60;
         public bool RawPhase = true;

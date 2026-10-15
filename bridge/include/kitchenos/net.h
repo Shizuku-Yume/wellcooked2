@@ -36,8 +36,11 @@
 
 #include <kitchenos/shm.h> /* kos_error + KOS_ERR_*, the shared failure contract */
 
-#define KOS_NET_DEFAULT_PORT 12345
-#define KOS_NET_DEFAULT_BIND_ADDR "0.0.0.0"
+/* 14455 是链路两侧共用的默认端口，谁在听由 mode 决定（decisions.md: 2026-10-15 - 端口按
+ * 组员决策统一成 14455）。绑定地址默认 loopback：链路没有认证，绑 0.0.0.0 等于把"谁能当
+ * 插件"交给同网段的任何人；跨机演示时显式传 --host 0.0.0.0。 */
+#define KOS_NET_DEFAULT_PORT 14455
+#define KOS_NET_DEFAULT_BIND_ADDR "127.0.0.1"
 #define KOS_NET_DEFAULT_BACKLOG 5
 #define KOS_NET_DEFAULT_RECONNECT_MS 1000
 
@@ -60,7 +63,7 @@ typedef struct {
     int reconnect_delay_ms; /* CONNECT: pause between dials, 0 means immediately */
 } kos_net_opts;
 
-/* LISTEN, port 12345, bind 0.0.0.0, backlog 5, reconnect after 1000 ms. host is
+/* LISTEN, port 14455, bind 127.0.0.1, backlog 5, reconnect after 1000 ms. host is
  * left NULL because CONNECT is the only mode that reads it and silently dialing
  * localhost on a forgotten host would hide a configuration mistake. */
 void kos_net_opts_init(kos_net_opts *opts);

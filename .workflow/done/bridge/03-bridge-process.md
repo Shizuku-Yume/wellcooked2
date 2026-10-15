@@ -11,6 +11,10 @@
 **Read first:** `.workflow/specs/bridge.md`（全篇）, 本 effort 的 01 与 02 产出的头文件。
 **Done when:**
 - [x] 默认 `--link listen --port 12345`；`--link connect --host H --port P` 可切换（默认 14455）
+
+> **后续修正（2026-10-15，integrator 记录）：** 上面这条 `Done when` 里的默认端口已变。两种模式
+> 现在默认同一个端口 **14455**，默认绑定地址是 **127.0.0.1**（`decisions.md: 2026-10-15 - 端口按
+> 组员决策统一成 14455`）。本文件其余部分是当时运行的原始输出，逐字保留，没有回改。
 - [x] 每个 `state_update` 一帧：`sem_timedwait` 等 N 个槽，超时对缺失厨师下发 idle 并点名
 - [x] Scheduler/Worker 完全不存在时照常连接、照常按帧下发 idle，进程不退出
 - [x] 心跳超时 → 判定断开、暂停下发并记录；重连后恢复

@@ -17,8 +17,10 @@ effort 里不成立，跨端契约的基准是 `protocol/`。）
 
 一个独立进程 `kitchenos-bridge`，跑在 WSL2/Linux 侧，是唯一与游戏通信的进程。
 
-- 默认以 TCP **服务端**监听 `0.0.0.0:12345`，接受插件连入；`--link connect` 时可切换为
-  客户端，主动去连插件开的服务端（`--host` / `--port`，默认 14455）。两种模式跑同一套协议。
+- 默认以 TCP **服务端**监听 `127.0.0.1:14455`，接受插件连入；`--link connect` 时可切换为
+  客户端，主动去连插件开的服务端（`--host` / `--port`，默认同样是 14455）。两种模式跑同一套
+  协议，谁在听由模式表达，端口号不负责区分方向（`decisions.md: 2026-10-15 - 端口按组员决策
+  统一成 14455`）。绑 loopback 是默认值：链路没有认证，跨机演示要显式传 `--host 0.0.0.0`。
 - 收插件上报的 `state_update`，把世界状态写进共享内存 `/kitchenos_state`。
 - 把每个 `state_update` 当作一帧：等全部 N 个输入槽就绪（有超时上限），汇总成动作下发插件；
   槽缺失或超时的厨师下发 idle，并记录是哪几个。
@@ -98,11 +100,11 @@ effort 里不成立，跨端契约的基准是 `protocol/`。）
   下发 idle，日志点名是哪几个厨师，进程不退出。
 - **W4.** 心跳超时：模拟插件停止心跳超过阈值 → Bridge 判定断开、暂停下发并记录；重新连接后
   恢复下发。
-- **W5.** 异常输入：>1 MiB 的帧、非法 JSON、截断帧各来一次 → Bridge 记录并丢弃，进程存活，
+- **W5.** 异常输入：>1 MiB 的行、非法 JSON、截断行各来一次 → Bridge 记录并丢弃，进程存活，
   之后仍能正常处理一帧。
 - **W6.** SIGTERM：发信号后进程在 1 秒内退出，日志有退出事件，`/dev/shm` 下不残留
   `/kitchenos_state` 与信号量，立刻重启能成功 bind 同一端口。
-- **W7.** 双拓扑：`--link listen --port 12345` 与 `--link connect --host 127.0.0.1 --port 14455`
+- **W7.** 双拓扑：`--link listen --port 14455` 与 `--link connect --host 127.0.0.1 --port 14455`
   两种模式各完成一次完整帧交换。
 - **W8.** 实机：Windows 游戏启动后，Bridge 日志出现 `hello` 与 `state_update`（**唯一需要
   启动游戏的一次验证**）。
@@ -111,7 +113,7 @@ effort 里不成立，跨端契约的基准是 `protocol/`。）
 `tools/fake_plugin.py` 驱动（W2–W5、W7，含动作枚举五个的端到端：`pickup-dash` 场景让两个
 Worker 分别写 `pickup`/`dash`，断言它们原样到达对端），它替代反复启动游戏；游戏实机只留 W8
 一次。出问题时的可观察信号：Bridge 进程退出码非 0、日志停止增长、`/dev/shm/kitchenos*` 残留、
-`ss -ltnp` 看不到 12345 监听。
+`ss -ltnp` 看不到 14455 监听。
 
 值得测的边界：空 `chefs` 数组、`resources` 里出现未知键（如 `pot_7`）、超大 `orders`、
 只连上不发任何消息就断开、连续快速断开重连、`plate_stack.count` 为 0。
@@ -143,9 +145,9 @@ Worker 分别写 `pickup`/`dash`，断言它们原样到达对端），它替代
 | **W2** | ✅ | `happy`：连上、`hello`、60 Hz `state_update`、481 个动作（另一次 480）、`echo_reply` 往返、写共享内存，退出码 0；`pickup-dash`：两个 Worker 分别写 `pickup`/`dash`，对端各收到 120 次且 0 条被拒 |
 | **W3** | ✅ | `one-slot`：缺槽厨师 **240/240 全 `stop`**；活跃槽稳定收到 `move`；日志点名（`slots_missing ... missing=1`） |
 | **W4** | ✅ | `no-heartbeat`：`plugin_timeout silent_ms=801` → 暂停下发（0 动作）→ 重连 → `plugin_resumed` → 恢复 |
-| **W5** | ✅ | `bad-frames`：>1 MiB 帧、非法 JSON、截断帧各一次，进程存活、连接保持、随后照常处理 |
+| **W5** | ✅ | `bad-frames`：>1 MiB 的行、非法 JSON、截断行各一次，进程存活、连接保持、随后照常处理 |
 | **W6** | ✅ | SIGTERM 后 **0.05 s**（无插件时 0.020 s）退出、退出码 0、端口立即可重绑、`/dev/shm` 无残留 |
-| **W7** | ✅ | `happy`（Bridge 监听 12345）+ `connect-mode`（Bridge 拨号 14455）各完成完整帧交换。**两个方向跑过的对端都是协议级模拟插件**：真插件的 server 模式从未被任何一次运行覆盖（那需要把游戏切到 server 模式，而实机只跑过 client 方向）。插件侧默认值已按 §6.2.4 对齐（`Network.ServerPort` 默认 14455，见下），所以按文档默认配置直接跑得通，但"跑得通"这一条仍然只是静态对齐、没有运行证据 |
+| **W7** | ✅ | `happy`（Bridge 监听 14455）+ `connect-mode`（Bridge 拨号 14455）各完成完整帧交换。**两个方向跑过的对端都是协议级模拟插件**：真插件的 server 模式从未被任何一次运行覆盖（那需要把游戏切到 server 模式，而实机只跑过 client 方向）。两端默认端口已统一成 14455（见下），所以按文档默认配置直接跑得通，但"跑得通"这一条仍然只是静态对齐、没有运行证据 |
 | **W8** | ⚠️ 一半 | **已达成**：2026-10-15 实机，`hello` ✅、`state_update` **76 条** ✅、解析错误 0 ✅（见 done/bridge/05-real-game.md）。**未达成**：同一份记录里 `state_summary ... chefs=0 orders=0`（游戏停在菜单，没进关卡），即"共享内存里的厨师/订单/资源非空"没有被观察到；再跑一次 `bash tools/run-real-game.sh` 并进关卡即可补上 |
 
 ### 与文档的逐条对照
@@ -155,8 +157,8 @@ Worker 分别写 `pickup`/`dash`，断言它们原样到达对端），它替代
 | §834-842「Bridge 进程」 | 唯一连游戏的进程、按帧写共享内存、读输入槽汇总下发、按帧同步、崩溃时发 idle 保持连接 | 全部实现；其中"阻塞等待"实现为**有界等待**，理由见下 |
 | §543-553「共享内存 + 信号量」 | `shm_open("/kitchenos_state")` | 默认名一致 |
 | §6.2.3（951-966） | "使用 **seqlock 或** 读写信号量保护"；Bridge 独占写、Scheduler/Worker 并发读、Worker 独占写各自输入槽；"这是典型的读者写者问题" | 选 seqlock；权限划分与文档逐条一致 |
-| §6.2.4（968-975） | "BepInEx 插件在游戏进程内启动 TCP 服务器（localhost:14455）；Linux 侧 Bridge 作为客户端连接" | 两侧默认值已对齐：Bridge `--link connect` 默认 `127.0.0.1:14455` 实测 PASS；插件 server 模式改用 `Network.ServerPort`（默认 14455，与 client 模式的 `Network.Port` 12345 分开）。插件这一半是静态对齐，未实机跑过 |
-| §2.2.1 / §5.1 | Bridge 作 TCP 服务端 `0.0.0.0:12345` | `--link listen --port 12345`，实测 PASS |
+| §6.2.4（968-975） | "BepInEx 插件在游戏进程内启动 TCP 服务器（localhost:14455）；Linux 侧 Bridge 作为客户端连接" | 反向模式：Bridge `--link connect` 默认拨 `127.0.0.1:14455` 实测 PASS，插件 server 模式监听 `Network.ServerPort`（默认 14455）。插件这一半是静态对齐，未实机跑过 |
+| §2.2.1 / §5.1 | Bridge 作 TCP 服务端（样例代码写 `0.0.0.0:12345`） | `--link listen` 实测 PASS；默认端口按组员决策统一成 **14455**、默认绑 **loopback**（`decisions.md: 2026-10-15 - 端口按组员决策统一成 14455`），与课程文档样例的 12345 / `INADDR_ANY` 不同，跨机时用 `--host 0.0.0.0` 覆盖 |
 | §5.2 | 消息类型名与字段 | 与 `Messages.cs` 九个类型名逐字相同，测试里做双向映射校验；`action` 枚举取插件八个动作里的五个（`move`/`stop`/`interact`/`pickup`/`dash`，见 `decisions.md: 2026-10-15 - action 枚举扩到 5 个`）；schema 另用 `jsonschema` 对 150+150 条真实帧校验，并确认 6 条不合契约的形状被拒（`logs/schema-check.out`） |
 | §5.3 | 解析失败 ⇒ 记录并丢弃；断开 ⇒ 等待重连 | 逐条实现，`bad-frames` / `no-heartbeat` 覆盖 |
 | §6.3 | 用 `sigaction`（不用 `signal`） | `sigaction` + 处理函数只置 `volatile sig_atomic_t` |

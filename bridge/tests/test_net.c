@@ -374,7 +374,7 @@ static void test_log_module(void)
     CHECK(kos_log_mirror_stderr(log, 1) == KOS_OK);
 
     kos_log_debug(log, "hidden_debug", "n=%d", 1); /* below min_level: dropped */
-    kos_log_info(log, "bridge_start", "pid=%d link=%s port=%d", (int)getpid(), "listen", 12345);
+    kos_log_info(log, "bridge_start", "pid=%d link=%s port=%d", (int)getpid(), "listen", 14455);
     kos_log_warn(log, "input_slot_missing", "frame=%llu chef=%d", (unsigned long long)7, 3);
     kos_log_error(log, "json_parse_failed", "reason=%s", "expected value");
     /* newlines inside a message must not become extra events */

@@ -39,7 +39,7 @@ bash plugin/tools/conformance/run-conformance.sh 12402 3 pickup,dash pickup,dash
 退出码：**0** 全部通过；**1** 两端对不上（脚本会打印是哪一项）；**3** 前置条件不成立
 （`csc` 不在、对端没编译出来、桥没起来）。
 
-端口默认 **12401** 而不是 12345，共享内存用 `/kitchenos_conformance` +
+端口默认 **12401** 而不是 14455，共享内存用 `/kitchenos_conformance` +
 `/kitchenos_conformance_sem`，所以这一轮可以和真插件、或别人的 W8 运行同时进行，不会互相踩。
 
 ## 3. 它验了什么
