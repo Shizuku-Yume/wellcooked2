@@ -130,6 +130,7 @@ namespace WellCooked
                     continue; // 空的
                 }
 
+
                 var p = unity.transform.position;
                 var position = new Vector2(p.x, p.z);
                 float distance = Vector2.Distance(position, from);
@@ -146,7 +147,61 @@ namespace WellCooked
                 }
             }
 
+            if (best != null)
+            {
+                return best;
+            }
+
+            // 兜底：这关可能没有"盘子堆"，盘子是散放在台面上的单个 ClientPlate。
+            // 排除被厨师拿着的那些（挂在厨师下面的）。
+            foreach (var component in WorldState.FindAll("ClientPlate"))
+            {
+                var unity = component as Component;
+                if (unity == null || HeldByChef(unity))
+                {
+                    continue;
+                }
+
+                var name = unity.gameObject.name;
+                if (name.IndexOf("return", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    continue;
+                }
+
+                var p = unity.transform.position;
+                var position = new Vector2(p.x, p.z);
+                float distance = Vector2.Distance(position, from);
+                if (distance < bestDistance)
+                {
+                    bestDistance = distance;
+                    best = new Station
+                    {
+                        Type = "ClientPlate",
+                        Name = name,
+                        Position = position,
+                        Component = unity
+                    };
+                }
+            }
+
             return best;
+        }
+
+        /// <summary>这个东西是不是被厨师拿在手里（沿父级找 PlayerControls）。</summary>
+        private static bool HeldByChef(Component component)
+        {
+            var current = component.transform;
+            for (int i = 0; i < 6 && current != null; i++)
+            {
+                if (current.GetComponent("PlayerControls") != null)
+                {
+                    return true;
+                }
+
+                current = current.parent;
+            }
+
+            return false;
         }
 
         /// <summary>最近一次已知的厨师位置，用来挑"离我最近的工位"。</summary>
