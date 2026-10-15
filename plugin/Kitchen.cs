@@ -296,11 +296,14 @@ namespace WellCooked
             return fallback;
         }
 
-        /// <summary>砧板上那块料的切割进度（0..1）与是否切好。</summary>
-        public static bool WorkProgress(Vector2 station, out float progress, out bool finished)
+        /// <summary>
+        /// 砧板上那块料的切割状态。`m_progress` 是**整数阶段**（不是 0..1 的浮点），
+        /// `HasFinished()` = `m_progress == m_stages - 1`；`m_subProgress` 是当前阶段里切了几刀。
+        /// </summary>
+        public static bool WorkState(Vector2 station, out bool finished, out string description)
         {
-            progress = 0f;
             finished = false;
+            description = "?";
             int ix, iz;
             if (!WorldState.GameCellOf(station, out ix, out iz))
             {
@@ -321,12 +324,24 @@ namespace WellCooked
             }
 
             var progressValue = WorldState.Get(item, "m_progress");
-            if (progressValue is float value)
+            var subValue = WorldState.Get(item, "m_subProgress");
+            int progress = progressValue is int p0 ? p0 : 0;
+            int sub = subValue is int s0 ? s0 : 0;
+
+            int stages = 0;
+            var workable = WorldState.Get(item, "m_workable");
+            if (workable != null)
             {
-                progress = value;
+                var stagesValue = WorldState.Get(workable, "m_stages");
+                if (stagesValue is int stagesInt)
+                {
+                    stages = stagesInt;
+                }
             }
 
             finished = WorldState.Get(item, "HasFinished") is bool done && done;
+            description = "阶段 " + progress + "/" + Mathf.Max(stages - 1, 1)
+                          + " 子进度 " + sub + (finished ? " 已切好" : "");
             return true;
         }
 

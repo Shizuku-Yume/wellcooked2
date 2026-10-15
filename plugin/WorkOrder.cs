@@ -67,6 +67,7 @@ namespace WellCooked
 
         /// <summary>每一步的超时（秒）。到点没做成就报失败、重来。</summary>
         private const float StepTimeout = 20f;
+        private const float ChopTimeout = 60f;
 
         /// <summary>到达判定半径：工位都在台面里，厨师只能站到旁边一格。</summary>
         private const float ReachRadius = 0.25f;
@@ -160,9 +161,10 @@ namespace WellCooked
             }
 
             // 到点了还没做完 → 报失败、重来这一步
-            if (now - _stepStart > StepTimeout)
+            float limit = _step == Step.Chop ? ChopTimeout : StepTimeout;
+            if (now - _stepStart > limit)
             {
-                Fail(now, _step + " 超时 " + StepTimeout.ToString("F0") + " 秒");
+                Fail(now, _step + " 超时 " + limit.ToString("F0") + " 秒");
                 return;
             }
 
@@ -283,9 +285,9 @@ namespace WellCooked
         /// </summary>
         private static bool HandleChop(float now, string heldNow)
         {
-            float progress;
             bool finished;
-            bool hasItem = Kitchen.WorkProgress(_station, out progress, out finished);
+            string workState;
+            bool hasItem = Kitchen.WorkState(_station, out finished, out workState);
 
             if (hasItem && !finished)
             {
@@ -301,14 +303,13 @@ namespace WellCooked
                 if (!_chopStarted)
                 {
                     _chopStarted = true;
-                    _log.LogInfo("工序: 3/6 开始切（按住交互，进度 " + progress.ToString("F2") + "）");
+                    _log.LogInfo("工序: 3/6 开始切（按住 X，当前 " + workState + "）");
                 }
 
                 if (now >= _chopLogAt)
                 {
                     _chopLogAt = now + 3f;
-                    _log.LogInfo("工序: 3/6 切料中（进度 " + progress.ToString("F2") + "，手上「"
-                                 + heldNow + "」）");
+                    _log.LogInfo("工序: 3/6 切料中（" + workState + "，手上「" + heldNow + "」）");
                 }
 
                 return true;
@@ -324,7 +325,7 @@ namespace WellCooked
                     _pressUntil = now + InteractHold;
                     _pressing = true;
                     _lastCheckAt = now + InteractHold + 0.2f;
-                    _log.LogInfo("工序: 3/6 切好了，按 A 拿走（手上「" + heldNow + "」）");
+                    _log.LogInfo("工序: 3/6 切好了（" + workState + "），按 A 拿走");
                 }
 
                 if (_pressing && now >= _pressUntil)
