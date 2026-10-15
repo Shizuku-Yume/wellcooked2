@@ -1,0 +1,9 @@
+{
+  "seed": 12345,
+  "level": "s_city_h5",
+  "menu": [
+    {
+      "recipes": ["SteamedSpecial_Fish", "SteamedSpecial_Prawns", "SteamedSpecial_Meat", "SteamedSpecial_Carrot"]
+    }
+  ]
+}

@@ -118,6 +118,14 @@ namespace WellCooked
                 case "order":
                     DumpOrder();
                     break;
+                case "orders":
+                    if (value == "reload")
+                    {
+                        Orders.Reload();
+                    }
+
+                    Orders.Describe();
+                    break;
                 case "levels":
                     DumpLevels(value);
                     break;

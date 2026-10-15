@@ -32,7 +32,20 @@ printf 'restart=1\n' ...        # 重开当前关
 printf 'mech=1\n' ...           # 数当前场景真实存在的机制组件与工位
 printf 'levels=city\n' ...      # 打印关卡表（菜单位置 ↔ 场景名 ↔ 解锁/通关），可按场景名过滤
 printf 'unlock=1\n' ...         # 解锁当前存档全部关卡（含 IsLevelUnlocked 自检）
+printf 'orders=reload\n' ...    # 重读订单配置并打印当前配置与已生成单数
 ```
+
+固定订单（策略对比要用同一组订单，游戏自己随机出单做不到）：
+
+```sh
+cp config/orders.example.json "$GAME_DIR/BepInEx/wellcooked-orders.json"   # 一份配置=一个阶段一列菜名
+# 菜名 = 关卡菜谱里的名字；写错时日志会列出本关可用菜名（`订单: ... 本关可用菜名：0:Sushi_Fish, ...`）
+grep -E '订单: ' "$GAME_DIR/BepInEx/LogOutput.log"                          # 每次生成单都有一行，含阶段/第几单/菜名
+```
+
+`config/orders.example.json` 里的菜名是 `s_city_h5` 的（复制过去就能用）；`level` 键只是给人看的，插件不读。
+`seed` 只管随机源（回合开始时 `Random.InitState`），`menu` 只管每阶段出哪道菜——两者不是一回事，日志分开记。
+它不控制订单的到达时刻（那由订单控制器决定），见 `decisions.md: 2026-10-15 - 固定菜单复用 TAS 的 GetNextRecipe Prefix`。
 
 挑关卡（本体 144 个关卡资源包，包名就是场景名）：
 

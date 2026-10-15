@@ -37,6 +37,7 @@ namespace WellCooked
             Navigation.Install(_log);
             Commands.Install(_log);
             WorkOrder.Install(_log);
+            Orders.Install(_log);
             Takeover.Install(_log);
             DumpGameInventory();
         }
