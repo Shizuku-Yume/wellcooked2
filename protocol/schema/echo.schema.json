@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:kitchenos:schema:echo",
+  "title": "echo",
+  "description": "双向：联调第一步。收到 echo 的一端回 echo_reply，token 原样照抄。",
+  "type": "object",
+  "required": ["type", "token"],
+  "properties": {
+    "type": { "const": "echo" },
+    "token": { "type": "string", "description": "任意字符串，用于配对请求与应答。" }
+  },
+  "examples": [{ "type": "echo", "token": "probe-42" }]
+}

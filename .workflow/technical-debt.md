@@ -40,6 +40,22 @@ An entry leaves this file in one of two ways:
 - **Solution:** 抽 `scripts/lib.sh` 的 `resolve_game_dir()`，默认路径只留一份，由各脚本 source；csproj 那份保留为 IDE 直接 build 的兜底并在注释里说明。
 - **Cost:** 小，纯重构；但会给已经审过的任务 01 多加一个文件、移动审查边界，所以留到下一个要碰这些脚本的任务里顺手做。
 
+## one-slot 场景的裕度太薄，负载高时会假失败
+
+- **Where:** `tools/fake_plugin.py` 的 `one-slot` 场景，加 `bridge/tools/worker_stub.c` 的发布节奏
+- **Added:** 2026-10-15
+- **Priority:** worth-doing
+- **Problem:** 该场景断言"被写了槽的厨师至少收到一个 `move`"，但实测裕度只有个位数：单独连跑三次，
+  240 帧里 `move` 分别是 **21 / 7 / 89**；在整批套件里跑（机器同时在编译）时掉到 **0**，场景判 FAIL。
+  同一次失败的桥日志写的是 `slots_missing ... missing=0,1`，worker stub 自报"10 秒里只发布了 166 帧"
+  （30 Hz 应约 300 帧）—— 即失败来自 stub 没跑满，不是协议行为错。
+- **Impact:** 整批套件在负载高的机器上会随机报红，最坏情况是让人去查一个并不存在的并发 bug；也让人
+  不敢相信"10/10 通过"这句话本身。
+- **Solution:** 让 stub 的发布节奏以单调时钟为基准并补偿欠账（现在每轮固定睡 `1/hz`，被调度延迟吃掉
+  的份额不会补回来），或在输出里同时打印 stub 的实际发布帧数、把断言按实际帧数缩放。
+- **Cost:** 中，要动 worker stub 的节奏逻辑。只改断言更便宜，但会把"真的丢了输入"这类回归一起放过，
+  所以先改 stub 这一侧。
+
 ## 工序"就位"卡住后退化成 1.4 米内直接按、不校验朝向
 
 - **Where:** `plugin/WorkOrder.cs`（`_looseApproach`、`_arriveAt`、`_looseApproach ? 1.4f : ReachRadius`）
@@ -67,3 +83,20 @@ An entry leaves this file in one of two ways:
 - **Problem:** 没厨师时用兜底半径 0.35，通道会被判死、连通块虚高；有厨师时用实测半径 0.40，又比游戏自己的通行判定严（游戏网格 1.2 米、厨师连续移动能过 0.9 米的缝），于是"主连通块占比"偏悲观。
 - **Impact:** 挑关卡时会把可用关卡判成"碎"，需要人肉再用 4 邻接复核（任务 09 的 Progress 里就是这么做的）。
 - **Solution:** 评估模式单独放宽边判定（节点仍用真实半径），或在日志里同时给出"严格/宽松"两个数字。
+
+## 两个插件工程并存，状态读取与输入注入各有一份
+
+- **Where:** `plugin/*.cs` + `plugin/WellCooked.Smoke.csproj`（世界状态、导航、工序、关卡接管、调试指令）
+  与 `plugin/WellCooked.Plugin/`（协议编解码、TCP 链路、每帧状态上报、动作注入）
+- **Added:** 2026-10-15
+- **Priority:** worth-doing
+- **Problem:** 两条线并行做插件，合并后仓库里有两个 BepInEx 工程，职责有实质重叠：状态读取有
+  `WorldState.cs`/`Kitchen.cs` 与 `StateReader.cs` 两份，输入注入有 `LogicalInput.cs`+`VirtualPad.cs`
+  与 `InputInjector.cs` 两份。类型名实测不冲突（两边 10 : 4 个类型无交集），所以各自都能编过、
+  互不报错 —— 也正因如此，编译器不会提醒任何人这里重了。
+- **Impact:** 同一条游戏事实（厨师坐标怎么取、交互键是哪个）改一处不改另一处就会漂移；两个工程都往
+  `BepInEx/plugins/` 拷，装哪个、要不要一起装，只能靠人记。
+- **Solution:** 先定一个存活方向再合并：按链路层（协议/上报/注入接口）与游戏控制层（导航/工序/接管）
+  分层，让组员那份当控制层、本分支那份当链路层，共用一套状态读取。`game-bridge.md` 把插件定义成
+  "状态读取、输入注入、TCP 客户端"三件事，正好是两边各做了一半 —— 合并方向在那份 spec 里已经有依据。
+- **Cost:** 大，要动两边共 15 个文件，而且输入注入那条路只有进游戏才能验（本机测不了）。

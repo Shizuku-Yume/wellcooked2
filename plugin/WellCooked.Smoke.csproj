@@ -38,6 +38,14 @@
     </Reference>
   </ItemGroup>
 
+  <!-- 本工程在 plugin/ 根下，而 SDK 的默认 Compile 通配是 **/*.cs：它会把子目录一起吃进来。
+       WellCooked.Plugin/ 是带自己 csproj 和 obj/ 的独立工程（连带它的 obj/*.AssemblyInfo.cs
+       一起编进来会导致程序集特性重复），tools/conformance/ 则是控制台对端。两者都不属于这个
+       冒烟工程，显式排除。 -->
+  <ItemGroup>
+    <Compile Remove="WellCooked.Plugin/**;tools/**" />
+  </ItemGroup>
+
   <!-- 引用游戏自带的 UnityEngine 程序集（2017.4 是模块化布局，名字随版本变，用通配符）。
        以完整路径作为 Reference 的身份，避免按元数据批处理（MSBuild 不支持那种写法）。 -->
   <ItemGroup>

@@ -62,6 +62,211 @@ user may overturn on sight. `Revisit when` of "never" is allowed but suspicious;
 
 ## Entries
 
+## 2026-10-15 - Bridge 同时实现两种 TCP 拓扑，默认监听 0.0.0.0:12345
+
+- **Decided:** Bridge 默认以 server 模式监听 `0.0.0.0:12345`，插件作客户端连入；同时实现
+  `--link connect --host <ip> --port 14455` 模式，由 Bridge 作为客户端去连插件开的服务端。
+  两种模式跑同一套分帧与消息协议。
+- **Instead of:** 只按文档 §2.2.1/§5.1/阶段B 实现 server 模式，把 §6.1、§6.2 里"插件开
+  TCP 服务器 14455、Bridge 作客户端"当作笔误忽略。
+- **Because:** 文档四处表述指向 server 模式（§2.2.1 架构图写死 `TCP Server (0.0.0.0:12345)`、
+  §2.2.1 技术栈表把插件功能写成"TCP客户端"、§5.1 的 C 样例 `htons(12345)` 且注释"调度器侧
+  （服务端）"、阶段B"监听 TCP 端口"），两处（§6.1、§6.2）写反。用户明确要求两个方向的链路
+  都要有。两种拓扑共用连接抽象，额外成本很小，且插件的 TcpLink 本来就支持 client/server
+  双模式，两种都能实机跑。
+- **Mine:** no
+- **Revisit when:** 实机验证证明某一方向在 WSL2 网络模式下不可用（例如 NAT 与 mirrored 模式
+  切换导致 Windows 连不进 WSL2）。
+- **Effort:** bridge
+- **Superseded by:** 2026-10-15 - 端口按组员决策统一成 14455（只推翻默认监听地址与端口那一半；
+  "两种拓扑都要有"仍然成立）
+
+## 2026-10-15 - 帧屏障以 state_update 为帧边界，等待 Worker 而非等待插件
+
+- **Decided:** Bridge 把每个 `state_update` 当作一帧边界，收到后等待全部 N 个 Worker 输入
+  槽就绪（`sem_timedwait` 有上限），超时或槽缺失的厨师下发 idle 动作；它不要求插件在帧内
+  阻塞应答。
+- **Instead of:** 按文档 §5.1 "每帧发送状态消息，阻塞等待输入响应"实现严格的一问一答帧同步，
+  即先改插件让它每帧阻塞。
+- **Because:** 文档 §6.1 同时要求"当 Scheduler/Worker 崩溃时，Bridge 继续运行并向游戏发送
+  idle 输入"，所以 Bridge 无论如何必须能在参与者缺席时继续工作；把屏障定义成"等 Worker 且
+  有超时降级"既满足文档语义，又能在 Scheduler/Worker 尚不存在时独立验证。改插件是插件侧的
+  独立工作量，不该阻塞 Bridge。
+- **Mine:** yes
+- **Revisit when:** Worker 进程落地、需要按真实帧率严格同步时，重新评估是否要求插件帧内应答。
+- **Effort:** bridge
+
+## 2026-10-15 - OS 核心用 C + GNU make，放 bridge/；协议契约放 protocol/
+
+- **Decided:** Linux 侧 OS 核心用 C（C99），构建用 GNU make，代码放 `bridge/`；跨端协议说明与
+  JSON Schema 放 `protocol/`，作为两端唯一契约。
+- **Instead of:** 用 C++17 + CMake，或 Rust + Cargo。
+- **Because:** 文档 §2.2.1 允许 C/C++/Rust。本机 WSL2 里 cmake 与 gdb 都没装而 gcc/make 齐备，
+  课程实验室环境更可能只有 gcc/make。C 与文档里那些 POSIX 调用片段逐行对应，答辩时能直接对照
+  课件讲。
+- **Mine:** yes
+- **Revisit when:** 代码规模增长到手工维护 Makefile 变得昂贵，或需要跨平台构建矩阵。
+- **Effort:** bridge
+
+## 2026-10-15 - JSON 自己写最小解析器，不引第三方库
+
+- **Decided:** 在 `bridge` 内实现只覆盖本项目消息所需子集（对象、数组、字符串、数字、布尔、
+  null）的递归下降解析器与写入器。
+- **Instead of:** 引入 cJSON 或 jansson，把 JSON 解析外包给成熟库。
+- **Because:** 文档 §2.2.1 要求纯 POSIX 技术栈，`.workflow/standards.md` 规定不引入第三方 C 库
+  （实验室机器不能假设能联网装包）。本项目消息结构浅且固定，子集解析器可完整单测。
+- **Mine:** yes
+- **Revisit when:** 协议扩展到需要通用 schema 校验或深层嵌套结构。
+- **Effort:** bridge
+
+## 2026-10-15 - 零长帧当作空消息交付，不当作流失步
+
+- **Decided:** 长度前缀为 0 的帧照常交付（`len == 0` 的一帧），由解析器拒绝该消息并记
+  `parse_error`，连接保持。只有长度前缀越界（< 0 或 > 1 MiB）才断链。
+- **Instead of:** 原实现把 `len == 0` 判为 framing desync 并断开连接。
+- **Because:** `framing.h` 明确承诺会产出 `len == 0` 的帧，参考实现
+  `plugin/WellCooked.Plugin/Net/TcpLink.cs:287` 也只拒绝 `len < 0 || len > MaxFrameBytes`。
+  文档 §5.3 把"消息畸形"（记录并丢弃该消息）与"失步"（付出断连代价）分成两类，空消息属于
+  前者；拿一次连接闪断去换一个解析器本来就会拒绝的帧，代价与收益完全不成比例。
+- **Mine:** yes
+- **Revisit when:** 有第三方实现给零长帧赋予特殊语义（例如当心跳），或协议需要区分
+  "空消息"与"没有消息"。
+- **Effort:** bridge
+
+## 2026-10-15 - 共享状态用 seqlock；就绪信号量另起名字
+
+- **Decided:** 世界状态用 seqlock 保护；"本帧输入已就绪"的通知信号量命名为
+  `/kitchenos_input_ready`，不采用文档代码示例里的 `/kitchenos_sem`。
+- **Instead of:** 走 §6.2.3 的另一条路——用初值为 1 的 `/kitchenos_sem` 当互斥量，
+  由 Bridge 在写临界区前后 `sem_wait`/`sem_post`。
+- **Because:** §6.2.3 原文是"使用 seqlock **或**读写信号量保护"，择一即可。文档 553 行的
+  `/kitchenos_sem` 初值为 1，是**互斥量**那一路的名字；而"通过信号量通知 Bridge 本帧输入
+  已就绪"（869 行）的那个信号量文档没有给名字。本项目的访问模式是 Bridge 单写、
+  Scheduler 与多个 Worker 并发读，正是 seqlock 的适用形状，且读者永不被写者阻塞。
+- **Mine:** yes
+- **Revisit when:** 出现需要写者之间互斥的共享区（seqlock 只解决单写多读），或课程验收
+  明确点名要看到 `sem_wait`/`sem_post` 保护临界区。
+- **Effort:** bridge
+
+## 2026-10-15 - 实机验收不要求改游戏侧配置
+
+- **Decided:** Bridge 的默认监听端口取插件默认连接的那个端口（12345），因此 W8 不需要编辑
+  游戏侧任何配置文件即可完成；插件的 server 模式（14455）保留给相反拓扑使用。
+- **Instead of:** 把"改 `BepInEx/config` 里的 `Network.Host`/`Network.Port`"写进 W8 的步骤。
+- **Because:** 每多一个手改配置的步骤，就多一种"验收失败其实是配置没改"的假失败，而排查
+  这种失败要花的时间远超过它省下的。两边的默认值本来就该指向同一个端口，维持它们相等是
+  零成本的；`127.0.0.1` 若跨不过 WSL2 边界，回退到 WSL IP 是一条命令的事，已写在失败提示里。
+- **Mine:** yes
+- **Revisit when:** 插件的默认端口发生变更，或 Bridge 需要一个不与游戏共存的固定端口。
+- **Effort:** bridge
+- **Superseded by:** 2026-10-15 - 端口按组员决策统一成 14455（端口取值那一半；"实机验收不要
+  求改游戏侧配置"仍然成立，而且现在两端默认值相同，更不需要改）
+
+## 2026-10-15 - 插件由本 effort 补写，两端同轮交付
+
+- **Decided:** bridge effort 连 Windows 侧插件一起交付（`plugin/WellCooked.Plugin`，`a67ea3b`），
+  并把 `protocol/`（README + `schema/`）当作两端唯一契约，而不是假定插件已经存在。
+- **Instead of:** 只交付 Bridge 与它依赖的共享层，把 W8 记为"无法运行"，等后续插件 effort 再补。
+- **Because:** 用户要的是能实机跑通；当时仓库里没有任何插件，Bridge 在真游戏上一天也没跑过，
+  `state_update` 只能来自 `tools/fake_plugin.py`，协议就只能是自测自证。补写插件的成本可控
+  （BepInEx + Harmony + 一个自有 TCP 客户端），换来 W8 从"不可运行"变成"可运行"。
+  这条是**补记**：当时没记，随后几份文档因此把插件当成了"现有实现" —— 见
+  `decisions.md: 2026-10-15 - 零长帧当作空消息交付` 里的"参考实现 `TcpLink.cs:287`"、
+  `protocol/protocol.md` 的开头与 `specs/bridge.md` 的"以插件现有实现为基准"。那些措辞已更正；
+  它们各自的**决定**不受影响。
+- **Mine:** yes
+- **Revisit when:** 出现第三个实现方（例如同学独立写的插件），或课程要求两端由不同人实现 ——
+  那时"两端同轮写成"不再可接受，跨端一致性必须由第三方实现来证。
+- **Effort:** bridge
+
+## 2026-10-15 - 链路存活只看心跳
+
+- **Decided:** Bridge 用"最近一次收到 `heartbeat` 的时间"判断插件是否活着
+  （`--heartbeat-timeout-ms`，默认 3000 ms，0 = 关掉判定），`state_update` 不刷新它；插件侧同理
+  （`Network.HeartbeatTimeoutMs`，默认 0 = 关掉该判定）。
+- **Instead of:** 按文档 §5.3 的字面意思用"任何消息都没来"判定断开（那样 `state_update` 也算
+  活着），或者干脆取消超时判定、只靠 TCP 断连。
+- **Because:** 状态上报高频、心跳低频。若任何消息都算活着，插件持续发状态而心跳线程死掉时
+  Bridge 永远发现不了，"插件还在"与"插件的心跳还在"变成同一件事，暂停/恢复那套逻辑就没意义了。
+  代价是两侧默认余量只有 1 秒（插件 `HeartbeatMs=2000` vs Bridge 3000），已连同四个开关写进
+  `protocol/protocol.md` §3.2 的表格；要更稳就把 `--heartbeat-timeout-ms` 调到 6000，或把插件的
+  `HeartbeatMs` 调小。README §3.2/§4 原先写的"任何消息"与代码不符，已改。
+- **Mine:** yes
+- **Revisit when:** 实机上出现"状态流正常却被判失联"的误断（先看 `logs/bridge.log` 里的
+  `plugin_timeout silent_ms=`），或插件改成由状态上报本身承担心跳。
+- **Effort:** bridge
+
+## 2026-10-15 - 链路不做认证，默认监听 0.0.0.0
+
+- **Decided:** Bridge 与插件之间不做认证与加密。Bridge 默认监听 `0.0.0.0:12345`，任何连上的
+  对端都会被当成插件（新连接顶掉旧连接），它发来的 `state_update` 会写进 `/kitchenos_state`；
+  `--link connect` 模式下 Bridge 发来的 `action` 会被插件当作游戏输入执行。
+- **Instead of:** 在 `hello` 里带一个共享令牌、两端校验，或默认只绑 `127.0.0.1`。
+- **Because:** 单机课设：两端同机，插件默认连 `127.0.0.1`，文档也没要求认证。加令牌要同时改
+  两端并重做一次实机验证，而插件在本机**无法编译**（缺 BepInEx 与游戏程序集），改了也验不了。
+  风险边界写在复核记录里，明说而不是默认：同机或同网段的任何人都能冒充插件、往共享内存灌
+  伪造世界状态、或把 `logs/bridge.log` 刷满（日志不轮转）。解析路径本身没有内存安全问题
+  （长度上限、深度上限、数组上限、真实原子屏障，ASan/UBSan 下 824 项检查全绿）。
+- **Mine:** yes
+- **Revisit when:** 换到多人共用的机器、需要跨网段演示，或端口要暴露到局域网之外。
+- **Effort:** bridge
+- **Superseded by:** 2026-10-15 - 端口按组员决策统一成 14455（只推翻"默认监听 `0.0.0.0`"这一半，
+  也就是"任何连上的对端都成为被服务的插件"那条暴露面；"链路不做认证"本身仍然成立）
+
+## 2026-10-15 - action 枚举扩到 5 个：pickup / dash 上线
+
+- **Decided:** 线上 `action` 从 move/stop/interact 扩到**五个**，补上 `pickup` 与 `dash`：
+  `protocol.h` 加 `PROTO_ACTION_PICKUP` / `PROTO_ACTION_DASH` 与
+  `protocol_build_action_pickup()` / `_dash()`（与 `stop` 共用"只有名字"的构造体），
+  `bridge/src/bridge.c` 的 `build_action_from_slot()` 直接映射这两个 kind，
+  `protocol/protocol.md` §3.6 与 `protocol/schema/action.schema.json` 同步放宽；插件的
+  `press`/`release`/`tap` 仍然只留在插件里。
+- **Instead of:** 保持三种动作，让 `build_action_from_slot()` 把 pickup/dash 降级为 idle stop、
+  只把日志从 DEBUG 提到 WARN（这是复核时 agent 先选的那条路，被用户否掉）。
+- **Because:** 缺口只在 C 侧：插件 `InputInjector` 本来就实现八个动作并在 `hello` 里宣告，
+  `kos_action_kind` 也一直有这两个取值，缺的只是 C 侧不去构造它们 —— 所以这次扩张**不需要碰
+  插件、也不需要 C# 工具链**，可以用 `bridge/tests/test_protocol.c` 的构造/往返用例、
+  `tools/fake_plugin.py` 的 `pickup-dash` 场景（两个 Worker 分别写 pickup/dash，断言原样到达
+  对端）和放宽后的 schema 来验证。只记 WARN 的代价是：Worker 写了 dash 却永远等不到它生效，
+  而那在日志里只是一条"降级"、不是一个错误。
+- **Mine:** no
+- **Revisit when:** 需要按帧精确调度原始按键（`press`/`release`/`tap`），或插件的动作语义与
+  输入槽取值再次分叉。
+- **Effort:** bridge
+
+## 2026-10-15 - 重启时清掉崩溃残留的共享内存，不拒绝启动
+
+- **Decided:** Bridge 启动时用 `KOS_SHM_CREATE` 打开 `/kitchenos_state`；对象已存在就记一条
+  `shm_recreate` WARN、unlink 后重建，而不是报错退出。魔数/结构版本/尺寸校验只用于**挂接**
+  （`KOS_SHM_ATTACH`，Scheduler/Worker 走这条），不匹配就明确拒绝。
+- **Instead of:** 按 spec 早先那句"写 shm 前先确认对端结构版本号，不匹配则拒绝启动"，Bridge
+  遇到任何已存在的段都退出。
+- **Because:** 上一次运行被 SIGKILL 或崩溃之后段会留在 `/dev/shm`。若拒绝启动，用户就得先手工
+  `rm /dev/shm/kitchenos_state*` 才能再跑，而这条命令不在任何文档里 —— 那是个只有作者知道的隐性
+  前置条件。段的唯一写入者就是 Bridge 自己，重建不会破坏别人的数据；真正的多进程读者走 ATTACH，
+  那条路上三项校验一个不少。spec 里那句话已改成这个行为。
+- **Mine:** yes
+- **Revisit when:** 出现第二个长期存活的世界状态写入者，或 Scheduler 需要在 Bridge 重启后沿用
+  上一帧的状态。
+- **Effort:** bridge
+
+## 2026-10-15 - 插件 server 模式单独用 14455，不再与 client 模式共用端口
+
+- **Decided:** 插件新增 `Network.ServerPort`（默认 14455），server 模式监听它；client 模式继续
+  用 `Network.Port`（默认 12345）。Bridge 的 `--link connect` 默认拨 14455 不变。
+- **Instead of:** 把 Bridge 的 `--link connect` 默认端口改成 12345 去迁就插件，让两端继续共用
+  一个端口号。
+- **Because:** 课程文档 §6.2.4 明写"插件在游戏进程内启动 TCP 服务器（localhost:14455）"，而
+  `decisions.md: …实机验收不要求改游戏侧配置` 已经定下"验收不该要求手改游戏侧配置"。共用一个
+  端口号会让这两个要求互相打架：照文档跑相反拓扑必然先撞一次"连不上"，然后才发现要改配置 ——
+  正是那条决策要消灭的假失败。两种模式的默认值各归其位之后，两个方向都按文档默认值直接可用。
+- **Mine:** no
+- **Revisit when:** 需要让同一个游戏实例同时充当 server 与 client，或课程验收要求两种模式共用
+  一个端口号。
+- **Effort:** bridge
+- **Superseded by:** 2026-10-15 - 端口按组员决策统一成 14455（两种模式现在就是共用一个端口号：
+  这正是本条目 `Revisit when` 里那两个条件之一，由用户裁定触发）
+
 ## 2026-10-14 - OS 核心用 C11
 
 - **Decided:** Supervisor、Scheduler、Worker、Bridge 四个进程用 C11 + 纯 POSIX API 实现。
@@ -104,7 +309,80 @@ user may overturn on sight. `Revisit when` of "never" is allowed but suspicious;
 - **Mine:** yes.
 - **Revisit when:** 关卡内的动作指令（移动、交互）在设备层表达不了，或游戏改版换掉 InControl。
 - **Effort:** game-bridge
+- **Superseded by:** 2026-10-15 - 输入注入改走逻辑层（借 gua248/Overcooked2-TAS 的方案）（正是本条
+  `Revisit when` 的第一个条件触发的：任务 09 在"切菜键是 X 不是 A"上丢过一次交互。本条对**前端**
+  的结论仍然成立 —— 前端加入走设备层）
 
+## 2026-10-15 - 分帧改成一行一条 JSON，不再用 4 字节长度前缀
+
+- **Decided:** TCP 上的消息边界改成一个 `\n`（0x0A）：一帧 = UTF-8 JSON 载荷 + `\n`，载荷上限
+  仍是 1 MiB（不含 `\n`，`TcpLink.MaxFrameBytes` 不变）。契约写在 `protocol/protocol.md` §1；
+  三处实现一起改：`bridge/src/framing.c`、`plugin/WellCooked.Plugin/Net/TcpLink.cs`、
+  `tools/fake_plugin.py`。`FRAMING_HEADER_LEN` 与 `framing_peek_length()` 删除，换成
+  `FRAMING_TERMINATOR`/`FRAMING_TERMINATOR_LEN`/`FRAMING_MAX_FRAME`。
+- **Instead of:** 保留 4 字节大端长度前缀（当时三处实现已经写完并且跑绿，改它是纯粹的返工）。
+- **Because:**
+  - 队友的 `.workflow/specs/game-bridge.md` "关键接口"写的是"一行一条 JSON，UTF-8，`\n` 结尾"，
+    而 `overcooked_os_course_project.md` 对分帧一个字也没写。两份文档冲突时前者是唯一的书面
+    分帧契约，长度前缀只是我们自己挑的实现方式，没有文档背书。
+  - 文档 §5.3 把"JSON 解析失败：记录错误日志，丢弃该消息"归为可恢复错误。换行分帧能在下一个
+    `\n` 重新对齐，坏消息只丢它自己；前缀分帧读到一个坏长度就无法定位下一条，只能断链——
+    一个字节的错要拿一次连接闪断去换。
+  - 删除而不替换 `framing_peek_length()`：它存在只是为了让调用方先看一眼前缀长度。行分帧下
+    "这一行不可能存在"（无 `\n` 且超过上限）与"还没到齐"由解码器自己的 `FRAMING_ERR_LENGTH`
+    与 `FRAMING_NEED_MORE` 分开回答，再留一个 peek 只会多一处能和线格式说法不一致的地方。
+  - "空行"= 空消息的结论不变（decisions.md: 2026-10-15 - 零长帧当作空消息交付）：空行照样交付
+    `len == 0`，由解析器拒绝该消息并记 `parse_error`，连接保持；只有"这一行永远不会结束"
+    （超过上限仍无 `\n`）才断链。
+- **Mine:** yes
+- **Revisit when:** 需要在线格式里传二进制（非 UTF-8）载荷，或某个对端要求消息体里能出现裸 `\n`
+  ——那时要么恢复长度前缀，要么给载荷加转义。
+- **Effort:** bridge
+
+## 2026-10-15 - 端口按课程文档 §5.1：Bridge 作服务端绑 12345，14455 留作反向模式
+
+- **Decided:** Bridge 默认 `--link listen` 绑 `0.0.0.0:12345` 作服务端、插件作客户端连
+  `127.0.0.1:12345`；`--link connect` 默认拨 `127.0.0.1:14455`、插件 `Network.Mode=server`
+  默认监听 14455。据此订正 `.workflow/specs/game-bridge.md` 的关键接口行（原文写"Bridge 监听
+  `127.0.0.1:14455`（跨机时改绑定地址），插件作为客户端连接"）。
+- **Instead of:** 照组员 spec 那句话把 Bridge 的默认监听端口改成 14455，让端口号与那份 spec 一致。
+- **Because:** 那句话与课程文档两处都对不上。文档 §5.1 的示例代码写明 `// 调度器侧（服务端）`
+  绑 `INADDR_ANY` + `sin_port = htons(12345)`、`// 游戏插件侧（客户端）` 写
+  `client.Connect("localhost", 12345)`；而 §6.1/§6.2.4 说在 14455 上起服务端的是**插件**。
+  组员那句取的是 §6.1 的端口号、用的是 §5.1 的角色分配，两边都不符，而 `standards.md` 明写
+  "代码与课程文档冲突时以课程文档为准"。§5.1 那套是文档里唯一自洽的读法，也是本实现原来的
+  默认值；§6.1/§6.2.4 那套按你的裁定实现为可切换的反向模式，两套都跑得通，所以不需要牺牲任何
+  一边。**这是本仓库里唯一一处改了队友文档陈述的地方**，若组员认为该以 14455 为默认，改回来只是
+  `bridge/src/bridge.c` 的 `DEFAULT_LISTEN_PORT` 加两处文档。
+- **Mine:** yes
+- **Revisit when:** 组员指出验收环境里 `127.0.0.1:14455` 已由别的服务占用，或课程验收明确要求
+  Bridge 监听 14455。
+- **Effort:** bridge
+- **Superseded by:** 2026-10-15 - 端口按组员决策统一成 14455（用户裁定以组员决策为默认值；本条
+  的推理过程保留在这里，因为它是"两份文档冲突时怎么判"的唯一记录）
+
+## 2026-10-15 - 与 game-bridge 方案对齐目录名、文档名与上报节奏
+
+- **Decided:** 按组员已有代码与文档对齐四处：Linux 侧源码目录 `core/` → `bridge/`（组员
+  `standards.md` 的 Layout 命名，其 `.gitignore` 也已预留 `bridge/*.o`）；协议文档
+  `protocol/README.md` → `protocol/protocol.md`（组员 spec 指定落点）；心跳超时默认
+  3000 → 5000 ms 与插件重连间隔 3000 → 2000 ms（组员 spec 的失败行为与"2 秒后重试"）；状态
+  上报由 500 ms 间隔改为每帧（组员 spec、`glossary.md` 的世界状态定义、方案 §5.1"每帧发送
+  状态消息"）。分帧一项另见上一条。
+- **Instead of:** 让两套设计在同一个仓库里并存 —— 两份 `standards.md`、两个源码目录名、两种
+  分帧、两个端口归属。两边单看都不算错，但没人能照着一份文档把东西跑起来，而"照文档跑不起来"
+  正是这次对齐要消灭的东西。
+- **Because:** 两个 effort 从同一起点各自开工且互相看不见：组员的 `game-bridge` spec 说"仓库里
+  还只有文档和汇报材料"，我这边也确认基线 `b61b6f7` 下一个 `plugin/` 文件都没有。分帧与源码
+  目录这两件事课程文档根本没写（`grep` 分帧/长度前缀/换行/分隔符/粘包/大端**零命中**；§6.6
+  的"建议目录"只列 `config/ runs/ logs/ /var/run/`，没有源码目录），端口则自相矛盾 —— 空白处
+  两个人各填各的，必然不同。已有文档能判的地方按文档判，判不了的地方才新增选择。每帧上报这条
+  不是新增选择：它是组员 spec 与我们 `glossary.md` 共同的定义，原来的 500 ms 才是我自己加的
+  限流，阈值 `IntervalMs=0`（每帧）留作默认、正数仍可限流。
+- **Mine:** no
+- **Revisit when:** 组员那边的 `scripts/` 与这边的 `tools/` 需要合并成一套，或每帧上报在实机上
+  产生明显开销（那时限流阈值一行配置即可回调）。
+- **Effort:** bridge
 ## 2026-10-15 - 相似项目只作设计参考，不新增代码来源
 
 - **Decided:** 本轮调研（`.workflow/maps/prior-art.md`）发现的相似项目一律只作设计参考，不复制代码：
@@ -209,3 +487,34 @@ user may overturn on sight. `Revisit when` of "never" is allowed but suspicious;
 - **Mine:** yes.
 - **Revisit when:** 游戏改版换掉 `ControlSchemeData` 的字段，或逻辑层注入影响联机同步。
 - **Effort:** game-bridge
+
+## 2026-10-15 - 端口按组员决策统一成 14455
+
+- **Decided:** 链路默认端口 **14455**，两种模式同号：Bridge `--link listen` 默认绑
+  `127.0.0.1:14455`，`--link connect` 默认拨 `127.0.0.1:14455`；插件 `Network.Port` 与
+  `Network.ServerPort` 默认也都是 14455。默认绑定地址两侧都是 loopback。课程文档 §5.1 样例里的
+  12345 与 `INADDR_ANY` 不再作默认值，但仍是合法的覆盖值（`--port` / `--host` /
+  `Network.ListenAddress`）。
+- **Instead of:** 保留上一轮按 §5.1 定的 `0.0.0.0:12345`，把组员"默认仍是 `127.0.0.1:14455`"
+  当成需要被纠正的陈旧表述。这是本轮唯一被推翻的自家决策，推理过程留在上一条里。
+- **Because:** 两条推理指向相反方向，都摆出来。
+  - 支持 12345：方案 §5.1 的示例代码（`// 调度器侧（服务端）` + `htons(12345)`）与 §2.2.1 架构图
+    `TCP Server (0.0.0.0:12345)`，以及 `standards.md` 的"代码与课程文档冲突时以课程文档为准"。
+  - 支持 14455：组员的决策条目与 `game-bridge.md` 两处一致，是团队里对这个问题唯一做过的显式
+    决策。而课程文档自相矛盾（§6.1/§6.2.4 说 14455 上起服务端的是插件），所以"以课程文档为准"
+    这条规则在这里指不出方向 —— 它能裁决"代码 vs 文档"，裁决不了"文档 vs 文档"。
+  - 用户裁定取组员决策。好处是组员的 spec 一个字符都不用改：他那行原文就是"Bridge 监听
+    `127.0.0.1:14455`（跨机时改绑定地址），插件作为客户端连接并在 2 秒后重试"，现在代码与它
+    逐字相符，团队文档自洽；代价是课程文档 §5.1 的 4 处 12345 与默认值不一致，已在
+    `specs/bridge.md` 的逐条对照里写明，并给出覆盖方式。
+  - 绑 loopback 那一半是独立判断：链路没有认证，绑 `0.0.0.0` 等于让同网段任何人冒充插件（那条
+    暴露面曾作为已知风险记录在案）。原先"WSL2 的 localhost 转发够不到只绑回环的监听器"的担心
+    **经实测证伪**：WSL2 里绑 `127.0.0.1:12399`、`ss` 确认在听、从 Windows 连接成功，所以 W8 的
+    Windows→WSL2 路径不受影响。`0.0.0.0` 留给跨机演示，由 `--host` 显式选择。
+  - 组员那条的 `Because`（参考项目的插件在同一个 loopback 端口跑 Thrift，写死的端口会撞）其实
+    指向**避开** 14455；但它同时给的缓解办法是"做成可配置"，而本实现已经满足（Bridge `--port`、
+    插件 `Network.Port`/`ServerPort`/`ListenAddress`），真的撞上时改一个配置项即可。
+- **Mine:** no
+- **Revisit when:** 验收明确要求默认值与 §5.1 样例一致，或参考项目 mod 与本实现同机同时运行并
+  真的撞上 14455。
+- **Effort:** bridge

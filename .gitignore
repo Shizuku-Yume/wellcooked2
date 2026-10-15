@@ -1,13 +1,21 @@
-# C# 构建产物
-plugin/bin/
-plugin/obj/
-
-# C 构建产物（bridge effort）
-bridge/*.o
-bridge/bridge
+# 运行时产物：文档 §6.6 规定的日志与运行记录目录，由程序自己创建
+logs/
+runs/
 
 # 运行日志
 *.log
+
+# 场景 harness 的临时输出
+tools/__pycache__/
+*.pyc
+
+# C 构建产物由 bridge/.gitignore 负责，这里不重复；这两条是按组员原有的命名习惯留的
+bridge/*.o
+bridge/bridge
+
+# C# 构建产物
+plugin/bin/
+plugin/obj/
 
 # 游戏目录是外部依赖：仓库只放插件源码和部署脚本，不提交游戏与 BepInEx 二进制
 BepInEx/
