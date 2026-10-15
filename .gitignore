@@ -2,8 +2,22 @@
 logs/
 runs/
 
+# 运行日志
+*.log
+
 # 场景 harness 的临时输出
 tools/__pycache__/
 *.pyc
 
-# C 构建产物由 core/.gitignore 负责，这里不重复
+# C 构建产物由 core/.gitignore 负责，这里不重复；bridge/ 是组员那套命名
+bridge/*.o
+bridge/bridge
+
+# C# 构建产物
+plugin/bin/
+plugin/obj/
+
+# 游戏目录是外部依赖：仓库只放插件源码和部署脚本，不提交游戏与 BepInEx 二进制
+BepInEx/
+winhttp.dll
+doorstop_config.ini
