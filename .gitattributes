@@ -3,15 +3,11 @@
 .workflow/glossary.md merge=union
 # workflow:end
 
-# OS 核心与工具在 WSL/Linux 里执行，而 WSL 直接读写这个 Windows 工作树（/mnt/d）。
-# core.autocrlf=true 会把脚本检出成 CRLF，bash 报 "$'\r': command not found"，make 也可能
-# 在续行处出错，所以这些文件必须锁死 LF：Windows 和 WSL 看到的是同一份字节。
-*.sh                   text eol=lf
-*.c                    text eol=lf
-*.h                    text eol=lf
-Makefile               text eol=lf
-*.mk                   text eol=lf
-*.py                   text eol=lf
-*.json                 text eol=lf
-*.jsonl                text eol=lf
-.workflow/bin/workflow text eol=lf
+# 这个仓库被 Windows 侧的编辑器和 WSL 共享同一个工作树，两边都会往里写。
+# 索引里所有文本文件存的都是 LF，而 Windows 侧工具习惯写成 CRLF，于是：
+#   - git status 长期显示 50 多个"已修改"的假改动，真实改动淹没在里面；
+#   - 一次 git add 就会把整个文件从 LF 转成 CRLF。真实发生过：一次只追加约 40 行的
+#     提交变成了 160 增 / 119 删，整份文件被重写。
+# 统一声明为文本并锁死 LF：比较和提交时都会归一化，假改动消失，也再不可能被误提交。
+# 图片等二进制文件由 text=auto 自动排除，不受影响。
+* text=auto eol=lf
