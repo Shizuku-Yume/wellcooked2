@@ -65,7 +65,7 @@ WSL_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
 say "=================================================================="
 say " 正在启动 Bridge：$HOST:$PORT"
 say " 日志：$LOG"
-"$BIN" --link listen --host "$HOST" --port "$PORT" --log "$LOG" &
+"$BIN" --link listen --host "$HOST" --port "$PORT" --log "$LOG" --verbose &
 BRIDGE_PID=$!
 sleep 1
 
@@ -110,6 +110,21 @@ while :; do
         say " 证据（bridge.log 摘录）："
         grep -m 2 "plugin_hello" "$LOG" | sed 's/^/   /'
         grep -m 3 "state_update" "$LOG" | sed 's/^/   /'
+        # state_update 只证明"游戏在往这边发状态"，不证明"发的是关卡里的状态"。
+        # 判据本身来自文档，不该被语义内容绑架；但内容为空时必须明说，
+        # 否则一次停在菜单里的运行会被当成关卡联调成功。
+        summary=$(grep "state_summary" "$LOG" | tail -n 1)
+        if [ -n "$summary" ]; then
+            say ""
+            say " 最近一次状态摘要："
+            say "   $summary"
+            if echo "$summary" | grep -q "chefs=0"; then
+                say ""
+                say " 注意：状态帧确实在正常到达（帧号在涨就是证据），但游戏报告的内容是空的"
+                say "       （chefs=0）—— 通常是还停在菜单/大厅，没有进入关卡。"
+                say "       判定标准本身已满足；若验收要求的是关卡内的状态，进入关卡后再跑一次即可。"
+            fi
+        fi
         say "------------------------------------------------------------------"
         exit 0
     fi
