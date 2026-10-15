@@ -1,0 +1,306 @@
+{
+  "nodes": [
+    {
+      "id": "cook:SteamedSpecial_Carrot",
+      "op": "cook",
+      "label": "SteamedSpecial_Carrot",
+      "resource": "cooker",
+      "duration": 5.0
+    },
+    {
+      "id": "cook:SteamedSpecial_Fish",
+      "op": "cook",
+      "label": "SteamedSpecial_Fish",
+      "resource": "cooker",
+      "duration": 5.0
+    },
+    {
+      "id": "cook:SteamedSpecial_Meat",
+      "op": "cook",
+      "label": "SteamedSpecial_Meat",
+      "resource": "cooker",
+      "duration": 5.0
+    },
+    {
+      "id": "cook:SteamedSpecial_Prawns",
+      "op": "cook",
+      "label": "SteamedSpecial_Prawns",
+      "resource": "cooker",
+      "duration": 5.0
+    },
+    {
+      "id": "deliver:SteamedSpecial_Carrot",
+      "op": "deliver",
+      "label": "SteamedSpecial_Carrot",
+      "resource": "serving",
+      "duration": 1.0
+    },
+    {
+      "id": "deliver:SteamedSpecial_Fish",
+      "op": "deliver",
+      "label": "SteamedSpecial_Fish",
+      "resource": "serving",
+      "duration": 1.0
+    },
+    {
+      "id": "deliver:SteamedSpecial_Meat",
+      "op": "deliver",
+      "label": "SteamedSpecial_Meat",
+      "resource": "serving",
+      "duration": 1.0
+    },
+    {
+      "id": "deliver:SteamedSpecial_Prawns",
+      "op": "deliver",
+      "label": "SteamedSpecial_Prawns",
+      "resource": "serving",
+      "duration": 1.0
+    },
+    {
+      "id": "fetch:Carrot",
+      "op": "fetch",
+      "label": "Carrot",
+      "resource": "dispenser",
+      "duration": 1.0,
+      "ingredient": "carrot",
+      "workable": true
+    },
+    {
+      "id": "fetch:Flour",
+      "op": "fetch",
+      "label": "Flour",
+      "resource": "dispenser",
+      "duration": 1.0,
+      "ingredient": "flour",
+      "workable": false
+    },
+    {
+      "id": "fetch:Meat",
+      "op": "fetch",
+      "label": "Meat",
+      "resource": "dispenser",
+      "duration": 1.0,
+      "ingredient": "meat",
+      "workable": true
+    },
+    {
+      "id": "fetch:Prawn",
+      "op": "fetch",
+      "label": "Prawn",
+      "resource": "dispenser",
+      "duration": 1.0,
+      "ingredient": "prawn",
+      "workable": true
+    },
+    {
+      "id": "fetch:UncookedFish",
+      "op": "fetch",
+      "label": "UncookedFish",
+      "resource": "dispenser",
+      "duration": 1.0,
+      "ingredient": "fish",
+      "workable": true
+    },
+    {
+      "id": "mix:MixedFlourCarrot",
+      "op": "mix",
+      "label": "MixedFlourCarrot",
+      "resource": "mixer",
+      "duration": 5.0
+    },
+    {
+      "id": "mix:MixedFlourMeat",
+      "op": "mix",
+      "label": "MixedFlourMeat",
+      "resource": "mixer",
+      "duration": 5.0
+    },
+    {
+      "id": "mix:MixedFlourPrawns",
+      "op": "mix",
+      "label": "MixedFlourPrawns",
+      "resource": "mixer",
+      "duration": 5.0
+    },
+    {
+      "id": "plate:SteamedSpecial_Carrot",
+      "op": "plate",
+      "label": "SteamedSpecial_Carrot",
+      "resource": "plate_stack",
+      "duration": 2.0
+    },
+    {
+      "id": "plate:SteamedSpecial_Fish",
+      "op": "plate",
+      "label": "SteamedSpecial_Fish",
+      "resource": "plate_stack",
+      "duration": 2.0
+    },
+    {
+      "id": "plate:SteamedSpecial_Meat",
+      "op": "plate",
+      "label": "SteamedSpecial_Meat",
+      "resource": "plate_stack",
+      "duration": 2.0
+    },
+    {
+      "id": "plate:SteamedSpecial_Prawns",
+      "op": "plate",
+      "label": "SteamedSpecial_Prawns",
+      "resource": "plate_stack",
+      "duration": 2.0
+    }
+  ],
+  "edges": [
+    [
+      "cook:SteamedSpecial_Carrot",
+      "plate:SteamedSpecial_Carrot"
+    ],
+    [
+      "cook:SteamedSpecial_Fish",
+      "plate:SteamedSpecial_Fish"
+    ],
+    [
+      "cook:SteamedSpecial_Meat",
+      "plate:SteamedSpecial_Meat"
+    ],
+    [
+      "cook:SteamedSpecial_Prawns",
+      "plate:SteamedSpecial_Prawns"
+    ],
+    [
+      "fetch:Carrot",
+      "mix:MixedFlourCarrot"
+    ],
+    [
+      "fetch:Flour",
+      "mix:MixedFlourCarrot"
+    ],
+    [
+      "fetch:Flour",
+      "mix:MixedFlourMeat"
+    ],
+    [
+      "fetch:Flour",
+      "mix:MixedFlourPrawns"
+    ],
+    [
+      "fetch:Meat",
+      "mix:MixedFlourMeat"
+    ],
+    [
+      "fetch:Prawn",
+      "mix:MixedFlourPrawns"
+    ],
+    [
+      "fetch:UncookedFish",
+      "cook:SteamedSpecial_Fish"
+    ],
+    [
+      "mix:MixedFlourCarrot",
+      "cook:SteamedSpecial_Carrot"
+    ],
+    [
+      "mix:MixedFlourMeat",
+      "cook:SteamedSpecial_Meat"
+    ],
+    [
+      "mix:MixedFlourPrawns",
+      "cook:SteamedSpecial_Prawns"
+    ],
+    [
+      "plate:SteamedSpecial_Carrot",
+      "deliver:SteamedSpecial_Carrot"
+    ],
+    [
+      "plate:SteamedSpecial_Fish",
+      "deliver:SteamedSpecial_Fish"
+    ],
+    [
+      "plate:SteamedSpecial_Meat",
+      "deliver:SteamedSpecial_Meat"
+    ],
+    [
+      "plate:SteamedSpecial_Prawns",
+      "deliver:SteamedSpecial_Prawns"
+    ]
+  ],
+  "dishes": [
+    {
+      "dish": "SteamedSpecial_Fish",
+      "score": 40,
+      "root": "cook:SteamedSpecial_Fish",
+      "nodes": [
+        "fetch:UncookedFish",
+        "cook:SteamedSpecial_Fish",
+        "plate:SteamedSpecial_Fish",
+        "deliver:SteamedSpecial_Fish"
+      ]
+    },
+    {
+      "dish": "SteamedSpecial_Prawns",
+      "score": 60,
+      "root": "cook:SteamedSpecial_Prawns",
+      "nodes": [
+        "fetch:Flour",
+        "fetch:Prawn",
+        "mix:MixedFlourPrawns",
+        "cook:SteamedSpecial_Prawns",
+        "plate:SteamedSpecial_Prawns",
+        "deliver:SteamedSpecial_Prawns"
+      ]
+    },
+    {
+      "dish": "SteamedSpecial_Meat",
+      "score": 80,
+      "root": "cook:SteamedSpecial_Meat",
+      "nodes": [
+        "fetch:Flour",
+        "fetch:Meat",
+        "mix:MixedFlourMeat",
+        "cook:SteamedSpecial_Meat",
+        "plate:SteamedSpecial_Meat",
+        "deliver:SteamedSpecial_Meat"
+      ]
+    },
+    {
+      "dish": "SteamedSpecial_Carrot",
+      "score": 80,
+      "root": "cook:SteamedSpecial_Carrot",
+      "nodes": [
+        "fetch:Carrot",
+        "fetch:Flour",
+        "mix:MixedFlourCarrot",
+        "cook:SteamedSpecial_Carrot",
+        "plate:SteamedSpecial_Carrot",
+        "deliver:SteamedSpecial_Carrot"
+      ]
+    }
+  ],
+  "durations": {
+    "source": "plan-§6.5-default（未实测；任务 12 拿到真实进度后再改）",
+    "seconds": {
+      "fetch": 1.0,
+      "cook": 5.0,
+      "mix": 5.0,
+      "assemble": 1.0,
+      "plate": 2.0,
+      "deliver": 1.0
+    }
+  },
+  "notes": [
+    "节点 id = 工序:游戏里的节点名，两道菜共用同一中间产物时只有一个节点",
+    "工时是方案 §6.5 的默认值，不是实测值",
+    "菜谱树里没有\"切\"这道工序：`fetch` 节点带 `workable`（料箱 prefab 上有没有 WorkableItem）作为事实，",
+    "要不要切由游戏决定，本文件不替它下结论（早先按 WorkableItem 自动插 chop 节点会给出多余的工序）"
+  ],
+  "scene": "s_city_h5",
+  "generated": {
+    "at": "2026-10-15T23:22:23+0800",
+    "state_t": 214.7,
+    "sources": [
+      "wellcooked-state.json",
+      "wellcooked-terrain.json"
+    ]
+  }
+}

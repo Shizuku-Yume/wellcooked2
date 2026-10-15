@@ -118,6 +118,9 @@ namespace WellCooked
                 case "order":
                     DumpOrder();
                     break;
+                case "menu":
+                    Orders.DumpMenu();
+                    break;
                 case "orders":
                     if (value == "reload")
                     {
