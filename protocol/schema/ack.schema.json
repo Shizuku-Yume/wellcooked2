@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:kitchenos:schema:ack",
+  "title": "ack",
+  "description": "双向：对一条 action 的执行回执。ok 必须是 JSON 布尔，不接受字符串 \"true\"。",
+  "type": "object",
+  "required": ["type", "action", "chef_id", "ok"],
+  "properties": {
+    "type": { "const": "ack" },
+    "action": { "type": "string", "description": "被回执的动作名。" },
+    "chef_id": { "type": "integer", "minimum": 0, "description": "哪个厨师。" },
+    "ok": { "type": "boolean", "description": "是否执行成功。" },
+    "detail": { "type": "string", "description": "失败原因等可读文本。" }
+  },
+  "examples": [
+    { "type": "ack", "action": "move", "chef_id": 1, "ok": true, "detail": "ok" },
+    { "type": "ack", "action": "interact", "chef_id": 2, "ok": false, "detail": "no such object" }
+  ]
+}

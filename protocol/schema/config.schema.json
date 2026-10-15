@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:kitchenos:schema:config",
+  "title": "config",
+  "description": "Bridge → 插件：把调度策略与订单计划告诉插件。",
+  "type": "object",
+  "required": ["type", "strategy"],
+  "properties": {
+    "type": { "const": "config" },
+    "strategy": {
+      "type": "string",
+      "description": "策略名，例如 EDF。调度决策属于 Scheduler，Bridge 只转发。"
+    },
+    "order_list": {
+      "type": "array",
+      "maxItems": 32,
+      "items": {
+        "type": "object",
+        "required": ["id"],
+        "properties": {
+          "id": { "type": "string", "description": "例如 order_001。" },
+          "recipe": { "type": "string", "description": "例如 salad。" },
+          "arrival_time": { "type": "number", "description": "到达时刻。" },
+          "deadline": { "type": "number", "description": "截止时刻。" }
+        }
+      }
+    }
+  },
+  "examples": [
+    {
+      "type": "config",
+      "strategy": "EDF",
+      "order_list": [
+        { "id": "order_001", "recipe": "salad", "arrival_time": 10, "deadline": 60 }
+      ]
+    }
+  ]
+}

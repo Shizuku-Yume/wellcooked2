@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:kitchenos:schema:hello",
+  "title": "hello",
+  "description": "双向：连接建立后说明身份。Bridge 的 instance 固定为 linux-bridge。",
+  "type": "object",
+  "required": ["type", "instance", "version"],
+  "properties": {
+    "type": { "const": "hello" },
+    "instance": {
+      "type": "string",
+      "description": "本端身份。Bridge 侧为 linux-bridge。"
+    },
+    "version": {
+      "type": "string",
+      "description": "协议版本，当前 0.1.0，与插件 WellCooked.Plugin 版本对齐。"
+    },
+    "actions": {
+      "type": "array",
+      "maxItems": 32,
+      "items": { "type": "string" },
+      "description": "本端支持的动作名，例如 move / stop / interact。"
+    }
+  },
+  "examples": [
+    {
+      "type": "hello",
+      "instance": "linux-bridge",
+      "version": "0.1.0",
+      "actions": ["move", "stop", "interact"]
+    }
+  ]
+}

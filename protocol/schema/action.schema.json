@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:kitchenos:schema:action",
+  "title": "action",
+  "description": "Bridge → 插件：让某个厨师做一件事。stop 是空转动作，输入槽缺失或超时时下发。",
+  "type": "object",
+  "required": ["type", "chef_id", "action"],
+  "properties": {
+    "type": { "const": "action" },
+    "chef_id": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "目标厨师。"
+    },
+    "action": {
+      "enum": ["move", "stop", "interact"],
+      "description": "move 需要 target；interact 需要 target_object；stop 不需要附加字段。"
+    },
+    "target": {
+      "type": "object",
+      "required": ["x", "y"],
+      "properties": {
+        "x": { "type": "number" },
+        "y": { "type": "number" }
+      },
+      "description": "move 的目标坐标。"
+    },
+    "target_object": {
+      "type": "string",
+      "description": "interact 的目标，例如 cutting_board_0；与 resources 的键同名。"
+    },
+    "button": { "type": "string", "description": "附加按键，插件透传给游戏。" },
+    "hold_ms": { "type": "number", "description": "长按时长。" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "action": { "const": "move" } }, "required": ["action"] },
+      "then": { "required": ["target"] }
+    },
+    {
+      "if": { "properties": { "action": { "const": "interact" } }, "required": ["action"] },
+      "then": { "required": ["target_object"] }
+    }
+  ],
+  "examples": [
+    { "type": "action", "chef_id": 0, "action": "move", "target": { "x": 12, "y": 6 } },
+    { "type": "action", "chef_id": 1, "action": "interact", "target_object": "cutting_board_0" },
+    { "type": "action", "chef_id": 1, "action": "stop" }
+  ]
+}

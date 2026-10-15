@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:kitchenos:schema:heartbeat",
+  "title": "heartbeat",
+  "description": "双向保活。插件每 500ms 发一次；对端超过阈值没收到任何消息（不只看心跳）即判定断开。",
+  "type": "object",
+  "required": ["type", "timestamp"],
+  "properties": {
+    "type": { "const": "heartbeat" },
+    "timestamp": {
+      "type": "integer",
+      "description": "Unix 秒。"
+    }
+  },
+  "examples": [{ "type": "heartbeat", "timestamp": 1234567890 }]
+}

@@ -1,0 +1,9 @@
+# 运行时产物：文档 §6.6 规定的日志与运行记录目录，由程序自己创建
+logs/
+runs/
+
+# 场景 harness 的临时输出
+tools/__pycache__/
+*.pyc
+
+# C 构建产物由 core/.gitignore 负责，这里不重复
