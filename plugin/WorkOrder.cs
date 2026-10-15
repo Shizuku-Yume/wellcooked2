@@ -159,6 +159,10 @@ namespace WellCooked
 
             var chef = chefs.FirstOrDefault(c => c.Slot == _slot);
             _lastChef = chef;
+            if (chef != null)
+            {
+                Kitchen.LastKnownPosition = chef.Position;
+            }
             if (chef == null)
             {
                 Fail(now, "这个厨师位没有厨师了");

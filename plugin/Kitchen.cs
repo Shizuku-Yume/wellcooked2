@@ -103,29 +103,54 @@ namespace WellCooked
         /// <summary>盘子堆（干净的盘子，拿一个就少一个）。</summary>
         public static Station PlateStack()
         {
-            foreach (var typeName in new[] { "ClientCleanPlateStack", "ClientPlate" })
-            {
-                foreach (var component in WorldState.FindAll(typeName))
-                {
-                    var unity = component as Component;
-                    if (unity == null)
-                    {
-                        continue;
-                    }
+            // 挑**最近的有盘子的干净盘子堆**：原来的写法取第一个 ClientCleanPlateStack，
+            // 结果挑到回收口（workstation_plate_return）或者空的堆，站在那儿按 A 什么也拿不到
+            // （实测 4/6 卡死在 equipment_plate_01 / workstation_plate_return）。
+            var from = LastKnownPosition;
+            Station best = null;
+            float bestDistance = float.MaxValue;
 
-                    var p = unity.transform.position;
-                    return new Station
+            foreach (var component in WorldState.FindAll("ClientCleanPlateStack"))
+            {
+                var unity = component as Component;
+                if (unity == null)
+                {
+                    continue;
+                }
+
+                var name = unity.gameObject.name;
+                if (name.IndexOf("return", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    continue; // 洗盘回收口，不是拿盘子的地方
+                }
+
+                var count = WorldState.Get(component, "GetCount");
+                if (count is int plates && plates <= 0)
+                {
+                    continue; // 空的
+                }
+
+                var p = unity.transform.position;
+                var position = new Vector2(p.x, p.z);
+                float distance = Vector2.Distance(position, from);
+                if (distance < bestDistance)
+                {
+                    bestDistance = distance;
+                    best = new Station
                     {
-                        Type = typeName,
-                        Name = unity.gameObject.name,
-                        Position = new Vector2(p.x, p.z),
+                        Type = "ClientCleanPlateStack",
+                        Name = name,
+                        Position = position,
                         Component = unity
                     };
                 }
             }
 
-            return null;
+            return best;
         }
+
+        /// <summary>最近一次已知的厨师位置，用来挑"离我最近的工位"。</summary>
+        public static Vector2 LastKnownPosition = new Vector2(0f, 0f);
 
         /// <summary>
         /// 空台面（可以放东西的普通台面）。
