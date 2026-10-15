@@ -256,6 +256,80 @@ namespace WellCooked
             return collider == null ? "（空）" : collider.gameObject.name;
         }
 
+        /// <summary>
+        /// 砧板（挂着 `ClientWorkstation` 的台面）。鱼要在这上面切——生鱼不能直接装盘。
+        /// 优先挑上面已经有料的那块（多半就是自己刚放上去的）。
+        /// </summary>
+        public static Station ChoppingBoard()
+        {
+            Station fallback = null;
+            foreach (var component in WorldState.FindAll("ClientWorkstation"))
+            {
+                var unity = component as Component;
+                if (unity == null)
+                {
+                    continue;
+                }
+
+                var attach = unity.GetComponent("ClientAttachStation");
+                var item = attach == null ? null : WorldState.Get(attach, "m_item") as Component;
+                var p = unity.transform.position;
+                var station = new Station
+                {
+                    Type = "ChoppingBoard",
+                    Name = unity.gameObject.name,
+                    Position = new Vector2(p.x, p.z),
+                    Component = unity
+                };
+
+                if (item != null)
+                {
+                    return station; // 上面有东西，就是它了
+                }
+
+                if (fallback == null)
+                {
+                    fallback = station;
+                }
+            }
+
+            return fallback;
+        }
+
+        /// <summary>砧板上那块料的切割进度（0..1）与是否切好。</summary>
+        public static bool WorkProgress(Vector2 station, out float progress, out bool finished)
+        {
+            progress = 0f;
+            finished = false;
+            int ix, iz;
+            if (!WorldState.GameCellOf(station, out ix, out iz))
+            {
+                return false;
+            }
+
+            var occupant = WorldState.GameCellOccupant(ix, iz);
+            if (occupant == null || occupant.GetComponent("ClientWorkstation") == null)
+            {
+                return false;
+            }
+
+            var attach = occupant.GetComponent("ClientAttachStation");
+            var item = attach == null ? null : WorldState.Get(attach, "m_item");
+            if (item == null)
+            {
+                return false;
+            }
+
+            var progressValue = WorldState.Get(item, "m_progress");
+            if (progressValue is float value)
+            {
+                progress = value;
+            }
+
+            finished = WorldState.Get(item, "HasFinished") is bool done && done;
+            return true;
+        }
+
         /// <summary>工位那一格上放着什么（`ClientAttachStation.m_item` 的名字）。</summary>
         public static string StationItemName(Vector2 station)
         {

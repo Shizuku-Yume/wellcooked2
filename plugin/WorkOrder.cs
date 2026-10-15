@@ -23,6 +23,7 @@ namespace WellCooked
             Idle,
             GetIngredient,
             DropOnCounter,
+            Chop,
             GetPlate,
             PlateIt,
             Deliver,
@@ -47,6 +48,8 @@ namespace WellCooked
         private static float _closestAt;
         private static float _faceNextPulse;
         private static float _facePulseUntil;
+        private static bool _chopStarted;
+        private static float _chopLogAt;
         private static bool _interacted;
         private static string _expectHeld = "";
         private static string _expectContents = "";
@@ -172,6 +175,12 @@ namespace WellCooked
             if (distance <= (_arrivedLogged ? ReachRadius * 2.4f : ReachRadius))
             {
                 _facing = true;
+
+                if (_step == Step.Chop && HandleChop(now, heldNow))
+                {
+                    return;
+                }
+
                 Vector2 toward = (chef.Position - _station).sqrMagnitude > 0.0001f
                     ? (_station - chef.Position).normalized
                     : Vector2.zero;
@@ -265,6 +274,89 @@ namespace WellCooked
             }
         }
 
+        /// <summary>
+        /// 切料这一步：按一次 A 开始（厨师站在砧板前就会一直切，切的动作由厨师动画驱动），
+        /// 站着等 `ClientWorkableItem.HasFinished()` 变真，再按一次把切好的拿走。
+        /// 返回 true 表示这一步还没走完（调用方直接 return）。
+        /// </summary>
+        private static bool HandleChop(float now, string heldNow)
+        {
+            float progress;
+            bool finished;
+            bool hasItem = Kitchen.WorkProgress(_station, out progress, out finished);
+
+            if (hasItem && !finished)
+            {
+                _faceDirection = Vector2.zero; // 站着别动
+
+                if (!_chopStarted && !_pressing && now >= _nextPress)
+                {
+                    _chopStarted = true;
+                    _nextPress = now + PressInterval;
+                    _pressUntil = now + InteractHold;
+                    _pressing = true;
+                    _log.LogInfo("工序: 3/6 开始切（进度 " + progress.ToString("F2") + "）");
+                }
+
+                if (_pressing && now >= _pressUntil)
+                {
+                    _pressing = false;
+                }
+
+                if (now >= _chopLogAt)
+                {
+                    _chopLogAt = now + 4f;
+                    _log.LogInfo("工序: 3/6 切料中（进度 " + progress.ToString("F2") + "，手上「"
+                                 + heldNow + "」）");
+                }
+
+                return true;
+            }
+
+            if (hasItem && finished)
+            {
+                _faceDirection = Vector2.zero;
+
+                if (!_pressing && now >= _nextPress)
+                {
+                    _nextPress = now + PressInterval;
+                    _pressUntil = now + InteractHold;
+                    _pressing = true;
+                    _lastCheckAt = now + InteractHold + 0.2f;
+                    _log.LogInfo("工序: 3/6 切好了，按 A 拿走（手上「" + heldNow + "」）");
+                }
+
+                if (_pressing && now >= _pressUntil)
+                {
+                    _pressing = false;
+                }
+
+                if (now >= _lastCheckAt)
+                {
+                    _lastCheckAt = float.MaxValue;
+
+                    if (Matches(heldNow))
+                    {
+                        Next(now);
+                        return true;
+                    }
+
+                    _nextPress = now + PressInterval;
+                }
+
+                return true;
+            }
+
+            // 砧板上没东西：要么已经拿在手上（成功），要么放料那步根本没放上去
+            if (Matches(heldNow))
+            {
+                Next(now);
+                return true;
+            }
+
+            return false;
+        }
+
         /// <summary>把目标设成"工位相邻格"，并记住工位本身（到点后要朝它）。</summary>
         private static void AimAt(Vector2 station, string name)
         {
@@ -310,6 +402,8 @@ namespace WellCooked
             _closestAt = now;
             _faceNextPulse = 0f;
             _facePulseUntil = 0f;
+            _chopStarted = false;
+            _chopLogAt = 0f;
             _hasTarget = false;
 
             switch (step)
@@ -328,17 +422,18 @@ namespace WellCooked
                     _hasTarget = true;
                     _expectHeld = want;
                     _expectContents = "";
-                    _log.LogInfo("工序: 1/5 去取料「" + want + "」（" + crate.Name + " "
+                    _log.LogInfo("工序: 1/6 去取料「" + want + "」（" + crate.Name + " "
                                  + _target.x.ToString("F1") + "," + _target.y.ToString("F1") + "）");
                     break;
                 }
 
                 case Step.DropOnCounter:
                 {
-                    var counter = Kitchen.FreeCounter(_target);
+                    // 鱼要切：放的地方必须是砧板（ClientWorkstation），不是随便一块空台面。
+                    var counter = Kitchen.ChoppingBoard();
                     if (counter == null)
                     {
-                        Fail(now, "找不到空台面放料");
+                        Fail(now, "找不到砧板放料");
                         return;
                     }
 
@@ -348,7 +443,20 @@ namespace WellCooked
                     _hasTarget = true;
                     _expectHeld = ""; // 放下后空手
                     _expectContents = "";
-                    _log.LogInfo("工序: 2/5 把料放到台面（" + counter.Name + " "
+                    _log.LogInfo("工序: 2/6 把料放到砧板（" + counter.Name + " "
+                                 + _target.x.ToString("F1") + "," + _target.y.ToString("F1") + "）");
+                    break;
+                }
+
+                case Step.Chop:
+                {
+                    // 切是自动的：站到砧板前按一次 A 开始，厨师站在那儿就一直切
+                    // （`ClientWorkstation.OnChop` 由厨师的切菜动画驱动），切完再按一次拿走。
+                    AimAt(_counter, _counterName);
+                    _hasTarget = true;
+                    _expectHeld = "";                 // 切的时候手是空的
+                    _expectContents = "";
+                    _log.LogInfo("工序: 3/6 切料（砧板 " + _counterName + " "
                                  + _target.x.ToString("F1") + "," + _target.y.ToString("F1") + "）");
                     break;
                 }
@@ -366,7 +474,7 @@ namespace WellCooked
                     _hasTarget = true;
                     _expectHeld = "Plate";
                     _expectContents = "";
-                    _log.LogInfo("工序: 3/5 去拿盘子（" + stack.Name + " "
+                    _log.LogInfo("工序: 4/6 去拿盘子（" + stack.Name + " "
                                  + _target.x.ToString("F1") + "," + _target.y.ToString("F1") + "）");
                     break;
                 }
@@ -377,7 +485,7 @@ namespace WellCooked
                     _hasTarget = true;
                     _expectHeld = "Plate";                  // 装盘后手上是"装着料的盘子"
                     _expectContents = WantedIngredient();
-                    _log.LogInfo("工序: 4/5 回去装盘（台面 "
+                    _log.LogInfo("工序: 5/6 回去装盘（砧板 "
                                  + _target.x.ToString("F1") + "," + _target.y.ToString("F1") + "）");
                     break;
                 }
@@ -395,7 +503,7 @@ namespace WellCooked
                     _hasTarget = true;
                     _expectHeld = ""; // 交付后应该空手
                     _expectContents = "";
-                    _log.LogInfo("工序: 5/5 去交付（" + station.Name + " "
+                    _log.LogInfo("工序: 6/6 去交付（" + station.Name + " "
                                  + _target.x.ToString("F1") + "," + _target.y.ToString("F1") + "）");
                     break;
                 }
@@ -410,6 +518,10 @@ namespace WellCooked
                     Begin(Step.DropOnCounter, now);
                     break;
                 case Step.DropOnCounter:
+                    Begin(Step.Chop, now);
+                    break;
+
+                case Step.Chop:
                     Begin(Step.GetPlate, now);
                     break;
                 case Step.GetPlate:
