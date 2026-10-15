@@ -108,6 +108,13 @@ effort 里不成立，跨端契约的基准是 `protocol/`。）
   两种模式各完成一次完整帧交换。
 - **W8.** 实机：Windows 游戏启动后，Bridge 日志出现 `hello` 与 `state_update`（**唯一需要
   启动游戏的一次验证**）。
+  - **动手前先删旧配置。** BepInEx 只给**缺失**的键补默认值，已存在的键原样保留，所以上一次
+    运行留下的 `BepInEx/config/com.wellcooked.plugin.cfg` 会把新默认值全部盖掉。2026-10-15
+    实测那份旧文件里 `Network.Port = 12345`、`State.IntervalMs = 500`、
+    `Network.ReconnectDelayMs = 3000`，而当时代码默认值已经是 `14455` / `0`（每帧）/ `2000` ——
+    不改它就会"代码改了、实机跑的还是旧行为"，而且日志里看不出任何异常。做法：装完新 DLL 后把
+    该 cfg 移走或删掉（已备份为 `com.wellcooked.plugin.cfg.bak-2026-10-15-old-defaults`），
+    让插件按新构建重新生成；确认新文件里 `Port = 14455` 再继续。
 
 测试层次：`bridge/tests/` 是 C 单元测试，覆盖纯函数与共享内存原语（W1）；协议级端到端由
 `tools/fake_plugin.py` 驱动（W2–W5、W7，含动作枚举五个的端到端：`pickup-dash` 场景让两个
