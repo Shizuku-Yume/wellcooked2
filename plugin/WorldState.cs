@@ -716,7 +716,8 @@ namespace WellCooked
 
             // 建完边再筛连通块：放在建边之前的话，边表还是全 false，
             // 每个格子都成了独立块，最大块只剩 1 格（实测 可走格 1/308）。
-            int dropped = KeepLargestComponent();
+            int blocks;
+            int dropped = KeepLargestComponent(out blocks);
 
             foreach (var p in free)
             {
@@ -736,7 +737,8 @@ namespace WellCooked
             text.Append(",\"cells\":[").Append(cells.ToString()).Append("]}");
             File.WriteAllText(Path.Combine(Paths.BepInExRootPath, "wellcooked-terrain.json"), text.ToString());
             count -= dropped;
-            _log.LogInfo("state: 可走格 " + count + "/" + (_cellsX * _cellsZ) + "，可走边 " + edges
+            _log.LogInfo("state: 连通块 " + blocks + " 个（丢掉 " + dropped + " 格），可走格 "
+                         + count + "/" + (_cellsX * _cellsZ) + "，可走边 " + edges
                          + "（物理采样，格距 " + _step.ToString("F2")
                          + "，厨师半径 " + chefRadius.ToString("F2")
                          + "，厨师层 " + UnityEngine.LayerMask.LayerToName(PlayerLayer)
@@ -788,10 +790,11 @@ namespace WellCooked
         /// 厨师走进去就再也出不来：起点格在口袋里，A* 到哪都报不可达（实测卡死在 20.56,-3.13）。
         /// 把口袋从可走表里去掉，起点就会就近跳到主区。
         /// </summary>
-        private static int KeepLargestComponent()
+        private static int KeepLargestComponent(out int blocks)
         {
             var component = new int[_cellsX, _cellsZ];
             var queue = new Queue<int>();
+            // label 数就是连通块数：>1 说明厨房被隔断（有走不到的区域），挑关卡时要看这个
             int best = 0;
             int bestSize = 0;
             int label = 0;
@@ -847,6 +850,7 @@ namespace WellCooked
                 }
             }
 
+            blocks = label;
             int dropped = 0;
             for (int i = 0; i < _cellsX; i++)
             {
