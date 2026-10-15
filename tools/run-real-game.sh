@@ -23,6 +23,10 @@ HOST="${HOST:-0.0.0.0}"
 WAIT_SECONDS="${WAIT_SECONDS:-120}"
 NEED_HELLO="${NEED_HELLO:-1}"
 NEED_STATE="${NEED_STATE:-10}"
+# 游戏侧日志。插件在 Awake 里会写一行 "[Plugin] WellCooked <版本> loaded (game=...)"，
+# 这一行是"插件真的初始化了"与"BepInEx 只是找到了这个类型"之间的分界。
+GAME_DIR="${GAME_DIR:-/mnt/d/EPIC/Games/Overcooked2}"
+BEPINEX_LOG="${BEPINEX_LOG:-${GAME_DIR}/BepInEx/LogOutput.log}"
 
 BRIDGE_PID=""
 
@@ -115,11 +119,35 @@ while :; do
         say "   parse_error=${parse_err}（需要 0）"
         say ""
         if [ "$hello" -eq 0 ]; then
-            say " 插件一次都没连上。按可能性排查："
-            say "  1) 游戏是否真的启动了？BepInEx\\LogOutput.log 里应有 'WellCooked' 的加载记录"
-            say "  2) 插件是否加载失败？看 BepInEx\\LogOutput.log 有没有 'could not be instantiated'"
-            say "  3) 网络：把插件配置 Network.Host 改成 ${WSL_IP} 再试"
-            say "  4) Windows 防火墙是否拦了 WSL 的入站连接"
+            say " 插件一次都没连上。游戏侧走到哪一步了："
+            say ""
+            if [ ! -f "$BEPINEX_LOG" ]; then
+                say "   ? 找不到 $BEPINEX_LOG"
+                say "     → 游戏没有以 BepInEx 方式启动过。若装在别处：GAME_DIR=<游戏目录> 重跑。"
+            elif grep -qF "could not be instantiated" "$BEPINEX_LOG"; then
+                say "   x 插件加载失败：日志里有 'could not be instantiated'"
+                grep -nF "could not be instantiated" "$BEPINEX_LOG" | tail -n 2 | sed 's/^/       /'
+                say "     → 这是插件自身的问题，与网络无关。"
+            elif grep -qF "[Plugin] WellCooked" "$BEPINEX_LOG"; then
+                say "   v 插件已初始化（它自己写了启动行）："
+                grep -nF "[Plugin] WellCooked" "$BEPINEX_LOG" | tail -n 1 | sed 's/^/       /'
+                say ""
+                say "     插件输出的其余日志："
+                grep -nF "[Plugin]" "$BEPINEX_LOG" | tail -n 6 | sed 's/^/       /'
+                say "     → 插件在跑却连不上，属于网络问题："
+                say "       把插件配置 Network.Host 改成 ${WSL_IP}，或查 Windows 防火墙入站规则。"
+            else
+                say "   x 日志里没有插件自己的启动行 '[Plugin] WellCooked ... loaded'"
+                say "     → 插件没有被初始化。BepInEx 打印 'Loading [WellCooked ...]' 只说明"
+                say "       它找到了这个类型，不等于 Awake 跑过了；两者必须分开看。"
+                say ""
+                say "     游戏侧日志末尾："
+                tail -n 8 "$BEPINEX_LOG" | sed 's/^/       /'
+            fi
+            say ""
+            say " 另外还要确认："
+            say "  - 游戏是否真的进了关卡（菜单阶段没有状态可发）"
+            say "  - Windows 防火墙是否拦了 WSL 的入站连接"
         else
             say " 插件连上了但状态不够。可能是停在菜单里没有进入关卡 ——"
             say " StateReader 只有在关卡内才拿得到厨师/订单，菜单阶段没有状态可发。"
