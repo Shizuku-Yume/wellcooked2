@@ -23,7 +23,8 @@ STUB=${KITCHENOS_WORKER_STUB:-$ROOT/core/build/kitchenos-worker-stub}
 LOGDIR=${KITCHENOS_LOG_DIR:-$ROOT/logs}
 PREFIX=kitchenos_c04
 RUN_ID=${KITCHENOS_RUN_ID:-$$}
-SCENARIOS=(happy one-slot no-heartbeat bad-frames connect-mode)
+SCENARIOS=(happy one-slot no-heartbeat bad-frames connect-mode reconnect-storm
+           silent-connect data-shapes second-peer)
 SCEN_TIMEOUT=90
 STRICT=0
 ALLOW_SKIP=0
@@ -195,7 +196,7 @@ run_one() {
     echo "----------------------------------------------------------------"
     echo ">> $name  (state=$state, log=$log)"
 
-    local attempt=0 rc=0 elapsed=0 start=0 signal=0
+    local attempt=0 rc=0 elapsed=0 start=0 signal=0 interrupted=0
     while :; do
         attempt=$((attempt + 1))
         cleanup_scenario "$state" "$sem"
@@ -215,12 +216,21 @@ run_one() {
         elapsed=$((SECONDS - start))
         signal=0
         [ "$rc" -ge 128 ] && [ "$rc" -le 192 ] && signal=$((rc - 128))
+        # timeout 自己收到 SIGTERM/SIGKILL 时也退出 124/137（本机实测），所以
+        # "rc=124 却远没跑满上限"同样不是场景挂死，而是外部信号打到了 timeout
+        # 或场景进程上（另一个 runner 的无锚点 pkill、OOM）—— 和上一段区别开，
+        # 只影响结论怎么写，不影响判定：真正的超时一定跑满 SCEN_TIMEOUT。
+        interrupted=0
+        if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then
+            [ "$elapsed" -lt "$((SCEN_TIMEOUT - 5))" ] && interrupted=1
+        fi
         # 被外部信号打死（别的 agent 的 pkill 横扫、手动 kill）既不是超时也不是
         # 断言结论，直接当 FAIL 会冤枉 Bridge；重跑一次，并把这件事说出来。
-        if [ "$signal" -gt 0 ] && [ "$elapsed" -lt "$SCEN_TIMEOUT" ] \
+        if { [ "$signal" -gt 0 ] || [ "$interrupted" -eq 1 ]; } \
+           && [ "$elapsed" -lt "$SCEN_TIMEOUT" ] \
            && [ "$attempt" -le "$RETRY_KILLED" ]; then
-            echo "    注意: 第 ${attempt} 次跑到 ${elapsed}s 时被信号 ${signal} 杀掉" \
-                 "（不是超时、也不是断言失败），重跑"
+            echo "    注意: 第 ${attempt} 次跑到 ${elapsed}s 时被外部打断" \
+                 "（rc=$rc signal=$signal，不是超时、也不是断言失败），重跑"
             continue
         fi
         break
@@ -229,7 +239,7 @@ run_one() {
     # 场景自己的输出原样给人看，缩进以区分层级
     sed 's/^/    /' "$out"
     if [ "$attempt" -gt 1 ]; then
-        echo "    （本场景共跑了 ${attempt} 次：前 $((attempt - 1)) 次被外部信号打断）"
+        echo "    （本场景共跑了 ${attempt} 次：前 $((attempt - 1)) 次被外部打断）"
     fi
 
     case "$rc" in
@@ -244,10 +254,18 @@ run_one() {
             SKIPPED=$((SKIPPED + 1))
             ;;
         124|137)
-            echo "FAIL $name (${elapsed}s) — 超时 ${SCEN_TIMEOUT}s 未结束（timeout 杀掉）" >&2
-            RESULTS+=("FAIL $name (timeout)")
-            FAILED=$((FAILED + 1))
-            FAILED_NAMES+=("$name(timeout)")
+            if [ "$interrupted" -eq 1 ]; then
+                echo "FAIL $name (${elapsed}s) — rc=$rc 且远未跑满 ${SCEN_TIMEOUT}s：" \
+                     "外部信号打到了 timeout/场景进程上（不是场景超时）" >&2
+                RESULTS+=("FAIL $name (killed)")
+                FAILED=$((FAILED + 1))
+                FAILED_NAMES+=("$name(killed)")
+            else
+                echo "FAIL $name (${elapsed}s) — 超时 ${SCEN_TIMEOUT}s 未结束（timeout 杀掉）" >&2
+                RESULTS+=("FAIL $name (timeout)")
+                FAILED=$((FAILED + 1))
+                FAILED_NAMES+=("$name(timeout)")
+            fi
             ;;
         *)
             echo "FAIL $name (${elapsed}s) — fake_plugin 退出码 $rc" >&2

@@ -18,6 +18,7 @@ MaxFrameBytes/ExtractFrames，消息基准是 Protocol/Messages.cs）。
 """
 
 import argparse
+import ctypes
 import json
 import os
 import re
@@ -50,7 +51,12 @@ EXIT_FAIL = 1
 EXIT_ERROR = 2
 EXIT_SKIP = 77
 
-SCENARIOS = ("happy", "one-slot", "no-heartbeat", "bad-frames", "connect-mode")
+SCENARIOS = ("happy", "one-slot", "no-heartbeat", "bad-frames", "connect-mode",
+             "reconnect-storm", "silent-connect", "data-shapes", "second-peer")
+
+# 日志行 = "ISO8601(毫秒) 级别 事件名 key=value ..."（core/src/log.c）。
+# 只认行首这个位置上的事件名：key=value 里出现同名词不算一次事件。
+LOG_LINE = re.compile(r"^\d{4}-\d\d-\d\dT[\d:.]+ +\w+ +(\S+)")
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -410,6 +416,26 @@ class Link:
         except OSError:
             pass
 
+    def close_rst(self):
+        """强制 RST 关闭：SO_LINGER=0 让 close() 直接发 RST，而不是 FIN。
+
+        游戏崩溃、进程被杀时对端看到的就是这个；RST 会把还没读走的字节一起丢掉，
+        所以"Bridge 重连时把解码器复位"这件事只有这条路径能验：残留的半帧若没被
+        清掉，下一条流的长度前缀就会被读成上一帧的尾巴。
+        """
+        if self.closed:
+            return
+        self.closed = True
+        try:
+            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER,
+                                 struct.pack("ii", 1, 0))
+        except OSError:
+            pass
+        try:
+            self.sock.close()
+        except OSError:
+            pass
+
     def _die(self, reason):
         if self.error is None:
             self.error = reason
@@ -433,6 +459,81 @@ def connect(host, port, timeout=5.0):
             last = exc
             time.sleep(0.05)
     raise InfraError("cannot connect to %s:%d within %.1fs: %s" % (host, port, timeout, last))
+
+
+def proc_fds(pid):
+    """{fd: 目标}：/proc/<pid>/fd 的真实内容，用来做泄漏对比。
+
+    只数个数不够：一个泄漏的 socket 和一条新开的日志 fd 在计数上长得一样。
+    所以连目标一起带回来，断言比的是"socket: 的个数"和整张表，泄漏时还能说出
+    多出来的是哪一个 fd。
+    """
+    fds = {}
+    try:
+        names = os.listdir("/proc/%d/fd" % pid)
+    except OSError as exc:
+        raise InfraError("cannot list /proc/%d/fd: %s" % (pid, exc))
+    for name in names:
+        try:
+            fds[int(name)] = os.readlink("/proc/%d/fd/%s" % (pid, name))
+        except (OSError, ValueError):
+            continue
+    return fds
+
+
+def socket_fds(fds):
+    return {fd: target for fd, target in fds.items() if target.startswith("socket:")}
+
+
+def proc_rss_kb(pid):
+    """VmRSS：fd 之外的另一类泄漏（解码器缓冲区、日志行缓冲）也值得看一眼。"""
+    try:
+        for line in Path("/proc/%d/status" % pid).read_text().splitlines():
+            if line.startswith("VmRSS:"):
+                return int(line.split()[1])
+    except (OSError, ValueError, IndexError):
+        pass
+    return None
+
+
+def describe_fds(fds):
+    return "%d fds (%d sockets)" % (len(fds), len(socket_fds(fds)))
+
+
+def fd_delta(before, after):
+    """多出来的 fd 描述；没有新 fd 时返回空串。"""
+    extra = [fd for fd in sorted(after) if fd not in before]
+    if not extra:
+        return ""
+    return "new fds: " + ", ".join("%d -> %s" % (fd, after[fd]) for fd in extra)
+
+
+def log_event_counts(ctx):
+    """日志里各事件名出现次数（事件名只认行首那一列）。"""
+    counts = Counter()
+    for line in ctx.log_text().splitlines():
+        match = LOG_LINE.match(line)
+        if match:
+            counts[match.group(1)] += 1
+    return counts
+
+
+def wait_log_events(ctx, event, minimum, timeout):
+    """等到某个事件至少出现 minimum 次；返回是否等到。"""
+    deadline = time.monotonic() + timeout
+    while True:
+        if log_event_counts(ctx)[event] >= minimum:
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.02)
+
+
+def live_link(host, port, timeout=5.0):
+    """连上 Bridge 并发一句 hello：所有多会话场景的开场都一样。"""
+    link = Link(connect(host, port, timeout))
+    link.send_json(msg_hello())
+    return link
 
 
 def collect(link, stats, duration):
@@ -749,6 +850,169 @@ class WorkerStub:
 
 
 # --------------------------------------------------------------------------
+# 共享内存世界状态：按 shm.h 的布局直接读，证明 Bridge 究竟写进去了什么
+# --------------------------------------------------------------------------
+#
+# 为什么不用日志代替：state_update 那行只报"解析出来几个"，报不出"映射进段里
+# 之后还剩几个"（两处上限不同：PROTO_MAX_ORDERS=32、KOS_SHM_MAX_ORDERS=16）。
+# 数据形状这类边界要判的就是映射后的结果，所以按段布局读原始内存。
+#
+# 这里的结构体是 shm.h 的**镜像**，不是同一份定义：字段一旦漂移，段头里那些
+# 尺寸字段就会对不上，read_world() 会直接报 InfraError 而不是给出错位的结论。
+
+
+class _Chef(ctypes.Structure):
+    _fields_ = [("id", ctypes.c_int32), ("x", ctypes.c_float), ("y", ctypes.c_float),
+                ("holding", ctypes.c_char * 32), ("state", ctypes.c_char * 24)]
+
+
+class _Order(ctypes.Structure):
+    _fields_ = [("id", ctypes.c_char * 32), ("recipe", ctypes.c_char * 32),
+                ("time_remaining", ctypes.c_int32), ("ingredient_count", ctypes.c_int32),
+                ("ingredients", (ctypes.c_char * 24) * 6)]
+
+
+class _Resource(ctypes.Structure):
+    _fields_ = [("name", ctypes.c_char * 32), ("state", ctypes.c_char * 24),
+                ("content", ctypes.c_char * 32), ("time_left", ctypes.c_float),
+                ("chef_id", ctypes.c_int32), ("count", ctypes.c_int32)]
+
+
+class _World(ctypes.Structure):
+    _fields_ = [("score", ctypes.c_int64), ("game_time", ctypes.c_int64),
+                ("chef_count", ctypes.c_uint32), ("reserved0", ctypes.c_uint32),
+                ("chefs", _Chef * 8),
+                ("order_count", ctypes.c_uint32), ("reserved1", ctypes.c_uint32),
+                ("orders", _Order * 16),
+                ("resource_count", ctypes.c_uint32), ("reserved2", ctypes.c_uint32),
+                ("resources", _Resource * 32),
+                ("write_seq", ctypes.c_uint64), ("checksum", ctypes.c_uint32),
+                ("reserved3", ctypes.c_uint32)]
+
+
+class _SegmentHeader(ctypes.Structure):
+    _fields_ = [("magic", ctypes.c_uint32), ("version", ctypes.c_uint32),
+                ("header_size", ctypes.c_uint32), ("world_size", ctypes.c_uint32),
+                ("slot_size", ctypes.c_uint32), ("slot_count", ctypes.c_uint32),
+                ("max_chefs", ctypes.c_uint32), ("max_orders", ctypes.c_uint32),
+                ("max_resources", ctypes.c_uint32),
+                ("max_order_ingredients", ctypes.c_uint32),
+                ("creator_pid", ctypes.c_int64), ("created_at_ms", ctypes.c_int64),
+                ("world_seq", ctypes.c_uint64), ("reserved", ctypes.c_uint32 * 4)]
+
+
+KOS_SHM_MAGIC = 0x4B4F5331
+KOS_SHM_WORLD_CHECKSUM_OFFSET = _World.checksum.offset
+
+
+def fnv1a_words(data):
+    """shm.c 的 checksum_bytes()：按 64 位小端字做 FNV-1a，最后折成 32 位。"""
+    h = 14695981039346656037
+    i = 0
+    while i + 8 <= len(data):
+        h = ((h ^ int.from_bytes(data[i:i + 8], "little")) * 1099511628211) & 0xFFFFFFFFFFFFFFFF
+        i += 8
+    while i < len(data):
+        h = ((h ^ data[i]) * 1099511628211) & 0xFFFFFFFFFFFFFFFF
+        i += 1
+    return (h ^ (h >> 32)) & 0xFFFFFFFF
+
+
+def _cstr(raw):
+    return bytes(raw).split(b"\0", 1)[0].decode("utf-8", "replace")
+
+
+class WorldSnapshot:
+    """一份读出来的世界状态，附上判定它自洽的依据。"""
+
+    def __init__(self, header, raw_world):
+        self.header = header
+        self.world = _World.from_buffer_copy(raw_world)
+        self.raw = raw_world
+        self.checksum_ok = fnv1a_words(
+            raw_world[:KOS_SHM_WORLD_CHECKSUM_OFFSET]) == self.world.checksum
+        self.seq_ok = (header.world_seq % 2 == 0
+                       and self.world.write_seq == header.world_seq)
+
+    def chef_ids(self):
+        return [self.world.chefs[i].id for i in range(self.world.chef_count)]
+
+    def order_ids(self):
+        return [_cstr(self.world.orders[i].id) for i in range(self.world.order_count)]
+
+    def order_ingredient_counts(self):
+        return [self.world.orders[i].ingredient_count
+                for i in range(self.world.order_count)]
+
+    def resource_names(self):
+        return [_cstr(self.world.resources[i].name)
+                for i in range(self.world.resource_count)]
+
+    def resource(self, name):
+        for i in range(self.world.resource_count):
+            item = self.world.resources[i]
+            if _cstr(item.name) == name:
+                return item
+        return None
+
+    def describe(self):
+        return ("chefs=%d orders=%d resources=%d score=%d game_time=%d "
+                "checksum_ok=%s seqlock_ok=%s"
+                % (self.world.chef_count, self.world.order_count,
+                   self.world.resource_count, self.world.score, self.world.game_time,
+                   self.checksum_ok, self.seq_ok))
+
+
+def read_world(path):
+    """读一份自洽的世界状态；布局对不上或快照被撕裂就抛 InfraError。
+
+    两种失败都要分开：结构对不上是本工具的错（shm.h 改了），撕裂是写者正在写的
+    正常瞬间，重试几次即可 —— 混在一起会把工具的错误说成 Bridge 的错。
+    """
+    size = ctypes.sizeof(_SegmentHeader)
+    try:
+        raw = Path(path).read_bytes()
+    except OSError as exc:
+        raise InfraError("cannot read %s: %s" % (path, exc))
+    if len(raw) < size + ctypes.sizeof(_World):
+        raise InfraError("%s is %d bytes, too small for a segment" % (path, len(raw)))
+    header = _SegmentHeader.from_buffer_copy(raw[:size])
+    if header.magic != KOS_SHM_MAGIC:
+        raise InfraError("%s: magic 0x%08x is not KOS_SHM_MAGIC" % (path, header.magic))
+    # 世界状态不是紧跟在段头字段后面：kos_shm_segment 把 world 和 slots 都算在
+    # header_size 里（shm.h），所以前缀长度要从三个尺寸字段倒推，再和本镜像对账。
+    prefix = header.header_size - header.world_size - header.slot_size * header.slot_count
+    if (prefix != size or header.world_size != ctypes.sizeof(_World)
+            or header.max_chefs != 8 or header.max_orders != 16
+            or header.max_resources != 32 or header.max_order_ingredients != 6):
+        raise InfraError(
+            "%s: segment layout header_size=%d world_size=%d slot_size=%d slot_count=%d "
+            "chefs=%d orders=%d resources=%d ingredients=%d does not match this reader "
+            "(prefix=%d vs %d, world=%d vs %d, 8/16/32/6) — update the ctypes mirror"
+            % (path, header.header_size, header.world_size, header.slot_size,
+               header.slot_count, header.max_chefs, header.max_orders,
+               header.max_resources, header.max_order_ingredients, prefix, size,
+               header.world_size, ctypes.sizeof(_World)))
+    return header, raw[prefix:prefix + header.world_size]
+
+
+def read_world_stable(path, timeout=3.0):
+    """等一份 seqlock+checksum 都自洽的快照（写者持奇序号时重读）。"""
+    deadline = time.monotonic() + timeout
+    last = None
+    while True:
+        header, raw = read_world(path)
+        snap = WorldSnapshot(header, raw)
+        if snap.checksum_ok and snap.seq_ok:
+            return snap
+        last = snap
+        if time.monotonic() >= deadline:
+            raise InfraError("no self-consistent snapshot of %s within %.1fs "
+                             "(last: %s)" % (path, timeout, last.describe()))
+        time.sleep(0.02)
+
+
+# --------------------------------------------------------------------------
 # 断言收集与场景上下文
 # --------------------------------------------------------------------------
 
@@ -844,7 +1108,7 @@ class Ctx:
 
     # -- 进程 --
     def start_bridge(self, *, link, port, host, chefs, frame_timeout_ms,
-                     heartbeat_timeout_ms):
+                     heartbeat_timeout_ms, verbose=False):
         binary = Path(self.args.bridge)
         if not binary.exists():
             raise InfraError("bridge binary not found: %s (build it with: cd core && make)"
@@ -855,13 +1119,17 @@ class Ctx:
                 "--log", str(self.log_path),
                 "--frame-timeout-ms", str(frame_timeout_ms),
                 "--heartbeat-timeout-ms", str(heartbeat_timeout_ms)]
+        # state_update 是 DEBUG 级：要按帧核对"解析出几个、丢了几个"的场景必须开它，
+        # 否则默认 INFO 下那行根本不落盘（state_summary 每 60 帧才有，且字段不全）。
+        if verbose:
+            argv.append("--verbose")
         self.bridge = BridgeProc(binary, argv, self.console_path)
         self.bridge.start()
         _say("    info       bridge pid=%d: %s" % (self.bridge.pid, " ".join(argv)))
         return self.bridge
 
     def start_bridge_and_wait(self, *, link, host, chefs, frame_timeout_ms,
-                              heartbeat_timeout_ms, port=None, retries=3):
+                              heartbeat_timeout_ms, port=None, retries=3, verbose=False):
         """起 Bridge 并等它就绪，返回实际用的端口。
 
         端口默认由内核分配：多 agent 并行开发时 12345 很可能被别的 Bridge 或
@@ -875,7 +1143,8 @@ class Ctx:
             use_port = requested if requested is not None else pick_free_port(host)
             self.start_bridge(link=link, port=use_port, host=host, chefs=chefs,
                               frame_timeout_ms=frame_timeout_ms,
-                              heartbeat_timeout_ms=heartbeat_timeout_ms)
+                              heartbeat_timeout_ms=heartbeat_timeout_ms,
+                              verbose=verbose)
             if self.bridge.wait_listen(use_port, self.args.ready_timeout):
                 return use_port
             foreign = self.bridge.port_is_taken_by_other(use_port)
@@ -1393,12 +1662,611 @@ def scenario_connect_mode(ctx, checks):
     return ("dial-in ok from %s:%d; %s" % (peer[0], peer[1], stats.describe()))
 
 
+# --------------------------------------------------------------------------
+# 边界场景：specs/bridge.md:104-105 点名、原套件没覆盖的那几个
+# --------------------------------------------------------------------------
+
+
+def _shape_state_update(chefs=None, orders=None, resources=None, frame_index=0):
+    """按 §5.2 拼一帧，但三个集合都由调用方给：数据形状边界要能单独摆出来。"""
+    if chefs is None:
+        chefs = [{"id": 0, "position": {"x": 1.0, "y": 2.0},
+                  "holding": None, "state": "idle"}]
+    if orders is None:
+        orders = [{"id": "order_001", "recipe": "salad", "time_remaining": 30,
+                   "ingredients": ["lettuce"]}]
+    if resources is None:
+        resources = {"pot_0": {"state": "free"}, "plate_stack": {"count": 3}}
+    return jdump({"type": "state_update", "timestamp": int(time.time()),
+                  "game_time": frame_index // 60, "score": 100,
+                  "chefs": chefs, "orders": orders, "resources": resources})
+
+
+def _served_window(ctx, link, chefs, seconds):
+    """在会话里正常跑一小段，返回收到的动作；用来证明"还照常服务"。"""
+    stats = Stats("served")
+    run_exchange(link, stats, seconds, chefs=chefs, hz=ctx.args.hz,
+                 heartbeat_ms=ctx.args.heartbeat_ms, ack_actions=not ctx.args.no_ack)
+    return stats
+
+
+def pump_with_heartbeats(link, stats, seconds, *, chefs, ack_actions=True, hb_period=0.3):
+    """边收边发心跳地等一段时间。
+
+    必须喂心跳：Bridge 的 `--heartbeat-timeout-ms` 一到就会（正确地）判插件失联、
+    暂停下发并断链（spec W4）。等待窗口里不喂心跳，测到的就不是想问的那件事。
+    """
+    end = time.monotonic() + seconds
+    next_hb = 0.0
+    while True:
+        now = time.monotonic()
+        if now >= end:
+            return
+        for msg in link.pump(min(0.05, max(0.0, end - now))):
+            _absorb(msg, stats, link, ack_actions, chefs)
+        now = time.monotonic()
+        if now >= next_hb:
+            _safe_send(link, stats, msg_heartbeat(), "heartbeat")
+            next_hb = now + hb_period
+
+
+def scenario_silent_connect(ctx, checks):
+    """边界：连上、一个字节都不发就断开，反复多次（specs/bridge.md:104）。
+
+    两条要求：每次会话都要作为一次链路事件被记下来（"全程写事件"里含 IPC 连接
+    与断开），并且这些空会话不能留下 fd、不能挡住下一个对端。
+    """
+    args = ctx.args
+    chefs = 1
+    ctx.clear_stale_shm()
+    port = ctx.start_bridge_and_wait(link="listen", host=args.host, chefs=chefs,
+                                     frame_timeout_ms=args.frame_timeout_ms,
+                                     heartbeat_timeout_ms=args.heartbeat_timeout_ms,
+                                     port=args.listen_port)
+    pid = ctx.bridge.pid
+
+    # 基线相位与收尾相位必须可比：两次都是"对端连着、正在跑帧"。
+    link = live_link(args.host, port, args.ready_timeout)
+    base = _served_window(ctx, link, chefs, 1.0)
+    checks.hard("baseline_dispatch", len(base.actions) >= 1, base.describe())
+    fds_before = proc_fds(pid)
+    rss_before = proc_rss_kb(pid)
+    checks.note("fds_before", "%s — %s" % (describe_fds(fds_before),
+                                           ", ".join("%d=%s" % (fd, tgt) for fd, tgt
+                                                     in sorted(fds_before.items()))))
+    # 计数器必须在断开之前取：close() 之后 link_down 可能立刻 +1，
+    # 拿它当基线就永远等不到"再加一次"
+    events = log_event_counts(ctx)
+    up0, down0 = events["link_up"], events["link_down"]
+    link.close()
+    checks.hard("baseline_session_was_logged", wait_log_events(ctx, "link_down", down0 + 1, 3.0),
+                "the baseline session's disconnect must show up as link_down (baseline: "
+                "link_up=%d link_down=%d)" % (up0, down0))
+
+    cycles = max(3, args.silent_cycles)
+    seen_up = seen_down = 0
+    for i in range(1, cycles + 1):
+        # 一个字节都不发：只有 connect 和 close
+        sock = connect(args.host, port, args.ready_timeout)
+        up_ok = wait_log_events(ctx, "link_up", up0 + i, 2.0)
+        sock.close()
+        down_ok = wait_log_events(ctx, "link_down", down0 + i, 2.0)
+        seen_up += 1 if up_ok else 0
+        seen_down += 1 if down_ok else 0
+        if not (up_ok and down_ok):
+            checks.note("cycle_%d_not_fully_logged" % i,
+                        "link_up=%s link_down=%s (up so far %d/%d)"
+                        % (up_ok, down_ok, seen_up, i))
+            break
+    checks.hard("every_silent_session_logged_as_up_and_down",
+                seen_up == cycles and seen_down == cycles,
+                "%d/%d connect-close cycles each produced exactly one link_up and one "
+                "link_down" % (min(seen_up, seen_down), cycles))
+
+    # 收尾：正常会话必须还是不折不扣地工作
+    link = live_link(args.host, port, args.ready_timeout)
+    after = _served_window(ctx, link, chefs, 1.5)
+    checks.hard("dispatch_after_silent_connects", len(after.actions) >= 5, after.describe())
+    checks.hard("actions_wellformed_after_silent_connects",
+                not after.bad_actions and not base.bad_actions,
+                "malformed: %s" % (after.bad_actions[:2] or base.bad_actions[:2] or "none"))
+    # "还连着"必须真的探：对端的 FIN 不 recv 是看不见的，心跳还可能排在它前面
+    still_open = not link.probe_closed(0.4)
+    checks.hard("final_connection_really_open", still_open,
+                "0.4s 内反复 recv 都没撞到 EOF 才算开着；link=%s" % (link.error or "open"))
+
+    fds_after = proc_fds(pid)
+    checks.note("fds_after", "%s — %s" % (describe_fds(fds_after),
+                                          ", ".join("%d=%s" % (fd, tgt) for fd, tgt
+                                                    in sorted(fds_after.items()))))
+    checks.hard("no_fd_leak_after_silent_connects", len(fds_after) == len(fds_before),
+                "%d cycles: before=%d fds, after=%d fds%s"
+                % (cycles, len(fds_before), len(fds_after), " — " + fd_delta(fds_before, fds_after)
+                   if fd_delta(fds_before, fds_after) else ""))
+    checks.hard("no_socket_leak_after_silent_connects",
+                len(socket_fds(fds_after)) == len(socket_fds(fds_before)),
+                "sockets before=%d after=%d (%s)"
+                % (len(socket_fds(fds_before)), len(socket_fds(fds_after)),
+                   fd_delta(fds_before, fds_after) or "no new fd"))
+    rss_after = proc_rss_kb(pid)
+    checks.note("rss_kb", "before=%s after=%s (VmRSS；fd 之外的泄漏也看一眼)"
+                % (rss_before, rss_after))
+    checks.soft("rss_not_grown_after_silent_connects",
+                rss_before is None or rss_after is None or rss_after - rss_before <= 512,
+                "VmRSS %s -> %s kB over %d cycles" % (rss_before, rss_after, cycles))
+    checks.hard("bridge_alive_after_silent_connects", ctx.bridge.alive(),
+                "exit=%s" % ctx.bridge.exit_code())
+    checks.hard("bridge_pid_unchanged", ctx.bridge.pid == pid,
+                "pid %s -> %s (no restart expected)" % (pid, ctx.bridge.pid))
+    link.close()
+    return ("%d silent connect-close cycles, every one logged link_up+link_down; "
+            "fds %d -> %d (%d sockets -> %d), VmRSS %s -> %s kB; then %s"
+            % (cycles, len(fds_before), len(fds_after), len(socket_fds(fds_before)),
+               len(socket_fds(fds_after)), rss_before, rss_after, after.describe()))
+
+
+def scenario_reconnect_storm(ctx, checks):
+    """边界：连续快速断开重连（关卡重载 / alt-tab 的真实形态，bridge.md:105）。
+
+    四种会话形态轮着来：什么都不发就 FIN、发几帧再 FIN、发半帧后 RST、发一帧后
+    RST。RST 是解码器复位唯一验得到的路径：半帧字节若留在解码器里，下一条流的
+    长度前缀就会被读成上一帧的尾巴，症状是 parse_error / framing desync 而不是干净报错。
+
+    硬结论只有两条：进程还活着、还在下发、最后的连接真的还开着；以及
+    /proc/<pid>/fd 里 socket 数与整表都不增长。
+    """
+    args = ctx.args
+    chefs = 1
+    ctx.clear_stale_shm()
+    port = ctx.start_bridge_and_wait(link="listen", host=args.host, chefs=chefs,
+                                     frame_timeout_ms=args.frame_timeout_ms,
+                                     heartbeat_timeout_ms=args.heartbeat_timeout_ms,
+                                     port=args.listen_port)
+    pid = ctx.bridge.pid
+
+    link = live_link(args.host, port, args.ready_timeout)
+    base = _served_window(ctx, link, chefs, 1.0)
+    checks.hard("baseline_dispatch", len(base.actions) >= 1, base.describe())
+    fds_before = proc_fds(pid)
+    rss_before = proc_rss_kb(pid)
+    checks.note("fds_before", "%s — %s" % (describe_fds(fds_before),
+                                           ", ".join("%d=%s" % (fd, tgt) for fd, tgt
+                                                     in sorted(fds_before.items()))))
+    link.close()
+    checks.hard("baseline_link_down_logged", wait_log_events(ctx, "link_down", 1, 3.0),
+                "the baseline session's disconnect must show up as link_down")
+    # 基线会话自己那次 EOF 断开也会落在下面的统计里，先记下来，风暴后做差
+    base_fin_downs = len(re.findall(r"link_down .*reason=peer closed the connection",
+                                    ctx.log_text()))
+
+    cycles = max(20, args.storm_cycles)
+    gap = max(0.0, args.storm_gap_ms / 1000.0)
+    forms = Counter()
+    for i in range(cycles):
+        form = i % 4
+        link = Link(connect(args.host, port, args.ready_timeout))
+        if form == 0:
+            forms["silent+FIN"] += 1
+        elif form == 1:
+            forms["hello+2frames+FIN"] += 1
+            link.send_json(msg_hello())
+            link.send_json(msg_state_update(chefs, i))
+            link.send_json(msg_state_update(chefs, i + 1))
+        elif form == 2:
+            forms["hello+half-frame+RST"] += 1
+            link.send_json(msg_hello())
+            link.send_raw(struct.pack(">I", 8192) + b"{" * 64)
+        else:
+            forms["hello+frame+RST"] += 1
+            link.send_json(msg_hello())
+            link.send_json(msg_state_update(chefs, i))
+        # 干净关闭的那两种先让 Bridge 把帧读走；RST 的那两种立刻断，
+        # 让"字节还在路上就被 RST 丢掉"这件事真的发生
+        if form in (0, 1):
+            if gap:
+                time.sleep(gap)
+            link.close()
+        else:
+            link.close_rst()
+        if gap:
+            time.sleep(gap)
+
+    # 每一轮都是"上去又下来"：全部断完之后 Bridge 的链路事件必须配平（没有半截状态）
+    drained = False
+    deadline = time.monotonic() + 3.0
+    while time.monotonic() < deadline:
+        events = log_event_counts(ctx)
+        if events["link_up"] > 0 and events["link_down"] >= events["link_up"]:
+            drained = True
+            break
+        time.sleep(0.02)
+    events = log_event_counts(ctx)
+    checks.hard("storm_edges_balanced", drained,
+                "after %d cycles the bridge should be back DOWN: link_up=%d link_down=%d"
+                % (cycles, events["link_up"], events["link_down"]))
+    checks.hard("storm_logged_link_up_and_down",
+                events["link_up"] >= 1 and events["link_down"] >= 1,
+                "link_up=%d link_down=%d for %d cycles (%s); link_up < cycles 是正常的，"
+                "见 rst_cycles_may_vanish" % (events["link_up"], events["link_down"],
+                                              cycles, dict(forms)))
+    checks.soft("storm_observed_more_than_one_session", events["link_up"] >= 2,
+                "link_up=%d: one continuous UP through all %d cycles would mean the "
+                "bridge never noticed a single peer leaving"
+                % (events["link_up"], cycles))
+
+    # 按断开原因给每类周期对账（link_down 行带 reason）。FIN 收尾的连接断开后仍留在
+    # accept 队列里，内核不会把它摘掉，accept 一定能拿到它（第一次 read 就是 EOF），
+    # 所以这两类周期必须每次都留下痕迹：要么 link_down(EOF)，要么被下一条连接顶掉
+    # 而记 link_peer_replaced。RST 收尾的可以整个消失——还没被 accept 就被 reset 的
+    # 连接会被内核从队列里摘掉，进程从头到尾没见过它，那不是漏记。
+    graceful_total = sum(forms[f] for f in ("silent+FIN", "hello+2frames+FIN"))
+    fin_down = replaced = 0
+    deadline = time.monotonic() + 2.0
+    while True:
+        text = ctx.log_text()
+        fin_down = len(re.findall(r"link_down .*reason=peer closed the connection", text))
+        replaced = len(re.findall(r"link_peer_replaced", text))
+        if (fin_down - base_fin_downs) + replaced >= graceful_total \
+           or time.monotonic() >= deadline:
+            break
+        time.sleep(0.05)
+    rst_down = len(re.findall(r"link_down .*reason=.*Connection reset", text))
+    storm_fin = fin_down - base_fin_downs
+    checks.hard("every_graceful_cycle_was_seen", storm_fin + replaced >= graceful_total,
+                "FIN 收尾的 %d 轮：新增 link_down(reason=EOF)=%d（基线那次不算），"
+                "link_peer_replaced=%d" % (graceful_total, storm_fin, replaced))
+    checks.note("rst_cycles_may_vanish",
+                "RST 收尾的 %d 轮里 %d 轮留下 link_down(reason=reset)；没留下的那些是"
+                "还没 accept 就被 reset、被内核从 accept 队列摘掉的，进程没见过，"
+                "不是漏记" % (cycles - graceful_total, rst_down))
+
+    # 收尾：正常会话
+    link = live_link(args.host, port, args.ready_timeout)
+    after = _served_window(ctx, link, chefs, max(2.0, args.duration))
+    checks.hard("dispatch_after_storm", len(after.actions) >= 10,
+                "%s after %d reconnect cycles" % (after.describe(), cycles))
+    checks.hard("actions_wellformed_after_storm",
+                not after.bad_actions and not base.bad_actions,
+                "malformed: %s" % (after.bad_actions[:2] or base.bad_actions[:2] or "none"))
+    still_open = not link.probe_closed(0.4)
+    checks.hard("final_connection_really_open", still_open,
+                "0.4s 内反复 recv 都没撞到 EOF 才算开着；link=%s" % (link.error or "open"))
+
+    # 解码器若没在重连时复位，残留半帧会让后面的字节被读成帧长：症状是
+    # parse_error（解码器把垃圾当消息交上来）或 framing desync（长度越界）。
+    text = ctx.log_text()
+    desync = re.findall(r"framing desync|stage=framing", text)
+    checks.hard("no_framing_desync_during_storm", not desync,
+                "残留半帧没被清掉的信号；命中 %d 次: %s" % (len(desync), desync[:2] or "none"))
+    checks.hard("no_parse_error_during_storm", log_event_counts(ctx)["parse_error"] == 0,
+                "parse_error 次数=%d（半帧在复位后不该被当成消息；命中说明解码器串了流）"
+                % log_event_counts(ctx)["parse_error"])
+
+    fds_after = proc_fds(pid)
+    checks.note("fds_after", "%s — %s" % (describe_fds(fds_after),
+                                          ", ".join("%d=%s" % (fd, tgt) for fd, tgt
+                                                    in sorted(fds_after.items()))))
+    checks.hard("no_fd_leak_after_storm", len(fds_after) == len(fds_before),
+                "%d cycles: before=%d fds, after=%d fds%s"
+                % (cycles, len(fds_before), len(fds_after),
+                   (" — " + fd_delta(fds_before, fds_after))
+                   if fd_delta(fds_before, fds_after) else ""))
+    checks.hard("no_socket_leak_after_storm",
+                len(socket_fds(fds_after)) == len(socket_fds(fds_before)),
+                "sockets before=%d after=%d (%s)"
+                % (len(socket_fds(fds_before)), len(socket_fds(fds_after)),
+                   fd_delta(fds_before, fds_after) or "no new fd"))
+    rss_after = proc_rss_kb(pid)
+    checks.note("rss_kb", "before=%s after=%s (VmRSS；fd 之外的泄漏也看一眼)"
+                % (rss_before, rss_after))
+    checks.soft("rss_not_grown_after_storm",
+                rss_before is None or rss_after is None or rss_after - rss_before <= 512,
+                "VmRSS %s -> %s kB over %d cycles" % (rss_before, rss_after, cycles))
+    checks.hard("bridge_alive_after_storm", ctx.bridge.alive(),
+                "exit=%s" % ctx.bridge.exit_code())
+    checks.hard("bridge_pid_unchanged", ctx.bridge.pid == pid,
+                "pid %s -> %s (no restart expected)" % (pid, ctx.bridge.pid))
+    link.close()
+    return ("%d reconnect cycles (%s); link_up=%d link_down=%d (FIN 类 link_down(EOF)=%d，"
+            "RST 类 link_down(reset)=%d，替换=%d); fds %d -> %d (%d sockets -> %d), "
+            "VmRSS %s -> %s kB; then %s; framing desync=%d parse_error=%d"
+            % (cycles, dict(forms), events["link_up"], events["link_down"], storm_fin, rst_down,
+               replaced, len(fds_before), len(fds_after), len(socket_fds(fds_before)),
+               len(socket_fds(fds_after)), rss_before, rss_after, after.describe(), len(desync),
+               log_event_counts(ctx)["parse_error"]))
+
+
+def scenario_data_shapes(ctx, checks):
+    """边界：空 chefs、resources 未知键、超大 orders、plate_stack.count==0（bridge.md:104-105）。
+
+    判据分两层：解析层不能因为这四种形状拒收整条 state_update（§5.3 只把"畸形消息"
+    和"流失步"分开处理），映射层按 shm.h 的段布局读回来核对 —— 协议上限
+    （PROTO_MAX_ORDERS=32）与段上限（KOS_SHM_MAX_ORDERS=16）不同，日志只报前者。
+    """
+    args = ctx.args
+    chefs = 2
+    ctx.clear_stale_shm()
+    port = ctx.start_bridge_and_wait(link="listen", host=args.host, chefs=chefs,
+                                     frame_timeout_ms=args.frame_timeout_ms,
+                                     heartbeat_timeout_ms=args.heartbeat_timeout_ms,
+                                     port=args.listen_port, verbose=True)
+    pid = ctx.bridge.pid
+    shm_path = ctx.shm_paths()[0]
+
+    link = live_link(args.host, port, args.ready_timeout)
+    base = _served_window(ctx, link, chefs, 1.0)
+    checks.hard("baseline_dispatch", len(base.actions) >= 1, base.describe())
+    checks.hard("bridge_writes_state_shm", ctx.wait_shm(3.0), "%s" % shm_path)
+    # 段布局自检：本工具的 ctypes 镜像必须和 Bridge 写出的段头一致，否则"读回来是什么"
+    # 这类结论都不成立。对不上时 read_world_stable() 直接报环境错误（退出码 2），
+    # 所以这里只把对上的尺寸记下来当证据。
+    snap = read_world_stable(shm_path)
+    checks.note("segment_layout", "header=%d world=%d slot=%d x%d max_chefs=%d max_orders=%d "
+                                  "max_resources=%d max_order_ingredients=%d"
+                % (snap.header.header_size, snap.header.world_size, snap.header.slot_size,
+                   snap.header.slot_count, snap.header.max_chefs, snap.header.max_orders,
+                   snap.header.max_resources, snap.header.max_order_ingredients))
+    max_orders = snap.header.max_orders
+    max_resources = snap.header.max_resources
+    max_ingredients = snap.header.max_order_ingredients
+
+    served = Stats("served-after-shapes")
+    seen = Stats("shape-frames")
+
+    def send_shape(label, payload, settle=0.45):
+        """发一帧形状帧、等它落进段里，返回那一刻的快照。
+
+        写 shm 发生在收包的同一步（早于帧屏障），所以 settle 只是给调度抖动留的余量；
+        这段时间照常喂心跳，免得 Bridge 因为"插件不出声"而按 W4 断链。
+        """
+        sent = _safe_send(link, seen, payload, "state_update(%s)" % label)
+        checks.hard("shape_frame_sent_%s" % label, sent, "link=%s" % (link.error or "open"))
+        pump_with_heartbeats(link, seen, settle, chefs=chefs, ack_actions=not args.no_ack)
+        snap = read_world_stable(shm_path)
+        # 形状帧之后 Bridge 必须照常下发：这里顺手把"还活着"的证据收下来
+        run_exchange(link, served, 0.4, chefs=chefs, hz=args.hz,
+                     heartbeat_ms=min(200, args.heartbeat_ms),
+                     ack_actions=not args.no_ack)
+        return snap
+
+    # 1) chefs: []
+    snap = send_shape("empty-chefs", _shape_state_update(chefs=[], frame_index=1))
+    checks.hard("empty_chefs_maps_to_zero_chefs", snap.world.chef_count == 0, snap.describe())
+    checks.note("empty_chefs_note",
+                "N 个输入槽来自 --chefs（本场景 %d），不来自帧里的 chefs 数组，"
+                "所以空数组不影响下发" % chefs)
+
+    # 2) resources 未知键：键是动态的，未知键必须原样带过去而不是被拒
+    res = {"pot_0": {"state": "occupied", "content": "soup", "time_left": 3},
+           "cutting_board_0": {"state": "occupied", "chef_id": 0},
+           "plate_stack": {"count": 4}, "pot_7": {"state": "free"},
+           "sink_left": {"state": "free"}}
+    snap = send_shape("unknown-resource-keys",
+                      _shape_state_update(resources=res, frame_index=2))
+    names = snap.resource_names()
+    unknown_names = names
+    checks.hard("unknown_resource_keys_kept_verbatim",
+                "pot_7" in names and "sink_left" in names,
+                "shm resource names=%s" % names)
+    checks.hard("resource_count_matches_frame", snap.world.resource_count == len(res),
+                "frame has %d keys, shm has %d" % (len(res), snap.world.resource_count))
+    pot7 = snap.resource("pot_7")
+    checks.hard("unknown_resource_defaults_are_sane",
+                pot7 is not None and _cstr(pot7.state) == "free" and pot7.chef_id == -1
+                and pot7.count == 0,
+                "pot_7: state=%s chef_id=%d count=%d time_left=%s"
+                % (_cstr(pot7.state) if pot7 is not None else "?",
+                   pot7.chef_id if pot7 is not None else -999,
+                   pot7.count if pot7 is not None else -999,
+                   pot7.time_left if pot7 is not None else -999))
+    stack4 = snap.resource("plate_stack")
+    checks.hard("known_resource_fields_mapped",
+                stack4 is not None and stack4.count == 4,
+                "plate_stack count=%d (frame says 4)"
+                % (stack4.count if stack4 is not None else -999))
+
+    # 3) 超大 orders：解析层丢超出的项并计数，映射层再截到段上限，两层都要自洽
+    big_orders = [{"id": "order_%03d-%s" % (i, "x" * 40), "recipe": "recipe_%d" % i,
+                   "time_remaining": 100 - i,
+                   "ingredients": ["ing_%d_%d" % (i, j) for j in range(10)]}
+                  for i in range(100)]
+    snap = send_shape("oversized-orders",
+                      _shape_state_update(orders=big_orders, frame_index=3))
+    counts = snap.order_ingredient_counts()
+    ids = snap.order_ids()
+    orders_in_shm = snap.world.order_count
+    checks.hard("oversized_orders_capped_at_segment_limit",
+                snap.world.order_count == max_orders,
+                "frame sends %d orders, segment cap=%d, shm order_count=%d"
+                % (len(big_orders), max_orders, snap.world.order_count))
+    checks.hard("oversized_orders_ingredients_capped",
+                bool(counts) and max(counts) <= max_ingredients,
+                "per-order ingredient_count=%s (segment cap=%d, frame sends 10)"
+                % (sorted(set(counts)), max_ingredients))
+    checks.hard("oversized_orders_kept_the_prefix",
+                bool(ids) and ids[0].startswith("order_000") and len(ids[0]) <= 31,
+                "first shm id=%r (frame sends %d chars; KOS_SHM_NAME_MAX=32 with NUL)"
+                % (ids[0] if ids else None, len(big_orders[0]["id"])))
+
+    # 4) plate_stack.count == 0：0 是合法计数，不是"缺失"
+    snap = send_shape("plate-stack-zero",
+                      _shape_state_update(resources={"plate_stack": {"count": 0}},
+                                          frame_index=4))
+    stack0 = snap.resource("plate_stack")
+    checks.hard("plate_stack_zero_stays_zero",
+                stack0 is not None and _cstr(stack0.name) == "plate_stack" and stack0.count == 0,
+                "plate_stack: name=%s count=%d"
+                % (_cstr(stack0.name) if stack0 is not None else "missing",
+                   stack0.count if stack0 is not None else -999))
+
+    # 5) resources 也有上限：40 个键只该留下前 32 个
+    many = {"pot_%d" % i: {"state": "free"} for i in range(40)}
+    snap = send_shape("oversized-resources",
+                      _shape_state_update(resources=many, frame_index=5))
+    names = snap.resource_names()
+    resources_in_shm = snap.world.resource_count
+    checks.hard("oversized_resources_capped_at_segment_limit",
+                snap.world.resource_count == max_resources,
+                "frame sends 40 keys, segment cap=%d, shm resource_count=%d"
+                % (max_resources, snap.world.resource_count))
+    checks.hard("oversized_resources_kept_the_prefix",
+                "pot_0" in names and "pot_39" not in names,
+                "shm first=%s last=%s" % (names[:1], names[-1:]))
+
+    checks.hard("dispatch_continued_after_every_shape", len(served.actions) >= 4,
+                "%d actions in the 0.4s windows after each of the 5 shape frames"
+                % len(served.actions))
+    checks.hard("actions_wellformed_for_shapes",
+                not served.bad_actions and not seen.bad_actions,
+                "malformed: %s" % (served.bad_actions[:2] or seen.bad_actions[:2] or "none"))
+    checks.hard("no_parse_error_for_these_shapes",
+                log_event_counts(ctx)["parse_error"] == 0,
+                "parse_error 次数=%d（这四种形状都该被接受，只有畸形/失步才拒）"
+                % log_event_counts(ctx)["parse_error"])
+    checks.hard("log_shows_the_empty_chefs_frame",
+                bool(re.search(r"state_update .*chefs=0 ", ctx.log_text())),
+                "state_update 行里应能看到 chefs=0：解析层确实收下了空数组")
+    dropped = [int(n) for n in re.findall(r"state_update .*?dropped=(\d+)", ctx.log_text())]
+    checks.note("parse_diag_dropped_items",
+                "state_update 行里最大的 dropped=%s（%d 行；协议上限 32 单 / 8 食材，"
+                "与段上限 %d / %d 不同）"
+                % (max(dropped) if dropped else None, len(dropped), max_orders, max_ingredients))
+    checks.soft("log_reports_orders_above_protocol_cap",
+                max(dropped, default=0) > 0,
+                "100 单超出 PROTO_MAX_ORDERS=32，dropped 应当非 0；实际 %s"
+                % (max(dropped) if dropped else "无 state_update 行"))
+    checks.hard("bridge_alive_after_shapes", ctx.bridge.alive(),
+                "exit=%s" % ctx.bridge.exit_code())
+    checks.hard("bridge_pid_unchanged", ctx.bridge.pid == pid,
+                "pid %s -> %s (no restart expected)" % (pid, ctx.bridge.pid))
+    link.close()
+    return ("empty chefs -> chef_count=0; unknown keys kept verbatim (%s); 100 orders -> "
+            "%d in shm (cap %d), ingredients<=%d, dropped=%s; plate_stack.count=0 -> 0; "
+            "40 resources -> %d in shm"
+            % (unknown_names, orders_in_shm, max_orders, max_ingredients,
+               max(dropped) if dropped else None, resources_in_shm))
+
+
+def scenario_second_peer(ctx, checks):
+    """第二个对端在第一个还活着时连进来（spec 没写，本场景只记录+钉不变量）。
+
+    net.c:547-558 的实现是"最新连接获胜"：accept 到新连接就关掉旧 peer 的 fd。
+    spec 对此沉默，所以这里不改语义，只断言与语义无关的三条不变量：
+      - 一个厨房只能有一个执行者：两个对端不能同时收到动作；
+      - 替换不能留下多余的 socket fd；
+      - 无论谁被留下，进程都要活着，且被留下的那个必须真的还连着。
+    """
+    args = ctx.args
+    chefs = 1
+    ctx.clear_stale_shm()
+    port = ctx.start_bridge_and_wait(link="listen", host=args.host, chefs=chefs,
+                                     frame_timeout_ms=args.frame_timeout_ms,
+                                     heartbeat_timeout_ms=args.heartbeat_timeout_ms,
+                                     port=args.listen_port)
+    pid = ctx.bridge.pid
+
+    link_a = live_link(args.host, port, args.ready_timeout)
+    first = Stats("peer-a")
+    run_exchange(link_a, first, 1.0, chefs=chefs, hz=args.hz, heartbeat_ms=args.heartbeat_ms,
+                 ack_actions=not args.no_ack)
+    checks.hard("first_peer_gets_actions", len(first.actions) >= 1, first.describe())
+    sockets_one_peer = len(socket_fds(proc_fds(pid)))
+    checks.note("peer_a_alone", "%s; bridge %s" % (first.describe(), describe_fds(proc_fds(pid))))
+    events_before = log_event_counts(ctx)
+
+    link_b = live_link(args.host, port, args.ready_timeout)
+    checks.note("peer_b", "second connection opened while peer A is still open")
+
+    # A 的下场：Bridge 若选择替换，A 应当立刻看到自己的连接被关（FIN/RST）
+    a_closed = link_a.probe_closed(1.5)
+    checks.note("peer_a_after_b_connected",
+                "closed=%s error=%s" % (a_closed, link_a.error or "none"))
+
+    # 之后一个窗口里，两边都发帧、都发心跳，各收各的：动作收到谁手里就是谁在被服务
+    window = max(1.5, args.duration / 2)
+    a_during = Stats("peer-a-during")
+    b_during = Stats("peer-b-during")
+    period = 1.0 / args.hz if args.hz > 0 else 0.0
+    hb_period = min(300, args.heartbeat_ms) / 1000.0
+    start = time.monotonic()
+    next_state = start
+    next_hb = start
+    while time.monotonic() - start < window:
+        for msg in link_a.pump(0.01):
+            _absorb(msg, a_during, None, False, chefs)
+        for msg in link_b.pump(0.01):
+            _absorb(msg, b_during, None, False, chefs)
+        now = time.monotonic()
+        if period and now >= next_state:
+            # 已经断掉的那条不再发：给一个死连接发帧只会刷一堆 tx_error
+            for lk, st in ((link_a, a_during), (link_b, b_during)):
+                if lk.closed:
+                    continue
+                _safe_send(lk, st, msg_state_update(chefs, st.frame_index), "state_update")
+                st.frame_index += 1
+            next_state += period
+            if next_state < now:
+                next_state = now + period
+        if now >= next_hb:
+            for lk, st in ((link_a, a_during), (link_b, b_during)):
+                if not lk.closed:
+                    _safe_send(lk, st, msg_heartbeat(), "heartbeat")
+            next_hb += hb_period
+
+    a_actions, b_actions = len(a_during.actions), len(b_during.actions)
+    winner = "peer B (the newer connection)" if b_actions else (
+        "peer A (the older connection)" if a_actions else "neither")
+    checks.note("who_gets_served", "peer A %d actions, peer B %d actions in %.1fs -> %s"
+                % (a_actions, b_actions, window, winner))
+    checks.hard("exactly_one_peer_is_served", (a_actions > 0) != (b_actions > 0),
+                "one kitchen has one executor: A=%d actions, B=%d actions" % (a_actions, b_actions))
+    checks.hard("served_peer_keeps_getting_actions", max(a_actions, b_actions) >= 3,
+                "winner=%s got %d actions in %.1fs" % (winner, max(a_actions, b_actions), window))
+    checks.hard("actions_wellformed_with_two_peers",
+                not a_during.bad_actions and not b_during.bad_actions,
+                "malformed: %s" % (a_during.bad_actions[:2] or b_during.bad_actions[:2] or "none"))
+    checks.hard("displaced_peer_sees_a_closed_socket",
+                (b_actions == 0) or a_closed,
+                "peer B is being served, so peer A must have been told (closed=%s, "
+                "error=%s) rather than left hanging" % (a_closed, link_a.error or "none"))
+    sockets_after = len(socket_fds(proc_fds(pid)))
+    checks.hard("second_peer_leaves_no_extra_socket", sockets_after == sockets_one_peer,
+                "sockets with peer A alone=%d, after B connected=%d (listen + one peer)"
+                % (sockets_one_peer, sockets_after))
+    checks.hard("bridge_alive_after_second_peer", ctx.bridge.alive(),
+                "exit=%s" % ctx.bridge.exit_code())
+    checks.hard("bridge_pid_unchanged", ctx.bridge.pid == pid,
+                "pid %s -> %s (no restart expected)" % (pid, ctx.bridge.pid))
+    events_after = log_event_counts(ctx)
+    swaps = events_after["link_peer_replaced"] - events_before["link_peer_replaced"]
+    checks.note("log_events_with_two_peers",
+                "link_up=%d->%d link_down=%d->%d link_peer_replaced=%d->%d"
+                % (events_before["link_up"], events_after["link_up"],
+                   events_before["link_down"], events_after["link_down"],
+                   events_before["link_peer_replaced"], events_after["link_peer_replaced"]))
+    # spec 要求日志含 IPC 连接与断开（bridge.md:27-28）：第二个对端顶掉第一个时，
+    # 链路始终是 UP，所以状态机自己看不见这次替换 —— 不记就是一条连接事件丢失。
+    swap_line = re.search(r"link_peer_replaced .*old_peer_fd=\d+ new_peer_fd=\d+",
+                          ctx.log_text())
+    checks.hard("log_records_the_peer_swap", swaps >= 1 and bool(swap_line),
+                "替换必须留一行带新旧 fd 的记录；link_peer_replaced 新增 %d 行，"
+                "样本=%s" % (swaps, swap_line.group(0) if swap_line else "none"))
+    link_a.close()
+    link_b.close()
+    return ("peer A alone got %s; then B connected -> %s; a_closed=%s; sockets %d -> %d"
+            % (first.describe(), winner, a_closed, sockets_one_peer, sockets_after))
+
+
 SCENARIO_IMPL = {
     "happy": scenario_happy,
     "one-slot": scenario_one_slot,
     "no-heartbeat": scenario_no_heartbeat,
     "bad-frames": scenario_bad_frames,
     "connect-mode": scenario_connect_mode,
+    "reconnect-storm": scenario_reconnect_storm,
+    "silent-connect": scenario_silent_connect,
+    "data-shapes": scenario_data_shapes,
+    "second-peer": scenario_second_peer,
 }
 
 
@@ -1736,6 +2604,12 @@ def parse_args(argv):
     parser.add_argument("--ready-timeout", type=float, default=10.0, help="等 Bridge 就绪的上限")
     parser.add_argument("--stub-hz", type=int, default=30, help="worker stub 的写槽频率")
     parser.add_argument("--no-stubs", action="store_true", help="不启动 worker stub，只测 idle 路径")
+    parser.add_argument("--storm-cycles", type=int, default=24,
+                        help="reconnect-storm 的断开重连轮数（至少 20 才有意义）")
+    parser.add_argument("--storm-gap-ms", type=int, default=40,
+                        help="reconnect-storm 每轮之间的间隔；0 = 尽量快，全挤在一个 poll 窗口里")
+    parser.add_argument("--silent-cycles", type=int, default=8,
+                        help="silent-connect 的\"连上就断\"轮数")
     parser.add_argument("--no-ack", action="store_true", help="不回 ack（模拟插件不回执）")
     parser.add_argument("--flat-xy", action="store_true",
                         help="state_update 额外带顶层 x/y（兼容扁平解析）")

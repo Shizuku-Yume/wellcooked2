@@ -109,6 +109,10 @@ typedef struct {
     kos_shm *shm;
     kos_shm_opts shm_opts;
     kos_net_state link_state;
+    /* The peer fd the last link_up/link_peer_replaced line reported. net.h hands
+     * out a new fd when a second connection replaces the first without the link
+     * ever going down, and that swap has to be logged (see check_link_edges). */
+    int link_peer_fd;
 
     /* ---- frame barrier ---- */
     int64_t frames;             /* state_update frames seen (logging only) */
@@ -1026,9 +1030,10 @@ static void on_link_up(bridge *b)
     b->last_heartbeat_ms = now_ms();
     b->last_heartbeat_sent_ms = 0; /* send one on the next tick */
     b->pending = 0;
+    b->link_peer_fd = kos_net_peer_fd(b->net);
     kos_log_info(b->log, "link_up", "mode=%s host=%s port=%d peer_fd=%d listen_fd=%d",
                  b->link_mode == KOS_NET_MODE_LISTEN ? "listen" : "connect", b->host,
-                 b->port, kos_net_peer_fd(b->net), kos_net_listen_fd(b->net));
+                 b->port, b->link_peer_fd, kos_net_listen_fd(b->net));
 }
 
 /*
@@ -1049,6 +1054,7 @@ static void on_link_down(bridge *b)
     const char *reason = net_error_text(b);
 
     b->pending = 0;
+    b->link_peer_fd = -1;
     if (reason_is_framing_failure(reason)) {
         kos_log_warn(b->log, "frame_error", "stage=framing reason=%s", reason);
     }
@@ -1056,12 +1062,35 @@ static void on_link_down(bridge *b)
                  b->link_mode == KOS_NET_MODE_LISTEN ? "listen" : "connect", reason);
 }
 
-/* Exactly one log line per transition, however many loop iterations it takes. */
+/*
+ * Exactly one log line per transition, however many loop iterations it takes.
+ *
+ * A peer can also change without any transition: net_accept() (net.c) closes the
+ * previous peer and adopts the newest connection, all inside one kos_net_wait(),
+ * so the link never leaves UP and the state change checked below cannot see it. That swap
+ * is still an IPC disconnect followed by an IPC connect, which this process is
+ * required to log, so the peer fd is tracked separately and reported here. The
+ * line is informational: the bridge's own state (open frame, heartbeat clock,
+ * pause flag) deliberately stays as it is -- a reconnect must not cost the game
+ * a frame, and the heartbeat timeout path is what drops a silent session.
+ */
 static void check_link_edges(bridge *b)
 {
     kos_net_state state = kos_net_state_of(b->net);
+    int peer_fd;
 
     if (state == b->link_state) {
+        if (state == KOS_NET_UP) {
+            peer_fd = kos_net_peer_fd(b->net);
+            if (peer_fd >= 0 && peer_fd != b->link_peer_fd) {
+                kos_log_info(b->log, "link_peer_replaced",
+                             "mode=%s old_peer_fd=%d new_peer_fd=%d "
+                             "rule=newest-connection-wins",
+                             b->link_mode == KOS_NET_MODE_LISTEN ? "listen" : "connect",
+                             b->link_peer_fd, peer_fd);
+                b->link_peer_fd = peer_fd;
+            }
+        }
         return;
     }
     b->link_state = state;
