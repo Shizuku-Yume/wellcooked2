@@ -1,0 +1,17 @@
+# Build output
+bin/
+obj/
+
+# Game / BepInEx reference assemblies (local only, not redistributable)
+Libs/
+
+# User-specific
+*.user
+*.suo
+
+# 调试期对游戏程序集的 IL dump：一次性产物，且含游戏内部符号。
+# 文档 §6.1 明确要求不要把游戏 DLL 相关内容提交到仓库。
+tools/dump*.txt
+tools/dump*-assembly.ps1
+tools/probe*.txt
+tools/probe*-assembly.ps1
