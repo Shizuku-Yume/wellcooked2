@@ -317,10 +317,18 @@ namespace WellCooked
                 return false;
             }
 
-            // 进度在 ClientWorkableItem 上，不在 attach station 的 m_item 上
-            // （那个是 ClientPhysicalAttachment，读 m_progress 只会得到一堆 AccessTools 警告）。
-            // 参考项目也是读 workstation.m_item（ReflectionUtil.GetValue(workstation, "m_item")）。
-            var workableItem = WorldState.Get(workstation, "m_item");
+            // 料在 attach station 上（workstation.m_item 只在**有厨师正在用**的时候才非空，
+            // 平时是 null，所以不能拿它判"板上有没有料"）；进度在同一个物体上的
+            // ClientWorkableItem 组件里（attach station 的 m_item 只是 ClientPhysicalAttachment，
+            // 直接读 m_progress 只会得到一堆 AccessTools 警告）。
+            var attach = occupant.GetComponent("ClientAttachStation");
+            var attached = attach == null ? null : WorldState.Get(attach, "m_item") as Component;
+            if (attached == null)
+            {
+                return false;
+            }
+
+            var workableItem = attached.gameObject.GetComponent("ClientWorkableItem");
             if (workableItem == null)
             {
                 return false;
