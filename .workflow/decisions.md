@@ -518,3 +518,21 @@ user may overturn on sight. `Revisit when` of "never" is allowed but suspicious;
 - **Revisit when:** 验收明确要求默认值与 §5.1 样例一致，或参考项目 mod 与本实现同机同时运行并
   真的撞上 14455。
 - **Effort:** bridge
+
+## 2026-10-16 - 两个插件工程合并到 net35 那份（演示机这份）
+
+- **Decided:** 存活工程是 `plugin/*.cs` + `WellCooked.Smoke.csproj`（net35，跑在 Fedora+Proton
+  演示机上：世界状态、导航、工序、关卡接管、调试指令）。net46 `plugin/WellCooked.Plugin/` 只留作
+  参考实现，它的链路层（`Net/TcpLink.cs`、`Protocol/Messages.cs`、每帧上报、动作注入接口）并进
+  存活工程，之后只有一份插件往 `BepInEx/plugins/` 拷。
+- **Instead of:** 反过来以 net46 那份为主（把工序/导航并进去）；或保留两份、各自补齐。
+- **Because:** 演示与验收在这台 Fedora 机器上（BepInEx 已装、游戏在 `/run/media/.../Overcooked! 2`、
+  `scripts/run-game.sh` 就是它的启动器），而工序、导航、关卡接管这些"踩出来的游戏事实"都在 net35
+  那份里（`technical-debt.md: 两个插件工程并存，状态读取与输入注入各有一份` 的 Where 逐条列过）。
+  反向合并得先把 net46 在 Proton 下加载起来，而那份的注释写的是 Unity 2018.4、本机是 2017.4.8f1，
+  多一层不必要的风险。保留两份则同一条游戏事实（厨师坐标怎么取、交互键是哪个）改一处漂移一处，
+  而且两份都往 `BepInEx/plugins/` 拷，装哪个只能靠人记。
+- **Mine:** no (asked the user)
+- **Revisit when:** 组员的 Windows 实验室需要一份独立部署的插件（例如课程要求两个实验室各自交付），
+  或 net46 那份承载了 net35 编不出来的东西（例如只在新 Mono 上可用的 API）。
+- **Effort:** game-bridge

@@ -12,6 +12,11 @@
 **Read first:** spec「What it does」「How it is built」「How we will know it works」W3、W4、W7；方案 §9 阶段A2、§5.2 `state_update` 字段；`protocol/protocol.md`
 **Covers:** W3, W4, W7
 
+**Note:** 链路层落到哪一份插件已定（`decisions.md: 2026-10-16 - 两个插件工程合并到 net35 那份`）：
+本任务在 `plugin/*.cs`（net35，演示机那份）上做，`plugin/WellCooked.Plugin/Net/TcpLink.cs` 与
+`Protocol/Messages.cs` 是搬运来源，那份之后只留作参考实现。合并本身的改动记在 `technical-debt.md`
+的「两个插件工程并存」条目里，随本任务一起删掉那条债务。
+
 **Check:** 启动 Bridge，再启动游戏进一局：`bridge.log` 5 秒内出现 `client connected`，随后持续收到 `state_update`，其中 `score` 与画面一致、`chefs` 数量与场上厨师数一致（人工比对一次）；`kill` 掉 Bridge，游戏继续运行且插件日志出现重连行，重启 Bridge 后 5 秒内重新连上。
 
 - [ ] 插件用后台线程跑 TCP 客户端，不阻塞游戏主线程（帧率不掉到不可玩）
