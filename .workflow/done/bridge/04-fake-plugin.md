@@ -68,3 +68,29 @@ SUITE_EXIT=0
   （`TcpLink.cs:287` 只拒绝 `len < 0 || len > MaxFrameBytes`）都认为它是合法的空帧。
   这是一处真实的规格不一致，已连同证据交回 net 的负责人修正；修好之前该断言保持 soft
   是正确的 —— 把它改成 hard 只会掩盖分歧，不会解决分歧。
+
+### 收尾补记：三条问题的最终结论（integrator，任务已提交为 `d0f9bab`）
+
+上面三条后来都被作者追到了根因，其中两条的**最初解释是错的**，值得更正：
+
+- **"并发运行会互相踩"的真正机制不是日志互相覆盖，而是清理模式误杀。** runner 用
+  `pkill -f "kitchenos-bridge .*--state-name X"` 清理，但这个模式**也会匹配到正在运行的
+  fake_plugin 自己的命令行** —— 因为它的 cmdline 里同样含有 bridge 路径和 `--state-name X`。
+  两个 runner 实例并存时，一个实例的清理会 SIGKILL 掉另一个实例正在跑的场景，
+  症状是"0 秒 / 7 秒就超时"以及被截断的日志。**这与 Bridge 真的卡死在观感上无法区分**，
+  是本 effort 里最具误导性的一处。修法是把模式锚定到二进制路径
+  （`^<bridge path> .*--state-name X( |$)`），并用 `pgrep` 证明现在只匹配真正的 Bridge。
+- **一条软断言曾经是因为 harness 自身的 bug 才通过的。** 对端关闭的 socket 不 `recv` 就
+  看不见，而 Bridge 的心跳可能先于 FIN 到达，于是"连接保持"是在**根本没有查看**的情况下
+  得出的结论。补上 `Link.probe_closed()`（在超时内排空到 EOF/error）后，超大帧断链
+  从"软断言 + 说明"升格为**引用规格条文的硬断言**，读到的是真实状态（RST 或 EOF）。
+  教训：一条一直通过的断言，可能只是因为它从来没真正观察过。
+- **零长帧已修复**（`eaed4f5`）。现在 Bridge 交付这个空帧、由解析器拒绝该消息、连接保持，
+  对应断言不再依赖 soft 兜底。
+
+**最终状态**：连续三次全量运行（含一次 `--strict`，把所有 soft 断言升格为硬断言）
+均为 5/5 PASS、退出码 0、零 soft WARN，被测二进制 sha256 在运行前后一致。
+每次运行使用 `/kitchenos_c04_<run-id>_<scenario>` 与 `logs/bridge-<run-id>-<scenario>.log`
+（run-id = runner pid），且只清理自己的对象，因此并行运行互不可见、互不可删；
+`wait_listen` 还会校验监听 socket 的 inode 确实属于本次的 Bridge pid，
+从根本上杜绝"连到了别人的 Bridge 上"（这种情况真实发生过一次，当时 12345 被占）。
