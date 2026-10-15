@@ -117,3 +117,44 @@ user may overturn on sight. `Revisit when` of "never" is allowed but suspicious;
 - **Revisit when:** 协议扩展到需要通用 schema 校验或深层嵌套结构。
 - **Effort:** bridge
 
+## 2026-10-15 - 零长帧当作空消息交付，不当作流失步
+
+- **Decided:** 长度前缀为 0 的帧照常交付（`len == 0` 的一帧），由解析器拒绝该消息并记
+  `parse_error`，连接保持。只有长度前缀越界（< 0 或 > 1 MiB）才断链。
+- **Instead of:** 原实现把 `len == 0` 判为 framing desync 并断开连接。
+- **Because:** `framing.h` 明确承诺会产出 `len == 0` 的帧，参考实现
+  `plugin/WellCooked.Plugin/Net/TcpLink.cs:287` 也只拒绝 `len < 0 || len > MaxFrameBytes`。
+  文档 §5.3 把"消息畸形"（记录并丢弃该消息）与"失步"（付出断连代价）分成两类，空消息属于
+  前者；拿一次连接闪断去换一个解析器本来就会拒绝的帧，代价与收益完全不成比例。
+- **Mine:** yes
+- **Revisit when:** 有第三方实现给零长帧赋予特殊语义（例如当心跳），或协议需要区分
+  "空消息"与"没有消息"。
+- **Effort:** bridge
+
+## 2026-10-15 - 共享状态用 seqlock；就绪信号量另起名字
+
+- **Decided:** 世界状态用 seqlock 保护；"本帧输入已就绪"的通知信号量命名为
+  `/kitchenos_input_ready`，不采用文档代码示例里的 `/kitchenos_sem`。
+- **Instead of:** 走 §6.2.3 的另一条路——用初值为 1 的 `/kitchenos_sem` 当互斥量，
+  由 Bridge 在写临界区前后 `sem_wait`/`sem_post`。
+- **Because:** §6.2.3 原文是"使用 seqlock **或**读写信号量保护"，择一即可。文档 553 行的
+  `/kitchenos_sem` 初值为 1，是**互斥量**那一路的名字；而"通过信号量通知 Bridge 本帧输入
+  已就绪"（869 行）的那个信号量文档没有给名字。本项目的访问模式是 Bridge 单写、
+  Scheduler 与多个 Worker 并发读，正是 seqlock 的适用形状，且读者永不被写者阻塞。
+- **Mine:** yes
+- **Revisit when:** 出现需要写者之间互斥的共享区（seqlock 只解决单写多读），或课程验收
+  明确点名要看到 `sem_wait`/`sem_post` 保护临界区。
+- **Effort:** bridge
+
+## 2026-10-15 - 实机验收不要求改游戏侧配置
+
+- **Decided:** Bridge 的默认监听端口取插件默认连接的那个端口（12345），因此 W8 不需要编辑
+  游戏侧任何配置文件即可完成；插件的 server 模式（14455）保留给相反拓扑使用。
+- **Instead of:** 把"改 `BepInEx/config` 里的 `Network.Host`/`Network.Port`"写进 W8 的步骤。
+- **Because:** 每多一个手改配置的步骤，就多一种"验收失败其实是配置没改"的假失败，而排查
+  这种失败要花的时间远超过它省下的。两边的默认值本来就该指向同一个端口，维持它们相等是
+  零成本的；`127.0.0.1` 若跨不过 WSL2 边界，回退到 WSL IP 是一条命令的事，已写在失败提示里。
+- **Mine:** yes
+- **Revisit when:** 插件的默认端口发生变更，或 Bridge 需要一个不与游戏共存的固定端口。
+- **Effort:** bridge
+
