@@ -1,4 +1,5 @@
 using System;
+using System.Text;
 using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
@@ -117,6 +118,9 @@ namespace WellCooked
                 case "order":
                     DumpOrder();
                     break;
+                case "mech":
+                    DumpMechanics();
+                    break;
                 case "scan":
                     Scan(value);
                     break;
@@ -133,6 +137,81 @@ namespace WellCooked
                     _log.LogWarning("指令: 不认识 " + key);
                     break;
             }
+        }
+
+        /// <summary>
+        /// 数当前场景里"真实存在"的机制组件与工位（挑关卡用）。
+        ///
+        /// 为什么不看物体名字：布景也叫 `city_bridge`/`raft_flower_01`，按名字筛会误判。
+        /// 这里直接遍历场景根物体上的组件，按**组件类型名**归类。
+        /// </summary>
+        private static void DumpMechanics()
+        {
+            var scene = UnityEngine.SceneManagement.SceneManager.GetActiveScene();
+            var mechanics = new SortedDictionary<string, int>(StringComparer.Ordinal);
+            var stations = new SortedDictionary<string, int>(StringComparer.Ordinal);
+            var roots = scene.GetRootGameObjects();
+            foreach (var root in roots)
+            {
+                foreach (var component in root.GetComponentsInChildren<Component>(true))
+                {
+                    if (component == null)
+                    {
+                        continue;
+                    }
+
+                    string name = component.GetType().Name;
+                    if (name.IndexOf("Conveyor", StringComparison.OrdinalIgnoreCase) >= 0
+                        || name.IndexOf("Teleport", StringComparison.OrdinalIgnoreCase) >= 0
+                        || name.IndexOf("Portal", StringComparison.OrdinalIgnoreCase) >= 0
+                        || name.IndexOf("Ice", StringComparison.OrdinalIgnoreCase) >= 0
+                        || name.IndexOf("Bridge", StringComparison.OrdinalIgnoreCase) >= 0
+                        || name.IndexOf("Raft", StringComparison.OrdinalIgnoreCase) >= 0
+                        || name.IndexOf("Wind", StringComparison.OrdinalIgnoreCase) >= 0
+                        || name.IndexOf("Cannon", StringComparison.OrdinalIgnoreCase) >= 0
+                        || name.IndexOf("Switch", StringComparison.OrdinalIgnoreCase) >= 0
+                        || name.IndexOf("Geyser", StringComparison.OrdinalIgnoreCase) >= 0
+                        || name.IndexOf("Trolley", StringComparison.OrdinalIgnoreCase) >= 0
+                        || name.IndexOf("Elevator", StringComparison.OrdinalIgnoreCase) >= 0
+                        || name.IndexOf("Fire", StringComparison.OrdinalIgnoreCase) >= 0)
+                    {
+                        mechanics[name] = mechanics.TryGetValue(name, out var m) ? m + 1 : 1;
+                    }
+
+                    if (name.IndexOf("AttachStation", StringComparison.OrdinalIgnoreCase) >= 0
+                        || name.IndexOf("Workstation", StringComparison.OrdinalIgnoreCase) >= 0
+                        || name.IndexOf("CookingStation", StringComparison.OrdinalIgnoreCase) >= 0
+                        || name.IndexOf("PlateStation", StringComparison.OrdinalIgnoreCase) >= 0
+                        || name.IndexOf("PlateStack", StringComparison.OrdinalIgnoreCase) >= 0
+                        || name.IndexOf("PickupItemSpawner", StringComparison.OrdinalIgnoreCase) >= 0
+                        || name.IndexOf("IngredientContainer", StringComparison.OrdinalIgnoreCase) >= 0
+                        || name.IndexOf("RubbishBin", StringComparison.OrdinalIgnoreCase) >= 0
+                        || name.IndexOf("ChoppingBoard", StringComparison.OrdinalIgnoreCase) >= 0)
+                    {
+                        stations[name] = stations.TryGetValue(name, out var c) ? c + 1 : 1;
+                    }
+                }
+            }
+
+            _log.LogInfo("mech: 场景 " + scene.name + " 根物体 " + roots.Length);
+            _log.LogInfo("mech: 机制 = " + (mechanics.Count == 0 ? "无" : Join(mechanics)));
+            _log.LogInfo("mech: 工位 = " + Join(stations));
+        }
+
+        private static string Join(SortedDictionary<string, int> map)
+        {
+            var text = new StringBuilder();
+            foreach (var pair in map)
+            {
+                if (text.Length > 0)
+                {
+                    text.Append(", ");
+                }
+
+                text.Append(pair.Key).Append('×').Append(pair.Value);
+            }
+
+            return text.Length == 0 ? "无" : text.ToString();
         }
 
         /// <summary>
