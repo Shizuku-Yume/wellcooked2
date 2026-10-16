@@ -29,7 +29,9 @@ namespace WellCooked
             public bool Active;
             public float MoveX;
             public float MoveY;
-            public bool Action;
+            public bool Action;   // 交互键（A / LogicalButtonID.PickupAndDrop）
+            public bool Dash;     // 冲刺/投掷（LogicalButtonID.Dash）
+            public bool Work;     // 用台面（X / LogicalButtonID.WorkstationInteract）
         }
 
         public static void Install(ManualLogSource log)
@@ -92,8 +94,19 @@ namespace WellCooked
             _log.LogInfo("logical: 逻辑层注入入口 " + patched + " 个");
         }
 
-        /// <summary>开始/停止驱动某个玩家：轴取 [-1,1]，按键按一次给一帧。</summary>
+        /// <summary>
+        /// 开始/停止驱动某个玩家：轴取 [-1,1]，`action` 是交互键（A）。
+        /// 调用点（`Takeover` 的非自有玩家那条路）本意就是"周期按交互键"，与设备层的
+        /// `Pad.Want(action, …)` 是同一个键；这里补上 Dash/Work 两个键给动作指令用。
+        /// </summary>
         public static void Set(PlayerInputLookup.Player player, Vector2 move, bool action)
+        {
+            SetButtons(player, move, action, false, false);
+        }
+
+        /// <summary>按三个逻辑键分别驱动（任务 04 的动作执行器用它）。</summary>
+        public static void SetButtons(PlayerInputLookup.Player player, Vector2 move,
+                                      bool pickup, bool dash, bool work)
         {
             Drive drive;
             if (!Drives.TryGetValue(player, out drive))
@@ -105,7 +118,9 @@ namespace WellCooked
             drive.Active = true;
             drive.MoveX = move.x;
             drive.MoveY = move.y;
-            drive.Action = action;
+            drive.Action = pickup;
+            drive.Dash = dash;
+            drive.Work = work;
         }
 
         public static void Clear()
@@ -116,6 +131,8 @@ namespace WellCooked
                 drive.MoveX = 0f;
                 drive.MoveY = 0f;
                 drive.Action = false;
+                drive.Dash = false;
+                drive.Work = false;
             }
         }
 
@@ -172,7 +189,15 @@ namespace WellCooked
                 return;
             }
 
-            if (__args[0] == null || __args[0].ToString() != "WorkstationInteract")
+            if (__args[0] == null)
+            {
+                return;
+            }
+
+            // 三个逻辑键都要能驱动：A=PickupAndDrop（取/放）、Dash（冲刺/投掷）、
+            // WorkstationInteract=X（用台面/切菜）。别的键原样透传。
+            var buttonId = __args[0].ToString();
+            if (buttonId != "PickupAndDrop" && buttonId != "Dash" && buttonId != "WorkstationInteract")
             {
                 return;
             }
@@ -184,7 +209,7 @@ namespace WellCooked
                 return;
             }
 
-            __result = new DrivenButton(__result, drive);
+            __result = new DrivenButton(__result, drive, buttonId);
         }
 
         /// <summary>移动轴：直接给策略算出来的值，其余成员转给原对象。</summary>
@@ -223,12 +248,29 @@ namespace WellCooked
         {
             private readonly ILogicalButton _inner;
             private readonly Drive _drive;
+            private readonly string _buttonId;
             private bool _claimed;
 
-            public DrivenButton(ILogicalButton inner, Drive drive)
+            public DrivenButton(ILogicalButton inner, Drive drive, string buttonId)
             {
                 _inner = inner;
                 _drive = drive;
+                _buttonId = buttonId;
+            }
+
+            private bool Wanted
+            {
+                get
+                {
+                    if (!_drive.Active)
+                    {
+                        return false;
+                    }
+
+                    return _buttonId == "PickupAndDrop" ? _drive.Action
+                        : _buttonId == "Dash" ? _drive.Dash
+                        : _drive.Work;
+                }
             }
 
             public void GetLogicTreeData(out AcyclicGraph<ILogicalElement, LogicalLinkInfo> graph,
@@ -239,17 +281,17 @@ namespace WellCooked
 
             public bool JustPressed()
             {
-                return _drive.Active ? _drive.Action && !_claimed : _inner.JustPressed();
+                return _drive.Active ? Wanted && !_claimed : _inner.JustPressed();
             }
 
             public bool JustReleased()
             {
-                return _drive.Active ? !_drive.Action && _claimed : _inner.JustReleased();
+                return _drive.Active ? !Wanted && _claimed : _inner.JustReleased();
             }
 
             public bool HasUnclaimedPressEvent()
             {
-                return _drive.Active ? _drive.Action && !_claimed : _inner.HasUnclaimedPressEvent();
+                return _drive.Active ? Wanted && !_claimed : _inner.HasUnclaimedPressEvent();
             }
 
             public void ClaimPressEvent()
@@ -268,12 +310,12 @@ namespace WellCooked
 
             public float GetHeldTimeLength()
             {
-                return _drive.Active ? (_drive.Action ? 1f : 0f) : _inner.GetHeldTimeLength();
+                return _drive.Active ? (Wanted ? 1f : 0f) : _inner.GetHeldTimeLength();
             }
 
             public bool IsDown()
             {
-                return _drive.Active ? _drive.Action : _inner.IsDown();
+                return _drive.Active ? Wanted : _inner.IsDown();
             }
         }
     }

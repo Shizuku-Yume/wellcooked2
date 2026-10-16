@@ -39,6 +39,7 @@ namespace WellCooked
         private static bool _wasConnected;
         private static bool _malformedLogged;
         private static bool _oversizeLogged;
+        private static bool _targetFallbackLogged;
 
         /// <summary>协议 §5 的单条消息上限。</summary>
         private const int MaxStateBytes = 4096;
@@ -109,6 +110,7 @@ namespace WellCooked
             else if (!connected && _wasConnected)
             {
                 _log.LogInfo("link: 与 Bridge 断开，后台每 2 秒重试");
+                ActionDriver.ReleaseAll(); // 没人在下动作了，把玩家位交还本地驱动
             }
 
             _wasConnected = connected;
@@ -312,7 +314,8 @@ namespace WellCooked
                     ApplyRemoteConfig(m);
                     break;
                 case MsgType.Action:
-                    HandleAction(m);
+                    Diag.Trace("link: 收到 action 原文 " + json);
+                    HandleAction(m, json);
                     break;
                 default:
                     _log.LogWarning("link: 不认识的消息类型 " + m.type);
@@ -334,8 +337,25 @@ namespace WellCooked
             }
         }
 
-        private static void HandleAction(InboundMessage m)
+        private static void HandleAction(InboundMessage m, string json)
         {
+            // Unity 的 JsonUtility 没把嵌套的 target 对象填进来（实测：move 到了这里 target 是 null，
+            // 于是每一条 move 都被拒）。参考实现（net46 那份）同样用它，但那条路从来没被真机跑过
+            // —— bridge/05 的实机只跑过 stop/idle。这里对 move 自己从原文里取一次，别再指望它。
+            if (m.target == null && !string.IsNullOrEmpty(json) && m.action == "move")
+            {
+                Vec2 parsed;
+                if (TryReadTarget(json, out parsed))
+                {
+                    m.target = parsed;
+                    if (!_targetFallbackLogged)
+                    {
+                        _targetFallbackLogged = true;
+                        _log.LogWarning("link: JsonUtility 没解析出 target，改从原文里取（只报一次）");
+                    }
+                }
+            }
+
             var handler = ActionHandler;
             if (handler == null)
             {
@@ -355,6 +375,84 @@ namespace WellCooked
             }
 
             _link.Send(Msg.Ack(m.action, m.chef_id, error == null, error ?? "ok"));
+        }
+
+        /// <summary>
+        /// 从原文里取 `"target":{"x":…,"y":…}`。只在 JsonUtility 没填出来时用，
+        /// 所以够用就行：找到 target 键，再找它后面第一个 x 与 y 的数字。
+        /// </summary>
+        private static bool TryReadTarget(string json, out Vec2 target)
+        {
+            target = null;
+            int at = json.IndexOf("\"target\"", StringComparison.Ordinal);
+            if (at < 0)
+            {
+                return false;
+            }
+
+            float x, y;
+            if (!TryReadNumber(json, "\"x\"", at, out x) || !TryReadNumber(json, "\"y\"", at, out y))
+            {
+                return false;
+            }
+
+            target = new Vec2();
+            target.x = x;
+            target.y = y;
+            return true;
+        }
+
+        private static bool TryReadNumber(string json, string key, int from, out float value)
+        {
+            value = 0f;
+            int at = json.IndexOf(key, from, StringComparison.Ordinal);
+            if (at < 0)
+            {
+                return false;
+            }
+
+            int colon = json.IndexOf(':', at + key.Length);
+            if (colon < 0)
+            {
+                return false;
+            }
+
+            int start = colon + 1;
+            while (start < json.Length && (json[start] == ' ' || json[start] == '\t'))
+            {
+                start++;
+            }
+
+            int end = start;
+            while (end < json.Length
+                   && (char.IsDigit(json[end]) || json[end] == '-' || json[end] == '+' || json[end] == '.'
+                       || json[end] == 'e' || json[end] == 'E'))
+            {
+                end++;
+            }
+
+            if (end == start)
+            {
+                return false;
+            }
+
+            return float.TryParse(json.Substring(start, end - start),
+                                  System.Globalization.NumberStyles.Float,
+                                  System.Globalization.CultureInfo.InvariantCulture, out value);
+        }
+
+        /// <summary>
+        /// 回一条动作的结局（执行器在到达/超时/失败时调）。第一次 ack 是"已登记"，
+        /// 这一次是"结局"—— 上层据此不必靠猜（见 `ActionDriver` 的说明）。
+        /// </summary>
+        public static void ReportAction(string action, int chefId, bool ok, string detail)
+        {
+            if (_link == null)
+            {
+                return;
+            }
+
+            _link.Send(Msg.Ack(action, chefId, ok, detail));
         }
 
         private static void LogLine(string message)

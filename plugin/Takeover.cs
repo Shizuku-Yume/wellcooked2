@@ -684,6 +684,11 @@ namespace WellCooked
                     continue;
                 }
 
+                if (ActionDriver.Drive(owned.Slot, owned.Pad, position, now))
+                {
+                    continue; // 这个玩家位收到过 Bridge 的动作，归动作执行器（任务 04）
+                }
+
                 if (!Navigation.HasArrived(owned.Slot))
                 {
                     string status;
@@ -734,6 +739,12 @@ namespace WellCooked
                     continue;
                 }
 
+                int slot = (int)player;   // 逻辑层的玩家号与本插件的槽号是同一套编号
+                if (ActionDriver.Drive(slot, null, position, now))
+                {
+                    continue;
+                }
+
                 string status;
                 var direction = Navigation.Steer(player, position, now, out status);
                 LogicalInput.Set(player, direction, action);
@@ -775,6 +786,11 @@ namespace WellCooked
                     continue;
                 }
 
+                if (ActionDriver.Owns(owned.Slot))
+                {
+                    continue; // 归动作执行器，工序不要碰它
+                }
+
                 PlayerControls chef;
                 ChefControllers.TryGetValue(owned.Slot, out chef);
                 Vector2 facingPosition = Vector2.zero;
@@ -796,6 +812,11 @@ namespace WellCooked
             {
                 Vector2 position;
                 if (!TryPosition(owned.Slot, out position))
+                {
+                    continue;
+                }
+
+                if (ActionDriver.Drive(owned.Slot, owned.Pad, position, now))
                 {
                     continue;
                 }
@@ -944,11 +965,50 @@ namespace WellCooked
                 var provider = chef.GetComponent<PlayerIDProvider>();
                 if (provider != null)
                 {
-                    int id = (int)provider.GetID();
-                    ChefPositions[id] = chef.transform.position;
-                    ChefControllers[id] = chef;
+                    int slot = (int)provider.GetID();
+                    ChefPositions[slot] = chef.transform.position;
+                    ChefControllers[slot] = chef;
+                    // 过程行：玩家号与槽号是同一套编号（协议里的 `chef_id` 就是它）。
+                    // 实测确认过一次：'One' → 0、'Two' → 1，与 pad 号、与 Bridge 的 slot 一致。
+                    Diag.Trace("takeover: 厨师 玩家号=" + slot + " 名字=" + chef.name
+                               + " 位置=(" + chef.transform.position.x.ToString("F1") + ","
+                               + chef.transform.position.z.ToString("F1") + ")");
                 }
             }
+        }
+
+        /// <summary>这个玩家位是不是我们占的（动作执行器据此拒绝不属于我们的 chef_id）。</summary>
+        public static bool IsOwnedSlot(int slot)
+        {
+            foreach (var owned in OwnedPads)
+            {
+                if (owned.Slot == slot)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>玩家位上的厨师对应的游戏玩家号（逻辑层注入要用它）。</summary>
+        public static bool TryPlayerOf(int slot, out PlayerInputLookup.Player player)
+        {
+            player = PlayerInputLookup.Player.One;
+            PlayerControls chef;
+            if (!ChefControllers.TryGetValue(slot, out chef) || chef == null)
+            {
+                return false;
+            }
+
+            var provider = chef.GetComponent<PlayerIDProvider>();
+            if (provider == null)
+            {
+                return false;
+            }
+
+            player = provider.GetID();
+            return true;
         }
 
         private static bool TryPosition(int playerIndex, out Vector2 position)

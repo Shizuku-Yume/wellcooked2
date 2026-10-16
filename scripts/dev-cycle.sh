@@ -66,14 +66,34 @@ print(len(v) if isinstance(v,list) else v if v is not None else '')
 set_key frontend_press true
 set_key diag true
 pkill -f 'Overcooked2.exe' >/dev/null 2>&1 || true
-sleep 3
+# 等进程真的没了再启动：Steam 还认为游戏在跑时，`steam -applaunch` 是个空操作
+# （实测：上一局没退干净，这一次就只打印一行"启动 appid 728880"，游戏根本没起来）。
+for _ in $(seq 1 20); do
+    pgrep -f 'Overcooked2.exe' >/dev/null 2>&1 || break
+    sleep 1
+done
+sleep 5
 rm -f "$LOG" "$GAME_DIR/BepInEx/wellcooked-command.txt"
-nohup bash scripts/run-game.sh >/tmp/wellcooked-run.out 2>&1 &
 
 # 游戏的启动时间随机器负载变（实测同一台机器 40 秒到 3 分钟都出现过），等宽一点。
-for _ in $(seq 1 80); do
-    grep -q 'takeover: 每帧检查' "$LOG" 2>/dev/null && break
-    sleep 3
+# 还没起来就再点一次火：Steam 偶尔会把第一次 applaunch 吃掉。
+attempt=0
+while [ $attempt -lt 2 ]; do
+    attempt=$((attempt + 1))
+    nohup bash scripts/run-game.sh >/tmp/wellcooked-run.out 2>&1 &
+    for _ in $(seq 1 40); do
+        grep -q 'takeover: 每帧检查' "$LOG" 2>/dev/null && break
+        sleep 3
+    done
+    grep -q 'takeover: 每帧检查' "$LOG" && break
+    echo "（第 $attempt 次启动没等到插件，再点一次火）"
+    pkill -f 'Overcooked2.exe' >/dev/null 2>&1 || true
+    for _ in $(seq 1 20); do
+        pgrep -f 'Overcooked2.exe' >/dev/null 2>&1 || break
+        sleep 1
+    done
+    sleep 5
+    rm -f "$LOG"
 done
 grep -q 'takeover: 每帧检查' "$LOG" || { echo "插件没起来，看 $LOG"; exit 1; }
 grep -E '前台伪装|失焦暂停' "$LOG" || true
