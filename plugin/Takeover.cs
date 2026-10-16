@@ -739,7 +739,8 @@ namespace WellCooked
                     continue;
                 }
 
-                if (ActionDriver.Drive((int)player, null, position, now))
+                int slot = (int)player;   // 逻辑层的玩家号与本插件的槽号是同一套编号
+                if (ActionDriver.Drive(slot, null, position, now))
                 {
                     continue;
                 }
@@ -964,9 +965,14 @@ namespace WellCooked
                 var provider = chef.GetComponent<PlayerIDProvider>();
                 if (provider != null)
                 {
-                    int id = (int)provider.GetID();
-                    ChefPositions[id] = chef.transform.position;
-                    ChefControllers[id] = chef;
+                    int slot = (int)provider.GetID();
+                    ChefPositions[slot] = chef.transform.position;
+                    ChefControllers[slot] = chef;
+                    // 过程行：玩家号与槽号是同一套编号（协议里的 `chef_id` 就是它）。
+                    // 实测确认过一次：'One' → 0、'Two' → 1，与 pad 号、与 Bridge 的 slot 一致。
+                    Diag.Trace("takeover: 厨师 玩家号=" + slot + " 名字=" + chef.name
+                               + " 位置=(" + chef.transform.position.x.ToString("F1") + ","
+                               + chef.transform.position.z.ToString("F1") + ")");
                 }
             }
         }

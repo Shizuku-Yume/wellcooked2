@@ -99,6 +99,8 @@ namespace WellCooked
                 var held = carrier == null ? null : carrier.InspectCarriedItem();
 
                 b.Obj();
+                // 协议里的 `id` 是"厨师编号，同时也是输入槽编号"：游戏的玩家号就是这套编号
+                // （实测 'One' → 0、'Two' → 1），与 `Takeover` 的槽号、Bridge 的 slot 一致。
                 b.FieldInt("id", (int)provider.GetID());
                 b.Key("position").Obj().FieldNum("x", p.x).FieldNum("y", p.z).EndObj();
                 if (held == null)

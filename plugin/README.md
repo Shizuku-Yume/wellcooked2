@@ -53,6 +53,56 @@
 重连的两种耗时别混：**对端立刻拒绝**（端口没人听）时约 2 秒一次；**连接建立阶段超时**时还要叠加
 最多 3 秒的 connect 等待，所以两次尝试之间可能看到约 5 秒。日志里都有重试次数。
 
+## 输入注入走哪条路，代价是什么
+
+对应 spec 开放问题"输入注入的具体路径"（`specs/game-bridge.md`，2026-10-16 定稿）：
+
+- **前端（"按 A 加入"、继续、过场）只能走设备层。** 进程内建一个 InControl `InputDevice`
+  （`AddControl` 注册控制项）→ `InputManager.AttachDevice` 挂上 → 每帧 `UpdateWithState` 设置按键。
+  逻辑层在前端没有对应对象（`PlayerInputLookup` 要玩家位先存在），spike game-bridge/06 实测过这条能
+  从标题画面推进到过场。
+- **关卡内动作走逻辑层 + 设备层两手都写。** 逻辑层替换 `PlayerControls.ControlScheme` 的
+  `m_pickupButton`/`m_worksurfaceUseButton`/`m_dashButton`/`m_moveX`/`m_moveY`（自实现
+  `ILogicalButton`/`ILogicalValue`），这是游戏内动作真正读的那一层；设备层再写一遍，是因为厨师是
+  挂在我们占的虚拟手柄上的（`EngagePadToSlot`），两条路径都可能是它这次取值的来源，写一致的意图
+  比猜哪一层生效便宜。
+- **槽号与玩家号是同一个数。** 协议里的 `chef_id` = 输入槽（0 基）；实测
+  `(int)PlayerIDProvider.GetID()` 也是 0 基（名字 `Player 1` 的厨师，`GetID()` 转 int 得 0），
+  所以 `chef_id` 可以直接喂给逻辑层。**别按名字里的数字猜** —— 这一轮就是先把它当成 1 基，
+  结果动作全喂给了另一个厨师（日志里 `玩家号=0 名字=Player 1` 才看出来）。
+
+代价：
+
+| 代价 | 说明 |
+|---|---|
+| 依赖游戏私有接口 | 逻辑层的字段名、`ILogicalButton` 的签名、`EngagePadToSlot` 都是反射调的私有成员，游戏一更新就可能失效；失效表现为 `反射: 没找到…` 日志 + 动作没效果（`Fallbacks.cs` 集中兜底） |
+| 占用 pad 位 | 设备层每接管一个玩家位要挂一个虚拟手柄，一台机器最多 4 个，所以能同时接管的厨师数受空闲 pad 限制 |
+| 两条路都要维护 | 前端只能设备层、关卡内两层都写，注入相关的 bug 要分别到两层看（`LogicalInput` 与 `VirtualPad`） |
+| 逻辑层要按"这一局谁是谁"写 | 逻辑层的键是 per-player 的，写错玩家号不会报错，只会让另一个厨师动 |
+
+## 一次真实操作的日志片段（任务 04，2026-10-16，`s_sushi_1_1`）
+
+Bridge（`--link listen`）+ 替身 Worker（`kitchenos-worker-stub`，写共享内存输入槽）→ 游戏插件：
+
+```
+# 桥侧：每帧把输入槽转成一条 action 下发，插件回 ack
+INFO  actions_sent frame=1542 chefs=2 sent=2 idle=1 move=1 interact=0 pickup=0 dash=0 timed_out=0
+DEBUG plugin_ack chef=0 action=move ok=1 detail=ok
+INFO  actions_sent frame=444  chefs=2 sent=2 idle=1 move=0 interact=0 pickup=1 dash=0 timed_out=0
+DEBUG plugin_ack chef=0 action=pickup ok=1 detail=ok
+INFO  actions_sent frame=351  chefs=2 sent=2 idle=1 move=0 interact=0 pickup=0 dash=1 timed_out=0
+DEBUG plugin_ack chef=0 action=dash ok=1 detail=ok
+
+# 插件侧（游戏日志 BepInEx/LogOutput.log）
+link: 收到 action 原文 {"type":"action","chef_id":0,"action":"move","target":{"x":11.37,"y":-4.63}}
+action: 厨师位 1 去 (11.4,-4.6)
+action: 移动中 厨师位 1 位置=(11.4,-1.7) 距目标=3.0 寻路=路点 1/3 剩余 3.0 路点坐标=(11.4,-2.3)
+action: 厨师位 1 按 pickup
+action: 厨师位 1 按 dash
+```
+
+`action: 厨师位 1` 里的"1"是**日志给人看的**编号（槽号 + 1）；协议与状态文件里是 0 基的 `chef_id`。
+
 ## 文件分工
 
 | 文件 | 管什么 |

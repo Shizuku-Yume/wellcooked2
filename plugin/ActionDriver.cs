@@ -17,6 +17,12 @@ namespace WellCooked
     /// - `stop`、`move` 到达/超时只会清掉"当前命令"（厨师原地站住），**不交还归属**：
     ///   Bridge 每帧都在发消息，交还归属会让本地驱动在手势间隙里插进来。
     ///
+    /// 回执（`ack`）分两次，协议 §3.5 的字段够用：
+    /// 1. **收到就回一次**（`ok=true` = 指令已登记并开始执行）——上层据此知道消息没丢；
+    /// 2. **走完再回一次**（到达 `ok=true` / 超时 `ok=false`）——上层据此知道这条指令的结局，
+    ///    不必靠猜（任务清单要求"超时回一条失败事件，避免上层永远等"）。
+    /// 没实现的动作名当场回 `ok=false`。
+    ///
     /// 输入层：两手都写，且写同样的值 —— 设备层（我们占的虚拟手柄）与逻辑层
     /// （`LogicalInput`，按厨师的游戏玩家号）正好互为备份；逻辑层一旦激活会覆盖设备层的
     /// 三个逻辑键与移动轴，所以两边的值必须一致。
@@ -24,7 +30,7 @@ namespace WellCooked
     public static class ActionDriver
     {
         private const float ArriveRadius = 0.5f;      // 一格（0.6 米）以内算到了
-        private const float MoveTimeout = 15f;        // 一次 move 最多走这么久
+        private const float MoveTimeout = 10f;        // 一次 move 最多走这么久（任务清单定的默认）
         private const float PulseSeconds = 0.25f;     // 按键按下去多久（游戏只认边沿）
         private const float PulseInterval = 0.6f;     // 一次动作没做出效果时，隔多久再按一次
 
@@ -175,9 +181,11 @@ namespace WellCooked
                 float distance = Vector2.Distance(position, command.Target);
                 if (distance <= ArriveRadius)
                 {
-                    _log.LogInfo("action: 厨师位 " + (slot + 1) + " 到达 ("
-                                 + command.Target.x.ToString("F1") + "," + command.Target.y.ToString("F1")
-                                 + ")，用时 " + (now - command.StartedAt).ToString("F1") + " 秒");
+                    string arrived = "到达 (" + command.Target.x.ToString("F1") + ","
+                                     + command.Target.y.ToString("F1") + ")，用时 "
+                                     + (now - command.StartedAt).ToString("F1") + " 秒";
+                    _log.LogInfo("action: 厨师位 " + (slot + 1) + " " + arrived);
+                    Report(slot, "move", true, arrived);
                     command.Done = true;
                     Feed(slot, pad, Vector2.zero, false, false, false);
                     return true;
@@ -185,9 +193,12 @@ namespace WellCooked
 
                 if (now > command.Deadline)
                 {
+                    string failed = "超时 " + MoveTimeout.ToString("F0") + " 秒，还差 "
+                                    + distance.ToString("F1") + " 米";
                     _log.LogWarning("action: 厨师位 " + (slot + 1) + " 走不到 ("
                                     + command.Target.x.ToString("F1") + "," + command.Target.y.ToString("F1")
-                                    + ")，还差 " + distance.ToString("F1") + " 米，放弃这一条");
+                                    + ")，" + failed);
+                    Report(slot, "move", false, failed);
                     command.Done = true;
                     Feed(slot, pad, Vector2.zero, false, false, false);
                     return true;
@@ -196,6 +207,10 @@ namespace WellCooked
                 Navigation.Assign(slot, command.Target);
                 string status;
                 var direction = Navigation.Steer(slot, position, now, out status);
+                // 过程行：走得慢/不动时看这句（`寻路=不可达` / `卡住` 一眼能看出是路的问题还是输入没到）
+                Diag.Trace("action: 移动中 厨师位 " + (slot + 1) + " 位置=("
+                           + position.x.ToString("F1") + "," + position.y.ToString("F1")
+                           + ") 距目标=" + distance.ToString("F1") + " 寻路=" + status);
                 Feed(slot, pad, direction, false, false, false);
                 return true;
             }
@@ -221,6 +236,12 @@ namespace WellCooked
             bool dash = command.Kind == "dash";
             Feed(slot, pad, Vector2.zero, pickup && pressed, dash && pressed, false);
             return true;
+        }
+
+        /// <summary>把一条动作的结局回给 Bridge（第二次 ack）。</summary>
+        private static void Report(int slot, string action, bool ok, string detail)
+        {
+            LinkRunner.ReportAction(action, slot, ok, detail);
         }
 
         /// <summary>
