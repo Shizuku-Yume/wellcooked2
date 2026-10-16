@@ -989,7 +989,7 @@ namespace WellCooked
                 return _teamId;
             }
 
-            var type = AccessTools.TypeByName("TeamID");
+            var type = FindType("TeamID");
             if (type == null || !type.IsEnum)
             {
                 return null;
@@ -1009,11 +1009,124 @@ namespace WellCooked
         }
 
         // ---- 反射小工具：拿不到返回 null，由调用方记进 missing ----
+        //
+        // 为什么不用 Harmony 的 AccessTools：它在**每次**找不到成员时都往 BepInEx 日志写一行
+        // Warning（`AccessTools.Field: Could not find field for type X and name Y`）。这些调用里有一部分
+        // 每帧都在跑（订单与状态读取挂在游戏自己的 Update 上），于是"没找到"的成员每帧刷一行 ——
+        // 实测一次 7 分钟的运行写了 **17 万行**，真正的诊断行被淹掉，日志本身也成了负担。
+        // 所以这里自己按类型层次查，并**按 (种类, 类型, 名字, 参数) 缓存命中与未命中**：
+        // 未命中只记一次（一次性记进日志，供"游戏版本一变哪些名字失效了"排查），之后直接返回 null。
+        //
+        // 与游戏版本绑定的名字（Unity 2017.4.8f1 / OC2 这一版实测有效；游戏更新后看日志里
+        // `反射: 未命中` 那些行，就知道哪些要重新核对）：
+        //   类型：ServerKitchenFlowControllerBase、ServerTeamMonitor、ServerOrderControllerBase、
+        //         ServerCookingHandler、ServerWorkableItem、ClientWorkableItem、ClientAttachStation、
+        //         ClientIngredientContainer、ServerRoundTimer、ServerCampaignFlowController、
+        //         PlayerControls、ClientPlayerControlsImpl_Default、ServerPlayerAttachmentCarrier
+        //   成员：m_item、m_progress、m_subProgress、m_contents、m_orders、m_activeOrders、
+        //         m_timeLeft、m_roundTimer、m_timeLimit、m_carriedObjects、GetContents、GetPoints
+        // 名字对不上时返回 null，由调用方记进 `missing` —— 不假装拿到了。
+
+        private const BindingFlags MemberFlags =
+            BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
+
+        private static readonly Dictionary<string, MemberInfo> MemberCache = new Dictionary<string, MemberInfo>();
+        private static readonly HashSet<string> KnownMissing = new HashSet<string>();
+        private static readonly Dictionary<string, Type> TypeCache = new Dictionary<string, Type>();
+        private static readonly HashSet<string> KnownMissingTypes = new HashSet<string>();
+        private static readonly object[] NoArgs = new object[0];
+
+        /// <summary>按类型名找 Type（带缓存）。找不到返回 null。</summary>
+        private static Type FindType(string typeName)
+        {
+            Type type;
+            if (TypeCache.TryGetValue(typeName, out type))
+            {
+                return type;
+            }
+
+            if (KnownMissingTypes.Contains(typeName))
+            {
+                return null;
+            }
+
+            type = AccessTools.TypeByName(typeName);
+            if (type == null)
+            {
+                KnownMissingTypes.Add(typeName);
+                _log.LogInfo("反射: 没找到类型 " + typeName + "（同一处只记一次）");
+                return null;
+            }
+
+            TypeCache[typeName] = type;
+            return type;
+        }
+
+        /// <summary>按 (种类, 类型, 名字, 参数) 查成员，命中与未命中都缓存。</summary>
+        private static MemberInfo FindMember(Type type, string name, Type[] args, string kind)
+        {
+            var key = kind + "|" + type.FullName + "|" + name + "|"
+                      + (args == null ? "" : string.Join(",", args.Select(a => a == null ? "?" : a.FullName).ToArray()));
+            MemberInfo cached;
+            if (MemberCache.TryGetValue(key, out cached))
+            {
+                return cached;
+            }
+
+            if (KnownMissing.Contains(key))
+            {
+                return null;
+            }
+
+            try
+            {
+                for (var current = type; current != null; current = current.BaseType)
+                {
+                    MemberInfo found;
+                    if (kind == "f")
+                    {
+                        found = current.GetField(name, MemberFlags);
+                    }
+                    else if (kind == "p")
+                    {
+                        found = current.GetProperty(name, MemberFlags);
+                    }
+                    else if (kind == "c")
+                    {
+                        found = current.GetConstructor(MemberFlags, null, args ?? Type.EmptyTypes, null);
+                    }
+                    else
+                    {
+                        found = current.GetMethod(name, MemberFlags, null, args ?? Type.EmptyTypes, null);
+                    }
+
+                    if (found != null)
+                    {
+                        MemberCache[key] = found;
+                        return found;
+                    }
+                }
+            }
+            catch (Exception)
+            {
+                // 重载属性（AmbiguousMatch）之类：当作没有，别再每帧重试
+            }
+
+            KnownMissing.Add(key);
+            _log.LogInfo("反射: 没找到" + KindName(kind) + " " + type.Name + "." + name
+                         + "（同一处只记一次）");
+            return null;
+        }
+
+        private static string KindName(string kind)
+        {
+            return kind == "f" ? "字段" : kind == "p" ? "属性" : "方法";
+        }
 
         public static List<object> FindAll(string typeName)
         {
             var result = new List<object>();
-            var type = AccessTools.TypeByName(typeName);
+            var type = FindType(typeName);
             if (type == null || !typeof(UnityEngine.Object).IsAssignableFrom(type))
             {
                 return result; // 不是组件，FindObjectsOfType 用不了
@@ -1045,25 +1158,24 @@ namespace WellCooked
             try
             {
                 var type = target.GetType();
-                var arguments = args ?? new object[0];
+                var arguments = args ?? NoArgs;
                 if (arguments.Length == 0)
                 {
-                    var property = AccessTools.Property(type, name);
+                    var property = FindMember(type, name, null, "p");
                     if (property != null)
                     {
-                        return property.GetValue(target, null);
+                        return ((PropertyInfo)property).GetValue(target, null);
                     }
 
-                    var field = AccessTools.Field(type, name);
+                    var field = FindMember(type, name, null, "f");
                     if (field != null)
                     {
-                        return field.GetValue(target);
+                        return ((FieldInfo)field).GetValue(target);
                     }
                 }
 
-                var method = AccessTools.Method(type, name,
-                    arguments.Select(a => a.GetType()).ToArray());
-                return method == null ? null : method.Invoke(target, arguments);
+                var method = FindMember(type, name, arguments.Select(a => a == null ? null : a.GetType()).ToArray(), "m");
+                return method == null ? null : ((MethodInfo)method).Invoke(target, arguments);
             }
             catch (Exception)
             {
@@ -1073,21 +1185,51 @@ namespace WellCooked
 
         private static object InvokeStatic(string typeName, string methodName)
         {
-            var type = AccessTools.TypeByName(typeName);
+            var type = FindType(typeName);
             if (type == null)
             {
                 return null;
             }
 
-            var method = AccessTools.Method(type, methodName, Type.EmptyTypes);
+            var method = FindMember(type, methodName, Type.EmptyTypes, "m");
+            if (method == null)
+            {
+                return null;
+            }
+
             try
             {
-                return method == null ? null : method.Invoke(null, null);
+                return ((MethodInfo)method).Invoke(null, null);
             }
             catch (Exception)
             {
                 return null;
             }
+        }
+
+        /// <summary>按类型名取 Type，带缓存（供需要自己调静态方法的调用方，别再各自 AccessTools.TypeByName）。</summary>
+        public static Type StaticType(string typeName)
+        {
+            return FindType(typeName);
+        }
+
+        /// <summary>按类型名 + 方法名取静态方法，带缓存；找不到返回 null。</summary>
+        public static MethodInfo StaticMethod(string typeName, string methodName, params Type[] args)
+        {
+            var type = FindType(typeName);
+            return type == null ? null : FindMember(type, methodName, args, "m") as MethodInfo;
+        }
+
+        /// <summary>按实例类型 + 方法名取实例方法，带缓存；找不到返回 null。</summary>
+        private static MethodInfo MethodOn(object target, string methodName, params Type[] args)
+        {
+            return target == null ? null : FindMember(target.GetType(), methodName, args, "m") as MethodInfo;
+        }
+
+        /// <summary>按参数类型取构造函数，带缓存；找不到返回 null。</summary>
+        private static ConstructorInfo CtorOf(Type type, params Type[] args)
+        {
+            return type == null ? null : FindMember(type, ".ctor", args, "c") as ConstructorInfo;
         }
 
         private static IEnumerable<object> AsEnumerable(object value)
@@ -1225,13 +1367,13 @@ namespace WellCooked
             ix = 0;
             iz = 0;
             var manager = GameGridManager();
-            var indexType = AccessTools.TypeByName("GridIndex");
+            var indexType = GridIndexType();
             if (manager == null || indexType == null)
             {
                 return false;
             }
 
-            var fromPos = AccessTools.Method(manager.GetType(), "GetUnclampedGridLocationFromPos", new[] { typeof(Vector3) });
+            var fromPos = MethodOn(manager, "GetUnclampedGridLocationFromPos", typeof(Vector3));
             if (fromPos == null)
             {
                 return false;
@@ -1253,14 +1395,14 @@ namespace WellCooked
         {
             world = Vector2.zero;
             var manager = GameGridManager();
-            var indexType = AccessTools.TypeByName("GridIndex");
+            var indexType = GridIndexType();
             if (manager == null || indexType == null)
             {
                 return false;
             }
 
-            var ctor = indexType.GetConstructor(new[] { typeof(int), typeof(int), typeof(int) });
-            var toPos = AccessTools.Method(manager.GetType(), "GetPosFromGridLocation", new[] { indexType });
+            var ctor = CtorOf(indexType, typeof(int), typeof(int), typeof(int));
+            var toPos = MethodOn(manager, "GetPosFromGridLocation", indexType);
             if (ctor == null || toPos == null)
             {
                 return false;
@@ -1275,14 +1417,14 @@ namespace WellCooked
         public static UnityEngine.GameObject GameCellOccupant(int ix, int iz)
         {
             var manager = GameGridManager();
-            var indexType = AccessTools.TypeByName("GridIndex");
+            var indexType = GridIndexType();
             if (manager == null || indexType == null)
             {
                 return null;
             }
 
-            var ctor = indexType.GetConstructor(new[] { typeof(int), typeof(int), typeof(int) });
-            var getOccupant = AccessTools.Method(manager.GetType(), "GetGridOccupant", new[] { indexType });
+            var ctor = CtorOf(indexType, typeof(int), typeof(int), typeof(int));
+            var getOccupant = MethodOn(manager, "GetGridOccupant", indexType);
             if (ctor == null || getOccupant == null)
             {
                 return null;
@@ -1298,8 +1440,7 @@ namespace WellCooked
                 return _gameGridManager;
             }
 
-            var type = AccessTools.TypeByName("GridManager");
-            var getActive = type == null ? null : AccessTools.Method(type, "GetActive", new[] { typeof(int) });
+            var getActive = StaticMethod("GridManager", "GetActive", typeof(int));
             if (getActive == null)
             {
                 return null;
@@ -1307,6 +1448,12 @@ namespace WellCooked
 
             _gameGridManager = getActive.Invoke(null, new object[] { 0 });
             return _gameGridManager;
+        }
+
+        /// <summary>游戏网格的格坐标类型（`GridIndex`），带缓存。</summary>
+        private static Type GridIndexType()
+        {
+            return FindType("GridIndex");
         }
 
         private static object _gameGridManager;

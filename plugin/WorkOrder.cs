@@ -7,7 +7,11 @@ using UnityEngine;
 namespace WellCooked
 {
     /// <summary>
-    /// 工序状态机（任务 09）：按当前订单走完 取盘子 → 取料装盘 → 交付。
+    /// 工序状态机（任务 09）：按当前订单走完
+    /// `取料 → 放砧板 → 切 → 拿盘子 → 装盘 → 拿走装好的盘子 → 交付`。
+    ///
+    /// （日志里这七步的编号是 `1/6 … 4/6` 接 `5/7 … 7/7`：中途从"装盘不算一步"改成七步时只改了后半段。
+    /// 只是显示用的计数，不影响判定；任务 12 往里加煮/煎那一步时一起改成 `1/8 … 8/8`。）
     ///
     /// 它只做"执行面"：给定订单，把动作一步步做出来并**确认结果**（手上多了什么、
     /// 得分有没有涨），做不成就报出来。谁决定"哪个厨师做哪一单"是 Scheduler 的事——
@@ -15,6 +19,13 @@ namespace WellCooked
     ///
     /// 每步都是：设目标点 → 等到达 → 按一次交互（A 键）→ 等世界状态出现预期变化 → 下一步。
     /// 每步带超时，超时报失败并重试，不静默卡住。
+    ///
+    /// 为什么是这七步（踩过的坑，别再"顺手简化"）：
+    /// - **不能拿着盘子直接取料**：拿着盘子去料箱按 A，盘子会被放下、只拿到生料，交付口不认。
+    /// - 放料/装盘的台面**要离料箱与盘子堆 2.4 米以上**：站太近时游戏在"料箱取料"和"台面拿放"
+    ///   之间乱选，手上的东西在料和盘子之间跳（这条是当年挑"空台面"时的实测，台面选择再改回来时同样适用）。
+    /// - 切菜键是 **X（`WorkstationInteract`）不是 A**，而且要**按住**（`InteractionIsSticky`）。
+    /// - 垃圾桶也挂着 `ClientAttachStation`：挑台面/工位时必须排除（实测把鱼扔进去过）。
     /// </summary>
     public static class WorkOrder
     {
@@ -35,7 +46,6 @@ namespace WellCooked
         private static Step _step = Step.Idle;
         private static int _slot = -1;
         private static float _stepStart;
-        private static float _interactAt;
         private static float _pressUntil;
         private static bool _pressing;
         private static float _nextPress;
@@ -43,10 +53,7 @@ namespace WellCooked
         private static bool _warned;
         private static bool _arrivedLogged;
         private static ChefState _lastChef;
-        private static string _facingName = "?";
         private static string _stationName = "";
-        private static float _closestDistance = float.MaxValue;
-        private static float _closestAt;
         private static float _faceNextPulse;
         private static float _facePulseUntil;
         private static bool _chopStarted;
@@ -64,7 +71,6 @@ namespace WellCooked
         private static string _counterName = "";
         private static Vector2 _station;   // 真正要交互的工位位置（朝向它）
         private static Vector2 _faceDirection;
-        private static float _faceUntil;
         private static bool _facing;
         private static bool _hasTarget;
         private static int _completed;
@@ -72,7 +78,9 @@ namespace WellCooked
 
         /// <summary>每一步的超时（秒）。到点没做成就报失败、重来。</summary>
         private const float StepTimeout = 20f;
-        private const float ChopTimeout = 60f;
+
+        /// <summary>切菜那一步的上限（兜底，值在 `Fallbacks`：现在靠按住 X + 超时推进，没有按 `HasFinished()` 收手）。</summary>
+        private const float ChopTimeout = Fallbacks.ChopHoldTimeoutSeconds;
 
         /// <summary>到达判定半径：工位都在台面里，厨师只能站到旁边一格。</summary>
         private const float ReachRadius = 0.25f;
@@ -187,13 +195,15 @@ namespace WellCooked
             // （实测停在 0.28 米：既回不到 0.25 的到位判定、也不按、也不超时）。
             // 先按精确就位走；卡住 6 秒还没到就放宽（工位的相邻格未必站得进去：
             // 出菜口嵌在墙里、盘子堆旁边被台面挡，实测都会"永远到不了 0.25 米"）。
-            if (!_looseApproach && now - _stepStart > 6f)
+            // 为什么/什么时候去掉这条兜底，写在 `Fallbacks` 里。
+            if (!_looseApproach && now - _stepStart > Fallbacks.LooseApproachAfterSeconds)
             {
                 _looseApproach = true;
-                _log.LogInfo("工序: " + _step + " 精确就位卡住了，放宽到 1.4 米直接试");
+                _log.LogInfo("工序: " + _step + " 精确就位卡住了，放宽到 "
+                             + Fallbacks.LooseApproachRadius.ToString("F1") + " 米直接试");
             }
 
-            float reach = _looseApproach ? 1.4f : ReachRadius;
+            float reach = _looseApproach ? Fallbacks.LooseApproachRadius : ReachRadius;
             if (distance <= (_arrivedLogged ? reach * 2.4f : reach))
             {
                 _facing = true;
@@ -424,7 +434,6 @@ namespace WellCooked
         {
             _step = step;
             _stepStart = now;
-            _interactAt = 0f;
             _pressing = false;
             _interacted = false;
             _nextPress = 0f;
@@ -432,8 +441,6 @@ namespace WellCooked
             _warned = false;
             _arrivedLogged = false;
             _facing = false;
-            _closestDistance = float.MaxValue;
-            _closestAt = now;
             _faceNextPulse = 0f;
             _facePulseUntil = 0f;
             _chopStarted = false;
@@ -557,7 +564,8 @@ namespace WellCooked
                     AimAt(station.Position, station.Name);
                     // 出菜口嵌在墙里，它的"相邻格"算不准也站不稳（实测到位后转身就把
                     // 自己推出去、再也回不来）。参考项目就是直接走到工位本身再按，
-                    // 这里照做：目标取工位本身，到位半径放宽，朝向不校验。
+                    // 这里照做：目标取工位本身，到位半径放宽，朝向不校验 —— 用的是同一条兜底
+                    // （`Fallbacks.LooseApproachRadius`），只是这里一开始就用，不等"卡住 6 秒"。
                     _target = station.Position;
                     _looseApproach = true;
                     _hasTarget = true;
