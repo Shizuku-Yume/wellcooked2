@@ -29,7 +29,7 @@ namespace WellCooked
 
         /// <summary>一行 JSON 的字节上限，不计结尾的 '\n'。</summary>
         private const int MaxFrameBytes = 1024 * 1024;
-        private const int MaxInboundQueue = 64;
+        private const int MaxInboundQueue = 256;
         private const int MaxOutboundQueue = 32;
 
         /// <summary>日志回调（由上层注入，链路层自己不依赖 BepInEx）。</summary>
@@ -44,6 +44,8 @@ namespace WellCooked
         private readonly int _reconnectDelayMs;
 
         private readonly Queue<string> _inbound = new Queue<string>();
+        private long _droppedActions;   // 队列满时丢掉的 action 数（只涨不落，日志限频）
+        private long _droppedPassive;   // 同上，丢的是心跳/echo 这类
         private readonly Queue<string> _outbound = new Queue<string>();
         private readonly object _inboundLock = new object();
         private readonly object _outboundLock = new object();
@@ -151,16 +153,19 @@ namespace WellCooked
                         continue;
                     }
 
+                    /* 先清空出站队列，再发布"已连接"。
+                     * 反过来的话（先 _connected = true 再清）主线程可能在中间这一瞬间
+                     * 看到已连接、把 hello 和首帧状态入队，紧接着被这里清掉 —— 而
+                     * LinkRunner 只在"断开→连接"这一跳发一次 hello，于是这条连接永远没有握手。 */
+                    lock (_outboundLock)
+                    {
+                        _outbound.Clear(); // 断线期间的旧动作没有意义，别在重连后补发
+                    }
                     _connected = true;
                     if (_attempts > 0)
                     {
                         Log("[Link] 第 " + _attempts + " 次重试连上了 " + DescribePeer());
                         _attempts = 0;
-                    }
-
-                    lock (_outboundLock)
-                    {
-                        _outbound.Clear(); // 断线期间的旧动作没有意义，别在重连后补发
                     }
 
                     _lastRxMs = NowMs();
@@ -189,6 +194,31 @@ namespace WellCooked
                     }
                 }
             }
+        }
+
+        /// <summary>
+        /// 队列满时挑一条非 action 的消息丢掉；一条都没有就返回 false（调用方丢最旧的 action）。
+        /// 判定靠字符串：入站消息只有 Bridge 这一个生产者，`{"type":"action"` 是它固定的写法
+        /// （见 `bridge/src/protocol.c` 的 builder）。真判错也不会更糟 —— 退化成"丢最旧的 action
+        /// 并计数告警"，也就是调用方那条路。
+        /// </summary>
+        private bool DropOldestNonAction()
+        {
+            int count = _inbound.Count;
+            string victim = null;
+            for (int i = 0; i < count; i++)
+            {
+                string item = _inbound.Dequeue();
+                if (victim == null && item.IndexOf("\"type\":\"action\"", StringComparison.Ordinal) < 0)
+                {
+                    victim = item;
+                }
+                else
+                {
+                    _inbound.Enqueue(item);
+                }
+            }
+            return victim != null;
         }
 
         private string DescribePeer()
@@ -409,7 +439,23 @@ namespace WellCooked
                     _inbound.Enqueue(json);
                     while (_inbound.Count > MaxInboundQueue)
                     {
-                        _inbound.Dequeue();
+                        /* 满了先丢一条非 action 的消息：心跳/echo 之类丢了下一次还有，
+                         * 而 action 是"要执行"的指令 —— 静默丢掉的话对端不知道，
+                         * 既不 ack 也不重发（对端按帧重发，下一帧还会来，但日志里必须留痕）。 */
+                        if (DropOldestNonAction())
+                        {
+                            _droppedPassive++;
+                        }
+                        else
+                        {
+                            _inbound.Dequeue();
+                            _droppedActions++;
+                            if (_droppedActions == 1 || _droppedActions % 100 == 0)
+                            {
+                                Log("[Link] 入站队列满（" + MaxInboundQueue + "），已丢掉 "
+                                    + _droppedActions + " 条 action；对端按帧重发，下一帧会再来");
+                            }
+                        }
                     }
                 }
 
@@ -470,7 +516,7 @@ namespace WellCooked
                     continue;
                 }
 
-                sock.Send(frame, 0, frame.Length, SocketFlags.None);
+                SendAll(sock, frame);
             }
         }
 
@@ -478,7 +524,28 @@ namespace WellCooked
         {
             byte[] payload = Encoding.UTF8.GetBytes(Msg.Heartbeat(UnixSeconds()));
             byte[] frame = EncodeFrame(payload);
-            sock.Send(frame, 0, frame.Length, SocketFlags.None);
+            SendAll(sock, frame);
+        }
+
+        /// <summary>
+        /// 循环发送直到整帧写完。
+        ///
+        /// `Socket.Send` 允许只发出去一部分（短写），原来只调一次、把没发出去的那截丢掉：
+        /// 对端会看到半条 JSON 行（缺结尾换行），下一条消息的字节又接在残留后面 ——
+        /// 分帧按换行切，一旦错位后面全错，而这条链路上没有重同步机制。
+        /// </summary>
+        private static void SendAll(Socket sock, byte[] frame)
+        {
+            int sent = 0;
+            while (sent < frame.Length)
+            {
+                int n = sock.Send(frame, sent, frame.Length - sent, SocketFlags.None);
+                if (n <= 0)
+                {
+                    throw new IOException("socket send returned " + n);
+                }
+                sent += n;
+            }
         }
 
         /// <summary>Unix 秒（net35 的 DateTimeOffset 没有 ToUnixTimeSeconds）。</summary>
