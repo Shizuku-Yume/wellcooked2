@@ -67,7 +67,14 @@ printf 'work=auto\nslots=1,2\ndiag=true\n' > "$GAME_DIR/BepInEx/wellcooked-takeo
 # slots=1,2   要占的玩家位（1 基）
 # diag=true   过程行（每帧/每 2 秒的位置、路点、手柄状态、寻路记下的边）——默认关，只留结果行
 # frontend_press=true  虚拟手柄在前端也按 A（进关卡要用；它会抢菜单导航，所以默认关）
+# bridge=127.0.0.1:14455  连 Bridge 上报世界状态（默认就开着；写 bridge=off 关掉）
+# state_ms=0  上报间隔毫秒；0 = 每帧（默认，协议与 spec 要求每帧）
 ```
+
+插件与 Bridge 的链路（任务 03）：连上后立刻发 `hello` 并每帧发 `state_update`，收心跳与 `action`；
+断线后等 2 秒再连、连上重新握手；**对端立刻拒绝**时约 2 秒一次，**连接建立阶段超时**时还会叠加最多
+3 秒 connect 等待（日志里有重试次数）。`state_ms` 这一版不做范围钳制：`0` 每帧、正数就是毫秒间隔。桥侧用 `bash tools/run-bridge-scenarios.sh` 不用游戏就能验协议，
+进关卡验真机用 `bash tools/run-real-game.sh`（它自己起 Bridge 并判定 hello/state_update 条数）。
 
 `diag` 是任务 10 收敛出来的唯一诊断开关（`plugin/Diag.cs`）：**结果行**（工序每步的开始/结果、失败原因、
 指令执行）不受它管；**过程行**默认不打 —— 收敛前"每帧一行"的代码散在三处、各判各的标志。
@@ -101,6 +108,20 @@ grep -E '订单: ' "$GAME_DIR/BepInEx/LogOutput.log"                          # 
 /tmp/.ocenv/bin/python scripts/scan-levels.py          # 离线按物体名统计工位/机制，先筛掉明显不能用的
 bash scripts/eval-levels.sh s_city_h5                  # 每关重开一局，量菜谱 + 连通性 + 机制组件
 ```
+
+自制演示关卡（任务 13）：构建必须在 **Windows** 侧做（`BuildTarget.StandaloneWindows`；Linux 编辑器没有跨平台构建模块，Windows 编辑器在本机 Wine 下激活界面跑不通）。交接文档、布局数据与生成器脚本都在 `levels/wellcooked_demo/`：
+
+```sh
+# Windows 侧（组员）：装 Unity 2017.4.8f1 → 按 levels/wellcooked_demo/README.md 走十条步骤
+#   产物 = Assets/AssetBundles/info_wellcooked_demo + s_wellcooked_demo_1
+# 装进游戏：拷到 "$GAME_DIR/BepInEx/plugins/OC2DIYLevel/levels/wellcooked_demo/"
+# Linux 侧验收：
+bash scripts/dev-cycle.sh 20 s_wellcooked_demo_1
+printf 'mech=1\n' > "$GAME_DIR/BepInEx/wellcooked-command.txt"   # 应输出"机制 = 无（只有通用系统）"
+bash scripts/eval-levels.sh s_wellcooked_demo_1                  # 主连通块占比 ≥ 90%
+```
+
+待传的三样东西与体积见 `levels/TRANSFER.md`；`Assembly-CSharp` 的压缩包在 `~/oc2-transfer/`。
 
 厨房配置（OS 侧的资源与地面模型，方案 §6.6）：
 

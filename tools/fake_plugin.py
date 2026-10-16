@@ -57,7 +57,7 @@ EXIT_SKIP = 77
 
 SCENARIOS = ("happy", "one-slot", "no-heartbeat", "bad-frames", "connect-mode",
              "reconnect-storm", "silent-connect", "data-shapes", "second-peer",
-             "pickup-dash")
+             "pickup-dash", "input-grace")
 
 # 日志行 = "ISO8601(毫秒) 级别 事件名 key=value ..."（bridge/src/log.c）。
 # 只认行首这个位置上的事件名：key=value 里出现同名词不算一次事件。
@@ -1129,7 +1129,7 @@ class Ctx:
 
     # -- 进程 --
     def start_bridge(self, *, link, port, host, chefs, frame_timeout_ms,
-                     heartbeat_timeout_ms, verbose=False):
+                     heartbeat_timeout_ms, input_grace_ms=None, verbose=False):
         binary = Path(self.args.bridge)
         if not binary.exists():
             raise InfraError("bridge binary not found: %s (build it with: cd bridge && make)"
@@ -1140,6 +1140,8 @@ class Ctx:
                 "--log", str(self.log_path),
                 "--frame-timeout-ms", str(frame_timeout_ms),
                 "--heartbeat-timeout-ms", str(heartbeat_timeout_ms)]
+        if input_grace_ms is not None:
+            argv += ["--input-grace-ms", str(input_grace_ms)]
         # state_update 是 DEBUG 级：要按帧核对"解析出几个、丢了几个"的场景必须开它，
         # 否则默认 INFO 下那行根本不落盘（state_summary 每 60 帧才有，且字段不全）。
         if verbose:
@@ -1150,7 +1152,8 @@ class Ctx:
         return self.bridge
 
     def start_bridge_and_wait(self, *, link, host, chefs, frame_timeout_ms,
-                              heartbeat_timeout_ms, port=None, retries=3, verbose=False):
+                              heartbeat_timeout_ms, input_grace_ms=None, port=None,
+                              retries=3, verbose=False):
         """起 Bridge 并等它就绪，返回实际用的端口。
 
         端口默认由内核分配：多 agent 并行开发时 14455 很可能被别的 Bridge 或
@@ -1165,6 +1168,7 @@ class Ctx:
             self.start_bridge(link=link, port=use_port, host=host, chefs=chefs,
                               frame_timeout_ms=frame_timeout_ms,
                               heartbeat_timeout_ms=heartbeat_timeout_ms,
+                              input_grace_ms=input_grace_ms,
                               verbose=verbose)
             if self.bridge.wait_listen(use_port, self.args.ready_timeout):
                 return use_port
@@ -1454,8 +1458,9 @@ def scenario_pickup_dash(ctx, checks):
                  ack_actions=not args.no_ack, flat_xy=args.flat_xy)
     link.close()
 
-    # stub 以 stub_hz 往槽里写、Bridge 以 hz 开帧，所以每隔一帧左右才有一格"新输入"，
-    # 其余帧合法地降级为 idle：判据是"这两个动作真的到了"，不是"只出现它们"。
+    # stub 以 stub_hz 往槽里写、Bridge 以 hz 开帧，所以有些帧落在两次发布之间。那种帧
+    # 现在沿用槽里最后一版意图（--input-grace-ms 之内），不再降级成 idle；本场景的判据
+    # 仍然是"这两个动作真的到了"，idle 的时机由 input-grace 场景单独验。
     seen0 = [a.get("action") for a in stats.actions if a.get("chef_id") == 0]
     seen1 = [a.get("action") for a in stats.actions if a.get("chef_id") == 1]
     got0 = seen0.count("pickup")
@@ -1475,6 +1480,80 @@ def scenario_pickup_dash(ctx, checks):
                 "exit=%s" % ctx.bridge.exit_code())
     return ("%s in %.1fs; chef 0 -> %s; chef 1 -> %s"
             % (stats.describe(), window, Counter(seen0) or "none", Counter(seen1) or "none"))
+
+
+def scenario_input_grace(ctx, checks):
+    """输入宽限窗口：Worker 停写后，桥先在窗口内沿用最后一版意图，窗口过了才发 idle。
+
+    2026-10-16 加（任务 04 真机调试时发现）：桥原来把"这一格这帧没交新版本"直接当成
+    "这个 Worker 缺席"，于是任何比游戏帧率慢的 Worker 都会有一批帧被冻住 —— 实测
+    120Hz 的替身对 117fps 的游戏，对端收到的 action 里 85% 是合成的 stop，
+    持续动作（move）走两步停一步。现在的语义是：槽超过 --input-grace-ms（默认 250ms）
+    没有新版本才当缺席，Worker 崩了之后照样会降级成 idle。
+    """
+    args = ctx.args
+    chefs = 2
+    stub_binary = Path(args.worker_stub)
+    if not stub_binary.exists():
+        raise Skipped("worker-stub not built (%s); this scenario needs a live slot writer "
+                      "— build with: cd bridge && make" % stub_binary)
+
+    grace_ms = 400
+    ctx.clear_stale_shm()
+    port = ctx.start_bridge_and_wait(link="listen", host=args.host, chefs=chefs,
+                                     frame_timeout_ms=args.frame_timeout_ms,
+                                     input_grace_ms=grace_ms,
+                                     heartbeat_timeout_ms=args.heartbeat_timeout_ms,
+                                     port=args.listen_port)
+
+    link = Link(connect(args.host, port, args.ready_timeout))
+    link.send_json(msg_hello())
+    priming = Stats("priming")
+    run_exchange(link, priming, 1.0, chefs=chefs, hz=args.hz,
+                 heartbeat_ms=args.heartbeat_ms, ack_actions=not args.no_ack,
+                 flat_xy=args.flat_xy)
+    checks.hard("bridge_writes_state_shm", ctx.wait_shm(3.0), "%s" % ctx.shm_paths()[0])
+
+    checks.note("grace_ms", "%d (Bridge --input-grace-ms)" % grace_ms)
+    stub = ctx.start_stub(slot=0, chefs=chefs, hz=args.stub_hz, duration=3.0, kind="move")
+
+    live = Stats("live")
+    run_exchange(link, live, 2.0, chefs=chefs, hz=args.hz, heartbeat_ms=args.heartbeat_ms,
+                 ack_actions=not args.no_ack, flat_xy=args.flat_xy)
+
+    # 停写：窗口内应该还在沿用最后一版 move，窗口过了才是 stop。
+    stub.terminate()
+    inside = Stats("inside_grace")
+    run_exchange(link, inside, grace_ms / 1000.0 * 0.6, chefs=chefs, hz=args.hz,
+                 heartbeat_ms=args.heartbeat_ms, ack_actions=not args.no_ack,
+                 flat_xy=args.flat_xy)
+    after = Stats("after_grace")
+    run_exchange(link, after, grace_ms / 1000.0 * 2.0 + 0.5, chefs=chefs, hz=args.hz,
+                 heartbeat_ms=args.heartbeat_ms, ack_actions=not args.no_ack,
+                 flat_xy=args.flat_xy)
+    link.close()
+
+    live0 = [a.get("action") for a in live.actions if a.get("chef_id") == 0]
+    inside0 = [a.get("action") for a in inside.actions if a.get("chef_id") == 0]
+    after0 = [a.get("action") for a in after.actions if a.get("chef_id") == 0]
+    checks.note("windows", "live=%s inside=%s after=%s"
+                % (Counter(live0) or "none", Counter(inside0) or "none",
+                   Counter(after0) or "none"))
+    checks.hard("live_worker_input_forwarded", live0.count("move") >= 3,
+                "chef 0 got %d move of %d actions while the stub was writing (%s)"
+                % (live0.count("move"), len(live0), Counter(live0) or "none"))
+    checks.hard("last_intent_kept_inside_grace", inside0.count("move") >= 1,
+                "chef 0 got %s in the %.0fms after the stub stopped (want the last move kept)"
+                % (Counter(inside0) or "none", grace_ms * 0.6))
+    tail = after0[-5:]
+    checks.hard("idle_after_grace", "stop" in after0 and "move" not in tail,
+                "chef 0 got %s after the grace window (want stop; last five: %s)"
+                % (Counter(after0) or "none", tail))
+    checks.hard("bridge_alive_after_grace", ctx.bridge.alive(),
+                "exit=%s" % ctx.bridge.exit_code())
+    return ("grace=%dms; live=%s; inside=%s; after=%s"
+            % (grace_ms, Counter(live0) or "none", Counter(inside0) or "none",
+               Counter(after0) or "none"))
 
 
 def scenario_no_heartbeat(ctx, checks):
@@ -2359,6 +2438,7 @@ SCENARIO_IMPL = {
     "data-shapes": scenario_data_shapes,
     "second-peer": scenario_second_peer,
     "pickup-dash": scenario_pickup_dash,
+    "input-grace": scenario_input_grace,
 }
 
 

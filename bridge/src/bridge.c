@@ -68,6 +68,9 @@
 #define DEFAULT_SEM_NAME KOS_SHM_DEFAULT_SEM_NAME
 #define DEFAULT_LOG_PATH "logs/bridge.log"
 #define DEFAULT_FRAME_TIMEOUT_MS 100
+/* 槽多久没有新版本就当成缺席（发 idle）。要比游戏帧间隔宽得多，否则一个正常但比游戏慢的
+ * Worker 会被反复冻住；也要足够短，Worker 崩了之后厨师不能一直跑下去。 */
+#define DEFAULT_INPUT_GRACE_MS 250
 /* 5000 来自 game-bridge spec 的失败行为约定（"心跳超时 5 秒判定对端断开"）。存活判定仍然
  * 只看心跳 —— 见 decisions.md: 存活判定只看心跳。 */
 #define DEFAULT_HEARTBEAT_TIMEOUT_MS 5000
@@ -102,6 +105,7 @@ typedef struct {
     const char *sem_name;
     const char *log_path;
     int frame_timeout_ms;
+    int input_grace_ms; /* 槽多久没新版本才算"这一格缺席"（默认见 DEFAULT_INPUT_GRACE_MS） */
     int heartbeat_timeout_ms; /* 0 disables the plugin liveness check */
     int heartbeat_interval_ms;
     long max_frames; /* > 0: exit 0 after this many dispatched frames */
@@ -128,6 +132,8 @@ typedef struct {
      * the "consume this frame's input exactly once" bookkeeping of
      * kos_shm_wait_frame_after(). */
     uint64_t last_frame[KOS_SHM_MAX_CHEFS];
+    /* slot_fresh_ms[k] = 这一格最近一次"交了新版本"的时刻（单调毫秒）。 */
+    int64_t slot_fresh_ms[KOS_SHM_MAX_CHEFS];
 
     /* ---- plugin liveness ---- */
     int paused;                /* plugin timed out: dispatching suspended */
@@ -308,6 +314,8 @@ static void print_help(void)
            "  --sem-name NAME         input-ready semaphore (default %s).\n"
            "  --log FILE              event log (default %s).\n"
            "  --frame-timeout-ms M    frame barrier upper bound (default %d).\n"
+           "  --input-grace-ms M      how long a slot may go without a new version before\n"
+           "                          its chef is answered with idle (default %d).\n"
            "  --heartbeat-timeout-ms M  declare the plugin gone after M ms without a\n"
            "                          heartbeat; 0 disables (default %d).\n"
            "                          A timeout suspends dispatching until the plugin\n"
@@ -324,7 +332,7 @@ static void print_help(void)
            "2 argument error. Unknown or incomplete options print the usage line.\n",
            DEFAULT_LISTEN_PORT, DEFAULT_CONNECT_PORT, KOS_SHM_MAX_CHEFS, DEFAULT_CHEFS,
            DEFAULT_STATE_NAME, DEFAULT_SEM_NAME, DEFAULT_LOG_PATH,
-           DEFAULT_FRAME_TIMEOUT_MS, DEFAULT_HEARTBEAT_TIMEOUT_MS,
+           DEFAULT_FRAME_TIMEOUT_MS, DEFAULT_INPUT_GRACE_MS, DEFAULT_HEARTBEAT_TIMEOUT_MS,
            DEFAULT_HEARTBEAT_INTERVAL_MS);
 }
 
@@ -375,6 +383,7 @@ static int parse_args(int argc, char **argv, bridge *b)
     b->sem_name = DEFAULT_SEM_NAME;
     b->log_path = DEFAULT_LOG_PATH;
     b->frame_timeout_ms = DEFAULT_FRAME_TIMEOUT_MS;
+    b->input_grace_ms = DEFAULT_INPUT_GRACE_MS;
     b->heartbeat_timeout_ms = DEFAULT_HEARTBEAT_TIMEOUT_MS;
     b->heartbeat_interval_ms = DEFAULT_HEARTBEAT_INTERVAL_MS;
     b->max_frames = 0;
@@ -465,6 +474,12 @@ static int parse_args(int argc, char **argv, bridge *b)
                 return ARG_ERR;
             }
             b->log_path = v;
+        } else if (strcmp(name, "--input-grace-ms") == 0) {
+            const char *v = take_value(value, argc, argv, &i);
+            if (parse_long(v, 0, 600000, &number) != 0) {
+                return ARG_ERR;
+            }
+            b->input_grace_ms = (int)number;
         } else if (strcmp(name, "--frame-timeout-ms") == 0) {
             const char *v = take_value(value, argc, argv, &i);
             if (parse_long(v, 0, 600000, &number) != 0) {
@@ -596,27 +611,50 @@ static void world_from_state_update(const proto_state_update *up, kos_world_stat
 static uint64_t probe_slots(bridge *b)
 {
     uint64_t missing = 0;
-    int rc;
+    uint32_t k;
 
     if (b->chefs <= 0) {
         /* No slots to wait for: every frame is trivially complete. shm.h
          * rejects chef_count == 0, so this must not reach the barrier. */
         return 0;
     }
-    rc = kos_shm_wait_frame_after(b->shm, b->last_frame, (uint32_t)b->chefs, 0, &missing);
 
-    if (rc == KOS_OK) {
-        return 0;
+    /*
+     * 只看，不改水位。
+     *
+     * 这里**不能**用 kos_shm_wait_frame_after()：它会把"比上次更新"的那一格
+     * 消费掉（推进 last_frame[k]），而本函数在屏障窗口内会被事件循环反复调用，
+     * 于是每次探测都把 Worker 刚写进来的那一版吃掉，等到真正下发这一帧时，
+     * 槽看起来又"没更新"了 —— 实测（2026-10-16，60Hz 与 300Hz 两种 stub 发布
+     * 率）0 号槽被判缺失的帧占 88%～98%，插件收到大量合成的 stop，持续动作
+     * （move）被打断。消费必须只发生在 dispatch_pending() 真正取用那一帧时。
+     *
+     * 另外 timeout=0 会让 slot_snapshot_until() 的"序号是奇数"分支直接返回
+     * BUSY（deadline 已经过期，不重试），所以旧写法连"只是看一眼"都做不到。
+     */
+    for (k = 0; k < (uint32_t)b->chefs; k++) {
+        kos_input_action action;
+
+        int rc = kos_shm_slot_read(b->shm, k, &action);
+
+        if (rc == KOS_OK && action.frame_id > b->last_frame[k]) {
+            b->slot_fresh_ms[k] = now_ms(); /* 这一格刚交了新的一版 */
+            continue;
+        }
+        /*
+         * 没交新版本 ≠ 这个 Worker 死了。
+         *
+         * 桥每帧要求"槽比上次更新"，可 Worker 的发布节拍是它自己的：只要它比游戏帧率慢一点，
+         * 就会有帧落在两次发布之间（实测 120Hz 的 Worker 对 117fps 的游戏，约一半的帧如此）。
+         * 那种帧不该把厨师冻住 —— 保留它最后交的那一版意图，只有超过 --input-grace-ms
+         * 都没动静（Worker 崩了/退出了）才降级成 idle，这才是 decisions.md 2026-10-15
+         * 那条"Worker 崩溃时 Bridge 继续发 idle"要的效果。
+         */
+        if (now_ms() - b->slot_fresh_ms[k] > b->input_grace_ms) {
+            missing |= (uint64_t)1u << k;
+        }
     }
-    if (rc == KOS_ERR_TIMEOUT) {
-        return missing; /* the normal "not every worker has published yet" */
-    }
-    kos_log_warn(b->log, "frame_error", "stage=wait_frame_after rc=%s chefs=%d",
-                 kos_strerror(rc), b->chefs);
-    if (b->chefs >= 64) {
-        return ~(uint64_t)0;
-    }
-    return (((uint64_t)1 << (unsigned)b->chefs) - 1u);
+    return missing;
 }
 
 static void format_chef_list(uint64_t mask, int chefs, char *out, size_t cap)
@@ -707,11 +745,14 @@ static void dispatch_pending(bridge *b, uint64_t missing, int timed_out)
             built = protocol_build_action_stop(k, buf, sizeof buf, &len);
             idle++;
         } else if (kos_shm_slot_read(b->shm, (uint32_t)k, &action) != KOS_OK) {
+            /* fall through to the unreadable branch below */
             /* Ready by frame_id but unreadable now: the slot was overwritten or
              * torn. Idle is the only honest answer for this frame. */
             built = protocol_build_action_stop(k, buf, sizeof buf, &len);
             idle++;
         } else {
+            /* 消费这一版：本帧的输入只取用一次，下一次探测要求更新的一版。 */
+            b->last_frame[k] = action.frame_id;
             built = build_action_from_slot(k, &action, buf, sizeof buf, &len);
             if (built != PROTO_OK) {
                 /* stop/none mean "nothing to do this frame": routine, and DEBUG is
@@ -1409,11 +1450,11 @@ static int bridge_main(bridge *b)
 
     kos_log_info(b->log, "bridge_start",
                  "link=%s host=%s port=%d chefs=%d requested=%d state=%s sem=%s log=%s "
-                 "frame_timeout_ms=%d heartbeat_timeout_ms=%d heartbeat_interval_ms=%d "
+                 "frame_timeout_ms=%d input_grace_ms=%d heartbeat_timeout_ms=%d heartbeat_interval_ms=%d "
                  "max_frames=%ld pid=%ld",
                  b->link_mode == KOS_NET_MODE_LISTEN ? "listen" : "connect", b->host,
                  b->port, b->chefs, b->chefs_requested, b->state_name, b->sem_name,
-                 b->log_path, b->frame_timeout_ms, b->heartbeat_timeout_ms,
+                 b->log_path, b->frame_timeout_ms, b->input_grace_ms, b->heartbeat_timeout_ms,
                  b->heartbeat_interval_ms, b->max_frames, (long)getpid());
     if (b->chefs_requested != b->chefs) {
         kos_log_warn(b->log, "chefs_clamped", "requested=%d used=%d limit=%d",

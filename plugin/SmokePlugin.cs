@@ -34,6 +34,8 @@ namespace WellCooked
             ApplyAlwaysFocusedPatch();
             WorldState.Install(_log);
             Diag.Install(_log);
+            LinkRunner.Install(_log);
+            ActionDriver.Install(_log);
             LogicalInput.Install(_log);
             Navigation.Install(_log);
             Commands.Install(_log);
