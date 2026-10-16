@@ -15,7 +15,13 @@
 **Read first:** spec「How it is built」「How we will know it works」W5、开放问题「输入注入的具体路径」；方案 §9 阶段A3、§5.2 `action` 消息
 **Covers:** W5
 
-**Check:** 游戏进一局、Bridge 连上后，用 `python3 tests/send_action.py --chef 0 --move 12,6` → 游戏里 0 号厨师走到 (12,6) 一格以内，且 `bridge.log` 随后一条 `state_update` 里该厨师位置随之变化；再发 `--interact cutting_board_0` 让它取番茄并放上砧板切完，画面与状态都对得上。
+**Check:** 游戏进一局、Bridge 连上后，由 Worker 侧（`bridge/tools/worker_stub.c` 是替身）往 0 号厨师的
+输入槽写一条 `move`（目标坐标取自 `wellcooked-terrain.json` 的可走格心）→ 游戏里 0 号厨师走到目标
+0.5 米以内（插件日志 `action: 厨师位 1 到达 (x,y)`），且桥侧 `actions_sent` 每帧 `move=1`、随后的
+`state_update` 里该厨师位置跟着变；再写 `pickup`（在料箱旁应把料拿起来、状态里 `held` 变非空）与
+`dash`；最后写 `interact` 让它取番茄并放上砧板切完，画面与状态都对得上。
+
+复现命令见 Progress 末尾；整条 Check 目前只完成了 `move` 那一段（见 Progress 的"整条 Check 没做完"）。
 
 - [x] 读出可用关卡列表（进游戏界面读；进菜单本身就要靠这条任务做出来的输入注入），写进 spec 开放问题 1，供固定地图的决策使用
 - [x] 输入注入路径选定并写进 `plugin/README.md`：为什么走这条路、代价是什么（对应 spec 开放问题）
@@ -52,14 +58,19 @@ Dirty at start: none（从 `a2dc5c8` 起，叠在 `game-bridge/03-plugin-client-
 - `bridge/tools/worker_stub.c`：加 `--target X,Y`（固定目标点），默认仍是三角波 —— 真 Worker 决定
   "厨师 0 去砧板"时发的是一个固定坐标，Check 需要能复现这一条。
 
-**Check（真机跑通，2026-10-16）**：`bash scripts/build-plugin.sh` 0 警告 0 错误；`make -C bridge test`
-5 套 0 失败。游戏起不来那次是 Steam 侧的问题（`steam -shutdown` 后重启就好了），与插件无关。
+**Check（部分验证，2026-10-16）**：`bash scripts/build-plugin.sh` 0 警告 0 错误；`make -C bridge test`
+5 套 0 失败；`bash tools/run-bridge-scenarios.sh` 12 个场景（含新加的 `input-grace`）。游戏起不来那次是
+Steam 侧的问题（`steam -shutdown` 后重启就好了），与插件无关。
+
+**整条 Check 没做完**：`move` 到位实测通过（下面），但 Check 要的 `interact cutting_board_0`（取番茄 →
+放砧板 → 切完）没做（要厨师先走到料箱/砧板旁，那段走位受既有导航缺陷影响）；`dash` 只验了"按键下发、
+游戏不报错"，没量效果。
 
 真机验证（`s_sushi_1_1`，桥 `--link listen --port 14455`，替身 Worker 写共享内存输入槽）：
 
 | 动作 | 桥侧 | 插件侧 | 游戏里 |
 |---|---|---|---|
-| `move` | `actions_sent … move=1`、`plugin_ack action=move ok=1`（第二次 `ok=true detail=到达…`） | `action: 厨师位 1 去 (12.6,-1.8)` | **到达**：0 号厨师从 (11.43,-1.58) 走到 (12.51,-1.58)，插件 2.7 秒后报 `action: 厨师位 1 到达 (12.6,-1.8)，用时 2.7 秒`（判定半径 0.5 米）；随后 `state_update` 里位置跟着变 |
+| `move` | `actions_sent` 每帧 `move=1`（`idle=0`）、`plugin_ack action=move ok=1`（第二次 `ok=true detail=到达…`） | `action: 厨师位 1 去 (12.6,-1.8)` | **到达**：0 号厨师从 (11.43,-1.58) 走到 (12.51,-1.58)，插件 2.7 秒后报 `action: 厨师位 1 到达 (12.6,-1.8)，用时 2.7 秒`（判定半径 0.5 米）；随后 `state_update` 里位置跟着变 |
 | `pickup` | `pickup=1`、`ok=1` | `action: 厨师位 1 按 pickup`（0.6 秒后重按一次） | 厨师不在料箱旁，空手按 A 没东西可拿，`held` 仍为空 |
 | `dash` | `dash=1`、`ok=1` | `action: 厨师位 1 按 dash` | 没有单独量"冲了多远"；按键下发、游戏不报错 |
 | 未实现动作 | 桥侧 `slot-action-rejected` | `ack ok=false detail=…` | —— |
@@ -85,19 +96,40 @@ Dirty at start: none（从 `a2dc5c8` 起，叠在 `game-bridge/03-plugin-client-
    落在两次发布之间，那些帧的厨师被冻住（`stop`），`move` 走两步停一步。加 `--input-grace-ms`（默认 250）：
    槽超过这么久没有新版本才当缺席发 idle，否则保留它最后交的那一版意图 —— 这既是 `decisions.md`
    2026-10-15 那条"Worker 崩溃时 Bridge 继续发 idle"要的效果，也让正常但比游戏慢的 Worker 能跑。
-   修后同口径实测：桥侧 `plugin_ack` 里 **1236 条 move 对 215 条 stop**（约 85% 的帧拿到真实动作），
-   厨师 2.7 秒走到目标。
+   修后同口径实测（**按 `actions_sent` 的每帧分类数，不用 ack 条数推** —— 一条 move 会回两次 ack）：
+   `worker_stub --kind move --hz 120 --duration 10` 那一窗（帧 123..1357，1235 帧）里 **1235 帧全部拿到
+   真实动作、0 帧被判缺**，厨师 2.7 秒走到目标。
 4. **替身 Worker 的 `frame_id` 是自己的计数器**（`worker_stub.c`），与游戏帧无关；真 Worker（任务 05）
    要按游戏帧发布（一帧一版，或至少比帧率快一倍），否则第 3 条那个 grace 窗口就是它唯一的缓冲。
+5. **按键动作在重复消息下永远不结束**（评审抓到的阻塞项，已修）：`Handle` 里按键分支每次收到同一条
+   `pickup`/`dash` 都重新登记，把 `NextPulseAt` 清成 0、把 `Deadline` 往后推 10 秒 —— 桥每帧都在重发，
+   于是按键被一直按着、超时永不触发、也回不了结局 ack（协议 §3.5 要求超时必回）。修法：同一条按键动作
+   还在（`Kind` 相同且没 `Done`）就不重复登记；按满 2 次并松开后回一条 `ok=true detail=已按键 2 次`
+   并结束，`Deadline` 到了回 `ok=false`。真机实测：6 秒里 7 个按键周期，每个周期按 2 次后回
+   `plugin_ack chef=0 action=pickup ok=1 detail=已按键 2 次`；Worker 写 `stop` 就停（槽里一直是
+   `pickup` 时按"这个动作还在"处理，等于"继续试着拿"）。
+6. 顺手：`worker_stub --target NaN,0` 以前会被 `strtod` 收下（Bridge 侧会拒绝非有限坐标，看起来像
+   "参数生效了但动作没到"），现在两个解析函数都拒非有限数；新增 `input-grace` 场景把第 3 条的语义
+   钉住（停写后窗口内仍转发最后一版 `move`、窗口过后转 `stop`）。
 
-**没验证到的**：Check 原文那串 `interact cutting_board_0`（取番茄 → 放砧板 → 切完）需要厨师先走到料箱/砧板
-旁，而这一段正是上面第 2、3 条影响的持续走位；`dash` 的效果没有单独度量；`interact` 的 `target_object`
-插件不读（协议 §3.6 明说，按 A 是对着厨师脚下的工位按）。
+**这一轮真机怎么复现**（Check 原文里的 `python3 tests/send_action.py --chef 0 --move 12,6` 不存在；
+Linux 侧下动作的正路是 Worker 写共享内存输入槽，`bridge/tools/worker_stub.c` 是那个替身，本轮给它加了
+`--target`）：
 
-**Check 原文里的 `python3 tests/send_action.py --chef 0 --move 12,6` 不存在**：Linux 侧下动作的正路是
-Worker 写共享内存输入槽（`bridge/tools/worker_stub.c` 是那个替身），Bridge 按帧转发；这一轮给它加了
-`--target`。目标坐标要落在 `wellcooked-terrain.json` 的可走格心上（格距 0.6 米），随手写的坐标很可能
-在台面里，导航只会报"走不到"。
+```sh
+bash scripts/dev-cycle.sh 12 s_sushi_1_1          # 进关卡（会先把游戏点起来）
+bridge/build/kitchenos-bridge --link listen --host 127.0.0.1 --port 14455 --log logs/bridge.log --verbose &
+bridge/build/kitchenos-worker-stub --state-name /kitchenos_state --sem-name /kitchenos_input_ready     --chefs 2 --slot 0 --kind move --target 12.57,-1.8 --hz 120 --duration 10
+# 判据：游戏日志出现 `action: 厨师位 1 到达 (12.6,-1.8)`；桥日志 actions_sent 每帧 move=1；
+#       状态文件里 0 号厨师落在目标 0.5 米内
+```
+
+**目标坐标要落在 `wellcooked-terrain.json` 的可走格心上**（格距 0.6 米，`cells` 里挑），随手写的坐标
+很可能在台面里，导航只会报"走不到"。另外真机测试前先用 `xdotool search --name Overcooked2 windowactivate`
+把游戏窗口激活 —— 窗口失焦时游戏不处理输入（这一轮踩过：厨师一动不动、工序的按键写入计数照涨）。
+
+**没验证到的**：`interact cutting_board_0` 那一串（取番茄 → 放砧板 → 切完）；`dash` 的效果没有单独度量；
+`interact` 的 `target_object` 插件不读（协议 §3.6 明说，按 A 是对着厨师脚下的工位按）。
 
 **关卡列表**（清单第 1 项）已回填到 `specs/game-bridge.md` 开放问题 1：这一版 21 关 19 场景，
 `s_sushi_1_1`…`s_sushi_1_4`、`s_rapids_2_1`、`s_wizard_3_1`、`s_sushi_4_1`、`s_sushi_5_1`、

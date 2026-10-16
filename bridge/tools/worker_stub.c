@@ -12,6 +12,7 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include <errno.h>
+#include <math.h>
 #include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -75,7 +76,7 @@ static int parse_double(const char *text, double *out)
 
     errno = 0;
     value = strtod(text, &end);
-    if (errno != 0 || end == text || *end != '\0') {
+    if (errno != 0 || end == text || *end != '\0' || !isfinite(value)) {
         return -1;
     }
     *out = value;
@@ -97,7 +98,9 @@ static int parse_double_prefix(const char *text, size_t len, double *out)
 
     errno = 0;
     value = strtod(buf, &end);
-    if (errno != 0 || end == buf || *end != '\0') {
+    /* strtod 收 "nan"/"inf"，而坐标必须是有限数：Bridge 对非有限移动坐标会拒绝并
+     * 回退成 idle，替身要是接受了这种参数，看起来就是"参数生效了但动作没到"。 */
+    if (errno != 0 || end == buf || *end != '\0' || !isfinite(value)) {
         return -1;
     }
     *out = value;

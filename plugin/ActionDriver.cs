@@ -33,13 +33,14 @@ namespace WellCooked
         private const float MoveTimeout = 10f;        // 一次 move 最多走这么久（任务清单定的默认）
         private const float PulseSeconds = 0.25f;     // 按键按下去多久（游戏只认边沿）
         private const float PulseInterval = 0.6f;     // 一次动作没做出效果时，隔多久再按一次
+        private const int KeyPulses = 2;              // 按键类按几次算"做过了"（游戏只认边沿，按一次可能被吃掉）
 
         private sealed class Command
         {
             public string Kind;
             public Vector2 Target;
             public float Deadline;
-            public bool Pulsed;
+            public int Pulses;   // 按键类按了几次
             public float PulseUntil;
             public float NextPulseAt;
             public float StartedAt;
@@ -142,12 +143,16 @@ namespace WellCooked
                 // 语义捷径：pickup/interact 都按交互键（A），dash 按冲刺键 —— 与协议 §3.6 一致
                 Owned.Add(m.chef_id);
                 Command command;
-                if (!Commands.TryGetValue(m.chef_id, out command) || command.Kind != kind)
+                if (Commands.TryGetValue(m.chef_id, out command) && command.Kind == kind
+                    && !command.Done)
                 {
-                    command = new Command { Kind = kind, StartedAt = now };
-                    Commands[m.chef_id] = command;
+                    // 同一条按键动作还在（桥每帧都会重发）：不重复登记 —— 重复登记会把
+                    // 脉冲间隔和超时都重置，变成"一直按着、永远不结束"。
+                    return null;
                 }
 
+                command = new Command { Kind = kind, StartedAt = now };
+                Commands[m.chef_id] = command;
                 command.NextPulseAt = 0f; // 立刻按第一下
                 command.Deadline = now + MoveTimeout;
                 return null;
@@ -215,21 +220,37 @@ namespace WellCooked
                 return true;
             }
 
-            // 按键类：按下 PulseSeconds，之后松开；没做出效果就隔 PulseInterval 再按一次
+            // 按键类：按下 PulseSeconds，之后松开；再隔 PulseInterval 按一次（游戏只认边沿，
+            // 一次按键可能被帧边界吃掉）。按满 KeyPulses 次并松开就算做完，回一条结局 ack ——
+            // 按键没有"到没到位"这种可观测的结局，能报的就是"按了几次"，效果看后续 state_update。
             bool pressed = now < command.PulseUntil;
-            if (!pressed && now >= command.NextPulseAt)
+            if (!pressed && command.Pulses < KeyPulses && now >= command.NextPulseAt)
             {
                 command.PulseUntil = now + PulseSeconds;
                 command.NextPulseAt = now + PulseInterval;
+                command.Pulses++;
                 pressed = true;
                 _log.LogInfo("action: 厨师位 " + (slot + 1) + " 按 " + command.Kind
-                             + (command.Pulsed ? "（再按一次）" : ""));
-                command.Pulsed = true;
+                             + (command.Pulses > 1 ? "（再按一次）" : ""));
             }
 
             if (now > command.Deadline)
             {
+                string late = "超时 " + MoveTimeout.ToString("F0") + " 秒，按键没走完";
+                _log.LogWarning("action: 厨师位 " + (slot + 1) + " " + command.Kind + " " + late);
+                Report(slot, command.Kind, false, late);
                 command.Done = true;
+                Feed(slot, pad, Vector2.zero, false, false, false);
+                return true;
+            }
+
+            if (command.Pulses >= KeyPulses && !pressed)
+            {
+                string done = "已按键 " + command.Pulses + " 次";
+                Report(slot, command.Kind, true, done);
+                command.Done = true;
+                Feed(slot, pad, Vector2.zero, false, false, false);
+                return true;
             }
 
             bool pickup = command.Kind == "pickup" || command.Kind == "interact";
