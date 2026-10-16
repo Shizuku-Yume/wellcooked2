@@ -109,6 +109,20 @@ grep -E '订单: ' "$GAME_DIR/BepInEx/LogOutput.log"                          # 
 bash scripts/eval-levels.sh s_city_h5                  # 每关重开一局，量菜谱 + 连通性 + 机制组件
 ```
 
+自制演示关卡（任务 13）：构建必须在 **Windows** 侧做（`BuildTarget.StandaloneWindows`；Linux 编辑器没有跨平台构建模块，Windows 编辑器在本机 Wine 下激活界面跑不通）。交接文档、布局数据与生成器脚本都在 `levels/wellcooked_demo/`：
+
+```sh
+# Windows 侧（组员）：装 Unity 2017.4.8f1 → 按 levels/wellcooked_demo/README.md 走十条步骤
+#   产物 = Assets/AssetBundles/info_wellcooked_demo + s_wellcooked_demo_1
+# 装进游戏：拷到 "$GAME_DIR/BepInEx/plugins/OC2DIYLevel/levels/wellcooked_demo/"
+# Linux 侧验收：
+bash scripts/dev-cycle.sh 20 s_wellcooked_demo_1
+printf 'mech=1\n' > "$GAME_DIR/BepInEx/wellcooked-command.txt"   # 应输出"机制 = 无（只有通用系统）"
+bash scripts/eval-levels.sh s_wellcooked_demo_1                  # 主连通块占比 ≥ 90%
+```
+
+待传的三样东西与体积见 `levels/TRANSFER.md`；`Assembly-CSharp` 的压缩包在 `~/oc2-transfer/`。
+
 厨房配置（OS 侧的资源与地面模型，方案 §6.6）：
 
 ```sh
