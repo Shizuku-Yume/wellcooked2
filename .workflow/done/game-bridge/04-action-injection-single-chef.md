@@ -5,7 +5,7 @@
 **Base commit:** a2dc5c8
 **Base branch:** game-bridge/03-plugin-client-state-upload
 **Started:** 2026-10-16T10:30:00+08:00
-**Status:** paused
+**Finished:** 2026-10-16T11:45:00+08:00
 
 **Delivers:** Bridge 下发一条 `action`，游戏里 0 号厨师真的动起来：走到指定坐标、抓取食材、放到砧板上切完。动作全集（移动、交互、抓取/放下、投掷）都能由外部指令触发，并能在上报的状态里看到结果。
 
