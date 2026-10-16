@@ -1,0 +1,28 @@
+# wellcooked_demo 厨房布局（单位：0.6 米格；x 向右、z 向上；世界坐标 = 格号 x 0.6）
+# 列（制表符分隔，固定 7 列）：kind  prefab  so  ingredient  x  z  note
+# kind：dispenser | chopping | cooker | frying | plate_stack | serving | plate_return | utensil | spawn
+# 设计：单一连通屋子、无任何机关；4 个厨师；3 道菜 = Burrito_Chicken（煮饭 + 炸鸡 + 装盘）
+#       + Sushi_PlainFish + Sushi_PlainPrawn（都要切）→ 覆盖 切 / 煮 / 煎 / 装盘，
+#       并刻意让两道菜共用砧板与盘子堆（资源争用是调度演示要看的东西）。
+# 坐标只用了 x=1..14、z=2..11 这两条台面，中间 z=3..10 全空，保证通道宽度 > 1 格（厨师半径 0.40）。
+kind	prefab	so	ingredient	x	z	note
+dispenser	Dispenser	Dispenser01SO	TortillaSO	1	11	玉米饼
+dispenser	Dispenser	Dispenser02SO	RiceSO	2	11	米（要煮）
+dispenser	Dispenser	Dispenser01SO	BurritoChickenSO	3	11	鸡肉（要切+炸）
+dispenser	Dispenser	Dispenser02SO	BurritoMeatSO	4	11	牛肉（要切+炸）
+dispenser	Dispenser	Dispenser01SO	MushroomSO	5	11	蘑菇（要切）
+dispenser	Dispenser	Dispenser02SO	SushiFishSO	7	11	寿司鱼（要切）
+dispenser	Dispenser	Dispenser01SO	SushiPrawnSO	8	11	寿司虾（要切）
+chopping	ChoppingCounter	ChoppingCounterSO		10	11	砧板 1
+chopping	ChoppingCounter	ChoppingCounterSO		11	11	砧板 2
+cooker	Cooker	CookerSO		13	11	灶台（放锅煮饭）
+frying	FryingStation	FryingStationSO		14	11	炸台（放锅炸鸡/牛）
+plate_stack	CleanPlateStack	CleanPlateStackSO		1	2	干净盘堆
+serving	ServingStation	ServingStationSO		3	2	上菜口（两格宽）
+plate_return	PlateReturn	PlateReturnSO		6	2	脏盘台
+utensil	Pot	PotSO		13	11	煮锅（放在灶台上）
+utensil	FryPan	FryPanSO		14	11	炸锅（放在炸台上）
+spawn				6	7	厨师 1
+spawn				7	7	厨师 2
+spawn				8	7	厨师 3
+spawn				9	7	厨师 4
