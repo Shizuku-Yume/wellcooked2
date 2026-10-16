@@ -684,6 +684,11 @@ namespace WellCooked
                     continue;
                 }
 
+                if (ActionDriver.Drive(owned.Slot, owned.Pad, position, now))
+                {
+                    continue; // 这个玩家位收到过 Bridge 的动作，归动作执行器（任务 04）
+                }
+
                 if (!Navigation.HasArrived(owned.Slot))
                 {
                     string status;
@@ -734,6 +739,11 @@ namespace WellCooked
                     continue;
                 }
 
+                if (ActionDriver.Drive((int)player, null, position, now))
+                {
+                    continue;
+                }
+
                 string status;
                 var direction = Navigation.Steer(player, position, now, out status);
                 LogicalInput.Set(player, direction, action);
@@ -775,6 +785,11 @@ namespace WellCooked
                     continue;
                 }
 
+                if (ActionDriver.Owns(owned.Slot))
+                {
+                    continue; // 归动作执行器，工序不要碰它
+                }
+
                 PlayerControls chef;
                 ChefControllers.TryGetValue(owned.Slot, out chef);
                 Vector2 facingPosition = Vector2.zero;
@@ -796,6 +811,11 @@ namespace WellCooked
             {
                 Vector2 position;
                 if (!TryPosition(owned.Slot, out position))
+                {
+                    continue;
+                }
+
+                if (ActionDriver.Drive(owned.Slot, owned.Pad, position, now))
                 {
                     continue;
                 }
@@ -949,6 +969,40 @@ namespace WellCooked
                     ChefControllers[id] = chef;
                 }
             }
+        }
+
+        /// <summary>这个玩家位是不是我们占的（动作执行器据此拒绝不属于我们的 chef_id）。</summary>
+        public static bool IsOwnedSlot(int slot)
+        {
+            foreach (var owned in OwnedPads)
+            {
+                if (owned.Slot == slot)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>玩家位上的厨师对应的游戏玩家号（逻辑层注入要用它）。</summary>
+        public static bool TryPlayerOf(int slot, out PlayerInputLookup.Player player)
+        {
+            player = PlayerInputLookup.Player.One;
+            PlayerControls chef;
+            if (!ChefControllers.TryGetValue(slot, out chef) || chef == null)
+            {
+                return false;
+            }
+
+            var provider = chef.GetComponent<PlayerIDProvider>();
+            if (provider == null)
+            {
+                return false;
+            }
+
+            player = provider.GetID();
+            return true;
         }
 
         private static bool TryPosition(int playerIndex, out Vector2 position)

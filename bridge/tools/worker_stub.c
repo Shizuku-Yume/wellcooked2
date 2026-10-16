@@ -42,10 +42,15 @@ static void usage(FILE *out, const char *argv0)
     fprintf(out,
             "usage: %s --state-name NAME --sem-name NAME --chefs N --slot K\n"
             "          --hz H --duration S [--kind move|stop|interact|pickup|dash]\n"
+            "          [--target X,Y]\n"
             "\n"
             "Publishes one Chef Worker's worth of input into slot K of an existing\n"
             "KitchenOS shared segment. The segment must already exist (start the\n"
-            "Bridge first); this program never creates it.\n",
+            "Bridge first); this program never creates it.\n"
+            "\n"
+            "move sends a triangular wave between STUB_X0 and STUB_X1 by default;\n"
+            "--target X,Y sends one constant target instead (what a real Worker\n"
+            "does when it decides 'chef 0 goes to the cutting board').\n",
             argv0);
 }
 
@@ -71,6 +76,28 @@ static int parse_double(const char *text, double *out)
     errno = 0;
     value = strtod(text, &end);
     if (errno != 0 || end == text || *end != '\0') {
+        return -1;
+    }
+    *out = value;
+    return 0;
+}
+
+/* 解析 text 的前 len 个字节（不是 NUL 结尾的片段），给 --target X,Y 用。 */
+static int parse_double_prefix(const char *text, size_t len, double *out)
+{
+    char buf[64];
+    char *end = NULL;
+    double value;
+
+    if (len == 0 || len >= sizeof buf) {
+        return -1;
+    }
+    memcpy(buf, text, len);
+    buf[len] = '\0';
+
+    errno = 0;
+    value = strtod(buf, &end);
+    if (errno != 0 || end == buf || *end != '\0') {
         return -1;
     }
     *out = value;
@@ -148,6 +175,9 @@ int main(int argc, char **argv)
     double hz = 60.0;
     double duration = 4.0;
     kos_action_kind kind = KOS_ACTION_MOVE;
+    int fixed_target = 0;
+    double target_x = 0.0;
+    double target_y = 0.0;
 
     kos_shm_opts opts;
     kos_shm *shm = NULL;
@@ -199,6 +229,16 @@ int main(int argc, char **argv)
                 fprintf(stderr, "%s: --duration wants a number\n", argv[0]);
                 return 2;
             }
+        } else if (strcmp(a, "--target") == 0) {
+            /* "X,Y"：一个固定目标点。逗号分隔，两边都要能解析成有限数。 */
+            const char *comma = strchr(value, ',');
+            if (comma == NULL
+                || parse_double_prefix(value, comma - value, &target_x) != 0
+                || parse_double(comma + 1, &target_y) != 0) {
+                fprintf(stderr, "%s: --target wants X,Y\n", argv[0]);
+                return 2;
+            }
+            fixed_target = 1;
         } else if (strcmp(a, "--kind") == 0) {
             if (parse_kind(value, &kind) != 0) {
                 fprintf(stderr, "%s: --kind must be move, stop, interact, pickup or dash\n",
@@ -289,8 +329,8 @@ int main(int argc, char **argv)
             action.frame_id = frame + 1; /* 0 保留给"从没写过" */
             action.chef_id = (int32_t)slot;
             action.kind = kind;
-            action.target_x = STUB_X0 + t * (STUB_X1 - STUB_X0);
-            action.target_y = (float)slot;
+            action.target_x = fixed_target ? (float)target_x : STUB_X0 + t * (STUB_X1 - STUB_X0);
+            action.target_y = fixed_target ? (float)target_y : (float)slot;
             action.target_object[0] = '\0';
             if (kind == KOS_ACTION_INTERACT) {
                 /* interact 必须带一个非空目标，否则 Bridge 只能把它降级成 idle */

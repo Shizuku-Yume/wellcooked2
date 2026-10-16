@@ -109,6 +109,7 @@ namespace WellCooked
             else if (!connected && _wasConnected)
             {
                 _log.LogInfo("link: 与 Bridge 断开，后台每 2 秒重试");
+                ActionDriver.ReleaseAll(); // 没人在下动作了，把玩家位交还本地驱动
             }
 
             _wasConnected = connected;
