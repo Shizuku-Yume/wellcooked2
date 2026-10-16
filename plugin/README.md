@@ -33,9 +33,25 @@
 - `BepInEx/wellcooked-state.json`：给人看与给 OS 侧导出用（`scripts/export-kitchen.py` 读它生成
   `config/kitchen.json` + `config/recipes.json`）。取不到的字段进 `missing` 数组，**不假装拿到了**。
   同目录还有 `wellcooked-terrain.json`（可走格）与 `wellcooked-menu.json`（菜谱表，`menu=1` 导出）。
-- `state_update`（TCP，每帧）：字段名以 `protocol/protocol.md` 为准，构造在 `plugin/Link/StateFrame.cs`。
+- `state_update`（TCP，**默认每帧**；`wellcooked-takeover.txt` 里写 `state_ms=<毫秒>` 就按间隔限流）：
+  字段名以 `protocol/protocol.md` 为准，构造在 `plugin/Link/StateFrame.cs`。协议的分帧硬上限是单行 1 MiB；
+  4 KB 是状态帧的**预算**（超过只在日志里警告一次，不截断也不丢弃 —— 见 `LinkRunner.MaxStateBytes`）。
   协议里可选的字段取不到时**省略**（不是填 0）：`chefs[].state`、`orders[].ingredients`、
   `resources[].chef_id` 这一轮没映射；锅/砧板读不到状态时只报编号。
+
+## 链路配置与重连（`wellcooked-takeover.txt`）
+
+| 键 | 行为 | 生效时机 |
+|---|---|---|
+| `bridge=<host>:<port>` | 停掉旧链路，建新链路并重新握手 | 最多一个配置轮询周期（5 秒） |
+| `bridge=off` | 停掉链路（不再连） | 同上 |
+| `state_ms=<毫秒>` | 只改上报间隔（`0` = 每帧）；**不重建 TCP 连接** | 同上 |
+
+心跳与重连参数这一版写死在 `LinkRunner` 里（心跳 2000 ms、断线后等 2000 ms 再连），
+没有做成可热改的配置键 —— 协议文档里 `Network.*` 那些键是 net46 参考实现的，net35 演示插件不读它们。
+
+重连的两种耗时别混：**对端立刻拒绝**（端口没人听）时约 2 秒一次；**连接建立阶段超时**时还要叠加
+最多 3 秒的 connect 等待，所以两次尝试之间可能看到约 5 秒。日志里都有重试次数。
 
 ## 文件分工
 

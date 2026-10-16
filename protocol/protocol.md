@@ -19,8 +19,10 @@ C 侧 `bridge/include/kitchenos/protocol.h` + `bridge/src/protocol.c`，
   插件默认监听 `127.0.0.1:14455`。方向由模式表达，端口号不承担这个责任。
 - 绑定地址默认 **loopback**。链路没有认证，绑 `0.0.0.0` 等于把"谁能当插件"交给同网段的
   任何人；跨机演示时显式传 `--host 0.0.0.0`。
-- 两端都可配置：Bridge 用 `--port` / `--host`，插件用 `Network.Port`、`Network.ServerPort`、
-  `Network.ListenAddress`（`decisions.md: 2026-10-15 - Bridge 端口可配置，默认 14455`）。
+- 两端都可配置：Bridge 用 `--port` / `--host`；插件侧下面列出的 `Network.*` 是 **net46 参考实现**
+  （`plugin/WellCooked.Plugin/`）的配置键，**net35 演示插件不读它们** —— 它只读
+  `BepInEx/wellcooked-takeover.txt` 里的 `bridge=` / `state_ms=`（见 `plugin/README.md`）。
+  （`decisions.md: 2026-10-15 - Bridge 端口可配置，默认 14455`）
   两种拓扑跑同一套协议。
 - 一帧 = **一行**：UTF-8 JSON 字节，后面跟一个 **`\n`（0x0A）**。换行符是分隔符，不属于载荷。
 - 单行载荷上限 **1048576 字节（1 MiB）**，与 `TcpLink.MaxFrameBytes` 一致（不含结尾的 `\n`）。

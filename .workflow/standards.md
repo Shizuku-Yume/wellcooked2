@@ -72,7 +72,8 @@ printf 'work=auto\nslots=1,2\ndiag=true\n' > "$GAME_DIR/BepInEx/wellcooked-takeo
 ```
 
 插件与 Bridge 的链路（任务 03）：连上后立刻发 `hello` 并每帧发 `state_update`，收心跳与 `action`；
-断线每 2 秒重连，重连后重新握手。桥侧用 `bash tools/run-bridge-scenarios.sh` 不用游戏就能验协议，
+断线后等 2 秒再连、连上重新握手；**对端立刻拒绝**时约 2 秒一次，**连接建立阶段超时**时还会叠加最多
+3 秒 connect 等待（日志里有重试次数）。`state_ms` 这一版不做范围钳制：`0` 每帧、正数就是毫秒间隔。桥侧用 `bash tools/run-bridge-scenarios.sh` 不用游戏就能验协议，
 进关卡验真机用 `bash tools/run-real-game.sh`（它自己起 Bridge 并判定 hello/state_update 条数）。
 
 `diag` 是任务 10 收敛出来的唯一诊断开关（`plugin/Diag.cs`）：**结果行**（工序每步的开始/结果、失败原因、
