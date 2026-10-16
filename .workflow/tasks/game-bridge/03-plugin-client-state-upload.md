@@ -2,7 +2,10 @@
 
 **Effort:** game-bridge
 **Task type:** feature
-**Base commit:** <commit-sha>
+**Base commit:** 9d72d38
+**Base branch:** game-bridge/10-plugin-cleanup
+**Started:** 2026-10-16T02:30:00+08:00
+**Status:** active
 
 **Delivers:** 游戏跑起来后，插件自己连上 Bridge 并每帧上报世界状态；关掉 Bridge 游戏不崩、插件持续重连，Bridge 重启后连接自动恢复。Bridge 侧能看到与画面一致的得分和厨师数。
 
@@ -27,3 +30,7 @@
 - [ ] 关掉 Bridge 期间游戏不卡顿、不崩溃
 
 **Progress:**
+
+## Progress
+
+Dirty at start: none（从 `9d72d38` 起，叠在 `game-bridge/10-plugin-cleanup` 上）。
