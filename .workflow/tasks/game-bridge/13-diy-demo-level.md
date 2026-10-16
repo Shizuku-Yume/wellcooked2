@@ -43,3 +43,27 @@
 **Done when:** 上面每条打勾，Check 的五项证据都有。
 
 ## Progress
+
+**卡点：Unity 2017.4 的许可证在这台机器上拿不到**（2026-10-16 实测，四条路都堵）：
+
+| 试过 | 结果 |
+|---|---|
+| 工程本身需要 **Windows** 版编辑器 | `Assets/Editor/CreateAssetBundles.cs` 写死 `BuildTarget.StandaloneWindows`；Linux 版装完 `Editor/Data/PlaybackEngines/` 只有 `LinuxStandaloneSupport`，且 `LinuxEditorInstaller/UnitySetup-{Windows,Mac}-Support-*.tar.xz` 全是 404（Linux 宿主机没有跨平台构建模块） |
+| Windows 版编辑器装在 Wine 下 | 能跑：`Unity.exe -batchmode` 只在最后报 `Unity has not been activated with a valid License`，其余正常 |
+| `-createManualActivationFile`（无头 / 带显示 / 带 `-quit`，三次） | 都停在 `DisplayProgressbar: Unity license`，**不产出 `.alf`**；Unity 官方支持文档写明 "Personal 许可证已不再支持手动激活" |
+| CLI 激活 `-username/-password` | 同样停在 `DisplayProgressbar: Unity license`，连"凭据错"都没到，说明没走到认证请求 |
+| GUI（带 Wine 虚拟桌面） | **编辑器直接崩**，弹出 Unity Bug Reporter（截图 `/tmp/unity-window.png`），拿不到登录窗口 |
+
+补充事实：`license.unity3d.com` / `activation.unity3d.com` / `id.unity.com` 三个域名都还在响应（200/302），
+所以不是服务下线，而是 **Wine 下跑不通这个版本的激活界面**。
+
+**已经就绪、与许可证无关的部分**（一旦有可用许可证，只差跑一次构建）：
+
+- 编辑器工程 `~/oc2-level-editor`（206M 的 `gua248/Overcooked2-LevelEditor` 副本，不在 /tmp）。
+- AssetRipper 1.3.14 已把游戏导出成 Unity 工程（42G，`~/oc2-export/ExportedProject`），
+  `Assets/Scripts/Assembly-CSharp`（2365 个 .cs）已按教程第 5 步拷进编辑器工程第 6 步覆盖 `Assembly-CSharp-Patch`。
+- 游戏本体 `StreamingAssets/Windows`（7.7G）已拷进 `Assets/StreamingAssets`。
+- 加载器 `OC2DIYLevel-v0.10` 已下载（含 `test_level` / `oc1_story` 示例关卡集，可直接当模板）。
+- 关卡数据源：本体这版的菜谱 DAG（`Chicken_Burrito` = 玉米饼 + 煮饭 + 炸鸡；`Sushi_PlainFish`/`Sushi_PlainPrawn` 需要切），
+  正好覆盖"切 + 煮/煎 + 装盘"；桌台/器具清单见 `Docs/zh/reference.md`。
+
