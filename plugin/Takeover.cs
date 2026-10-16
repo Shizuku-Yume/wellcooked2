@@ -168,6 +168,7 @@ namespace WellCooked
             var now = Time.realtimeSinceStartup;
             Commands.Tick();
             WorldState.Tick(now);
+            LinkRunner.Tick(now);
 
             // 驱动必须**每帧**给方向：原来整个 Step 被 0.5 秒的检查间隔卡住，
             // 一秒只决策 2 次，而路点间隔 0.6 米、厨师一秒能走 3 米——一帧就冲过路点，

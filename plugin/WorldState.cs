@@ -37,6 +37,22 @@ namespace WellCooked
             _log.LogInfo("state: 世界状态读取已启用");
         }
 
+        private static readonly HashSet<string> WarnedOnce = new HashSet<string>();
+
+        /// <summary>
+        /// 同一句话只报一次（按内容去重）。给"某些帧读不到某个字段"这类事用：
+        /// 每帧都刷一行会把日志淹掉，完全不报又会让下游以为那个字段永远是空的。
+        /// </summary>
+        public static void WarnOnce(string message)
+        {
+            if (_log == null || !WarnedOnce.Add(message))
+            {
+                return;
+            }
+
+            _log.LogWarning(message);
+        }
+
         public static void Tick(float now)
         {
             if (now >= _nextSnapshot)
@@ -128,7 +144,7 @@ namespace WellCooked
         /// <summary>得分、订单、回合计时：都在厨房流程控制器上。</summary>
         private static void AppendKitchen(StringBuilder json, List<string> missing)
         {
-            var flow = FindAll("ServerKitchenFlowControllerBase").FirstOrDefault();
+            var flow = Flow();
             if (flow == null)
             {
                 missing.Add("ServerKitchenFlowControllerBase");
@@ -1458,16 +1474,31 @@ namespace WellCooked
 
         private static object _gameGridManager;
 
+        /// <summary>
+        /// 厨房流程控制器（得分、订单、回合计时都挂在它上面）。
+        /// 摘要（`wellcooked-state.json`）与上报（`state_update`）共用它，不再各自 `FindAll` 一遍。
+        /// </summary>
+        public static object Flow()
+        {
+            return FindAll("ServerKitchenFlowControllerBase").FirstOrDefault();
+        }
+
+        /// <summary>合作模式只有一个队（`TeamID` 里第一个非 None 的值）；取不到返回 null。</summary>
+        public static object Team()
+        {
+            return TeamId();
+        }
+
         /// <summary>当前这一局的订单控制器（工序状态机用它读活跃订单与菜谱）。</summary>
         public static object FirstOrderController()
         {
-            var flow = FindAll("ServerKitchenFlowControllerBase").FirstOrDefault();
+            var flow = Flow();
             if (flow == null)
             {
                 return null;
             }
 
-            var team = TeamId();
+            var team = Team();
             if (team == null)
             {
                 return null;
