@@ -1,0 +1,75 @@
+# wellcooked_demo layout (unit: 1 m grid; x right, z up)
+# columns: kind	prefab	so	ingredient	x	z	note
+kind	prefab	so	ingredient	x	z	note
+counter	Counter	CounterSO		-5	-14		
+dispenser	Dispenser	Dispenser02SO	RiceSO	-3	-14	S rice	
+dispenser	Dispenser	Dispenser01SO	BurritoChickenSO	-1	-14	S chicken	
+dispenser	Dispenser	Dispenser01SO	SushiFishSO	1	-14	S fish	
+dispenser	Dispenser	Dispenser02SO	SushiPrawnSO	3	-14	S prawn	
+washing	Sink	SinkSO		6	-14		
+counter	Counter	CounterSO		9	-14		
+chopping	ChoppingCounter	ChoppingCounterSO		11	-14	S board 1	
+chopping	ChoppingCounter	ChoppingCounterSO		13	-14	S board 2	
+cooker	Cooker	CookerSO		15	-14	S cooker 1	
+utensil	Pot	PotSO		15	-14	pot on S cooker 1	
+frying	FryingStation	FryingStationSO		17	-14	S fryer 1	
+utensil	FrierBasket	FrierBasketSO		17	-14	basket on S fryer 1	
+counter	Counter	CounterSO		19	-14		
+counter	Counter	CounterSO		21	-14		
+dispenser	Dispenser	Dispenser01SO	TortillaSO	-5	-12	W tortilla	
+spawn				8	-12		
+counter	Counter	CounterSO		21	-12		
+counter	Counter	CounterSO		-5	-10		
+counter	Counter	CounterSO		21	-10		
+counter	Counter	CounterSO		-5	-8		
+counter	Counter	CounterSO		-1	-8		
+counter	Counter	CounterSO		1	-8		
+counter	Counter	CounterSO		3	-8		
+counter	Counter	CounterSO		5	-8		
+counter	Counter	CounterSO		7	-8		
+counter	Counter	CounterSO		9	-8		
+counter	Counter	CounterSO		11	-8		
+counter	Counter	CounterSO		13	-8		
+counter	Counter	CounterSO		15	-8		
+counter	Counter	CounterSO		17	-8		
+counter	Counter	CounterSO		21	-8		
+counter	Counter	CounterSO		-5	-6		
+counter	Counter	CounterSO		21	-6		
+serving	ServingStation	ServingStationSO		3	-5		
+spawn				8	-5		
+counter	Counter	CounterSO		-5	-4		
+spawn				-3	-4		
+counter	Counter	CounterSO		-1	-4		
+cooker	Cooker	CookerSO		11	-4	N cooker 2	180
+utensil	Pot	PotSO		11	-4	pot on N cooker 2	180
+frying	FryingStation	FryingStationSO		13	-4	N fryer 2	180
+utensil	FrierBasket	FrierBasketSO		13	-4	basket on N fryer 2	180
+plate_stack	CleanPlateStack	CleanPlateStackSO		15	-4	N clean plates	180
+counter	Counter	CounterSO		17	-4		
+spawn				19	-4		
+counter	Counter	CounterSO		21	-4		
+counter	Counter	CounterSO		-5	-2		
+counter	Counter	CounterSO		-1	-2		
+counter	Counter	CounterSO		1	-2		
+counter	Counter	CounterSO		3	-2		
+counter	Counter	CounterSO		11	-2		
+counter	Counter	CounterSO		13	-2		
+counter	Counter	CounterSO		15	-2		
+counter	Counter	CounterSO		17	-2		
+counter	Counter	CounterSO		21	-2		
+counter	Counter	CounterSO		-5	0		
+counter	Counter	CounterSO		21	0		
+counter	Counter	CounterSO		-5	2		
+counter	Counter	CounterSO		-3	2		
+counter	Counter	CounterSO		-1	2		
+counter	Counter	CounterSO		1	2		
+counter	Counter	CounterSO		3	2		
+counter	Counter	CounterSO		5	2		
+counter	Counter	CounterSO		7	2	wall	
+counter	Counter	CounterSO		9	2		
+plate_return	PlateReturn	PlateReturnSO		11	2	dirty plates, moved E	
+counter	Counter	CounterSO		13	2		
+counter	Counter	CounterSO		15	2		
+counter	Counter	CounterSO		17	2		
+counter	Counter	CounterSO		19	2		
+counter	Counter	CounterSO		21	2		

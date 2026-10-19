@@ -1,4 +1,4 @@
-﻿# 杩愯鏃朵骇鐗╋細鏂囨。 搂6.6 瑙勫畾鐨勬棩蹇椾笌杩愯璁板綍鐩綍锛岀敱绋嬪簭鑷繁鍒涘缓
+# 杩愯鏃朵骇鐗╋細鏂囨。 搂6.6 瑙勫畾鐨勬棩蹇椾笌杩愯璁板綍鐩綍锛岀敱绋嬪簭鑷繁鍒涘缓
 logs/
 runs/
 
@@ -22,3 +22,10 @@ doorstop_config.ini
 # 鏈満娓告垙鍓湰锛?.77 GB锛孶nity 2017.4.8f1锛屼粎鐢ㄤ簬鍙嶇紪璇戜笌鏋勫缓锛?/Overcooked 2!/
 # 本机游戏副本（Unity 2017.4.8f1，仅供反编译与构建）
 /Overcooked 2!/
+
+# 本机编译依赖（游戏 / BepInEx / Unity DLL），不入库
+plugin/Libs*/
+
+# 布局编辑器保存时生成的备份与本地构建状态
+levels/wellcooked_demo/*.tsv.bak*
+levels/wellcooked_demo/layout-editor/build-status.txt

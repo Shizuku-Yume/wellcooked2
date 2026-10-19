@@ -1,0 +1,73 @@
+# wellcooked_demo layout (unit: 1 m grid; x right, z up)
+# columns: kind	prefab	so	ingredient	x	z	note
+kind	prefab	so	ingredient	x	z	note
+# menu: Burrito_Chicken_SO, Sushi_PlainFish_SO, Sushi_PlainPrawn_SO
+counter	Counter	CounterSO		-7	-16		
+counter	Counter	CounterSO		-5	-16		
+counter	Counter	CounterSO		-3	-16		
+counter	Counter	CounterSO		-1	-16		
+counter	Counter	CounterSO		1	-16		
+chopping	ChoppingCounter	ChoppingCounterSO		3	-16		
+counter	Counter	CounterSO		5	-16		
+dispenser	Dispenser	Dispenser01SO	RiceSO	7	-16		
+counter	Counter	CounterSO		9	-16		
+chopping	ChoppingCounter	ChoppingCounterSO		11	-16		
+counter	Counter	CounterSO		13	-16		
+counter	Counter	CounterSO		15	-16		
+counter	Counter	CounterSO		17	-16		
+counter	Counter	CounterSO		19	-16		
+counter	Counter	CounterSO		21	-16		
+counter	Counter	CounterSO		-7	-14		
+washing	Sink	SinkSO		21	-13		270
+counter	Counter	CounterSO		-7	-12		
+plate_stack	CleanPlateStack	CleanPlateStackSO		-7	-12	restored: mount on counter	
+spawn				4	-12		
+spawn				12	-12		
+counter	Counter	CounterSO		-7	-10		
+counter	Counter	CounterSO		21	-10		
+counter	Counter	CounterSO		-7	-8		
+counter	Counter	CounterSO		21	-8		
+counter	Counter	CounterSO		-7	-6		
+counter	Counter	CounterSO		-5	-6		
+counter	Counter	CounterSO		-3	-6		
+counter	Counter	CounterSO		-1	-6		
+counter	Counter	CounterSO		1	-6		
+counter	Counter	CounterSO		3	-6		
+counter	Counter	CounterSO		5	-6		
+cooker	Cooker	CookerSO		7	-6		
+utensil	Pot	PotSO		7	-6		
+cooker	Cooker	CookerSO		9	-6		
+utensil	Pot	PotSO		9	-6		
+counter	Counter	CounterSO		11	-6		
+counter	Counter	CounterSO		13	-6		
+counter	Counter	CounterSO		15	-6		
+counter	Counter	CounterSO		17	-6		
+counter	Counter	CounterSO		19	-6		
+counter	Counter	CounterSO		21	-6		
+counter	Counter	CounterSO		-7	-4		
+counter	Counter	CounterSO		21	-4		
+dispenser	Dispenser	Dispenser01SO	TortillaSO	-7	-2		
+spawn				4	-2		
+dispenser	Dispenser	Dispenser01SO	BurritoChickenSO	21	-2		
+spawn				11	-1		
+dispenser	Dispenser	Dispenser01SO	SushiFishSO	-7	0		
+dispenser	Dispenser	Dispenser01SO	SushiPrawnSO	21	0		
+counter	Counter	CounterSO		-7	2		
+counter	Counter	CounterSO		21	2		
+counter	Counter	CounterSO		-7	4		
+counter	Counter	CounterSO		-5	4		
+counter	Counter	CounterSO		-3	4		
+counter	Counter	CounterSO		-1	4		
+frying	FryingStation	FryingStationSO		1	4		
+utensil	FrierBasket	FrierBasketSO		1	4		
+counter	Counter	CounterSO		3	4		
+serving	ServingStation	ServingStationSO		6	4		
+plate_return	PlateReturn	PlateReturnSO		9	4		0
+counter	Counter	CounterSO		11	4		
+counter	Counter	CounterSO		13	4		
+frying	FryingStation	FryingStationSO		15	4		
+utensil	FrierBasket	FrierBasketSO		15	4		
+counter	Counter	CounterSO		17	4		
+counter	Counter	CounterSO		19	4		
+counter	Counter	CounterSO		21	4		
+utensil	FireExtinguisher	FireExtinguisherSO		21	4		

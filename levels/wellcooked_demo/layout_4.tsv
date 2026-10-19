@@ -1,0 +1,105 @@
+# wellcooked_demo layout (unit: 1 m grid; x right, z up)
+# columns: kind	prefab	so	ingredient	x	z	note
+kind	prefab	so	ingredient	x	z	note
+# menu: Burrito_Chicken_SO, Sushi_PlainFish_SO, Sushi_PlainPrawn_SO
+counter	Counter	CounterSO		-10	-16	wall	
+dispenser	Dispenser	Dispenser01SO	SushiFishSO	-8	-16	S fish	
+counter	Counter	CounterSO		-6	-16	wall	
+chopping	ChoppingCounter	ChoppingCounterSO		-4	-16	S board3	
+chopping	ChoppingCounter	ChoppingCounterSO		-2	-16	S board4	
+cooker	Cooker	CookerSO		0	-16	S cooker1	
+utensil	Pot	PotSO		0	-16	pot2	
+frying	FryingStation	FryingStationSO		2	-16	S fryer	
+utensil	FrierBasket	FrierBasketSO		2	-16	basket1	
+dispenser	Dispenser	Dispenser02SO	SushiPrawnSO	4	-16	S prawn	
+counter	Counter	CounterSO		6	-16	wall	
+washing	Sink	SinkSO		9	-16		
+counter	Counter	CounterSO		12	-16		
+counter	Counter	CounterSO		14	-16	wall	
+counter	Counter	CounterSO		16	-16	wall	
+counter	Counter	CounterSO		18	-16		
+counter	Counter	CounterSO		20	-16		
+counter	Counter	CounterSO		22	-16		
+counter	Counter	CounterSO		24	-16	wall	
+counter	Counter	CounterSO		26	-16	wall	
+counter	Counter	CounterSO		28	-16	wall	
+counter	Counter	CounterSO		-10	-14	wall	
+counter	Counter	CounterSO		28	-14	wall	
+spawn				1	-13		
+spawn				5	-13		
+spawn				10	-13		
+serving	ServingStation	ServingStationSO		15	-13		
+counter	Counter	CounterSO		-10	-12	wall	
+counter	Counter	CounterSO		28	-12	wall	
+counter	Counter	CounterSO		-10	-10		
+counter	Counter	CounterSO		28	-10		
+counter	Counter	CounterSO		-5	-9		
+counter	Counter	CounterSO		-3	-9		
+counter	Counter	CounterSO		-1	-9		
+counter	Counter	CounterSO		18	-9		
+counter	Counter	CounterSO		24	-9		
+counter	Counter	CounterSO		-10	-8		
+counter	Counter	CounterSO		22	-8		
+counter	Counter	CounterSO		28	-8	wall	
+counter	Counter	CounterSO		-5	-7		
+counter	Counter	CounterSO		2	-7		
+counter	Counter	CounterSO		4	-7		
+counter	Counter	CounterSO		6	-7		
+counter	Counter	CounterSO		10	-7		
+counter	Counter	CounterSO		12	-7		
+counter	Counter	CounterSO		14	-7		
+counter	Counter	CounterSO		18	-7		
+counter	Counter	CounterSO		-10	-6		
+counter	Counter	CounterSO		21	-6		
+counter	Counter	CounterSO		-5	-5		
+counter	Counter	CounterSO		2	-5		
+counter	Counter	CounterSO		6	-5		
+counter	Counter	CounterSO		10	-5		
+counter	Counter	CounterSO		14	-5		
+counter	Counter	CounterSO		18	-5		
+serving	ServingStation	ServingStationSO		28	-5		
+counter	Counter	CounterSO		-10	-4		
+counter	Counter	CounterSO		20	-4		
+counter	Counter	CounterSO		-5	-3		
+counter	Counter	CounterSO		2	-3		
+counter	Counter	CounterSO		4	-3		
+counter	Counter	CounterSO		6	-3		
+counter	Counter	CounterSO		10	-3		
+counter	Counter	CounterSO		12	-3		
+counter	Counter	CounterSO		14	-3		
+counter	Counter	CounterSO		18	-3		
+counter	Counter	CounterSO		-10	-2	wall	
+counter	Counter	CounterSO		22	-2		
+counter	Counter	CounterSO		28	-2	wall	
+counter	Counter	CounterSO		-5	-1		
+counter	Counter	CounterSO		-3	-1		
+counter	Counter	CounterSO		-1	-1		
+counter	Counter	CounterSO		18	-1		
+counter	Counter	CounterSO		24	-1		
+counter	Counter	CounterSO		-10	0	wall	
+counter	Counter	CounterSO		28	0	wall	
+counter	Counter	CounterSO		-10	2	wall	
+counter	Counter	CounterSO		28	2	wall	
+counter	Counter	CounterSO		-10	4	wall	
+dispenser	Dispenser	Dispenser01SO	TortillaSO	-8	4	N tortilla	
+counter	Counter	CounterSO		-6	4	wall	
+counter	Counter	CounterSO		-4	4	wall	
+chopping	ChoppingCounter	ChoppingCounterSO		-2	4	N board1	
+chopping	ChoppingCounter	ChoppingCounterSO		0	4	N board2	
+cooker	Cooker	CookerSO		2	4	N cooker1	
+utensil	Pot	PotSO		2	4	pot1	
+frying	FryingStation	FryingStationSO		4	4	N fryer	
+utensil	FrierBasket	FrierBasketSO		4	4	basket2	
+dispenser	Dispenser	Dispenser02SO	RiceSO	6	4	N rice	
+counter	Counter	CounterSO		8	4	wall	
+dispenser	Dispenser	Dispenser01SO	BurritoChickenSO	10	4	N chicken	
+counter	Counter	CounterSO		12	4	wall	
+counter	Counter	CounterSO		14	4	wall	
+counter	Counter	CounterSO		16	4	wall	
+counter	Counter	CounterSO		18	4		
+counter	Counter	CounterSO		20	4		
+plate_stack	CleanPlateStack	CleanPlateStackSO		20	4		
+counter	Counter	CounterSO		22	4		
+counter	Counter	CounterSO		24	4	wall	
+counter	Counter	CounterSO		26	4	wall	
+counter	Counter	CounterSO		28	4	wall	
