@@ -1,4 +1,4 @@
-# wellcooked_demo layout (unit: 1 m grid; x right, z up)
+# wellcooked_demo layout (unit: 0.6 m grid; x right, z up)
 # columns: kind	prefab	so	ingredient	x	z	note
 kind	prefab	so	ingredient	x	z	note
 counter	Counter	CounterSO		-5	-14		

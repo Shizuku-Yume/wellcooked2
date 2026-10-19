@@ -206,56 +206,55 @@ AssetBundle 打包必须在 Windows 物理机上完成。需在 Windows 环境�
 
 ## 6. 产物往哪放
 
-构建产物包含两个二进制 bundle 文件：`info_wellcooked_demo` 与 `s_wellcooked_demo_1`。
+构建产物包含 `info_wellcooked_demo` 与 `s_wellcooked_demo_1..4` 五个二进制 bundle；下标是玩家人数
+（`_1` = 1 人，`_2` = 2 人，依此类推），场景名就是 bundle 名。
 
 ### 6.1 游戏目录部署位置
 - **路径**：`Overcooked! 2/BepInEx/plugins/OC2DIYLevel/levels/wellcooked_demo/`
-- **放置内容**：
-  - `info_wellcooked_demo`
-  - `s_wellcooked_demo_1`
+- **放置内容**：`info_wellcooked_demo` 与 `s_wellcooked_demo_1`、`_2`、`_3`、`_4` 全部五个文件
 - **层级关系说明**：
   - 加载器插件 `OC2DIYLevel.dll` 与公共资源包 `common01`、`common02` 等位于父级目录 `Overcooked! 2/BepInEx/plugins/OC2DIYLevel/`；
   - OC2DIYLevel v0.10 发行包自带 `test_level` 与 `oc1_story` 两个关卡集目录，结构与 `wellcooked_demo` 一致，可作为参考对照。
 
 ### 6.2 代码仓库保存位置
-- **路径**：
-  - `levels/wellcooked_demo/info_wellcooked_demo`
-  - `levels/wellcooked_demo/s_wellcooked_demo_1`
+- **路径**：`levels/wellcooked_demo/` 下的 `info_wellcooked_demo` 与 `s_wellcooked_demo_1..4`
 - 随代码提交至 Git，供其他无需打开 Unity 的环境直接复制运行。
 
 ---
 
 ## 7. 验收（回到 Linux 侧跑）
 
-产物放回 Linux 运行环境后，执行以下 5 项验收命令与判据验证：
+产物放回 Linux 运行环境后，执行以下 5 项验收命令与判据验证。下面的命令以 `_2`（两名厨师）为例；
+换人数就把场景名换成对应的 `_N`。
 
 ### 7.1 启动并进入自制关卡
 ```sh
-bash scripts/dev-cycle.sh 20 s_wellcooked_demo_1
+bash scripts/dev-cycle.sh 20 s_wellcooked_demo_2
 ```
-- **判据**：游戏进程正常拉起，虚拟手柄自动完成前端选人并执行 `load=s_wellcooked_demo_1`，成功载入自制关卡场景，终端正常打印出 20 秒的位置与移动日志。
+- **判据**：游戏进程正常拉起，虚拟手柄自动完成前端选人并执行 `load=s_wellcooked_demo_2`，成功载入自制关卡场景，终端正常打印出位置与移动日志。
 
 ### 7.2 检查关卡机制
 ```sh
 printf 'mech=1\n' > "$GAME_DIR/BepInEx/wellcooked-command.txt"
 ```
-- **判据**：查看 `$GAME_DIR/BepInEx/LogOutput.log` 输出，Mechanisms 项明确输出为“机制 = 无（只有通用系统）”，场景内不存在活动机关或特殊地形。
+- **判据**：查看 `$GAME_DIR/BepInEx/LogOutput.log` 输出，机制行里没有 `Rail`/`Conveyor`/`Portal`/`Cannon`/`Switch`/`Geyser`/`Bridge`/`Raft`/`Trolley`。基础 prefab 自带的通用组件（`TabletopConveyenceWindReceiver`、`WindAccumulator`、`Teleportable*`、`FireExtinguish*`）不是关卡机关，本体关卡也有。
 
 ### 7.3 检查空间连通性
 ```sh
-bash scripts/eval-levels.sh s_wellcooked_demo_1
+bash scripts/eval-levels.sh s_wellcooked_demo_2
 ```
-- **判据**：评估脚本重新启动游戏并采样 0.6 米网格，输出中可行区主连通块占比 $\ge 90\%$，确认整个厨房处于同一连通块内，工位未将通道堵塞。
+- **判据**：评估脚本重新启动游戏并采样 0.6 米网格，输出中主连通块占比 $\ge 90\%$，确认整个厨房处于同一连通块内，工位未将通道堵塞。`_2` 实测：`连通块 1 个（丢掉 0 格），可走格 154/220`。
 
 ### 7.4 检查自动调度出单
-在 `$GAME_DIR/BepInEx/wellcooked-takeover.txt` 中开启工序自动模式：
+在 `$GAME_DIR/BepInEx/wellcooked-takeover.txt` 中开启工序自动模式（`_2` 用两个玩家位；`_4` 写 `1,2,3,4`）：
 ```sh
-printf 'work=auto\nslots=1,2,3,4\n' > "$GAME_DIR/BepInEx/wellcooked-takeover.txt"
+printf 'work=auto\nslots=1,2\n' > "$GAME_DIR/BepInEx/wellcooked-takeover.txt"
 ```
-- **判据**：工序状态机自动接管 4 个厨师完成取料、加工、烹饪、装盘与交付，单局运行中至少成功完成 1 单交付。
+- **判据**：工序状态机自动接管厨师完成取料、加工、烹饪、装盘与交付，单局运行中至少成功完成 1 单交付。
 
 ### 7.5 核对工位数与布局一致性
-- **判据**：检查 `wellcooked-state.json` 或 `mech` 打印的工位列表，工位总数与种类必须与 `layout.tsv` 一致（共 20 个摆放项：7 个料箱、2 个砧板、1 个灶台、1 个炸台、1 个干净盘堆、1 个上菜口、1 个脏盘台、2 个独立锅具、4 个厨师初始出生点）。
+- **判据**：检查 `wellcooked-state.json` 或 `mech` 打印的工位列表，工位总数与种类必须与对应的 `layout_<N>.tsv` 一致。
+  `_2` 实测：5 个料箱、2 个砧板、2 个灶台 + 2 个炸台、1 个水槽、1 个干净盘堆、1 个出菜口、1 个脏盘台、2 个锅具、2 个炸篮；位置与 `layout_2.tsv` 一致（`export-kitchen.py` 合并后 17 个逻辑工位）。
 
 ---
 
