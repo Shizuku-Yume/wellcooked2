@@ -202,6 +202,30 @@ AssetBundle 打包必须在 Windows 物理机上完成。需在 Windows 环境�
 ### 5.4 脚本状态说明
 `BuildWellCookedDemo.cs` **尚未在 Unity 编辑器中编译运行过**（Linux 机器无可用许可证）。初次在 Windows 编辑器中打开时可能需要根据 Unity 2017.4 的 API 提示修复少量类型或命名空间报错。脚本输出的全部日志均带有 `[wellcooked_demo]` 前缀，可在 Console 中直接过滤查看。
 
+### 5.5 场景背景：当前固定为模板
+
+当前生成器**不支持换背景**：`CreateScene()` 固定复制 `Assets/Template/s_template.unity`，
+`TileFloor()` 只把模板里的纯色 `Floor` 平面铺开。OC2 的关卡背景不是 `LevelInfoSO` 的一个字段，
+而是原关卡场景里的环境物体（地板、墙、装饰、灯光、天空盒）；所以没有“改一个 theme 名字”的开关。
+
+要使用某一关的背景，按下面的路径做（需要 Windows 侧 Unity 工程和原关卡场景）：
+
+1. 在 Windows 编辑器工程里用 AssetRipper/AssetStudio 把目标关卡（例如 `s_sushi_1_1`）导出成
+   Unity 场景，放进 `Assets/`；原关卡场景很大，这一步只能在构建机上做。
+2. 在 `layout_<N>.tsv` 里加一行类似 `# menu:` 的 `# theme: Assets/.../s_sushi_1_1.unity`
+   （或直接改 `BuildWellCookedDemo.cs` 里的常量）。
+3. 改 `CreateScene()`：有主题场景时复制主题场景而不是 `s_template`；打开后删掉原关卡的游戏对象
+   （`ClientIngredientContainer` / `ClientWorkstation` / `ClientCookingStation` / `ClientPlateStation` /
+   `ClientCleanPlateStack` / `ClientPickupItemSpawner` / `PlayerControls`，以及原来的
+   `PseudoPrefabManager`），保留环境/墙/地板/装饰/灯光；主题场景自己带地板时跳过 `TileFloor()`。
+4. 继续用 `PlaceFromLayout()` 放自定义工位；按主题场景的实际房间尺寸调整 `layout_<N>.tsv` 的坐标。
+5. 重新 `Build AssetBundles`。注意依赖：现在的自定义 bundle 只有几十 KB，说明工位 prefab
+   引用的资源在 `common*` 里；主题关卡特有的装饰如果只存在于原关卡 bundle，需要一起打进自定义
+   bundle，或让加载器先加载对应的依赖 bundle，否则运行时会缺资源。
+
+如果只是想让**选关菜单的封面**好看，那是另一条路（`LevelSetInfoSO` / `diylevelcover` 的封面图），
+不会改变游戏内场景。
+
 ---
 
 ## 6. 产物往哪放
