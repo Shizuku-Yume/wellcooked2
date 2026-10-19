@@ -1,26 +1,28 @@
-# 杩愯鏃朵骇鐗╋細鏂囨。 搂6.6 瑙勫畾鐨勬棩蹇椾笌杩愯璁板綍鐩綍锛岀敱绋嬪簭鑷繁鍒涘缓
+# 运行时产物：文档 §6.6 规定的日志与运行记录目录，由程序自己创建
 logs/
 runs/
 
-# 杩愯鏃ュ織
+# 运行日志
 *.log
 
-# 鍦烘櫙 harness 鐨勪复鏃惰緭鍑?tools/__pycache__/
+# 场景 harness 的临时输出
+tools/__pycache__/
 *.pyc
 
-# C 鏋勫缓浜х墿鐢?bridge/.gitignore 璐熻矗锛岃繖閲屼笉閲嶅锛涜繖涓ゆ潯鏄寜缁勫憳鍘熸湁鐨勫懡鍚嶄範鎯暀鐨?bridge/*.o
+# C 构建产物由 bridge/.gitignore 负责，这里不重复；这两条是按组员原有的命名习惯留的
+bridge/*.o
 bridge/bridge
 
-# C# 鏋勫缓浜х墿
+# C# 构建产物
 plugin/bin/
 plugin/obj/
 
-# 娓告垙鐩綍鏄閮ㄤ緷璧栵細浠撳簱鍙斁鎻掍欢婧愮爜鍜岄儴缃茶剼鏈紝涓嶆彁浜ゆ父鎴忎笌 BepInEx 浜岃繘鍒?BepInEx/
+# 游戏目录是外部依赖：仓库只放插件源码和部署脚本，不提交游戏与 BepInEx 二进制
+BepInEx/
 winhttp.dll
 doorstop_config.ini
 
-# 鏈満娓告垙鍓湰锛?.77 GB锛孶nity 2017.4.8f1锛屼粎鐢ㄤ簬鍙嶇紪璇戜笌鏋勫缓锛?/Overcooked 2!/
-# 本机游戏副本（Unity 2017.4.8f1，仅供反编译与构建）
+# 本机游戏副本（2.77 GB，Unity 2017.4.8f1，仅供反编译与构建）
 /Overcooked 2!/
 
 # 本机编译依赖（游戏 / BepInEx / Unity DLL），不入库
