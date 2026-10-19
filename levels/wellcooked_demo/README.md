@@ -206,8 +206,17 @@ AssetBundle 打包必须在 Windows 物理机上完成。需在 Windows 环境�
 
 ## 6. 产物往哪放
 
-构建产物包含 `info_wellcooked_demo` 与 `s_wellcooked_demo_1..4` 五个二进制 bundle；下标是玩家人数
-（`_1` = 1 人，`_2` = 2 人，依此类推），场景名就是 bundle 名。
+构建产物包含 `info_wellcooked_demo` 与 `s_wellcooked_demo_1..4` 五个二进制 bundle；下标是**地图编号**，
+不是玩家人数。每张地图都带 `config_1p..4p`，玩家人数由关卡 flow 决定。
+
+| 场景 | 显示名 | 布局 | 实测连通性 |
+|---|---|---|---|
+| `s_wellcooked_demo_1` | Basic Kitchen | 4 料箱 / 3 砧板 / 2 灶台 / 2 炸台 / 4 出生点 | 3 块，主块 ≈56% |
+| `s_wellcooked_demo_2` | Twin Lines | 5 料箱 / 2 砧板 / 2 灶台 / 2 炸台 / 4 出生点 | **1 块，100%** |
+| `s_wellcooked_demo_3` | Ring Bar | 5 料箱 / 2 砧板 / 2 灶台 / 2 炸台 / 4 出生点 | 8 块，主块 ≈36% |
+| `s_wellcooked_demo_4` | Big Kitchen | 5 料箱 / 4 砧板 / 2 灶台 / 2 炸台 / 2 出菜口 / 3 出生点 | 12 块，主块 ≈43% |
+
+目前只有 `_2` 满足“单一连通厨房”；另外三张的布局还需要修（或从关卡集里去掉）。
 
 ### 6.1 游戏目录部署位置
 - **路径**：`Overcooked! 2/BepInEx/plugins/OC2DIYLevel/levels/wellcooked_demo/`
@@ -224,8 +233,8 @@ AssetBundle 打包必须在 Windows 物理机上完成。需在 Windows 环境�
 
 ## 7. 验收（回到 Linux 侧跑）
 
-产物放回 Linux 运行环境后，执行以下 5 项验收命令与判据验证。下面的命令以 `_2`（两名厨师）为例；
-换人数就把场景名换成对应的 `_N`。
+产物放回 Linux 运行环境后，执行以下 5 项验收命令与判据验证。下面的命令以 `_2`（Twin Lines）为例；
+换地图就把场景名换成 `_1`..`_4`，玩家人数只由 `slots` 决定。
 
 ### 7.1 启动并进入自制关卡
 ```sh
@@ -246,7 +255,7 @@ bash scripts/eval-levels.sh s_wellcooked_demo_2
 - **判据**：评估脚本重新启动游戏并采样 0.6 米网格，输出中主连通块占比 $\ge 90\%$，确认整个厨房处于同一连通块内，工位未将通道堵塞。`_2` 实测：`连通块 1 个（丢掉 0 格），可走格 154/220`。
 
 ### 7.4 检查自动调度出单
-在 `$GAME_DIR/BepInEx/wellcooked-takeover.txt` 中开启工序自动模式（`_2` 用两个玩家位；`_4` 写 `1,2,3,4`）：
+在 `$GAME_DIR/BepInEx/wellcooked-takeover.txt` 中开启工序自动模式（两名厨师写 `1,2`，四名写 `1,2,3,4`；与地图编号无关）：
 ```sh
 printf 'work=auto\nslots=1,2\n' > "$GAME_DIR/BepInEx/wellcooked-takeover.txt"
 ```
