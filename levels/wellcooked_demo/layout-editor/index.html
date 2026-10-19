@@ -540,7 +540,7 @@ document.getElementById("btnMenuAuto").onclick = () => {
 document.getElementById("btnMenuAll").onclick = () => { menuSel = RECIPES.map(r => r.n); renderMenu(); };
 function toTSV() {
   const lines = [];
-  lines.push("# wellcooked_demo layout (unit: 1 m grid; x right, z up)");
+  lines.push("# wellcooked_demo layout (unit: 0.6 m grid; x right, z up)");
   lines.push("# columns: kind\tprefab\tso\tingredient\tx\tz\tnote");
   lines.push("kind\tprefab\tso\tingredient\tx\tz\tnote");
   if (menuSel.length) lines.push("# menu: " + menuSel.join(", "));
@@ -672,7 +672,7 @@ document.getElementById("btnLoad").onclick = () => loadFile(document.getElementB
 document.getElementById("btnClear").onclick = () => { if (confirm("清空当前编辑内容？")) { objs=[]; selected=-1; draw(); renderList(); validate(); } };
 document.getElementById("btnBuild").onclick = async () => {
   const st = document.getElementById("status");
-  st.innerHTML = "正在保存并构建（约 6-10 分钟）…";
+  st.innerHTML = "正在保存并构建/部署…（Linux 没有构建命令时只部署现有 bundle）";
   await document.getElementById("btnSave").click();
   try {
     const r = await fetch("/api/build", {method:"POST"});

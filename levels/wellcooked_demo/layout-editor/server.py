@@ -1,6 +1,8 @@
 import json
-import subprocess
 import os
+import shutil
+import subprocess
+import threading
 import urllib.parse
 from datetime import datetime
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -9,15 +11,34 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 # 编辑器放在 levels/wellcooked_demo/layout-editor/，layout TSV 就在上一级。
 ROOT = os.path.dirname(HERE)
 PORT = int(os.environ.get("WELLCOOKED_EDITOR_PORT", "8770"))
-# 构建脚本在仓库外（本机是 D:\oc2-level-build\build-only.ps1），用环境变量传入。
+# 构建脚本在仓库外（Windows 侧是 D:\oc2-level-build\build-only.ps1），用环境变量传入。
 BUILD_PS1 = os.environ.get("WELLCOOKED_BUILD_PS1", "")
+# Linux 侧没有 Unity 构建能力；需要真实构建时把命令放这里（例如 ssh 到 Windows 构建机），
+# 命令成功后必须把 5 个 bundle 写回 levels/wellcooked_demo/，然后本服务再部署。
+BUILD_CMD = os.environ.get("WELLCOOKED_BUILD_CMD", "")
+DEPLOY_SH = os.path.join(ROOT, "deploy.sh")
 STATUS_FILE = os.environ.get("WELLCOOKED_STATUS_FILE", os.path.join(HERE, "build-status.txt"))
 _building = [False]
 
+
+def default_game_dir():
+    """按常见 Steam 路径找游戏目录；找不到就返回 Windows 时代的旧默认值。"""
+    candidates = [
+        os.path.expanduser("~/.local/share/Steam/steamapps/common/Overcooked! 2"),
+        os.path.expanduser("~/.steam/steam/steamapps/common/Overcooked! 2"),
+        os.path.join("/run/media", os.environ.get("USER", ""),
+                     "File/Steam/steamapps/common/Overcooked! 2"),
+        os.path.join(os.path.dirname(os.path.dirname(ROOT)), "Overcooked 2!"),
+    ]
+    for candidate in candidates:
+        if os.path.isdir(os.path.join(candidate, "BepInEx")):
+            return candidate
+    return candidates[0]
+
+
 # 游戏侧“处理时间”覆盖：本编辑器写，BepInEx 插件 WellCooked 读同一份文件。
-# 换游戏目录时设置环境变量 WELLCOOKED_GAME_DIR（例如 D:\EPIC\Games\Overcooked2）。
-GAME_DIR = os.environ.get("WELLCOOKED_GAME_DIR") or os.path.join(
-    os.path.dirname(os.path.dirname(ROOT)), "Overcooked 2!")
+# 换游戏目录时设置环境变量 WELLCOOKED_GAME_DIR。
+GAME_DIR = os.environ.get("WELLCOOKED_GAME_DIR") or default_game_dir()
 PROCESSING_FILE = os.path.join(GAME_DIR, "BepInEx", "wellcooked-processing.json")
 PROCESSING_DEFAULTS = {"cook_time": 10.0, "chop_stages": 8, "chop_multiplier": 5}
 # 必须和 plugin/WellCooked.Plugin/Game/ProcessingTuner.cs 的常量一致。
@@ -26,13 +47,6 @@ PROCESSING_RANGES = {
     "chop_stages": (2, 8, 1),
     "chop_multiplier": (1, 10, 1),
 }
-
-HEADER = (
-    "# wellcooked_demo 关卡布局（单位：1 米格；x 向右、z 向上）\n"
-    "# 列（制表符分隔，固定 7 列）：kind\tprefab\tso\tingredient\tx\tz\tnote\n"
-    "# kind：dispenser | chopping | cooker | frying | plate_stack | serving | plate_return | utensil | spawn | counter\n"
-)
-
 
 def layout_files():
     if not os.path.isdir(ROOT):
@@ -84,6 +98,80 @@ def _read_processing():
     return values, updated, exists
 
 
+# ---------------- 构建 / 部署 ----------------
+
+def _write_status(text, append=True):
+    folder = os.path.dirname(STATUS_FILE)
+    if folder:
+        os.makedirs(folder, exist_ok=True)
+    with open(STATUS_FILE, "a" if append else "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(text)
+        if not text.endswith("\n"):
+            fh.write("\n")
+
+
+def _run_logged(cmd, shell=False, env=None):
+    """跑命令，把 stdout/stderr 逐行写进状态文件（前端每 3 秒轮询）。"""
+    printable = cmd if isinstance(cmd, str) else " ".join(cmd)
+    _write_status("$ " + printable)
+    try:
+        proc = subprocess.Popen(
+            cmd, shell=shell, env=env, stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT, text=True, bufsize=1)
+        for line in proc.stdout:
+            _write_status(line.rstrip("\n"))
+        rc = proc.wait()
+    except Exception as exc:  # noqa: BLE001
+        _write_status("运行失败: " + str(exc))
+        return 127
+    _write_status("退出码 %d" % rc)
+    return rc
+
+
+def _run_build():
+    try:
+        _write_status("[%s] 构建/部署开始" % datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                      append=False)
+        built = False
+        if BUILD_CMD:
+            _write_status("构建方式: WELLCOOKED_BUILD_CMD")
+            rc = _run_logged(BUILD_CMD, shell=True)
+            if rc != 0:
+                _write_status("构建命令失败，不部署。")
+                return
+            built = True
+        elif BUILD_PS1 and os.path.isfile(BUILD_PS1):
+            powershell = shutil.which("powershell") or shutil.which("pwsh")
+            if powershell:
+                _write_status("构建方式: " + powershell + " " + BUILD_PS1)
+                rc = _run_logged([
+                    powershell, "-NoProfile", "-ExecutionPolicy", "Bypass",
+                    "-File", BUILD_PS1])
+                if rc != 0:
+                    _write_status("PowerShell 构建失败，不部署。")
+                    return
+                built = True
+            else:
+                _write_status("找到 WELLCOOKED_BUILD_PS1，但本机没有 powershell/pwsh；"
+                              "跳过构建，只部署现有 bundle。")
+        else:
+            _write_status("未配置 WELLCOOKED_BUILD_CMD / WELLCOOKED_BUILD_PS1；"
+                          "Linux 端只部署现有 bundle（不会重建 AssetBundle）。")
+
+        if not os.path.isfile(DEPLOY_SH):
+            _write_status("找不到部署脚本: " + DEPLOY_SH)
+            return
+        env = dict(os.environ)
+        env["WELLCOOKED_GAME_DIR"] = GAME_DIR
+        _write_status("部署目标: " + GAME_DIR + ("（已构建）" if built else "（现有 bundle）"))
+        rc = _run_logged(["bash", DEPLOY_SH], env=env)
+        _write_status("[%s] %s" % (
+            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "完成" if rc == 0 else "部署失败（退出码 %d）" % rc))
+    finally:
+        _building[0] = False
+
+
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=HERE, **kwargs)
@@ -131,19 +219,13 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_POST(self):
         if self.path.startswith("/api/build"):
-            if not BUILD_PS1 or not os.path.isfile(BUILD_PS1):
-                self._json({"ok": False, "error": "未配置 WELLCOOKED_BUILD_PS1（指向 build-only.ps1）"}, 400); return
             if _building[0]:
                 self._json({"ok": False, "error": "busy"}, 409); return
             _building[0] = True
-            import threading, subprocess as sp
-            def run():
-                try:
-                    sp.run(["powershell","-NoProfile","-ExecutionPolicy","Bypass","-File",BUILD_PS1], stdout=sp.DEVNULL, stderr=sp.DEVNULL)
-                finally:
-                    _building[0] = False
-            threading.Thread(target=run, daemon=True).start()
-            self._json({"ok": True}); return
+            threading.Thread(target=_run_build, daemon=True).start()
+            powershell = shutil.which("powershell") or shutil.which("pwsh")
+            mode = "build+deploy" if (BUILD_CMD or (BUILD_PS1 and powershell)) else "deploy-only"
+            self._json({"ok": True, "mode": mode}); return
         parsed = urllib.parse.urlparse(self.path)
         if parsed.path == "/api/processing":
             try:
