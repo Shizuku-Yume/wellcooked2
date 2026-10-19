@@ -209,14 +209,15 @@ AssetBundle 打包必须在 Windows 物理机上完成。需在 Windows 环境�
 构建产物包含 `info_wellcooked_demo` 与 `s_wellcooked_demo_1..4` 五个二进制 bundle；下标是**地图编号**，
 不是玩家人数。每张地图都带 `config_1p..4p`，玩家人数由关卡 flow 决定。
 
-| 场景 | 显示名 | 布局 | 实测连通性 |
+| 场景 | 显示名 | 布局 | 采样连通性（关键工位 A*） |
 |---|---|---|---|
-| `s_wellcooked_demo_1` | Basic Kitchen | 4 料箱 / 3 砧板 / 2 灶台 / 2 炸台 / 4 出生点 | 3 块，主块 ≈56% |
-| `s_wellcooked_demo_2` | Twin Lines | 5 料箱 / 2 砧板 / 2 灶台 / 2 炸台 / 4 出生点 | **1 块，100%** |
-| `s_wellcooked_demo_3` | Ring Bar | 5 料箱 / 2 砧板 / 2 灶台 / 2 炸台 / 4 出生点 | 8 块，主块 ≈36% |
-| `s_wellcooked_demo_4` | Big Kitchen | 5 料箱 / 4 砧板 / 2 灶台 / 2 炸台 / 2 出菜口 / 3 出生点 | 12 块，主块 ≈43% |
+| `s_wellcooked_demo_1` | Basic Kitchen | 4 料箱 / 3 砧板 / 2 灶台 / 2 炸台 / 4 出生点 | 3 块；关键工位 2-5 路点可达 |
+| `s_wellcooked_demo_2` | Twin Lines | 5 料箱 / 2 砧板 / 2 灶台 / 2 炸台 / 4 出生点 | **1 块（100%）** |
+| `s_wellcooked_demo_3` | Ring Bar | 5 料箱 / 2 砧板 / 2 灶台 / 2 炸台 / 4 出生点 | 8 块；关键工位 1-3 路点可达 |
+| `s_wellcooked_demo_4` | Big Kitchen | 5 料箱 / 4 砧板 / 2 灶台 / 2 炸台 / 2 出菜口 / 3 出生点 | 12 块；关键工位 1-6 路点可达 |
 
-目前只有 `_2` 满足“单一连通厨房”；另外三张的布局还需要修（或从关卡集里去掉）。
+四张地图的厨师位置与关键工位都在主连通块内、`path=` 探测 A* 可达。`_1/_3/_4` 的 3/8/12 块是
+3 米采样边距里的口袋（墙外、台面后），不是可玩区的断点；“主块占比 ≥90%”会把它们误判成不可用。
 
 ### 6.1 游戏目录部署位置
 - **路径**：`Overcooked! 2/BepInEx/plugins/OC2DIYLevel/levels/wellcooked_demo/`
@@ -252,7 +253,7 @@ printf 'mech=1\n' > "$GAME_DIR/BepInEx/wellcooked-command.txt"
 ```sh
 bash scripts/eval-levels.sh s_wellcooked_demo_2
 ```
-- **判据**：评估脚本重新启动游戏并采样 0.6 米网格，输出中主连通块占比 $\ge 90\%$，确认整个厨房处于同一连通块内，工位未将通道堵塞。`_2` 实测：`连通块 1 个（丢掉 0 格），可走格 154/220`。
+- **判据**：从厨师位置用 `path=<x1>,<z1>,<x2>,<z2>` 探测料箱/加热/出菜/水槽/盘堆，A* 都要返回路径；`eval-levels.sh` 的 `连通块/丢掉` 只作参考，它把 3 米采样边距里的口袋算进分母。`_2` 实测：`连通块 1 个（丢掉 0 格），可走格 154/220`。
 
 ### 7.4 检查自动调度出单
 在 `$GAME_DIR/BepInEx/wellcooked-takeover.txt` 中开启工序自动模式（两名厨师写 `1,2`，四名写 `1,2,3,4`；与地图编号无关）：
