@@ -1,5 +1,5 @@
 using System;
-using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Net;
@@ -38,9 +38,13 @@ namespace WellCooked.Net
         private readonly int _heartbeatTimeoutMs;
         private readonly int _reconnectDelayMs;
 
-        private readonly ConcurrentQueue<string> _inbound = new ConcurrentQueue<string>();
-        private readonly ConcurrentQueue<string> _outbound = new ConcurrentQueue<string>();
-        private readonly ManualResetEventSlim _wake = new ManualResetEventSlim(false);
+        // 2017.4 的播放器是 CLR 2.0（.NET 3.5），没有 System.Collections.Concurrent，
+        // 这里用 Queue + 锁实现同样的「单生产者/单消费者、有界丢弃」语义。
+        private readonly Queue<string> _inbound = new Queue<string>();
+        private readonly Queue<string> _outbound = new Queue<string>();
+        private readonly object _inboundGate = new object();
+        private readonly object _outboundGate = new object();
+        private readonly ManualResetEvent _wake = new ManualResetEvent(false);
 
         private Thread _thread;
         private volatile bool _running;
@@ -88,19 +92,31 @@ namespace WellCooked.Net
         /// <summary>主线程取一条入站 JSON（无消息返回 false）。</summary>
         public bool TryDequeueInbound(out string json)
         {
-            return _inbound.TryDequeue(out json);
+            lock (_inboundGate)
+            {
+                if (_inbound.Count == 0)
+                {
+                    json = null;
+                    return false;
+                }
+
+                json = _inbound.Dequeue();
+                return true;
+            }
         }
 
         /// <summary>发送一条 JSON（未连接时静默丢弃；队列满时丢最旧）。</summary>
         public void Send(string json)
         {
             if (string.IsNullOrEmpty(json) || !_connected) return;
-            while (_outbound.Count >= MaxOutboundQueue)
+            lock (_outboundGate)
             {
-                string dropped;
-                _outbound.TryDequeue(out dropped);
+                while (_outbound.Count >= MaxOutboundQueue)
+                {
+                    _outbound.Dequeue();
+                }
+                _outbound.Enqueue(json);
             }
-            _outbound.Enqueue(json);
         }
 
         // ---------------- worker ----------------
@@ -113,8 +129,10 @@ namespace WellCooked.Net
                 {
                     if (!Acquire()) continue;
                     _connected = true;
-                    string stale;
-                    while (_outbound.TryDequeue(out stale)) { }
+                    lock (_outboundGate)
+                    {
+                        _outbound.Clear();
+                    }
                     _lastRxMs = NowMs();
                     Log("[TcpLink] connected (" + _mode + " " + DescribePeer() + ")");
                     PumpLoop();
@@ -299,11 +317,13 @@ namespace WellCooked.Net
                 if (len > MaxFrameBytes)
                     throw new IOException("invalid line length: " + len);
                 string json = Encoding.UTF8.GetString(rx, off, len);
-                _inbound.Enqueue(json);
-                while (_inbound.Count > MaxInboundQueue)
+                lock (_inboundGate)
                 {
-                    string dropped;
-                    _inbound.TryDequeue(out dropped);
+                    _inbound.Enqueue(json);
+                    while (_inbound.Count > MaxInboundQueue)
+                    {
+                        _inbound.Dequeue();
+                    }
                 }
                 off = nl + 1;
             }
@@ -330,9 +350,19 @@ namespace WellCooked.Net
 
         private void FlushOutbound(Socket sock)
         {
-            string msg;
-            while (_outbound.TryDequeue(out msg))
+            while (true)
             {
+                string msg;
+                lock (_outboundGate)
+                {
+                    if (_outbound.Count == 0)
+                    {
+                        break;
+                    }
+
+                    msg = _outbound.Dequeue();
+                }
+
                 byte[] payload = Encoding.UTF8.GetBytes(msg);
                 if (payload.Length > MaxFrameBytes) continue;
                 byte[] frame = EncodeFrame(payload);
@@ -354,7 +384,8 @@ namespace WellCooked.Net
 
         private static string Msg_Heartbeat()
         {
-            long unix = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            // DateTimeOffset.ToUnixTimeSeconds 是 .NET 4.6 API，net35 下自己算
+            long unix = (long)(DateTime.UtcNow - new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)).TotalSeconds;
             return Protocol.Msg.Heartbeat(unix);
         }
 
@@ -367,7 +398,7 @@ namespace WellCooked.Net
         private void Sleep(int ms)
         {
             if (ms <= 0) return;
-            _wake.Wait(ms);
+            _wake.WaitOne(ms);
             _wake.Reset();
         }
 

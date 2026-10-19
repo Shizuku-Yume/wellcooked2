@@ -1,0 +1,73 @@
+# wellcooked_demo layout (unit: 1 m grid; x right, z up)
+# columns: kind	prefab	so	ingredient	x	z	note
+kind	prefab	so	ingredient	x	z	note
+# menu: Burrito_Chicken_SO, Sushi_PlainPrawn_SO
+counter	Counter	CounterSO		-8	-14		
+dispenser	Dispenser	Dispenser02SO	SushiPrawnSO	-6	-14	added	
+dispenser	Dispenser	Dispenser01SO	BurritoChickenSO	-4	-14		
+counter	Counter	CounterSO		-2	-14		
+counter	Counter	CounterSO		0	-14		
+counter	Counter	CounterSO		2	-14		
+counter	Counter	CounterSO		4	-14		
+counter	Counter	CounterSO		6	-14		
+frying	FryingStation	FryingStationSO		8	-14		
+utensil	FrierBasket	FrierBasketSO		8	-14		
+frying	FryingStation	FryingStationSO		10	-14		
+utensil	FrierBasket	FrierBasketSO		10	-14		
+counter	Counter	CounterSO		12	-14		
+counter	Counter	CounterSO		14	-14		
+counter	Counter	CounterSO		16	-14		
+counter	Counter	CounterSO		18	-14		
+counter	Counter	CounterSO		20	-14		
+counter	Counter	CounterSO		-8	-12		
+counter	Counter	CounterSO		0	-12		
+spawn				16	-12		
+serving	ServingStation	ServingStationSO		20	-11		
+counter	Counter	CounterSO		-8	-10		
+spawn				-4	-10		
+counter	Counter	CounterSO		0	-10		
+counter	Counter	CounterSO		-8	-8		
+counter	Counter	CounterSO		0	-8		
+counter	Counter	CounterSO		12	-8		
+counter	Counter	CounterSO		20	-8		
+counter	Counter	CounterSO		-8	-6		
+counter	Counter	CounterSO		0	-6		
+chopping	ChoppingCounter	ChoppingCounterSO		6	-6		
+counter	Counter	CounterSO		12	-6		
+counter	Counter	CounterSO		20	-6		
+dispenser	Dispenser	Dispenser01SO	TortillaSO	-8	-4		
+counter	Counter	CounterSO		0	-4		
+chopping	ChoppingCounter	ChoppingCounterSO		6	-4		
+dispenser	Dispenser	Dispenser01SO	RiceSO	12	-4		
+counter	Counter	CounterSO		20	-4		
+counter	Counter	CounterSO		-8	-2		
+counter	Counter	CounterSO		0	-2		
+chopping	ChoppingCounter	ChoppingCounterSO		6	-2		
+counter	Counter	CounterSO		12	-2		
+counter	Counter	CounterSO		20	-2		
+spawn				15	-1		
+counter	Counter	CounterSO		-8	0		
+spawn				-2	0		
+plate_stack	CleanPlateStack	CleanPlateStackSO		6	0		
+counter	Counter	CounterSO		12	0		
+counter	Counter	CounterSO		20	0		
+counter	Counter	CounterSO		-8	2		
+counter	Counter	CounterSO		12	2		
+counter	Counter	CounterSO		20	2		
+counter	Counter	CounterSO		-8	4		
+counter	Counter	CounterSO		-6	4		
+counter	Counter	CounterSO		-4	4		
+counter	Counter	CounterSO		-2	4		
+cooker	Cooker	CookerSO		0	4		
+utensil	Pot	PotSO		0	4		
+cooker	Cooker	CookerSO		2	4		
+utensil	FryPan	FryPanSO		2	4		
+counter	Counter	CounterSO		4	4		
+counter	Counter	CounterSO		6	4		
+counter	Counter	CounterSO		8	4		
+counter	Counter	CounterSO		10	4		
+counter	Counter	CounterSO		12	4		
+washing	Sink	SinkSO		15	4		
+counter	Counter	CounterSO		18	4		
+utensil	FireExtinguisher	FireExtinguisherSO		18	4		
+counter	Counter	CounterSO		20	4		

@@ -70,12 +70,15 @@ namespace WellCooked
             _state.Log = LogLine;
             _input.Init(_harmony);
             _state.Init(_harmony);
+            ProcessingTuner.Init(_harmony, LogLine);
 
             ApplyInputConfig();
             _statePushEnabled = _stateEnabled.Value;
             _stateIntervalMs = ClampInterval(_stateIntervalMsConfig.Value);
 
             StartLink();
+            HotkeyLoad.Init(LogLine);
+            LevelMenu.Init(LogLine);
             LogLine("[Plugin] WellCooked " + PluginVersion + " loaded (game=" + Application.productName + ")");
         }
 
@@ -87,6 +90,7 @@ namespace WellCooked
                 _link = null;
             }
             _input.ClearAll();
+            ProcessingTuner.Shutdown();
             if (_harmony != null)
             {
                 try { _harmony.UnpatchSelf(); } catch { }
@@ -100,6 +104,13 @@ namespace WellCooked
             PumpInbound();
 
             _input.Tick();
+            ProcessingTuner.Tick();
+
+            // 选关菜单：F9 开关，↑/↓ 选择，回车载入，ESC 关闭（OnGUI 里绘制）
+            LevelMenu.Tick();
+
+            // 直载通道：BepInEx\wellcooked-load.txt，绕开街机大厅
+            HotkeyLoad.Tick();
 
             bool connected = _link != null && _link.Connected;
             if (connected && !_wasConnected)
@@ -125,6 +136,12 @@ namespace WellCooked
                     SendState();
                 }
             }
+        }
+
+        /// <summary>F9 level-picker overlay; draws nothing while the menu is closed.</summary>
+        private void OnGUI()
+        {
+            LevelMenu.Draw();
         }
 
         // ================= 入站 =================

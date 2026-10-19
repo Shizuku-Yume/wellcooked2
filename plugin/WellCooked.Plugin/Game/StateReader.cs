@@ -99,7 +99,9 @@ namespace WellCooked.Game
             var b = new JsonBuilder(2048);
             b.Obj();
             b.Field("type", MsgType.StateUpdate);
-            b.FieldInt("timestamp", DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+            // ToUnixTimeSeconds 是 .NET 4.6 API，net35（2017.4 的 CLR 2.0）下自己算
+            b.FieldInt("timestamp",
+                (long)(DateTime.UtcNow - new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)).TotalSeconds);
             b.FieldInt("game_time", GetGameTimeSeconds());
             b.FieldInt("score", GetScore());
 
