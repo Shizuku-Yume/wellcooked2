@@ -31,6 +31,10 @@
   .sw { width:10px; height:10px; border-radius:2px; flex:0 0 auto; }
   .row span.n { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .row span.c { color:var(--dim); }
+  .art-thumb { width:72px; height:72px; flex:0 0 auto; border:1px solid var(--line); border-radius:4px; background:#171b20; object-fit:contain; }
+  .dim { color:#8b929b; font-size:10px; }
+  #artList .row { align-items:flex-start; }
+  #artList .row span.n { white-space:normal; line-height:1.35; }
   #status { padding:8px 14px; font-size:12px; border-top:1px solid var(--line); min-height:38px; }
   .err { color:var(--warn); }
   .good { color:var(--ok); }
@@ -60,6 +64,30 @@
   <div class="sect">
     <h2>笔刷</h2>
     <div class="palette" id="palette"></div>
+    <div style="color:#8b929b;font-size:11px;margin-top:6px;line-height:1.5">
+      背景物件（art）已关闭：画布不显示、列表不列出、也不能放置/删除。<br>
+      art 行仍然原样读写，保存不会丢背景。
+    </div>
+  </div>
+  <div class="sect" id="artSect" style="display:none">
+    <h2>背景 / 装饰（art 素材）</h2>
+    <div style="display:flex;gap:6px;margin-bottom:6px">
+      <select id="artTheme" style="flex:1;min-width:0"></select>
+      <input id="artSearch" placeholder="搜索" style="width:84px">
+    </div>
+    <div id="artList" style="max-height:230px;overflow:auto;border:1px solid var(--line);border-radius:6px"></div>
+    <div id="artPreview" style="margin-top:8px;border:1px solid var(--line);border-radius:6px;padding:8px;text-align:center;background:#1b1f24">
+      <div id="artPreviewBox" style="min-height:210px;display:flex;align-items:center;justify-content:center;color:#8b929b;font-size:12px">点一个素材查看尺寸示例</div>
+      <div id="artPreviewName" style="color:#c9d1d9;font-size:12px;margin-top:4px"></div>
+    </div>
+    <div id="artHint" style="color:#8b929b;font-size:11px;margin-top:5px">每个素材都有中文名 + 尺寸示例（大图按实测宽×深等比例画出占地矩形，并标注宽/深/高）。点素材后到画布上点格子放置。</div>
+    <div style="display:flex;gap:6px;align-items:center;margin-top:5px">
+      <span style="color:#9aa0a6;font-size:12px">高度</span>
+      <input id="artY" type="number" step="0.1" value="0" style="width:66px">
+      <span style="color:#8b929b;font-size:11px">米（放置新素材 / 选中的背景生效）</span>
+    </div>
+    <label class="inline" style="display:block;margin-top:5px"><input type="checkbox" id="showArt" checked> 画布显示背景物件</label>
+    <div style="color:#8b929b;font-size:11px;margin-top:3px">art 只做视觉，不占格、不参与和工位/其它物体的堆叠检测</div>
   </div>
   <div class="sect">
     <h2>料箱原料（选中料箱后生效）</h2>
@@ -106,7 +134,7 @@
 </div>
 
 <script>
-const X0 = -12, X1 = 30, Z0 = -18, Z1 = 6;      // 编辑范围（格）
+const X0 = -12, X1 = 30, Z0 = -18, Z1 = 14;      // 编辑范围（格）；Z1 放到 14 是为了能摆背景/街景
 const CS = 34;                                  // 每格像素
 const CELL = 0.6;   // 实测：台面 1.2 米 = 2 格，最小公因数 0.6 米
 // 真实可视地板（米）：x -6.6..17.4, z -10.2..3.0 → 换算成格
@@ -143,9 +171,21 @@ const cv = document.getElementById("cv");
 const ctx = cv.getContext("2d");
 cv.width = COLS * CS; cv.height = ROWS * CS;
 
-let objs = [];            // {kind,prefab,so,ing,x,z,note}
+let objs = [];            // {kind,prefab,so,ing,x,z,note} / art: {kind:"art",theme,prefab,y,x,z,note,dir}
 let brush = KINDS[0];
 let selected = -1;
+// 背景（art）素材库：尺寸来自示例工程实测（/api/art → art-sizes.tsv）
+let artCatalog = [];      // [{theme, count, items:[{name,w,h,d,minY,colliders,renderers}]}]
+const artSizes = {};      // "theme/name" -> {w,h,d,minY}
+const ART_COLOR = "#7c8b99";
+// 背景物件（art）显示 + 编辑总开关：false = 画布不画、列表不列、不能放/删；
+// parseTSV / toTSV 仍然原样读写 art 行，保存不会丢背景。
+const ART_UI = false;
+function artKey(theme, name) { return theme + "/" + name; }
+function artSizeOf(o) {
+  const s = artSizes[artKey(o.theme, o.prefab)];
+  return s && s.w > 0 ? s : { w: 1.2, h: 0.6, d: 1.2, minY: 0 };
+}
 
 const px = (x) => (x - X0) * CS;
 const py = (z) => (Z1 - 1 - z) * CS;   // z 向上
@@ -163,9 +203,9 @@ const cellAt = (ev) => {
 // 生成器 FootprintOf() 用米、这里用格，0.6 米/格，2x2 / 4x2 的整数结果完全对应。
 // 锚点不是左上角：2x2 台面放在 (7,0) 时占 (6,0)(7,0)(6,1)(7,1)，与游戏里一致。
 function layoutBounds(list) {
-  // 必须和生成器 ComputeRoomBounds() 一样：只跳过 spawn（utensil/plate_stack 也算），
-  // 否则靠墙判断（yaw）会不同，同一个 sink 在两边会被算成不同朝向。
-  const all = (list || objs).filter(o => o.kind !== "spawn");
+  // 必须和生成器 ComputeRoomBounds() 一样：只跳过 spawn 和 art（背景可能放在房间外很远，
+  // 算进来会把墙边工位的朝向判定带偏），否则同一个 sink 在两边会被算成不同朝向。
+  const all = (list || objs).filter(o => o.kind !== "spawn" && o.kind !== "art");
   if (!all.length) return { minX:0, maxX:0, minZ:0, maxZ:0 };
   const xs = all.map(o => o.x), zs = all.map(o => o.z);
   return { minX:Math.min(...xs), maxX:Math.max(...xs), minZ:Math.min(...zs), maxZ:Math.max(...zs) };
@@ -188,15 +228,24 @@ function servingYaw(gx, gz, bb) {
 }
 function yawOf(o, bb) {
   bb = bb || layoutBounds();
+  if (o.kind === "art") return ((parseInt(o.dir, 10) || 0) % 360 + 360) % 360;  // 背景朝向只认 dir
   if (o.kind === "serving") return servingYaw(o.x, o.z, bb);   // 出餐口永远由位置决定（dir 不生效）
   if (o.dir === undefined || o.dir === null || o.dir === "") return wallYaw(o.x, o.z, bb);
   return ((parseInt(o.dir, 10) % 360) + 360) % 360;
 }
 // 长轴跟着朝向走：0/180 => 长轴沿 x；90/270 => 长轴沿 z。
 // 用和生成器 FootprintOf() 相同的区间（45..135 / 225..315），非 90 的整数倍也一致。
+// art 用实测尺寸（米 → 格）；其它工位用查表尺寸。
 function dimsOf(o, bb) {
-  const k = KINDS.find(k => k.prefab === o.prefab) || KINDS.find(k => k.kind === o.kind) || {};
-  let w = k.w || 1, h = k.h || 1;
+  let w, h;
+  if (o.kind === "art") {
+    const s = artSizeOf(o);
+    w = s.w / CELL;
+    h = (s.d > 0 ? s.d : s.h) / CELL;
+  } else {
+    const k = KINDS.find(k => k.prefab === o.prefab) || KINDS.find(k => k.kind === o.kind) || {};
+    w = k.w || 1; h = k.h || 1;
+  }
   const y = yawOf(o, bb);
   if ((y > 45 && y < 135) || (y > 225 && y < 315)) { const t = w; w = h; h = t; }
   return { w: w, h: h, yaw: y };
@@ -212,7 +261,8 @@ function covers(o, x, z, bb) {
   const b = boxOf(o, bb);
   return x >= b.x0 && x < b.x1 && z >= b.z0 && z < b.z1;
 }
-function solidAt(o) { return o.kind !== "utensil" && o.kind !== "plate_stack" && o.kind !== "spawn"; }
+// art 是纯背景：不占格、不挡路、不参与重叠检查（和生成器一致）。
+function solidAt(o) { return o.kind !== "utensil" && o.kind !== "plate_stack" && o.kind !== "spawn" && o.kind !== "art"; }
 function boxesOverlap(a, b) {
   return a.x0 < b.x1 && b.x0 < a.x1 && a.z0 < b.z1 && b.z0 < a.z1;
 }
@@ -237,6 +287,7 @@ function conflictsWith(cand) {
   return objs.some(o => solidAt(o) && boxesOverlap(cb, boxOf(o, bb)));
 }
 function kindName(o) {
+  if (o.kind === "art") return o.prefab + "（背景）";
   const k = KINDS.find(k => k.prefab === o.prefab) || KINDS.find(k => k.kind === o.kind) || {};
   return k.name || o.kind;
 }
@@ -244,6 +295,27 @@ function zxy(o) { return "(" + o.x + "," + o.z + ")"; }
 function overlapText(pair) {
   const a = objs[pair[0]], b = objs[pair[1]];
   return zxy(a) + " 的" + kindName(a) + "与 " + zxy(b) + " 的" + kindName(b) + " 占地重叠";
+}
+// 画布上的 art 示例：按实测占地画虚线框 + 名称 + 尺寸（不参与堆叠检测）
+function drawArt(o, i, bb) {
+  const b = boxOf(o, bb);
+  const left = (b.x0 - X0) * CS, top = (Z1 - b.z1) * CS;
+  const wPx = b.w * CS, hPx = b.h * CS;
+  const s = artSizeOf(o);
+  ctx.fillStyle = "rgba(124,139,153,.16)";
+  ctx.fillRect(left, top, wPx, hPx);
+  ctx.setLineDash([4, 3]);
+  ctx.strokeStyle = (i === selected) ? "#fff" : "rgba(150,165,180,.7)";
+  ctx.lineWidth = (i === selected) ? 2 : 1;
+  ctx.strokeRect(left + 0.5, top + 0.5, wPx - 1, hPx - 1);
+  ctx.setLineDash([]);
+  ctx.fillStyle = "#98a6b4";
+  ctx.font = "9px Consolas,monospace";
+  ctx.fillText(o.prefab.slice(0, 12), left + 3, top + 11);
+  if (s.w > 0) {
+    ctx.fillStyle = "#6f7d8b";
+    ctx.fillText(s.w.toFixed(1) + "×" + (s.d > 0 ? s.d.toFixed(1) : s.h.toFixed(1)) + "m", left + 3, top + hPx - 4);
+  }
 }
 function draw() {
   ctx.clearRect(0,0,cv.width,cv.height);
@@ -266,7 +338,12 @@ function draw() {
   const bb = layoutBounds(objs);
   const bad = new Set();
   findOverlaps(objs).forEach(p => { bad.add(p[0]); bad.add(p[1]); });
+  // 背景先画（虚线框 + 名称 + 实测尺寸），再画工位，避免背景盖住台面
+  if (ART_UI && document.getElementById("showArt") && document.getElementById("showArt").checked) {
+    objs.forEach((o, i) => { if (o.kind === "art") drawArt(o, i, bb); });
+  }
   objs.forEach((o,i) => {
+    if (o.kind === "art") return;
     const k = KINDS.find(k=>k.prefab===o.prefab) || KINDS.find(k=>k.kind===o.kind) || {color:"#888"};
     const b = boxOf(o, bb);
     const left = (b.x0 - X0) * CS, top = (Z1 - b.z1) * CS;
@@ -337,6 +414,7 @@ const LIST_GROUPS = [
   { name: "盘子 / 洗涤", kinds: ["plate_stack", "plate_return", "washing"] },
   { name: "出餐口", kinds: ["serving"] },
   { name: "锅具 / 工具", kinds: ["utensil"] },
+  { name: "背景 / 装饰", kinds: ["art"] },
 ];
 const LIST_GROUP_OTHER = "其他";
 function listGroupOf(kind) {
@@ -356,6 +434,7 @@ function renderList() {
   }
   const grouped = {};
   objs.forEach((o, i) => {
+    if (!ART_UI && o.kind === "art") return;   // art 编辑已关闭：不出现在列表里
     const name = listGroupOf(o.kind);
     (grouped[name] || (grouped[name] = [])).push({ o, i });
   });
@@ -372,11 +451,16 @@ function renderList() {
       const d = document.createElement("div");
       d.className = "row" + (i === selected ? " sel" : "");
       const k = KINDS.find(k=>k.prefab===o.prefab) || KINDS.find(k=>k.kind===o.kind) || {color:"#888"};
-      d.innerHTML = `<span class="sw" style="background:${k.color}"></span>
-        <span class="n">${k.name || o.kind}${o.ing?" · "+o.ing:""}</span>
+      const isArt = o.kind === "art";
+      const label = isArt ? o.prefab : (k.name || o.kind) + (o.ing ? " · " + o.ing : "");
+      d.innerHTML = `<span class="sw" style="background:${isArt ? ART_COLOR : k.color}"></span>
+        <span class="n">${label}</span>
         <span class="c">${o.x},${o.z}</span>`;
       d.onclick = () => {
         selected = (selected === i ? -1 : i);
+        if (selected >= 0 && o.kind === "art") {
+          document.getElementById("artY").value = (o.y === undefined ? 0 : o.y);
+        }
         if (selected >= 0 && o.kind === "dispenser") document.getElementById("ingSel").value = o.ing || INGREDIENTS[0].v;
         draw(); renderList();
       };
@@ -391,7 +475,8 @@ function validate() {
   const bad = [];
   const seen = {};
   objs.forEach(o => {
-    if (o.x < FLOOR.x0 || o.x > FLOOR.x1 || o.z < FLOOR.z0 || o.z > FLOOR.z1)
+    // 背景可以放在地板外（街景、远景），不校验地板范围
+    if (o.kind !== "art" && (o.x < FLOOR.x0 || o.x > FLOOR.x1 || o.z < FLOOR.z0 || o.z > FLOOR.z1))
       bad.push(`${kindName(o)} 在 (${o.x},${o.z}) 超出地板范围`);
     // 与生成器一致：utensil / plate_stack 装在宿主格上，不算“同一格放了多个物体”。
     if (o.kind !== "spawn" && solidAt(o)) {
@@ -416,6 +501,7 @@ function removeObjectAt(i) {
   draw(); renderList(); validate(); renderMenu(); scheduleSave();
 }
 function deleteSelected() {
+  if (!ART_UI && selected >= 0 && objs[selected] && objs[selected].kind === "art") return;
   if (selected >= 0) removeObjectAt(selected);
 }
 
@@ -434,7 +520,7 @@ function placeAt(c, erase, allowOverlap) {
     // 先删家具（后放的在上层）；格子上没有家具时才删 spawn。
     // 这样台面盖住 spawn 时橡皮不会误删 spawn，单独点 spawn 所在格又能删掉它。
     for (let n = objs.length - 1; n >= 0; n--) {
-      if (objs[n].kind !== "spawn" && covers(objs[n], c.x, c.z, bb)) { i = n; break; }
+      if (objs[n].kind !== "spawn" && (!ART_UI ? objs[n].kind !== "art" : true) && covers(objs[n], c.x, c.z, bb)) { i = n; break; }
     }
     if (i < 0) {
       for (let n = objs.length - 1; n >= 0; n--) {
@@ -442,6 +528,19 @@ function placeAt(c, erase, allowOverlap) {
       }
     }
     if (i >= 0) removeObjectAt(i);
+    return;
+  }
+
+  // 背景素材：同一格同一素材不重复堆叠；不参与任何重叠 / 占格检查。
+  if (brush.kind === "art") {
+    if (!ART_UI) return;   // art 编辑已关闭：不允许放置
+    const dup = objs.some(o => o.kind === "art" && o.theme === brush.theme
+                              && o.prefab === brush.prefab && o.x === c.x && o.z === c.z);
+    if (dup) return;
+    objs.push({ kind:"art", theme: brush.theme, prefab: brush.prefab, so:"", ing:"",
+                x: c.x, z: c.z, note:"", y: brush.y || 0 });
+    selected = -1;
+    draw(); renderList(); validate(); scheduleSave();
     return;
   }
 
@@ -498,6 +597,15 @@ function parseTSV(text) {
     if (!/^[a-z_]+$/.test(f[0]) || f[0] === "kind") return;
     const x = parseInt(f[4], 10), z = parseInt(f[5], 10);
     if (!Number.isFinite(x) || !Number.isFinite(z)) return;   // 表头 / 坏行
+    // art 行：kind=art, prefab=主题, so=素材名, ingredient=Y 高度（米）
+    if (f[0] === "art") {
+      const ay = parseFloat(f[3]);
+      const aDir = (f.length >= 8 && f[7] !== "") ? parseInt(f[7], 10) : NaN;
+      out.push({ kind:"art", theme:f[1], prefab:f[2], so:"", ing:"", x:x, z:z,
+                 note:f[6] || "", y: Number.isFinite(ay) ? ay : 0,
+                 dir: Number.isFinite(aDir) ? ((aDir % 360) + 360) % 360 : undefined });
+      return;
+    }
     // 第 8 列是朝向；空着表示“按位置推导”（生成器也一样）。
     // 只接受 0 <= dir < 360，和生成器 float.TryParse + 范围检查保持一致。
     const rawDir = (f.length >= 8 && f[7] !== "") ? parseInt(f[7], 10) : NaN;
@@ -540,15 +648,224 @@ document.getElementById("btnMenuAuto").onclick = () => {
 document.getElementById("btnMenuAll").onclick = () => { menuSel = RECIPES.map(r => r.n); renderMenu(); };
 function toTSV() {
   const lines = [];
-  lines.push("# wellcooked_demo layout (unit: 1 m grid; x right, z up)");
+  lines.push("# wellcooked_demo layout (unit: 0.6 m grid; x right, z up)");
   lines.push("# columns: kind\tprefab\tso\tingredient\tx\tz\tnote");
   lines.push("kind\tprefab\tso\tingredient\tx\tz\tnote");
   if (menuSel.length) lines.push("# menu: " + menuSel.join(", "));
   objs.slice().sort((a,b)=> a.z-b.z || a.x-b.x).forEach(o => {
+    if (o.kind === "art") {
+      // art 行：kind / 主题 / 素材名 / Y 高度(米) / x / z / note / dir
+      lines.push([o.kind, o.theme, o.prefab, (o.y === undefined ? 0 : o.y), o.x, o.z,
+                  o.note || "", (o.dir === undefined ? "" : o.dir)].join("\t"));
+      return;
+    }
     lines.push([o.kind, o.prefab, o.so, o.ing, o.x, o.z, o.note||"", (o.dir===undefined?"":o.dir)].join("\t"));
   });
   return lines.join("\n") + "\n";
 }
+
+// ---- 背景 / 装饰素材库：尺寸来自示例工程实测（/api/art → art-sizes.tsv）----
+let artFilter = "";
+function renderArtThemes() {
+  const sel = document.getElementById("artTheme");
+  sel.innerHTML = "";
+  artCatalog.forEach(entry => {
+    const o = document.createElement("option");
+    o.value = entry.theme;
+    const zhTheme = (entry.items[0] && entry.items[0].themeZh) || entry.theme;
+    o.textContent = zhTheme + "（" + entry.count + "）";
+    o.title = entry.theme;
+    sel.appendChild(o);
+  });
+  if (!artCatalog.length) {
+    const o = document.createElement("option");
+    o.value = ""; o.textContent = "（没有尺寸表）";
+    sel.appendChild(o);
+  }
+}
+// 每个 art 素材的"示例"：左侧小图按实测尺寸画俯视比例（宽×深），右侧竖条表示高度
+function drawArtThumb(cv, it) {
+  const c = cv.getContext("2d");
+  const W = cv.width, H = cv.height;
+  c.clearRect(0, 0, W, H);
+  c.fillStyle = "#171b20"; c.fillRect(0, 0, W, H);
+  const w = Math.max(it.w > 0 ? it.w : 1.2, 0.05);
+  const d = Math.max(it.d > 0 ? it.d : it.h, 0.05);
+  const h = Math.max(it.h > 0 ? it.h : 0.6, 0.05);
+  const availW = W - 16, availH = H - 8;
+  const scale = Math.min(availW / w, availH / d);
+  const bw = Math.max(2, w * scale), bh = Math.max(2, d * scale);
+  const x0 = (W - 14 - bw) / 2, y0 = (H - bh) / 2;
+  c.fillStyle = "rgba(138,160,182,.38)";
+  c.fillRect(x0, y0, bw, bh);
+  c.strokeStyle = "#8fa4b8"; c.lineWidth = 1;
+  c.strokeRect(x0 + .5, y0 + .5, bw - 1, bh - 1);
+  // 高度条（右下角）
+  const barH = Math.min(h, 5) / 5 * (H - 10);
+  c.fillStyle = "#c9a36a";
+  c.fillRect(W - 7, H - 5 - barH, 4, barH);
+  c.strokeStyle = "#7a6748"; c.strokeRect(W - 7.5, H - 5.5 - barH, 5, barH + 1);
+  c.fillStyle = "#9aa6b2"; c.font = "8px Consolas,monospace";
+  c.fillText(h.toFixed(1), W - 14, H - 6);
+}
+// art 素材的示例图：用 Unity 从游戏 bundle 里渲染出来的真实外观图
+// 路径：/art-icons/<主题>/<素材名>.png（由 RenderArtIconsDeferred 生成）
+function artIconUrl(theme, name) {
+  return "/art-icons/" + encodeURIComponent(theme) + "/" + encodeURIComponent(name) + ".png";
+}
+function sizeText(it) {
+  if (!(it.w > 0)) return "尺寸未知";
+  const w = it.w.toFixed(2), d = (it.d > 0 ? it.d : it.h).toFixed(2), h = it.h.toFixed(2);
+  return w + " × " + d + " × " + h + " 米";
+}
+function cellsText(it) {
+  if (!(it.w > 0)) return "";
+  const cw = (it.w / CELL).toFixed(1), cd = ((it.d > 0 ? it.d : it.h) / CELL).toFixed(1);
+  return "占地 " + cw + " × " + cd + " 格";
+}
+// 大示例：按实测宽/深画俯视矩形，并标出宽、深、高
+function drawArtPreview(cv, it) {
+  const c = cv.getContext("2d");
+  const W = cv.width, H = cv.height;
+  c.clearRect(0, 0, W, H);
+  c.fillStyle = "#1b1f24"; c.fillRect(0, 0, W, H);
+  const w = Math.max(it.w > 0 ? it.w : 1.2, 0.05);
+  const d = Math.max(it.d > 0 ? it.d : it.h, 0.05, 0.05);
+  const h = Math.max(it.h > 0 ? it.h : 0.6, 0.05);
+  const padX = 46, padY = 30, padBottom = 34;
+  const availW = W - padX * 2, availH = H - padY - padBottom;
+  const scale = Math.min(availW / w, availH / d);
+  const bw = Math.max(6, w * scale), bh = Math.max(6, d * scale);
+  const x0 = (W - bw) / 2, y0 = padY + (availH - bh) / 2;
+  // 地面网格底纹
+  c.strokeStyle = "rgba(255,255,255,.05)";
+  c.lineWidth = 1;
+  for (let gx = 0; gx < W; gx += 12) { c.beginPath(); c.moveTo(gx, 0); c.lineTo(gx, H); c.stroke(); }
+  // 俯视占地矩形
+  c.fillStyle = "rgba(138,160,182,.42)";
+  c.fillRect(x0, y0, bw, bh);
+  c.strokeStyle = "#8fa4b8"; c.lineWidth = 1.5;
+  c.strokeRect(x0, y0, bw, bh);
+  c.fillStyle = "#c9d1d9"; c.font = "12px Consolas,monospace";
+  c.fillText("俯视", x0 + 4, y0 + 15);
+  // 宽（下方）
+  c.strokeStyle = "#c9a36a"; c.lineWidth = 1;
+  const yDim = y0 + bh + 16;
+  c.beginPath(); c.moveTo(x0, yDim); c.lineTo(x0 + bw, yDim); c.stroke();
+  c.beginPath(); c.moveTo(x0, yDim - 4); c.lineTo(x0, yDim + 4); c.stroke();
+  c.beginPath(); c.moveTo(x0 + bw, yDim - 4); c.lineTo(x0 + bw, yDim + 4); c.stroke();
+  c.fillStyle = "#e0b070"; c.textAlign = "center";
+  c.fillText(w.toFixed(2) + " 米", x0 + bw / 2, yDim + 14);
+  // 深（左侧）
+  c.strokeStyle = "#c9a36a";
+  const xDim = x0 - 14;
+  c.beginPath(); c.moveTo(xDim, y0); c.lineTo(xDim, y0 + bh); c.stroke();
+  c.beginPath(); c.moveTo(xDim - 4, y0); c.lineTo(xDim + 4, y0); c.stroke();
+  c.beginPath(); c.moveTo(xDim - 4, y0 + bh); c.lineTo(xDim + 4, y0 + bh); c.stroke();
+  c.save();
+  c.translate(xDim - 6, y0 + bh / 2);
+  c.rotate(-Math.PI / 2);
+  c.textAlign = "center";
+  c.fillText(d.toFixed(2) + " 米", 0, 0);
+  c.restore();
+  // 高度（右侧竖条）
+  const barX = x0 + bw + 18;
+  const barH = Math.min(h, 6) / 6 * availH;
+  c.fillStyle = "rgba(201,163,106,.55)";
+  c.fillRect(barX, y0 + bh - barH, 8, barH);
+  c.strokeStyle = "#c9a36a"; c.strokeRect(barX, y0 + bh - barH, 8, barH);
+  c.fillStyle = "#e0b070"; c.textAlign = "left";
+  c.fillText("高 " + h.toFixed(2), barX + 10, y0 + bh - barH + 10);
+  c.textAlign = "left";
+}
+function showArtPreview(theme, it) {
+  const box = document.getElementById("artPreviewBox");
+  const label = document.getElementById("artPreviewName");
+  box.innerHTML = "";
+  const cv2 = document.createElement("canvas");
+  cv2.width = 300; cv2.height = 210;
+  cv2.style.width = "300px"; cv2.style.height = "210px";
+  drawArtPreview(cv2, it);
+  box.appendChild(cv2);
+  label.innerHTML = "<b>" + (it.zh || it.name) + "</b><br><span class='dim'>" + it.name + "　"
+    + sizeText(it) + "　" + cellsText(it) + "</span>";
+}
+function renderArtList() {
+  const box = document.getElementById("artList");
+  const theme = document.getElementById("artTheme").value;
+  const entry = artCatalog.find(e => e.theme === theme);
+  box.innerHTML = "";
+  if (!entry) { box.innerHTML = '<div class="empty">没有可用的背景素材</div>'; return; }
+  const items = entry.items.filter(it => {
+    if (!artFilter) return true;
+    const q = artFilter;
+    return it.name.toLowerCase().includes(q) || (it.zh || "").includes(q);
+  });
+  if (!items.length) { box.innerHTML = '<div class="empty">没有匹配的素材</div>'; return; }
+  items.forEach(it => {
+    const row = document.createElement("div");
+    row.className = "row";
+    const active = brush.kind === "art" && brush.theme === theme && brush.prefab === it.name;
+    if (active) row.classList.add("sel");
+
+    const thumb = document.createElement("canvas");
+    thumb.className = "art-thumb";
+    thumb.width = 72; thumb.height = 72;
+    drawArtThumb(thumb, it);
+
+    const label = document.createElement("span");
+    label.className = "n";
+    label.innerHTML = `<b>${it.zh || it.name}</b><br><span class="dim">${sizeText(it)}</span>`;
+
+    row.appendChild(thumb);
+    row.appendChild(label);
+    row.title = (it.zh || it.name) + "（" + it.name + "）\n" + sizeText(it) + "　" + cellsText(it)
+              + "\n碰撞体 " + it.colliders + " 个、渲染器 " + it.renderers + " 个";
+    row.onclick = () => {
+      brush = { kind:"art", theme: theme, prefab: it.name, so:"", color: ART_COLOR };
+      renderPalette();
+      renderArtList();
+      showArtPreview(theme, it);
+      document.getElementById("artHint").textContent =
+        "已选 " + (it.zh || it.name) + "：" + sizeText(it) + " → 在画布上点格子放置（不参与堆叠检测）";
+    };
+    box.appendChild(row);
+  });
+}
+async function loadArtCatalog() {
+  if (!ART_UI) return;   // art 编辑已关闭，不请求素材库
+  try {
+    const r = await fetch("/api/art");
+    const j = await r.json();
+    if (!j || !j.ok || !j.themes) throw new Error((j && j.error) || "接口不可用");
+    artCatalog = j.themes;
+    artCatalog.forEach(entry => entry.items.forEach(it => {
+      artSizes[artKey(entry.theme, it.name)] = { w: it.w, h: it.h, d: it.d, minY: it.minY };
+    }));
+    renderArtThemes();
+    // 默认跳到 city_sushi（餐厅主题素材最全）
+    const sel = document.getElementById("artTheme");
+    if (artCatalog.some(e => e.theme === "city_sushi")) sel.value = "city_sushi";
+    renderArtList();
+  } catch (e) {
+    document.getElementById("artList").innerHTML =
+      '<div class="empty">背景素材接口不可用：' + e.message + '</div>';
+  }
+}
+document.getElementById("artTheme").onchange = () => renderArtList();
+document.getElementById("artSearch").oninput = (e) => {
+  artFilter = e.target.value.trim().toLowerCase();
+  renderArtList();
+};
+document.getElementById("showArt").onchange = () => draw();
+document.getElementById("artY").onchange = (e) => {
+  const y = parseFloat(e.target.value);
+  brush.y = Number.isFinite(y) ? y : 0;
+  if (selected >= 0 && objs[selected] && objs[selected].kind === "art") {
+    objs[selected].y = brush.y;
+    draw(); renderList(); validate(); scheduleSave();
+  }
+};
 
 // ---- 处理时间：写 BepInEx\wellcooked-processing.json，插件读同一份文件 ----
 // 范围由服务端 /api/processing 统一下发；插件 ProcessingTuner.cs 用同一组常量兜底。
@@ -672,7 +989,7 @@ document.getElementById("btnLoad").onclick = () => loadFile(document.getElementB
 document.getElementById("btnClear").onclick = () => { if (confirm("清空当前编辑内容？")) { objs=[]; selected=-1; draw(); renderList(); validate(); } };
 document.getElementById("btnBuild").onclick = async () => {
   const st = document.getElementById("status");
-  st.innerHTML = "正在保存并构建（约 6-10 分钟）…";
+  st.innerHTML = "正在保存并构建/部署…（Linux 没有构建命令时只部署现有 bundle）";
   await document.getElementById("btnSave").click();
   try {
     const r = await fetch("/api/build", {method:"POST"});
@@ -717,7 +1034,7 @@ document.getElementById("btnSave").onclick = async () => {
   renderPalette = function() {
     origRenderPalette();
   };
-  renderPalette(); draw(); validate(); refreshFiles(); loadProcessing();
+  renderPalette(); draw(); validate(); refreshFiles(); loadProcessing(); loadArtCatalog();
 })();
 </script>
 </body>

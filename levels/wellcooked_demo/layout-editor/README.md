@@ -16,11 +16,12 @@ python server.py
 | 变量 | 默认 | 说明 |
 |---|---|---|
 | `WELLCOOKED_EDITOR_PORT` | `8770` | HTTP 端口 |
-| `WELLCOOKED_GAME_DIR` | `<repo>/Overcooked 2!` | 游戏安装目录；处理时间 JSON 写到它的 `BepInEx\wellcooked-processing.json` |
-| `WELLCOOKED_BUILD_PS1` | 空 | `build-only.ps1` 的路径；不设置时“构建并部署”按钮会报“未配置” |
-| `WELLCOOKED_STATUS_FILE` | `layout-editor/build-status.txt` | 构建状态文件路径 |
+| `WELLCOOKED_GAME_DIR` | 自动探测 Steam 路径 | 游戏安装目录；处理时间 JSON 写到它的 `BepInEx/wellcooked-processing.json` |
+| `WELLCOOKED_BUILD_PS1` | 空 | Windows 侧 `build-only.ps1` 的路径；有 `powershell`/`pwsh` 时先构建再部署 |
+| `WELLCOOKED_BUILD_CMD` | 空 | 自定义构建命令（shell）；Linux 侧接远端构建机时用。成功后会再部署仓库里的 5 个 bundle |
+| `WELLCOOKED_STATUS_FILE` | `layout-editor/build-status.txt` | 构建/部署状态文件路径 |
 
-例如本机：
+Windows 本机：
 
 ```powershell
 $env:WELLCOOKED_BUILD_PS1 = "D:\oc2-level-build\build-only.ps1"
@@ -28,6 +29,41 @@ $env:WELLCOOKED_STATUS_FILE = "D:\oc2-level-build\build-status.txt"
 $env:WELLCOOKED_GAME_DIR = "D:\2026-2027秋季学期\操作系统课设\wellcooked2\Overcooked 2!"
 python server.py
 ```
+
+Linux（本机没有 Unity 构建能力，默认只部署仓库里已有的 bundle）：
+
+```bash
+WELLCOOKED_GAME_DIR="/run/media/shizuku/File/Steam/steamapps/common/Overcooked! 2" python server.py
+```
+
+“构建并部署”按钮的行为：
+
+1. 设置了 `WELLCOOKED_BUILD_CMD`：先跑它；退出码 0 后再部署。
+2. 否则设置了 `WELLCOOKED_BUILD_PS1` 且本机有 `powershell`/`pwsh`：先构建再部署。
+3. 否则：**只部署** `levels/wellcooked_demo/` 里现有的 5 个 bundle，并在状态里说明没有重建。
+
+`WELLCOOKED_BUILD_CMD` 的契约：命令退出码为 0 时，`levels/wellcooked_demo/` 里的
+`info_wellcooked_demo` 与 `s_wellcooked_demo_1..4` 必须已经是新产物；服务随后调用
+`deploy.sh` 把它们拷进游戏目录。例如远端构建机：
+
+```bash
+WELLCOOKED_BUILD_CMD='ssh win "powershell -NoProfile -File D:/oc2-level-build/build-only.ps1"' \
+WELLCOOKED_GAME_DIR="/run/media/shizuku/File/Steam/steamapps/common/Overcooked! 2" \
+python server.py
+```
+
+Linux 不能生成 Unity AssetBundle（Unity 2017.4 的 Windows 构建模块和许可证都不在这台机器上）。
+布局 TSV 比 bundle 新时，部署仍会执行，但状态里会警告“部署的是旧 bundle”；要让布局改动生效，
+必须在 Windows 侧重新构建，或把 `WELLCOOKED_BUILD_CMD` 指向构建机。
+
+也可以手动部署（不经过编辑器）：
+
+```bash
+bash levels/wellcooked_demo/deploy.sh
+# 或指定目录: bash levels/wellcooked_demo/deploy.sh --game-dir "/path/to/Overcooked! 2"
+```
+
+部署完成后重启游戏，OC2DIYLevel 才会重新扫描关卡集。
 
 ## 功能
 

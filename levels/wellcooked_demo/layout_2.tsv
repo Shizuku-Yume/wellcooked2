@@ -1,4 +1,4 @@
-# wellcooked_demo layout (unit: 1 m grid; x right, z up)
+# wellcooked_demo layout (unit: 0.6 m grid; x right, z up)
 # columns: kind	prefab	so	ingredient	x	z	note
 kind	prefab	so	ingredient	x	z	note
 # menu: Burrito_Chicken_SO, Sushi_PlainFish_SO, Sushi_PlainPrawn_SO
@@ -7,11 +7,11 @@ counter	Counter	CounterSO		-5	-16
 counter	Counter	CounterSO		-3	-16		
 counter	Counter	CounterSO		-1	-16		
 counter	Counter	CounterSO		1	-16		
-chopping	ChoppingCounter	ChoppingCounterSO		3	-16		
+counter	Counter	CounterSO		3	-16		
 counter	Counter	CounterSO		5	-16		
-dispenser	Dispenser	Dispenser01SO	RiceSO	7	-16		
-counter	Counter	CounterSO		9	-16		
-chopping	ChoppingCounter	ChoppingCounterSO		11	-16		
+chopping	ChoppingCounter	ChoppingCounterSO		7	-16		
+chopping	ChoppingCounter	ChoppingCounterSO		9	-16		
+counter	Counter	CounterSO		11	-16		
 counter	Counter	CounterSO		13	-16		
 counter	Counter	CounterSO		15	-16		
 counter	Counter	CounterSO		17	-16		
@@ -28,31 +28,31 @@ counter	Counter	CounterSO		21	-10
 counter	Counter	CounterSO		-7	-8		
 counter	Counter	CounterSO		21	-8		
 counter	Counter	CounterSO		-7	-6		
-counter	Counter	CounterSO		-5	-6		
+dispenser	Dispenser	Dispenser01SO	BurritoChickenSO	-5	-6		
 counter	Counter	CounterSO		-3	-6		
 counter	Counter	CounterSO		-1	-6		
 counter	Counter	CounterSO		1	-6		
 counter	Counter	CounterSO		3	-6		
 counter	Counter	CounterSO		5	-6		
-cooker	Cooker	CookerSO		7	-6		
-utensil	Pot	PotSO		7	-6		
-cooker	Cooker	CookerSO		9	-6		
-utensil	Pot	PotSO		9	-6		
+counter	Counter	CounterSO		7	-6		
+counter	Counter	CounterSO		9	-6		
 counter	Counter	CounterSO		11	-6		
 counter	Counter	CounterSO		13	-6		
 counter	Counter	CounterSO		15	-6		
 counter	Counter	CounterSO		17	-6		
 counter	Counter	CounterSO		19	-6		
 counter	Counter	CounterSO		21	-6		
-counter	Counter	CounterSO		-7	-4		
+dispenser	Dispenser	Dispenser01SO	SushiPrawnSO	-7	-4		
 counter	Counter	CounterSO		21	-4		
 dispenser	Dispenser	Dispenser01SO	TortillaSO	-7	-2		
 spawn				4	-2		
-dispenser	Dispenser	Dispenser01SO	BurritoChickenSO	21	-2		
+cooker	Cooker	CookerSO		21	-2		
+utensil	Pot	PotSO		21	-2		
 spawn				11	-1		
 dispenser	Dispenser	Dispenser01SO	SushiFishSO	-7	0		
-dispenser	Dispenser	Dispenser01SO	SushiPrawnSO	21	0		
-counter	Counter	CounterSO		-7	2		
+cooker	Cooker	CookerSO		21	0		
+utensil	Pot	PotSO		21	0		
+dispenser	Dispenser	Dispenser01SO	RiceSO	-7	2		
 counter	Counter	CounterSO		21	2		
 counter	Counter	CounterSO		-7	4		
 counter	Counter	CounterSO		-5	4		
@@ -71,3 +71,115 @@ counter	Counter	CounterSO		17	4
 counter	Counter	CounterSO		19	4		
 counter	Counter	CounterSO		21	4		
 utensil	FireExtinguisher	FireExtinguisherSO		21	4		
+art	dlc02_beach	Citywall_brick_01a	0	-52	8	boundary	0
+art	dlc02_beach	Citywall_brick_01a	0	-50	8	boundary	0
+art	dlc02_beach	Citywall_brick_01a	0	-48	8	boundary	0
+art	dlc02_beach	Citywall_brick_01a	0	-46	8	boundary	0
+art	dlc02_beach	Citywall_brick_01a	0	-44	8	boundary	0
+art	dlc02_beach	Citywall_brick_01a	0	-42	8	boundary	0
+art	dlc02_beach	Citywall_brick_01a	0	-40	8	boundary	0
+art	dlc02_beach	Citywall_brick_01a	0	-38	8	boundary	0
+art	dlc02_beach	Citywall_brick_01a	0	-36	8	boundary	0
+art	dlc02_beach	Citywall_brick_01a	0	-34	8	boundary	0
+art	dlc02_beach	Citywall_brick_01a	0	-32	8	boundary	0
+art	dlc02_beach	Citywall_brick_01a	0	-30	8	boundary	0
+art	dlc02_beach	Citywall_brick_01a	0	-28	8	boundary	0
+art	dlc02_beach	Citywall_brick_01a	0	-26	8	boundary	0
+art	dlc02_beach	Citywall_brick_01a	0	-24	8	boundary	0
+art	dlc02_beach	Citywall_brick_01a	0	-22	8	boundary	0
+art	dlc02_beach	Citywall_brick_01a	0	-20	8	boundary	0
+art	dlc02_beach	Citywall_brick_01a	0	-18	8	boundary	0
+art	dlc02_beach	Citywall_brick_01a	0	-16	8	boundary	0
+art	dlc02_beach	Citywall_brick_01a	0	-14	8	boundary	0
+art	dlc02_beach	Citywall_brick_01a	0	-12	8	boundary	0
+art	dlc02_beach	Citywall_brick_01a	0	-10	8	boundary	0
+art	dlc02_beach	Citywall_brick_01a	0	-8	8	boundary	0
+art	dlc02_beach	Citywall_brick_01a	0	-6	8	boundary	0
+art	dlc02_beach	Citywall_brick_01a	0	-4	8	boundary	0
+art	dlc02_beach	Citywall_brick_01a	0	-2	8	boundary	0
+art	dlc02_beach	Citywall_brick_01a	0	0	8	boundary	0
+art	dlc02_beach	Citywall_brick_01a	0	2	8	boundary	0
+art	dlc02_beach	Citywall_brick_01a	0	4	8	boundary	0
+art	dlc02_beach	Citywall_brick_01a	0	6	8	boundary	0
+art	dlc02_beach	Citywall_brick_01a	0	8	8	boundary	0
+art	dlc02_beach	Citywall_brick_01a	0	10	8	boundary	0
+art	dlc02_beach	Citywall_brick_01a	0	12	8	boundary	0
+art	dlc02_beach	Citywall_brick_01a	0	14	8	boundary	0
+art	dlc02_beach	Citywall_brick_01a	0	16	8	boundary	0
+art	dlc02_beach	Citywall_brick_01a	0	18	8	boundary	0
+art	dlc02_beach	Citywall_brick_01a	0	20	8	boundary	0
+art	dlc02_beach	Citywall_brick_01a	0	22	8	boundary	0
+art	dlc02_beach	Citywall_brick_01a	0	24	8	boundary	0
+art	dlc02_beach	Citywall_brick_01a	0	26	8	boundary	0
+art	dlc02_beach	Citywall_brick_01a	0	28	8	boundary	0
+art	dlc02_beach	Citywall_brick_01a	0	30	8	boundary	0
+art	dlc02_beach	Citywall_brick_01a	0	32	8	boundary	0
+art	dlc02_beach	Citywall_brick_01a	0	34	8	boundary	0
+art	dlc02_beach	Citywall_brick_01a	0	36	8	boundary	0
+art	dlc02_beach	Citywall_brick_01a	0	38	8	boundary	0
+art	dlc02_beach	Citywall_brick_01a	0	40	8	boundary	0
+art	dlc02_beach	Citywall_brick_01a	0	42	8	boundary	0
+art	dlc02_beach	Citywall_brick_01a	0	44	8	boundary	0
+art	dlc02_beach	Citywall_brick_01a	0	46	8	boundary	0
+art	dlc02_beach	Citywall_brick_01a	0	48	8	boundary	0
+art	dlc02_beach	Citywall_brick_01a	0	50	8	boundary	0
+art	dlc02_beach	Citywall_brick_01a	0	52	8	boundary	0
+art	dlc02_beach	Citywall_brick_01a	0	54	8	boundary	0
+art	dlc02_beach	Citywall_brick_01a	0	56	8	boundary	0
+art	dlc02_beach	Citywall_brick_01a	0	58	8	boundary	0
+art	dlc02_beach	Citywall_brick_01a	0	60	8	boundary	0
+art	dlc02_beach	Citywall_brick_01a	0	62	8	boundary	0
+art	dlc02_beach	Citywall_brick_01a	0	64	8	boundary	0
+art	dlc02_beach	Citywall_brick_01a	0	66	8	boundary	0
+art	dlc02_beach	pineapple_plant_01	0.104	-28	2	landmark	0
+art	dlc02_beach	sunbed_table_01	-0.001	-30	-2	landmark-mid	0
+art	dlc02_beach	City_restaurant_table&chairs_01	0.004	-35	-4	landmark-mid	0
+art	dlc02_beach	City_restaurant_table&chairs_01	0.004	-22	2	landmark-mid	0
+art	dlc02_beach	pineapple_plant_01	0.104	33	-8	landmark	0
+art	dlc02_beach	City_restaurant_table&chairs_01	0.004	30	-14	landmark-mid	0
+art	dlc02_beach	sunbed_table_01	-0.001	29	-2	landmark-mid	0
+art	dlc02_beach	sunbed_table_01	-0.001	32	-4	landmark-detail	180
+art	dlc02_beach	m_dlc2_sandcastle_01	0.138	-22	-19	landmark	0
+art	dlc02_beach	sunbed_table_01	-0.001	-26	-18	landmark-mid	0
+art	dlc02_beach	dlc2_Planter_01	0.382	-23	-14	landmark-mid	0
+art	dlc02_beach	sunbed_table_01	-0.001	-24	-23	landmark-detail	270
+art	dlc02_beach	table_01	0	-16	-17	furniture	0
+art	dlc02_beach	sunbed_table_01	-0.001	-16	-20	furniture-side	0
+art	dlc02_beach	sunbed_table_01	-0.001	-16	-14	furniture-side	180
+art	dlc02_beach	sunbed_table_01	-0.001	-13	-17	furniture-side	270
+art	dlc02_beach	table_01	0	-16	-10	furniture	0
+art	dlc02_beach	sunbed_table_01	-0.001	-16	-7	furniture-side	180
+art	dlc02_beach	sunbed_table_01	-0.001	-19	-10	furniture-side	90
+art	dlc02_beach	sunbed_table_01	-0.001	-13	-10	furniture-side	270
+art	dlc02_beach	City_restaurant_table&chairs_01	0.004	-16	-1	furniture	0
+art	dlc02_beach	sunbed_table_01	-0.001	-16	-4	furniture-side	0
+art	dlc02_beach	sunbed_table_01	-0.001	-16	2	furniture-side	180
+art	dlc02_beach	table_01	0	-29	-17	furniture	0
+art	dlc02_beach	palmtree_coconut_01	0.422	-25	-20	furniture-side	0
+art	dlc02_beach	City_restaurant_table&chairs_01	0.004	-25	-8	furniture	0
+art	dlc02_beach	palmtree_coconut_01	0.422	-25	-11	furniture-side	0
+art	dlc02_beach	palmtree_coconut_01	0.422	-25	-5	furniture-side	180
+art	dlc02_beach	table_01	0	28	-7	furniture	180
+art	dlc02_beach	sunbed_table_01	-0.001	30	-4	furniture-side	180
+art	dlc02_beach	table_01	0	30	0	furniture	180
+art	dlc02_beach	palmtree_coconut_01	0.422	30	3	furniture-side	180
+art	dlc02_beach	palmtree_coconut_01	0.422	27	0	furniture-side	90
+art	dlc02_beach	palmtree_coconut_01	0.422	33	0	furniture-side	270
+art	dlc02_beach	table_01	0	39	-19	furniture	180
+art	dlc02_beach	sunbed_table_01	-0.001	39	-22	furniture-side	0
+art	dlc02_beach	sunbed_table_01	-0.001	39	-16	furniture-side	180
+art	dlc02_beach	sunbed_table_01	-0.001	36	-19	furniture-side	90
+art	dlc02_beach	sunbed_table_01	-0.001	42	-19	furniture-side	270
+art	dlc02_beach	table_01	0	39	-12	furniture	180
+art	dlc02_beach	palmtree_coconut_01	0.422	39	-9	furniture-side	180
+art	dlc02_beach	palmtree_coconut_01	0.422	36	-12	furniture-side	90
+art	dlc02_beach	palmtree_coconut_01	0.422	42	-12	furniture-side	270
+art	dlc02_beach	table_01	0	39	-4	furniture	180
+art	dlc02_beach	sunbed_table_01	-0.001	39	-7	furniture-side	0
+art	dlc02_beach	sunbed_table_01	-0.001	39	-1	furniture-side	180
+art	dlc02_beach	sunbed_table_01	-0.001	36	-4	furniture-side	90
+art	dlc02_beach	sunbed_table_01	-0.001	42	-4	furniture-side	270
+art	dlc02_beach	Fire_hydrant	-0.001	-27	-24	street	0
+art	dlc02_beach	Fire_hydrant	-0.001	39	-29	street	0
+art	dlc02_beach	Fire_hydrant	-0.001	-23	-25	street	0
+art	dlc02_beach	Fire_hydrant	-0.001	39	-26	street	0

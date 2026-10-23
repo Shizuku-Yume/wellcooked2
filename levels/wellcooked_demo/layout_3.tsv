@@ -1,58 +1,59 @@
-# wellcooked_demo layout (unit: 1 m grid; x right, z up)
+# wellcooked_demo layout (unit: 0.6 m grid; x right, z up)
 # columns: kind	prefab	so	ingredient	x	z	note
 kind	prefab	so	ingredient	x	z	note
+# menu: Burrito_Chicken_SO, Sushi_PlainFish_SO, Sushi_PlainPrawn_SO, Burrito_Beef_SO
 counter	Counter	CounterSO		-5	-14		
-dispenser	Dispenser	Dispenser02SO	RiceSO	-3	-14	S rice	
-dispenser	Dispenser	Dispenser01SO	BurritoChickenSO	-1	-14	S chicken	
-dispenser	Dispenser	Dispenser01SO	SushiFishSO	1	-14	S fish	
-dispenser	Dispenser	Dispenser02SO	SushiPrawnSO	3	-14	S prawn	
-washing	Sink	SinkSO		6	-14		
-counter	Counter	CounterSO		9	-14		
-chopping	ChoppingCounter	ChoppingCounterSO		11	-14	S board 1	
-chopping	ChoppingCounter	ChoppingCounterSO		13	-14	S board 2	
-cooker	Cooker	CookerSO		15	-14	S cooker 1	
-utensil	Pot	PotSO		15	-14	pot on S cooker 1	
-frying	FryingStation	FryingStationSO		17	-14	S fryer 1	
-utensil	FrierBasket	FrierBasketSO		17	-14	basket on S fryer 1	
+counter	Counter	CounterSO		-3	-14		
+counter	Counter	CounterSO		-1	-14		
+dispenser	Dispenser	Dispenser01SO	SushiPrawnSO	1	-14		
+dispenser	Dispenser	Dispenser01SO	TortillaSO	3	-14		
+dispenser	Dispenser	Dispenser01SO	RiceSO	5	-14		
+dispenser	Dispenser	Dispenser01SO	BurritoChickenSO	7	-14		
+dispenser	Dispenser	Dispenser01SO	BurritoMeatSO	9	-14		
+dispenser	Dispenser	Dispenser01SO	MushroomSO	11	-14		
+dispenser	Dispenser	Dispenser01SO	SushiFishSO	13	-14		
+counter	Counter	CounterSO		15	-14		
+counter	Counter	CounterSO		17	-14		
 counter	Counter	CounterSO		19	-14		
 counter	Counter	CounterSO		21	-14		
-dispenser	Dispenser	Dispenser01SO	TortillaSO	-5	-12	W tortilla	
-spawn				8	-12		
+counter	Counter	CounterSO		-5	-12		
+utensil	FireExtinguisher	FireExtinguisherSO		-5	-12		
 counter	Counter	CounterSO		21	-12		
 counter	Counter	CounterSO		-5	-10		
+counter	Counter	CounterSO		-1	-10		
+counter	Counter	CounterSO		1	-10		
+cooker	Cooker	CookerSO		3	-10		
+utensil	FryPan	FryPanSO		3	-10		
+cooker	Cooker	CookerSO		5	-10		
+utensil	FryPan	FryPanSO		5	-10		
+cooker	Cooker	CookerSO		11	-10		
+utensil	Pot	PotSO		11	-10		
+cooker	Cooker	CookerSO		13	-10		
+utensil	Pot	PotSO		13	-10		
+counter	Counter	CounterSO		15	-10		
+counter	Counter	CounterSO		17	-10		
 counter	Counter	CounterSO		21	-10		
 counter	Counter	CounterSO		-5	-8		
 counter	Counter	CounterSO		-1	-8		
-counter	Counter	CounterSO		1	-8		
-counter	Counter	CounterSO		3	-8		
-counter	Counter	CounterSO		5	-8		
-counter	Counter	CounterSO		7	-8		
-counter	Counter	CounterSO		9	-8		
-counter	Counter	CounterSO		11	-8		
-counter	Counter	CounterSO		13	-8		
-counter	Counter	CounterSO		15	-8		
 counter	Counter	CounterSO		17	-8		
 counter	Counter	CounterSO		21	-8		
-counter	Counter	CounterSO		-5	-6		
-counter	Counter	CounterSO		21	-6		
-serving	ServingStation	ServingStationSO		3	-5		
-spawn				8	-5		
-counter	Counter	CounterSO		-5	-4		
-spawn				-3	-4		
+frying	FryingStation	FryingStationSO		-5	-6		
+utensil	FrierBasket	FrierBasketSO		-5	-6		
+spawn				3	-6		
+spawn				7	-6		
+spawn				10	-6		
+spawn				13	-6		
+washing	Sink	SinkSO		21	-5		
+frying	FryingStation	FryingStationSO		-5	-4		
+utensil	FrierBasket	FrierBasketSO		-5	-4		
 counter	Counter	CounterSO		-1	-4		
-cooker	Cooker	CookerSO		11	-4	N cooker 2	180
-utensil	Pot	PotSO		11	-4	pot on N cooker 2	180
-frying	FryingStation	FryingStationSO		13	-4	N fryer 2	180
-utensil	FrierBasket	FrierBasketSO		13	-4	basket on N fryer 2	180
-plate_stack	CleanPlateStack	CleanPlateStackSO		15	-4	N clean plates	180
 counter	Counter	CounterSO		17	-4		
-spawn				19	-4		
-counter	Counter	CounterSO		21	-4		
 counter	Counter	CounterSO		-5	-2		
 counter	Counter	CounterSO		-1	-2		
 counter	Counter	CounterSO		1	-2		
 counter	Counter	CounterSO		3	-2		
-counter	Counter	CounterSO		11	-2		
+chopping	ChoppingCounter	ChoppingCounterSO		5	-2		
+chopping	ChoppingCounter	ChoppingCounterSO		11	-2		
 counter	Counter	CounterSO		13	-2		
 counter	Counter	CounterSO		15	-2		
 counter	Counter	CounterSO		17	-2		
@@ -65,11 +66,512 @@ counter	Counter	CounterSO		-1	2
 counter	Counter	CounterSO		1	2		
 counter	Counter	CounterSO		3	2		
 counter	Counter	CounterSO		5	2		
-counter	Counter	CounterSO		7	2	wall	
-counter	Counter	CounterSO		9	2		
-plate_return	PlateReturn	PlateReturnSO		11	2	dirty plates, moved E	
+plate_stack	CleanPlateStack	CleanPlateStackSO		5	2		
+serving	ServingStation	ServingStationSO		8	2		
+plate_return	PlateReturn	PlateReturnSO		11	2		
 counter	Counter	CounterSO		13	2		
 counter	Counter	CounterSO		15	2		
 counter	Counter	CounterSO		17	2		
 counter	Counter	CounterSO		19	2		
 counter	Counter	CounterSO		21	2		
+art	dlc11_summer	dlc11_exterior_path_01	0	-31	-40	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-31	-36	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-31	-32	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-31	-28	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-31	-24	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-31	-20	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-31	-16	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-31	-12	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-31	-8	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-31	-4	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-31	0	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-31	4	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-31	8	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-31	12	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-31	16	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-31	20	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-31	24	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-31	28	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-27	-40	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-27	-36	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-27	-32	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-27	-28	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-27	-24	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-27	-20	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-27	-16	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-27	-12	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-27	-8	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-27	-4	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-27	0	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-27	4	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-27	8	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-27	12	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-27	16	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-27	20	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-27	24	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-27	28	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-23	-40	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-23	-36	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-23	-32	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-23	-28	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-23	-24	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-23	-20	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-23	-16	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-23	-12	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-23	-8	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-23	-4	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-23	0	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-23	4	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-23	8	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-23	12	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-23	16	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-23	20	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-23	24	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-23	28	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-19	-40	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-19	-36	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-19	-32	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-19	-28	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-19	-24	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-19	-20	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-19	-16	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-19	-12	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-19	-8	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-19	-4	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-19	0	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-19	4	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-19	8	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-19	12	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-19	16	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-19	20	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-19	24	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-19	28	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-15	-40	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-15	-36	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-15	-32	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-15	-28	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-15	-24	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-15	-20	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-15	-16	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-15	-12	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-15	-8	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-15	-4	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-15	0	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-15	4	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-15	8	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-15	12	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-15	16	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-15	20	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-15	24	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-15	28	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-11	-40	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-11	-36	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-11	-32	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-11	-28	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-11	-24	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-11	-20	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-11	-16	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-11	-12	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-11	-8	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-11	-4	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-11	0	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-11	4	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-11	8	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-11	12	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-11	16	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-11	20	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-11	24	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-11	28	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-7	-40	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-7	-36	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-7	-32	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-7	-28	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-7	-24	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-7	-20	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-7	-16	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-7	-12	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-7	-8	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-7	-4	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-7	0	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-7	4	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-7	8	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-7	12	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-7	16	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-7	20	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-7	24	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-7	28	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-3	-40	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-3	-36	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-3	-32	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-3	-28	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-3	-24	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-3	-20	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-3	-16	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-3	-12	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-3	-8	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-3	-4	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-3	0	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-3	4	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-3	8	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-3	12	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-3	16	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-3	20	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-3	24	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	-3	28	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	1	-40	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	1	-36	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	1	-32	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	1	-28	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	1	-24	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	1	-20	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	1	-16	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	1	-12	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	1	-8	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	1	-4	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	1	0	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	1	4	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	1	8	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	1	12	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	1	16	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	1	20	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	1	24	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	1	28	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	5	-40	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	5	-36	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	5	-32	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	5	-28	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	5	-24	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	5	-20	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	5	-16	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	5	-12	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	5	-8	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	5	-4	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	5	0	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	5	4	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	5	8	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	5	12	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	5	16	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	5	20	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	5	24	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	5	28	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	9	-40	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	9	-36	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	9	-32	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	9	-28	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	9	-24	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	9	-20	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	9	-16	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	9	-12	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	9	-8	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	9	-4	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	9	0	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	9	4	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	9	8	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	9	12	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	9	16	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	9	20	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	9	24	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	9	28	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	13	-40	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	13	-36	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	13	-32	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	13	-28	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	13	-24	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	13	-20	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	13	-16	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	13	-12	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	13	-8	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	13	-4	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	13	0	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	13	4	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	13	8	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	13	12	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	13	16	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	13	20	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	13	24	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	13	28	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	17	-40	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	17	-36	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	17	-32	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	17	-28	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	17	-24	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	17	-20	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	17	-16	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	17	-12	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	17	-8	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	17	-4	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	17	0	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	17	4	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	17	8	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	17	12	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	17	16	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	17	20	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	17	24	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	17	28	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	21	-40	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	21	-36	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	21	-32	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	21	-28	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	21	-24	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	21	-20	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	21	-16	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	21	-12	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	21	-8	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	21	-4	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	21	0	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	21	4	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	21	8	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	21	12	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	21	16	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	21	20	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	21	24	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	21	28	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	25	-40	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	25	-36	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	25	-32	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	25	-28	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	25	-24	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	25	-20	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	25	-16	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	25	-12	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	25	-8	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	25	-4	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	25	0	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	25	4	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	25	8	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	25	12	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	25	16	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	25	20	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	25	24	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	25	28	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	29	-40	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	29	-36	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	29	-32	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	29	-28	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	29	-24	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	29	-20	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	29	-16	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	29	-12	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	29	-8	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	29	-4	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	29	0	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	29	4	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	29	8	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	29	12	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	29	16	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	29	20	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	29	24	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	29	28	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	33	-40	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	33	-36	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	33	-32	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	33	-28	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	33	-24	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	33	-20	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	33	-16	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	33	-12	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	33	-8	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	33	-4	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	33	0	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	33	4	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	33	8	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	33	12	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	33	16	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	33	20	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	33	24	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	33	28	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	37	-40	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	37	-36	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	37	-32	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	37	-28	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	37	-24	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	37	-20	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	37	-16	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	37	-12	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	37	-8	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	37	-4	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	37	0	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	37	4	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	37	8	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	37	12	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	37	16	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	37	20	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	37	24	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	37	28	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	41	-40	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	41	-36	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	41	-32	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	41	-28	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	41	-24	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	41	-20	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	41	-16	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	41	-12	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	41	-8	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	41	-4	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	41	0	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	41	4	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	41	8	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	41	12	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	41	16	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	41	20	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	41	24	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	41	28	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	45	-40	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	45	-36	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	45	-32	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	45	-28	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	45	-24	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	45	-20	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	45	-16	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	45	-12	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	45	-8	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	45	-4	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	45	0	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	45	4	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	45	8	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	45	12	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	45	16	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	45	20	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	45	24	ground	0
+art	dlc11_summer	dlc11_exterior_path_01	0	45	28	ground	0
+art	dlc11_summer	dlc11_exterior_path_side_01	0.02	-9	-18	floor	0
+art	dlc11_summer	dlc11_exterior_path_side_01	0.02	-9	-14	floor	0
+art	dlc11_summer	dlc11_exterior_path_side_01	0.02	-9	-10	floor	0
+art	dlc11_summer	dlc11_exterior_path_side_01	0.02	-9	-6	floor	0
+art	dlc11_summer	dlc11_exterior_path_side_01	0.02	-9	-2	floor	0
+art	dlc11_summer	dlc11_exterior_path_side_01	0.02	-9	2	floor	0
+art	dlc11_summer	dlc11_exterior_path_side_01	0.02	-9	6	floor	0
+art	dlc11_summer	dlc11_exterior_path_side_01	0.02	-5	-18	floor	0
+art	dlc11_summer	dlc11_exterior_path_side_01	0.02	-5	-14	floor	0
+art	dlc11_summer	dlc11_exterior_path_side_01	0.02	-5	-10	floor	0
+art	dlc11_summer	dlc11_exterior_path_side_01	0.02	-5	-6	floor	0
+art	dlc11_summer	dlc11_exterior_path_side_01	0.02	-5	-2	floor	0
+art	dlc11_summer	dlc11_exterior_path_side_01	0.02	-5	2	floor	0
+art	dlc11_summer	dlc11_exterior_path_side_01	0.02	-5	6	floor	0
+art	dlc11_summer	dlc11_exterior_path_side_01	0.02	-1	-18	floor	0
+art	dlc11_summer	dlc11_exterior_path_side_01	0.02	-1	-14	floor	0
+art	dlc11_summer	dlc11_exterior_path_side_01	0.02	-1	-10	floor	0
+art	dlc11_summer	dlc11_exterior_path_side_01	0.02	-1	-6	floor	0
+art	dlc11_summer	dlc11_exterior_path_side_01	0.02	-1	-2	floor	0
+art	dlc11_summer	dlc11_exterior_path_side_01	0.02	-1	2	floor	0
+art	dlc11_summer	dlc11_exterior_path_side_01	0.02	-1	6	floor	0
+art	dlc11_summer	dlc11_exterior_path_side_01	0.02	3	-18	floor	0
+art	dlc11_summer	dlc11_exterior_path_side_01	0.02	3	-14	floor	0
+art	dlc11_summer	dlc11_exterior_path_side_01	0.02	3	-10	floor	0
+art	dlc11_summer	dlc11_exterior_path_side_01	0.02	3	-6	floor	0
+art	dlc11_summer	dlc11_exterior_path_side_01	0.02	3	-2	floor	0
+art	dlc11_summer	dlc11_exterior_path_side_01	0.02	3	2	floor	0
+art	dlc11_summer	dlc11_exterior_path_side_01	0.02	3	6	floor	0
+art	dlc11_summer	dlc11_exterior_path_side_01	0.02	7	-18	floor	0
+art	dlc11_summer	dlc11_exterior_path_side_01	0.02	7	-14	floor	0
+art	dlc11_summer	dlc11_exterior_path_side_01	0.02	7	-10	floor	0
+art	dlc11_summer	dlc11_exterior_path_side_01	0.02	7	-6	floor	0
+art	dlc11_summer	dlc11_exterior_path_side_01	0.02	7	-2	floor	0
+art	dlc11_summer	dlc11_exterior_path_side_01	0.02	7	2	floor	0
+art	dlc11_summer	dlc11_exterior_path_side_01	0.02	7	6	floor	0
+art	dlc11_summer	dlc11_exterior_path_side_01	0.02	11	-18	floor	0
+art	dlc11_summer	dlc11_exterior_path_side_01	0.02	11	-14	floor	0
+art	dlc11_summer	dlc11_exterior_path_side_01	0.02	11	-10	floor	0
+art	dlc11_summer	dlc11_exterior_path_side_01	0.02	11	-6	floor	0
+art	dlc11_summer	dlc11_exterior_path_side_01	0.02	11	-2	floor	0
+art	dlc11_summer	dlc11_exterior_path_side_01	0.02	11	2	floor	0
+art	dlc11_summer	dlc11_exterior_path_side_01	0.02	11	6	floor	0
+art	dlc11_summer	dlc11_exterior_path_side_01	0.02	15	-18	floor	0
+art	dlc11_summer	dlc11_exterior_path_side_01	0.02	15	-14	floor	0
+art	dlc11_summer	dlc11_exterior_path_side_01	0.02	15	-10	floor	0
+art	dlc11_summer	dlc11_exterior_path_side_01	0.02	15	-6	floor	0
+art	dlc11_summer	dlc11_exterior_path_side_01	0.02	15	-2	floor	0
+art	dlc11_summer	dlc11_exterior_path_side_01	0.02	15	2	floor	0
+art	dlc11_summer	dlc11_exterior_path_side_01	0.02	15	6	floor	0
+art	dlc11_summer	dlc11_exterior_path_side_01	0.02	19	-18	floor	0
+art	dlc11_summer	dlc11_exterior_path_side_01	0.02	19	-14	floor	0
+art	dlc11_summer	dlc11_exterior_path_side_01	0.02	19	-10	floor	0
+art	dlc11_summer	dlc11_exterior_path_side_01	0.02	19	-6	floor	0
+art	dlc11_summer	dlc11_exterior_path_side_01	0.02	19	-2	floor	0
+art	dlc11_summer	dlc11_exterior_path_side_01	0.02	19	2	floor	0
+art	dlc11_summer	dlc11_exterior_path_side_01	0.02	19	6	floor	0
+art	dlc11_summer	dlc11_exterior_path_side_01	0.02	23	-18	floor	0
+art	dlc11_summer	dlc11_exterior_path_side_01	0.02	23	-14	floor	0
+art	dlc11_summer	dlc11_exterior_path_side_01	0.02	23	-10	floor	0
+art	dlc11_summer	dlc11_exterior_path_side_01	0.02	23	-6	floor	0
+art	dlc11_summer	dlc11_exterior_path_side_01	0.02	23	-2	floor	0
+art	dlc11_summer	dlc11_exterior_path_side_01	0.02	23	2	floor	0
+art	dlc11_summer	dlc11_exterior_path_side_01	0.02	23	6	floor	0
+art	dlc11_summer	dlc11_marketstall_blank_01	1.04	-48	6	boundary	0
+art	dlc11_summer	dlc11_marketstall_blank_01	1.04	-42	6	boundary	0
+art	dlc11_summer	dlc11_marketstall_blank_01	1.04	-36	6	boundary	0
+art	dlc11_summer	dlc11_marketstall_blank_01	1.04	-30	6	boundary	0
+art	dlc11_summer	dlc11_marketstall_blank_01	1.04	-24	6	boundary	0
+art	dlc11_summer	dlc11_marketstall_blank_01	1.04	-18	6	boundary	0
+art	dlc11_summer	dlc11_marketstall_blank_01	1.04	-12	6	boundary	0
+art	dlc11_summer	dlc11_marketstall_blank_01	1.04	-6	6	boundary	0
+art	dlc11_summer	dlc11_marketstall_blank_01	1.04	0	6	boundary	0
+art	dlc11_summer	dlc11_marketstall_blank_01	1.04	6	6	boundary	0
+art	dlc11_summer	dlc11_marketstall_blank_01	1.04	12	6	boundary	0
+art	dlc11_summer	dlc11_marketstall_blank_01	1.04	18	6	boundary	0
+art	dlc11_summer	dlc11_marketstall_blank_01	1.04	24	6	boundary	0
+art	dlc11_summer	dlc11_marketstall_blank_01	1.04	30	6	boundary	0
+art	dlc11_summer	dlc11_marketstall_blank_01	1.04	36	6	boundary	0
+art	dlc11_summer	dlc11_marketstall_blank_01	1.04	42	6	boundary	0
+art	dlc11_summer	dlc11_marketstall_blank_01	1.04	48	6	boundary	0
+art	dlc11_summer	dlc11_marketstall_blank_01	1.04	54	6	boundary	0
+art	dlc11_summer	dlc11_marketstall_blank_01	1.04	60	6	boundary	0
+art	dlc11_summer	dlc11_marketstall_blank_01	1.04	66	6	boundary	0
+art	dlc11_summer	dlc11_pinata_orange_01	0.912	-19	-11	landmark	0
+art	dlc11_summer	restaurant_plant_02	0.003	-12	-9	landmark-mid	0
+art	dlc11_summer	table_02	0	-20	-21	landmark-mid	0
+art	dlc11_summer	walkway_pillars_02	0.492	-23	-8	landmark-mid	0
+art	dlc11_summer	dlc11_chair_01	-0.039	-17	-13	landmark-detail	0
+art	dlc11_summer	dlc11_chair_01	-0.039	-15	-15	landmark-detail	90
+art	dlc11_summer	dlc11_pinata_strawberry_01	1.033	44	1	landmark	0
+art	dlc11_summer	table_02	0	37	-3	landmark-mid	0
+art	dlc11_summer	dlc11_chair_01	-0.039	49	-2	landmark-detail	0
+art	dlc11_summer	dlc11_chair_01	-0.039	47	-2	landmark-detail	90
+art	dlc11_summer	dlc11_pinata_strawberry_01	1.033	-27	-17	landmark	0
+art	dlc11_summer	restaurant_plant_02	0.003	-29	-13	landmark-mid	0
+art	dlc11_summer	walkway_pillars_02	0.492	-18	-17	landmark-mid	0
+art	dlc11_summer	dlc11_chair_01	-0.039	-27	-22	landmark-detail	270
+art	dlc11_summer	dlc11_chair_01	-0.039	-24	-16	landmark-detail	270
+art	dlc11_summer	table_02	0	-13	-15	furniture	0
+art	dlc11_summer	dlc11_chair_01	-0.039	-14	-18	furniture-side	90
+art	dlc11_summer	dlc11_chair_01	-0.039	-14	-12	furniture-side	270
+art	dlc11_summer	dlc11_chair_01	-0.039	-17	-15	furniture-side	0
+art	dlc11_summer	table_02	0	-16	-7	furniture	0
+art	dlc11_summer	dlc11_chair_01	-0.039	-14	-4	furniture-side	270
+art	dlc11_summer	table_02	0	-22	-16	furniture	0
+art	dlc11_summer	dlc11_chair_01	-0.039	-23	-19	furniture-side	90
+art	dlc11_summer	dlc11_chair_01	-0.039	-23	-13	furniture-side	270
+art	dlc11_summer	table_02	0	-20	-8	furniture	0
+art	dlc11_summer	dlc11_chair_01	-0.039	-23	-11	furniture-side	90
+art	dlc11_summer	dlc11_chair_01	-0.039	-23	-5	furniture-side	270
+art	dlc11_summer	dlc11_chair_01	-0.039	-26	-8	furniture-side	0
+art	dlc11_summer	table_02	0	-23	0	furniture	0
+art	dlc11_summer	dlc11_chair_01	-0.039	-23	-3	furniture-side	90
+art	dlc11_summer	dlc11_chair_01	-0.039	-23	3	furniture-side	270
+art	dlc11_summer	dlc11_chair_01	-0.039	-26	0	furniture-side	0
+art	dlc11_summer	dlc11_chair_01	-0.039	-20	0	furniture-side	180
+art	dlc11_summer	table_02	0	30	-16	furniture	180
+art	dlc11_summer	dlc11_chair_01	-0.039	30	-19	furniture-side	90
+art	dlc11_summer	dlc11_chair_01	-0.039	30	-13	furniture-side	270
+art	dlc11_summer	dlc11_chair_01	-0.039	27	-16	furniture-side	0
+art	dlc11_summer	dlc11_chair_01	-0.039	33	-16	furniture-side	180
+art	dlc11_summer	table_02	0	30	-6	furniture	180
+art	dlc11_summer	dlc11_chair_01	-0.039	30	-9	furniture-side	90
+art	dlc11_summer	dlc11_chair_01	-0.039	30	-3	furniture-side	270
+art	dlc11_summer	dlc11_chair_01	-0.039	27	-6	furniture-side	0
+art	dlc11_summer	dlc11_chair_01	-0.039	33	-6	furniture-side	180
+art	dlc11_summer	table_02	0	30	1	furniture	180
+art	dlc11_summer	dlc11_chair_01	-0.039	30	4	furniture-side	270
+art	dlc11_summer	dlc11_chair_01	-0.039	27	1	furniture-side	0
+art	dlc11_summer	dlc11_chair_01	-0.039	33	1	furniture-side	180
+art	dlc11_summer	table_02	0	39	-15	furniture	180
+art	dlc11_summer	dlc11_chair_01	-0.039	39	-18	furniture-side	90
+art	dlc11_summer	dlc11_chair_01	-0.039	39	-12	furniture-side	270
+art	dlc11_summer	dlc11_chair_01	-0.039	36	-15	furniture-side	0
+art	dlc11_summer	dlc11_chair_01	-0.039	42	-15	furniture-side	180
+art	dlc11_summer	table_02	0	39	-6	furniture	180
+art	dlc11_summer	dlc11_chair_01	-0.039	39	-9	furniture-side	90
+art	dlc11_summer	dlc11_chair_01	-0.039	36	-6	furniture-side	0
+art	dlc11_summer	dlc11_chair_01	-0.039	42	-6	furniture-side	180
+art	dlc11_summer	dlc11_exterior_fire_hydrant_01	-0.001	39	-27	street	0
+art	dlc11_summer	dlc11_exterior_fire_hydrant_01	-0.001	34	-21	street	0

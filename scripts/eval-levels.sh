@@ -31,7 +31,10 @@ for level in "$@"; do
 
     # 等游戏自己把手柄占位（前端流程跑起来），否则 load 完没有厨师
     for _ in $(seq 1 40); do
-        joined=$(grep -c '游戏已自己加入 pad' "$LOG" 2>/dev/null || echo 0)
+        # grep -c 没匹配时既打印 0 又返回 1；再接 `|| echo 0` 会变成两行 "0\n0"，
+        # 下一行的 -ge 就报“需要整数”。保留 grep 自己打印的 0 即可。
+        joined=$(grep -ac '游戏已自己加入 pad' "$LOG" 2>/dev/null || true)
+        joined=${joined:-0}
         [ "$joined" -ge 2 ] && break
         sleep 3
     done

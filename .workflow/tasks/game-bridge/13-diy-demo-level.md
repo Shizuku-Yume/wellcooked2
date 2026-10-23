@@ -5,7 +5,7 @@
 **Base commit:** 24a18a7
 **Base branch:** game-bridge/04-action-injection-single-chef
 **Started:** 2026-10-16T12:00:00+08:00
-**Status:** paused（构建环节改由组员的 Windows 电脑做，见文末 Handoff）
+**Status:** blocked（关卡已验收；`work=auto` 一单等导航修好，菜谱共享中间产物待定，见文末）
 
 **Delivers:** 一个**自制关卡**能在游戏里加载并跑通调度演示：单一连通厨房、无传送带/轨道/开关/桥/平台，
 菜谱包含多个料与加工步骤（切 + 煮/煎），并把"关卡怎么来的、怎么装"写进文档，使换台机器也能复现。
@@ -36,12 +36,16 @@
 `mech` 输出"机制 = 无（只有通用系统）"；`eval-levels.sh` 量到的厨房可行区是一块（主连通块占比 ≥ 90%）；
 `work=auto` 在该关卡完成至少 1 单。
 
-- [ ] 关卡集骨架与 4 人配置（`config_1p..4p`）
-- [ ] 厨房布局：一屋子、无机关、料箱/砧板/锅灶/盘子/出菜口齐全，通道够宽（0.6 米网格上厨师半径 0.40 能过）
+- [x] 关卡集骨架与 4 人配置（`config_1p..4p`；仓库里是 `s_wellcooked_demo_1..4` 四个场景包）
+- [x] 厨房布局：一屋子、无机关、料箱/砧板/锅灶/盘子/出菜口齐全，通道够宽（0.6 米网格上厨师半径 0.40 能过）
+      —— 四张地图的厨师位置与关键工位都在主连通块内、`path=` 探测 A* 可达；`_1`/`_3`/`_4` 的
+      3/8/12 块是 3 米采样边距里的口袋，不是可玩区断点（判据见 Progress）
 - [ ] 菜谱：含多料 + 加工（切 + 煮/煎），至少两种菜共享一个中间产物（制造资源争用）
-- [ ] 构建出 AssetBundle 并装进 `BepInEx/plugins/OC2DIYLevel/levels/`
-- [ ] 关卡资源与"怎么装、怎么改"写进仓库（换机器能复现）
-- [ ] 用 `mech` + `eval-levels.sh` 量一遍并留证据（机制、连通性、工位数、菜谱）
+      —— 切/煮/煎已覆盖（`workable` 标记鱼、虾、鸡肉；`BoiledRice`/`FriedChicken`），
+      但导出的 DAG 里没有两道菜共享的中间产物节点；争用目前靠共用 2 块砧板与盘子堆，见 Progress
+- [x] 构建出 AssetBundle 并装进 `BepInEx/plugins/OC2DIYLevel/levels/`
+- [x] 关卡资源与"怎么装、怎么改"写进仓库（换机器能复现）
+- [x] 用 `mech` + `eval-levels.sh` 量一遍并留证据（机制、连通性、工位数、菜谱）
 
 **Done when:** 上面每条打勾，Check 的五项证据都有。
 
@@ -97,3 +101,51 @@ Windows 平台构建 —— 事件本身不该卡在这里，换一台能正常�
 编辑器工程组装（已清理）、`OC2DIYLevel-v0.10` 加载器（已装进游戏的 `BepInEx/plugins/`）、
 关卡设计数据与生成器脚本（在仓库里）。
 
+
+## Progress（2026-10-19 验收：四张地图，关键工位均可达；多块是采样口袋）
+
+把仓库里的 5 个 bundle（`info_wellcooked_demo` + `s_wellcooked_demo_1..4`）从 `main` 装进
+`$GAME_DIR/BepInEx/plugins/OC2DIYLevel/levels/wellcooked_demo/`。四张地图不是人数变体，是四套不同布局；
+每张都带 `config_1p..4p`：
+
+| 场景 | 显示名 | 工位 | 菜谱 | 连通性（主块 / 丢弃） | 结论 |
+|---|---|---|---|---|---|
+| `s_wellcooked_demo_1` | Basic Kitchen | 43 | Burrito + SushiPrawn | 3 块；216 / 丢弃 168（≈56%）；关键工位 A* 2-5 路点 | 可用（多块是采样口袋） |
+| `s_wellcooked_demo_2` | Twin Lines | 44 | Burrito + SushiFish + SushiPrawn | **1 块；154 / 丢弃 0（100%）** | **可用** |
+| `s_wellcooked_demo_3` | Ring Bar | 44 | Burrito + SushiFish + SushiPrawn | 8 块；151 / 丢弃 264（≈36%）；关键工位 A* 1-3 路点 | 可用（多块是采样口袋） |
+| `s_wellcooked_demo_4` | Big Kitchen | 45 | 实测 Burrito + SushiPrawn（TSV 写 3 道） | 12 块；219 / 丢弃 296（≈43%）；关键工位 A* 1-6 路点 | 可用（多块是采样口袋）；菜谱与 bundle 可能不同步 |
+
+下表的详细验收只跑了 `_2`：
+
+| 检查 | 结果 |
+|---|---|
+| 进入关卡 | `bash scripts/dev-cycle.sh 10 s_wellcooked_demo_2` → `scene=s_wellcooked_demo_2`，厨师正常加入，无加载报错 |
+| 机制 | `mech=1` 没有 `Rail`/`Conveyor`/`Portal`/`Cannon`/`Switch`/`Geyser`/`Bridge`/`Raft`/`Trolley`；只有基础 prefab 自带的通用组件（`TabletopConveyenceWindReceiver`、`WindAccumulator`、`Teleportable*`、`FireExtinguish*`、`PlayerSwitchingManager`），本体关卡也有 |
+| 连通性 | `eval-levels.sh s_wellcooked_demo_2`：`连通块 1 个（丢掉 0 格），可走格 154/220`，主块占比 100% |
+| 工位 | 合并后 17 个：料箱 5、砧板 2、加热 4（2 灶台 + 2 炸台）、水槽 1、干净盘堆 1、装盘台 1、出菜口 1、脏盘台 1、锅具 4 |
+| 菜谱 | `Chicken_Burrito`、`Sushi_PlainFish`、`Sushi_PlainPrawn`；DAG 16 节点/13 边 |
+| 切/煮/煎 | `workable=True` 的料：`BurritoChicken`、`SushiFish`、`SushiPrawn`（要切）；`cook:BoiledRice`、`cook:FriedChicken`（要加热）。导出的 DAG 没有显式 `chop` 节点（导出的既定行为：菜谱树只写组成，切由 `workable` 决定） |
+| 共享中间产物 | **没有**：两道寿司各用各的鱼/虾，和鸡肉卷也没有共同节点；争用靠共用 2 块砧板与干净盘堆（README 的设计口径） |
+| `work=auto` 完成 1 单 | **未通过**：31 秒内订单 5 个、`score=-60`，两名厨师在 `侧向错身`/`卡住` 处停住，没有交付。与任务 05 的导航阻塞是同一件事 |
+
+`export-kitchen.py` 的输出（`/tmp/wc-kitchen.json`、`/tmp/wc-recipes.json`）与 `eval-levels.sh`
+的数字一致。四张地图都能加载；从厨师位置用 `path=` 探测料箱/加热/出菜/水槽/盘堆，全部返回
+1-6 个路点，说明这些关键工位都在主连通块里。`_1`/`_3`/`_4` 多出来的 3/8/12 块是采样 3 米边距
+里的口袋（墙外、台面后），不是可玩区的断点；**“主块占比 ≥90%”这个判据会把它们误判成不可用**，
+应改成“所有 spawn + 关键工位在主块内且 A* 可达”。另外 `_4` 的 TSV 写了 3 道菜，实测菜单只有
+2 道，可能是 bundle 与最新 layout 不同步。
+
+## Blocked
+
+- **2026-10-19：连通性判据要改，不是地图不能用。** `eval-levels.sh` 报的 `_1/_3/_4` 3/8/12 块，
+  是 3 米采样边距里的口袋（墙外/台面后）；四张地图的厨师位置与关键工位都在主块内，`path=` 探测
+  A* 1-6 路点可达。任务 Check 的“主连通块 ≥90%”应改成“所有 spawn + 关键工位在主块内且两两
+  A* 可达”，否则会把可用地图误判成不可用。若仍要主块占比，得先把采样边距/口袋从分母里去掉。
+- **2026-10-19：`_4` 的菜谱与 bundle 可能不同步。** `layout_4.tsv` 写 3 道菜，实测菜单只有
+  2 道（Burrito + SushiPrawn）；需要在编辑器里按当前 layout 重新生成并打包，或核对 bundle 版本。
+- **2026-10-19：`work=auto` 在 `_2` 完成 1 单被导航阻塞**（技术债「导航的第一路点被挡：
+  A* 说可达，转向却原地不动或侧向错身」）。`_2` 已能加载、连通、出单；导航修好后回来重跑
+  这一项即可。
+- **菜谱共享中间产物**：任务清单要求“至少两种菜共享一个中间产物”，当前 `_2` 的 DAG 没有共享节点，
+  只有共用工位/盘子。要么把一道菜改成与 `Chicken_Burrito` 共用 `BoiledRice`（或其他中间产物），
+  要么把这条判据改成“共享工位/资源”。这是设计决定，等用户定。

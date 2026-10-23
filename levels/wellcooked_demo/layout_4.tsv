@@ -1,105 +1,841 @@
-# wellcooked_demo layout (unit: 1 m grid; x right, z up)
+# wellcooked_demo layout (unit: 0.6 m grid; x right, z up)
 # columns: kind	prefab	so	ingredient	x	z	note
 kind	prefab	so	ingredient	x	z	note
-# menu: Burrito_Chicken_SO, Sushi_PlainFish_SO, Sushi_PlainPrawn_SO
-counter	Counter	CounterSO		-10	-16	wall	
-dispenser	Dispenser	Dispenser01SO	SushiFishSO	-8	-16	S fish	
-counter	Counter	CounterSO		-6	-16	wall	
-chopping	ChoppingCounter	ChoppingCounterSO		-4	-16	S board3	
-chopping	ChoppingCounter	ChoppingCounterSO		-2	-16	S board4	
-cooker	Cooker	CookerSO		0	-16	S cooker1	
-utensil	Pot	PotSO		0	-16	pot2	
-frying	FryingStation	FryingStationSO		2	-16	S fryer	
-utensil	FrierBasket	FrierBasketSO		2	-16	basket1	
-dispenser	Dispenser	Dispenser02SO	SushiPrawnSO	4	-16	S prawn	
-counter	Counter	CounterSO		6	-16	wall	
-washing	Sink	SinkSO		9	-16		
-counter	Counter	CounterSO		12	-16		
-counter	Counter	CounterSO		14	-16	wall	
-counter	Counter	CounterSO		16	-16	wall	
-counter	Counter	CounterSO		18	-16		
-counter	Counter	CounterSO		20	-16		
-counter	Counter	CounterSO		22	-16		
-counter	Counter	CounterSO		24	-16	wall	
-counter	Counter	CounterSO		26	-16	wall	
-counter	Counter	CounterSO		28	-16	wall	
-counter	Counter	CounterSO		-10	-14	wall	
-counter	Counter	CounterSO		28	-14	wall	
-spawn				1	-13		
-spawn				5	-13		
-spawn				10	-13		
-serving	ServingStation	ServingStationSO		15	-13		
-counter	Counter	CounterSO		-10	-12	wall	
-counter	Counter	CounterSO		28	-12	wall	
-counter	Counter	CounterSO		-10	-10		
-counter	Counter	CounterSO		28	-10		
+# menu: Burrito_Chicken_SO, Sushi_PlainFish_SO, Sushi_PlainPrawn_SO, Burrito_Beef_SO
+counter	Counter	CounterSO		1	-15		
+counter	Counter	CounterSO		3	-15		
+counter	Counter	CounterSO		5	-15		
+counter	Counter	CounterSO		7	-15		
+serving	ServingStation	ServingStationSO		10	-15		
+counter	Counter	CounterSO		13	-15		
+counter	Counter	CounterSO		15	-15		
+counter	Counter	CounterSO		17	-15		
+counter	Counter	CounterSO		19	-15		
+counter	Counter	CounterSO		1	-13		
+counter	Counter	CounterSO		19	-13		
+plate_return	PlateReturn	PlateReturnSO		1	-11		
+counter	Counter	CounterSO		19	-11		
+spawn				5	-10		
+spawn				9	-10		
+spawn				12	-10		
+spawn				15	-10		
+counter	Counter	CounterSO		-11	-9		
+counter	Counter	CounterSO		-9	-9		
+counter	Counter	CounterSO		-7	-9		
 counter	Counter	CounterSO		-5	-9		
+plate_stack	CleanPlateStack	CleanPlateStackSO		-5	-9		
 counter	Counter	CounterSO		-3	-9		
 counter	Counter	CounterSO		-1	-9		
-counter	Counter	CounterSO		18	-9		
-counter	Counter	CounterSO		24	-9		
-counter	Counter	CounterSO		-10	-8		
-counter	Counter	CounterSO		22	-8		
-counter	Counter	CounterSO		28	-8	wall	
-counter	Counter	CounterSO		-5	-7		
-counter	Counter	CounterSO		2	-7		
-counter	Counter	CounterSO		4	-7		
-counter	Counter	CounterSO		6	-7		
-counter	Counter	CounterSO		10	-7		
-counter	Counter	CounterSO		12	-7		
-counter	Counter	CounterSO		14	-7		
-counter	Counter	CounterSO		18	-7		
-counter	Counter	CounterSO		-10	-6		
-counter	Counter	CounterSO		21	-6		
-counter	Counter	CounterSO		-5	-5		
-counter	Counter	CounterSO		2	-5		
-counter	Counter	CounterSO		6	-5		
-counter	Counter	CounterSO		10	-5		
-counter	Counter	CounterSO		14	-5		
-counter	Counter	CounterSO		18	-5		
-serving	ServingStation	ServingStationSO		28	-5		
-counter	Counter	CounterSO		-10	-4		
-counter	Counter	CounterSO		20	-4		
-counter	Counter	CounterSO		-5	-3		
-counter	Counter	CounterSO		2	-3		
-counter	Counter	CounterSO		4	-3		
-counter	Counter	CounterSO		6	-3		
-counter	Counter	CounterSO		10	-3		
-counter	Counter	CounterSO		12	-3		
-counter	Counter	CounterSO		14	-3		
-counter	Counter	CounterSO		18	-3		
-counter	Counter	CounterSO		-10	-2	wall	
-counter	Counter	CounterSO		22	-2		
-counter	Counter	CounterSO		28	-2	wall	
-counter	Counter	CounterSO		-5	-1		
-counter	Counter	CounterSO		-3	-1		
-counter	Counter	CounterSO		-1	-1		
-counter	Counter	CounterSO		18	-1		
-counter	Counter	CounterSO		24	-1		
-counter	Counter	CounterSO		-10	0	wall	
-counter	Counter	CounterSO		28	0	wall	
-counter	Counter	CounterSO		-10	2	wall	
-counter	Counter	CounterSO		28	2	wall	
-counter	Counter	CounterSO		-10	4	wall	
-dispenser	Dispenser	Dispenser01SO	TortillaSO	-8	4	N tortilla	
-counter	Counter	CounterSO		-6	4	wall	
-counter	Counter	CounterSO		-4	4	wall	
-chopping	ChoppingCounter	ChoppingCounterSO		-2	4	N board1	
-chopping	ChoppingCounter	ChoppingCounterSO		0	4	N board2	
-cooker	Cooker	CookerSO		2	4	N cooker1	
-utensil	Pot	PotSO		2	4	pot1	
-frying	FryingStation	FryingStationSO		4	4	N fryer	
-utensil	FrierBasket	FrierBasketSO		4	4	basket2	
-dispenser	Dispenser	Dispenser02SO	RiceSO	6	4	N rice	
-counter	Counter	CounterSO		8	4	wall	
-dispenser	Dispenser	Dispenser01SO	BurritoChickenSO	10	4	N chicken	
-counter	Counter	CounterSO		12	4	wall	
-counter	Counter	CounterSO		14	4	wall	
-counter	Counter	CounterSO		16	4	wall	
-counter	Counter	CounterSO		18	4		
-counter	Counter	CounterSO		20	4		
-plate_stack	CleanPlateStack	CleanPlateStackSO		20	4		
-counter	Counter	CounterSO		22	4		
-counter	Counter	CounterSO		24	4	wall	
-counter	Counter	CounterSO		26	4	wall	
-counter	Counter	CounterSO		28	4	wall	
+counter	Counter	CounterSO		1	-9		
+counter	Counter	CounterSO		19	-9		
+utensil	FireExtinguisher	FireExtinguisherSO		19	-9		
+counter	Counter	CounterSO		21	-9		
+counter	Counter	CounterSO		23	-9		
+counter	Counter	CounterSO		25	-9		
+counter	Counter	CounterSO		27	-9		
+counter	Counter	CounterSO		29	-9		
+counter	Counter	CounterSO		-11	-7		
+counter	Counter	CounterSO		29	-7		
+counter	Counter	CounterSO		-11	-5		
+counter	Counter	CounterSO		29	-5		
+counter	Counter	CounterSO		-11	-3		
+counter	Counter	CounterSO		3	-3		
+counter	Counter	CounterSO		5	-3		
+counter	Counter	CounterSO		7	-3		
+counter	Counter	CounterSO		9	-3		
+counter	Counter	CounterSO		11	-3		
+counter	Counter	CounterSO		13	-3		
+counter	Counter	CounterSO		15	-3		
+chopping	ChoppingCounter	ChoppingCounterSO		29	-3		
+frying	FryingStation	FryingStationSO		-11	-1		
+utensil	FrierBasket	FrierBasketSO		-11	-1		
+counter	Counter	CounterSO		3	-1		
+dispenser	Dispenser	Dispenser01SO	BurritoChickenSO	5	-1		
+dispenser	Dispenser	Dispenser01SO	MushroomSO	9	-1		
+chopping	ChoppingCounter	ChoppingCounterSO		29	-1		
+frying	FryingStation	FryingStationSO		-11	1		
+utensil	FrierBasket	FrierBasketSO		-11	1		
+counter	Counter	CounterSO		3	1		
+dispenser	Dispenser	Dispenser01SO	RiceSO	5	1		
+dispenser	Dispenser	Dispenser01SO	BurritoMeatSO	9	1		
+dispenser	Dispenser	Dispenser01SO	SushiPrawnSO	13	1		
+counter	Counter	CounterSO		29	1		
+counter	Counter	CounterSO		-11	3		
+counter	Counter	CounterSO		3	3		
+dispenser	Dispenser	Dispenser01SO	TortillaSO	5	3		
+dispenser	Dispenser	Dispenser01SO	SushiFishSO	13	3		
+counter	Counter	CounterSO		29	3		
+counter	Counter	CounterSO		-11	5		
+counter	Counter	CounterSO		-9	5		
+cooker	Cooker	CookerSO		-7	5		
+utensil	FryPan	FryPanSO		-7	5		
+cooker	Cooker	CookerSO		-5	5		
+utensil	FryPan	FryPanSO		-5	5		
+cooker	Cooker	CookerSO		-3	5		
+utensil	Pot	PotSO		-3	5		
+cooker	Cooker	CookerSO		-1	5		
+utensil	Pot	PotSO		-1	5		
+counter	Counter	CounterSO		1	5		
+counter	Counter	CounterSO		3	5		
+counter	Counter	CounterSO		5	5		
+counter	Counter	CounterSO		7	5		
+counter	Counter	CounterSO		9	5		
+counter	Counter	CounterSO		11	5		
+counter	Counter	CounterSO		13	5		
+counter	Counter	CounterSO		15	5		
+counter	Counter	CounterSO		17	5		
+counter	Counter	CounterSO		19	5		
+washing	Sink	SinkSO		22	5		
+counter	Counter	CounterSO		25	5		
+counter	Counter	CounterSO		27	5		
+counter	Counter	CounterSO		29	5		
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-37	-41	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-37	-37	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-37	-33	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-37	-29	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-37	-25	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-37	-21	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-37	-17	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-37	-13	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-37	-9	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-37	-5	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-37	-1	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-37	3	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-37	7	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-37	11	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-37	15	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-37	19	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-37	23	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-37	27	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-37	31	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-33	-41	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-33	-37	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-33	-33	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-33	-29	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-33	-25	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-33	-21	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-33	-17	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-33	-13	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-33	-9	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-33	-5	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-33	-1	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-33	3	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-33	7	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-33	11	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-33	15	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-33	19	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-33	23	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-33	27	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-33	31	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-29	-41	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-29	-37	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-29	-33	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-29	-29	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-29	-25	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-29	-21	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-29	-17	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-29	-13	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-29	-9	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-29	-5	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-29	-1	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-29	3	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-29	7	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-29	11	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-29	15	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-29	19	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-29	23	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-29	27	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-29	31	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-25	-41	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-25	-37	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-25	-33	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-25	-29	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-25	-25	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-25	-21	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-25	-17	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-25	-13	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-25	-9	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-25	-5	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-25	-1	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-25	3	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-25	7	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-25	11	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-25	15	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-25	19	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-25	23	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-25	27	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-25	31	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-21	-41	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-21	-37	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-21	-33	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-21	-29	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-21	-25	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-21	-21	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-21	-17	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-21	-13	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-21	-9	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-21	-5	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-21	-1	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-21	3	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-21	7	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-21	11	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-21	15	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-21	19	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-21	23	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-21	27	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-21	31	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-17	-41	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-17	-37	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-17	-33	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-17	-29	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-17	-25	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-17	-21	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-17	-17	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-17	-13	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-17	-9	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-17	-5	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-17	-1	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-17	3	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-17	7	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-17	11	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-17	15	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-17	19	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-17	23	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-17	27	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-17	31	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-13	-41	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-13	-37	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-13	-33	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-13	-29	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-13	-25	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-13	-21	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-13	-17	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-13	-13	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-13	-9	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-13	-5	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-13	-1	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-13	3	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-13	7	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-13	11	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-13	15	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-13	19	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-13	23	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-13	27	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-13	31	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-9	-41	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-9	-37	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-9	-33	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-9	-29	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-9	-25	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-9	-21	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-9	-17	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-9	-13	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-9	-9	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-9	-5	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-9	-1	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-9	3	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-9	7	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-9	11	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-9	15	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-9	19	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-9	23	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-9	27	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-9	31	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-5	-41	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-5	-37	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-5	-33	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-5	-29	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-5	-25	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-5	-21	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-5	-17	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-5	-13	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-5	-9	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-5	-5	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-5	-1	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-5	3	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-5	7	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-5	11	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-5	15	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-5	19	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-5	23	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-5	27	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-5	31	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-1	-41	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-1	-37	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-1	-33	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-1	-29	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-1	-25	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-1	-21	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-1	-17	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-1	-13	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-1	-9	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-1	-5	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-1	-1	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-1	3	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-1	7	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-1	11	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-1	15	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-1	19	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-1	23	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-1	27	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	-1	31	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	3	-41	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	3	-37	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	3	-33	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	3	-29	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	3	-25	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	3	-21	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	3	-17	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	3	-13	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	3	-9	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	3	-5	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	3	-1	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	3	3	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	3	7	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	3	11	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	3	15	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	3	19	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	3	23	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	3	27	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	3	31	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	7	-41	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	7	-37	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	7	-33	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	7	-29	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	7	-25	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	7	-21	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	7	-17	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	7	-13	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	7	-9	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	7	-5	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	7	-1	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	7	3	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	7	7	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	7	11	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	7	15	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	7	19	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	7	23	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	7	27	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	7	31	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	11	-41	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	11	-37	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	11	-33	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	11	-29	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	11	-25	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	11	-21	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	11	-17	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	11	-13	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	11	-9	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	11	-5	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	11	-1	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	11	3	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	11	7	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	11	11	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	11	15	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	11	19	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	11	23	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	11	27	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	11	31	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	15	-41	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	15	-37	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	15	-33	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	15	-29	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	15	-25	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	15	-21	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	15	-17	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	15	-13	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	15	-9	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	15	-5	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	15	-1	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	15	3	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	15	7	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	15	11	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	15	15	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	15	19	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	15	23	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	15	27	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	15	31	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	19	-41	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	19	-37	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	19	-33	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	19	-29	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	19	-25	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	19	-21	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	19	-17	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	19	-13	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	19	-9	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	19	-5	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	19	-1	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	19	3	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	19	7	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	19	11	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	19	15	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	19	19	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	19	23	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	19	27	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	19	31	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	23	-41	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	23	-37	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	23	-33	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	23	-29	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	23	-25	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	23	-21	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	23	-17	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	23	-13	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	23	-9	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	23	-5	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	23	-1	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	23	3	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	23	7	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	23	11	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	23	15	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	23	19	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	23	23	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	23	27	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	23	31	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	27	-41	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	27	-37	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	27	-33	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	27	-29	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	27	-25	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	27	-21	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	27	-17	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	27	-13	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	27	-9	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	27	-5	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	27	-1	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	27	3	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	27	7	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	27	11	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	27	15	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	27	19	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	27	23	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	27	27	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	27	31	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	31	-41	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	31	-37	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	31	-33	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	31	-29	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	31	-25	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	31	-21	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	31	-17	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	31	-13	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	31	-9	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	31	-5	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	31	-1	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	31	3	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	31	7	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	31	11	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	31	15	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	31	19	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	31	23	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	31	27	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	31	31	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	35	-41	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	35	-37	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	35	-33	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	35	-29	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	35	-25	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	35	-21	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	35	-17	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	35	-13	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	35	-9	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	35	-5	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	35	-1	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	35	3	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	35	7	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	35	11	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	35	15	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	35	19	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	35	23	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	35	27	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	35	31	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	39	-41	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	39	-37	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	39	-33	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	39	-29	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	39	-25	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	39	-21	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	39	-17	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	39	-13	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	39	-9	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	39	-5	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	39	-1	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	39	3	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	39	7	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	39	11	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	39	15	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	39	19	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	39	23	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	39	27	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	39	31	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	43	-41	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	43	-37	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	43	-33	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	43	-29	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	43	-25	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	43	-21	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	43	-17	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	43	-13	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	43	-9	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	43	-5	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	43	-1	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	43	3	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	43	7	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	43	11	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	43	15	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	43	19	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	43	23	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	43	27	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	43	31	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	47	-41	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	47	-37	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	47	-33	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	47	-29	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	47	-25	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	47	-21	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	47	-17	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	47	-13	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	47	-9	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	47	-5	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	47	-1	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	47	3	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	47	7	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	47	11	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	47	15	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	47	19	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	47	23	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	47	27	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	47	31	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	51	-41	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	51	-37	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	51	-33	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	51	-29	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	51	-25	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	51	-21	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	51	-17	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	51	-13	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	51	-9	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	51	-5	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	51	-1	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	51	3	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	51	7	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	51	11	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	51	15	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	51	19	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	51	23	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	51	27	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	51	31	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	55	-41	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	55	-37	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	55	-33	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	55	-29	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	55	-25	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	55	-21	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	55	-17	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	55	-13	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	55	-9	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	55	-5	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	55	-1	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	55	3	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	55	7	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	55	11	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	55	15	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	55	19	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	55	23	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	55	27	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_01	0	55	31	ground	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	-15	-19	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	-15	-15	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	-15	-11	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	-15	-7	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	-15	-3	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	-15	1	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	-15	5	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	-15	9	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	-11	-19	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	-11	-15	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	-11	-11	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	-11	-7	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	-11	-3	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	-11	1	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	-11	5	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	-11	9	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	-7	-19	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	-7	-15	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	-7	-11	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	-7	-7	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	-7	-3	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	-7	1	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	-7	5	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	-7	9	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	-3	-19	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	-3	-15	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	-3	-11	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	-3	-7	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	-3	-3	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	-3	1	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	-3	5	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	-3	9	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	1	-19	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	1	-15	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	1	-11	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	1	-7	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	1	-3	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	1	1	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	1	5	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	1	9	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	5	-19	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	5	-15	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	5	-11	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	5	-7	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	5	-3	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	5	1	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	5	5	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	5	9	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	9	-19	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	9	-15	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	9	-11	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	9	-7	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	9	-3	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	9	1	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	9	5	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	9	9	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	13	-19	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	13	-15	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	13	-11	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	13	-7	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	13	-3	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	13	1	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	13	5	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	13	9	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	17	-19	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	17	-15	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	17	-11	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	17	-7	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	17	-3	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	17	1	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	17	5	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	17	9	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	21	-19	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	21	-15	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	21	-11	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	21	-7	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	21	-3	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	21	1	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	21	5	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	21	9	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	25	-19	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	25	-15	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	25	-11	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	25	-7	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	25	-3	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	25	1	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	25	5	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	25	9	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	29	-19	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	29	-15	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	29	-11	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	29	-7	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	29	-3	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	29	1	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	29	5	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	29	9	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	33	-19	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	33	-15	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	33	-11	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	33	-7	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	33	-3	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	33	1	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	33	5	floor	0
+art	dlc07_horde/city	p_dlc07_pavement_02	0.02	33	9	floor	0
+art	dlc07_horde/city	p_dlc07_RestaurantWall	0	-56	9	boundary	0
+art	dlc07_horde/city	p_dlc07_WideWall_01	0	-54	9	boundary	0
+art	dlc07_horde/city	p_dlc07_StandardWall	0	-52	9	boundary	0
+art	dlc07_horde/city	p_dlc07_StandardWall	0	-50	9	boundary	0
+art	dlc07_horde/city	p_dlc07_RestaurantWall	0	-48	9	boundary	0
+art	dlc07_horde/city	p_dlc07_RestaurantWall	0	-46	9	boundary	0
+art	dlc07_horde/city	p_dlc07_WideWall_01	0	-44	9	boundary	0
+art	dlc07_horde/city	p_dlc07_RestaurantWall	0	-42	9	boundary	0
+art	dlc07_horde/city	p_dlc07_StandardWall	0	-40	9	boundary	0
+art	dlc07_horde/city	p_dlc07_StandardWall	0	-38	9	boundary	0
+art	dlc07_horde/city	p_dlc07_WideWall_01	0	-36	9	boundary	0
+art	dlc07_horde/city	p_dlc07_StandardWall	0	-34	9	boundary	0
+art	dlc07_horde/city	p_dlc07_WideWall_01	0	-32	9	boundary	0
+art	dlc07_horde/city	p_dlc07_StandardWall	0	-30	9	boundary	0
+art	dlc07_horde/city	p_dlc07_RestaurantWall	0	-28	9	boundary	0
+art	dlc07_horde/city	p_dlc07_WideWall_01	0	-26	9	boundary	0
+art	dlc07_horde/city	p_dlc07_WideWall_01	0	-24	9	boundary	0
+art	dlc07_horde/city	p_dlc07_RestaurantWall	0	-22	9	boundary	0
+art	dlc07_horde/city	p_dlc07_RestaurantWall	0	-20	9	boundary	0
+art	dlc07_horde/city	p_dlc07_WideWall_01	0	-18	9	boundary	0
+art	dlc07_horde/city	p_dlc07_RestaurantWall	0	-16	9	boundary	0
+art	dlc07_horde/city	p_dlc07_RestaurantWall	0	-14	9	boundary	0
+art	dlc07_horde/city	p_dlc07_RestaurantWall	0	-12	9	boundary	0
+art	dlc07_horde/city	p_dlc07_StandardWall	0	-10	9	boundary	0
+art	dlc07_horde/city	p_dlc07_StandardWall	0	-8	9	boundary	0
+art	dlc07_horde/city	p_dlc07_RestaurantWall	0	-6	9	boundary	0
+art	dlc07_horde/city	p_dlc07_WideWall_01	0	-4	9	boundary	0
+art	dlc07_horde/city	p_dlc07_WideWall_01	0	-2	9	boundary	0
+art	dlc07_horde/city	p_dlc07_StandardWall	0	0	9	boundary	0
+art	dlc07_horde/city	p_dlc07_WideWall_01	0	2	9	boundary	0
+art	dlc07_horde/city	p_dlc07_StandardWall	0	4	9	boundary	0
+art	dlc07_horde/city	p_dlc07_RestaurantWall	0	6	9	boundary	0
+art	dlc07_horde/city	p_dlc07_RestaurantWall	0	8	9	boundary	0
+art	dlc07_horde/city	p_dlc07_StandardWall	0	10	9	boundary	0
+art	dlc07_horde/city	p_dlc07_WideWall_01	0	12	9	boundary	0
+art	dlc07_horde/city	p_dlc07_WideWall_01	0	14	9	boundary	0
+art	dlc07_horde/city	p_dlc07_StandardWall	0	16	9	boundary	0
+art	dlc07_horde/city	p_dlc07_WideWall_01	0	18	9	boundary	0
+art	dlc07_horde/city	p_dlc07_WideWall_01	0	20	9	boundary	0
+art	dlc07_horde/city	p_dlc07_RestaurantWall	0	22	9	boundary	0
+art	dlc07_horde/city	p_dlc07_RestaurantWall	0	24	9	boundary	0
+art	dlc07_horde/city	p_dlc07_WideWall_01	0	26	9	boundary	0
+art	dlc07_horde/city	p_dlc07_WideWall_01	0	28	9	boundary	0
+art	dlc07_horde/city	p_dlc07_WideWall_01	0	30	9	boundary	0
+art	dlc07_horde/city	p_dlc07_RestaurantWall	0	32	9	boundary	0
+art	dlc07_horde/city	p_dlc07_StandardWall	0	34	9	boundary	0
+art	dlc07_horde/city	p_dlc07_RestaurantWall	0	36	9	boundary	0
+art	dlc07_horde/city	p_dlc07_WideWall_01	0	38	9	boundary	0
+art	dlc07_horde/city	p_dlc07_WideWall_01	0	40	9	boundary	0
+art	dlc07_horde/city	p_dlc07_RestaurantWall	0	42	9	boundary	0
+art	dlc07_horde/city	p_dlc07_RestaurantWall	0	44	9	boundary	0
+art	dlc07_horde/city	p_dlc07_StandardWall	0	46	9	boundary	0
+art	dlc07_horde/city	p_dlc07_RestaurantWall	0	48	9	boundary	0
+art	dlc07_horde/city	p_dlc07_RestaurantWall	0	50	9	boundary	0
+art	dlc07_horde/city	p_dlc07_WideWall_01	0	52	9	boundary	0
+art	dlc07_horde/city	p_dlc07_RestaurantWall	0	54	9	boundary	0
+art	dlc07_horde/city	p_dlc07_StandardWall	0	56	9	boundary	0
+art	dlc07_horde/city	p_dlc07_RestaurantWall	0	58	9	boundary	0
+art	dlc07_horde/city	p_dlc07_WideWall_01	0	60	9	boundary	0
+art	dlc07_horde/city	p_dlc07_WideWall_01	0	62	9	boundary	0
+art	dlc07_horde/city	p_dlc07_WideWall_01	0	64	9	boundary	0
+art	dlc07_horde/city	p_dlc07_WideWall_01	0	66	9	boundary	0
+art	dlc07_horde/city	p_dlc07_WideWall_01	0	68	9	boundary	0
+art	dlc07_horde/city	p_dlc07_RestaurantWall	0	70	9	boundary	0
+art	dlc07_horde/city	p_dlc07_StandardWall	0	72	9	boundary	0
+art	dlc07_horde/city	p_dlc07_StandardWall	0	74	9	boundary	0
+art	dlc07_horde/city	p_dlc07_RestaurantWall	0	-54	14	back-row	0
+art	dlc07_horde/city	p_dlc07_WideWall_01	0	-52	13	back-row	0
+art	dlc07_horde/city	p_dlc07_WideWall_01	0	-48	13	back-row	0
+art	dlc07_horde/city	p_dlc07_StandardWall	0	-46	12	back-row	0
+art	dlc07_horde/city	p_dlc07_StandardWall	0	-42	13	back-row	0
+art	dlc07_horde/city	p_dlc07_RestaurantWall	0	-38	13	back-row	0
+art	dlc07_horde/city	p_dlc07_WideWall_01	0	-36	14	back-row	0
+art	dlc07_horde/city	p_dlc07_StandardWall	0	-34	13	back-row	0
+art	dlc07_horde/city	p_dlc07_WideWall_01	0	-32	12	back-row	0
+art	dlc07_horde/city	p_dlc07_WideWall_01	0	-30	12	back-row	0
+art	dlc07_horde/city	p_dlc07_WideWall_01	0	-28	12	back-row	0
+art	dlc07_horde/city	p_dlc07_StandardWall	0	-26	13	back-row	0
+art	dlc07_horde/city	p_dlc07_WideWall_01	0	-24	13	back-row	0
+art	dlc07_horde/city	p_dlc07_RestaurantWall	0	-20	12	back-row	0
+art	dlc07_horde/city	p_dlc07_StandardWall	0	-18	12	back-row	0
+art	dlc07_horde/city	p_dlc07_StandardWall	0	-16	13	back-row	0
+art	dlc07_horde/city	p_dlc07_StandardWall	0	-14	14	back-row	0
+art	dlc07_horde/city	p_dlc07_StandardWall	0	-12	13	back-row	0
+art	dlc07_horde/city	p_dlc07_RestaurantWall	0	-10	14	back-row	0
+art	dlc07_horde/city	p_dlc07_WideWall_01	0	-6	12	back-row	0
+art	dlc07_horde/city	p_dlc07_StandardWall	0	-4	13	back-row	0
+art	dlc07_horde/city	p_dlc07_RestaurantWall	0	-2	13	back-row	0
+art	dlc07_horde/city	p_dlc07_StandardWall	0	0	13	back-row	0
+art	dlc07_horde/city	p_dlc07_WideWall_01	0	2	12	back-row	0
+art	dlc07_horde/city	p_dlc07_RestaurantWall	0	4	13	back-row	0
+art	dlc07_horde/city	p_dlc07_StandardWall	0	8	14	back-row	0
+art	dlc07_horde/city	p_dlc07_StandardWall	0	10	13	back-row	0
+art	dlc07_horde/city	p_dlc07_StandardWall	0	12	13	back-row	0
+art	dlc07_horde/city	p_dlc07_RestaurantWall	0	16	14	back-row	0
+art	dlc07_horde/city	p_dlc07_StandardWall	0	18	14	back-row	0
+art	dlc07_horde/city	p_dlc07_StandardWall	0	22	14	back-row	0
+art	dlc07_horde/city	p_dlc07_RestaurantWall	0	24	13	back-row	0
+art	dlc07_horde/city	p_dlc07_RestaurantWall	0	28	13	back-row	0
+art	dlc07_horde/city	p_dlc07_RestaurantWall	0	30	12	back-row	0
+art	dlc07_horde/city	p_dlc07_RestaurantWall	0	34	13	back-row	0
+art	dlc07_horde/city	p_dlc07_StandardWall	0	36	14	back-row	0
+art	dlc07_horde/city	p_dlc07_StandardWall	0	38	14	back-row	0
+art	dlc07_horde/city	p_dlc07_StandardWall	0	40	13	back-row	0
+art	dlc07_horde/city	p_dlc07_StandardWall	0	44	14	back-row	0
+art	dlc07_horde/city	p_dlc07_StandardWall	0	46	14	back-row	0
+art	dlc07_horde/city	p_dlc07_RestaurantWall	0	48	13	back-row	0
+art	dlc07_horde/city	p_dlc07_RestaurantWall	0	50	14	back-row	0
+art	dlc07_horde/city	p_dlc07_RestaurantWall	0	52	13	back-row	0
+art	dlc07_horde/city	p_dlc07_RestaurantWall	0	54	13	back-row	0
+art	dlc07_horde/city	p_dlc07_WideWall_01	0	56	13	back-row	0
+art	dlc07_horde/city	p_dlc07_RestaurantWall	0	58	14	back-row	0
+art	dlc07_horde/city	p_dlc07_StandardWall	0	60	14	back-row	0
+art	dlc07_horde/city	p_dlc07_StandardWall	0	62	13	back-row	0
+art	dlc07_horde/city	p_dlc07_StandardWall	0	66	13	back-row	0
+art	dlc07_horde/city	p_dlc07_WideWall_01	0	68	13	back-row	0
+art	dlc07_horde/city	p_dlc07_StandardWall	0	72	12	back-row	0
+art	dlc07_horde/city	p_dlc07_RestaurantWall	0	74	13	back-row	0
+art	dlc07_horde/city	p_dlc07_curtain_01	-0.038	-24	-9	landmark	0
+art	dlc07_horde/city	p_dlc07_restaurant_carpet_01	0	-24	-16	landmark-mid	0
+art	dlc07_horde/city	p_dlc07_restaurant_carpet_01	0	-26	-4	landmark-mid	0
+art	dlc07_horde/city	p_dlc07_vent_01	0	-19	-9	landmark-detail	180
+art	dlc07_horde/city	p_dlc07_curtain_01	-0.038	52	-9	landmark	0
+art	dlc07_horde/city	p_dlc07_restaurant_carpet_01	0	55	-5	landmark-mid	0
+art	dlc07_horde/city	p_dlc7_city_bench_01	0.035	44	-4	landmark-mid	0
+art	dlc07_horde/city	p_dlc7_city_bench_01	0.035	44	-12	landmark-mid	0
+art	dlc07_horde/city	p_dlc07_restaurant_carpet_01	0	50	-13	landmark-mid	0
+art	dlc07_horde/city	p_dlc07_vent_01	0	48	-12	landmark-detail	90
+art	dlc07_horde/city	p_dlc7_city_bench_01	0.035	-20	-18	furniture	0
+art	dlc07_horde/city	p_dlc07_vent_01	0	-20	-21	furniture-side	0
+art	dlc07_horde/city	p_dlc07_vent_01	0	-20	-15	furniture-side	180
+art	dlc07_horde/city	p_dlc07_vent_01	0	-23	-18	furniture-side	90
+art	dlc07_horde/city	p_dlc07_vent_01	0	-17	-18	furniture-side	270
+art	dlc07_horde/city	p_dlc7_city_bench_01	0.035	-22	-9	furniture	0
+art	dlc07_horde/city	p_dlc07_vent_01	0	-20	-12	furniture-side	0
+art	dlc07_horde/city	p_dlc07_vent_01	0	-20	-6	furniture-side	180
+art	dlc07_horde/city	p_dlc07_vent_01	0	-17	-9	furniture-side	270
+art	dlc07_horde/city	p_dlc7_city_bench_01	0.035	-20	1	furniture	0
+art	dlc07_horde/city	p_dlc07_vent_01	0	-20	-2	furniture-side	0
+art	dlc07_horde/city	p_dlc07_vent_01	0	-20	4	furniture-side	180
+art	dlc07_horde/city	p_dlc07_vent_01	0	-23	1	furniture-side	90
+art	dlc07_horde/city	p_dlc07_vent_01	0	-17	1	furniture-side	270
+art	dlc07_horde/city	p_dlc7_city_bench_01	0.035	-29	-18	furniture	0
+art	dlc07_horde/city	p_dlc07_vent_01	0	-29	-21	furniture-side	0
+art	dlc07_horde/city	p_dlc07_vent_01	0	-29	-15	furniture-side	180
+art	dlc07_horde/city	p_dlc07_vent_01	0	-32	-18	furniture-side	90
+art	dlc07_horde/city	p_dlc07_vent_01	0	-26	-18	furniture-side	270
+art	dlc07_horde/city	p_dlc7_city_bench_01	0.035	-29	-9	furniture	0
+art	dlc07_horde/city	p_dlc07_vent_01	0	-29	-12	furniture-side	0
+art	dlc07_horde/city	p_dlc07_vent_01	0	-29	-6	furniture-side	180
+art	dlc07_horde/city	p_dlc07_vent_01	0	-32	-9	furniture-side	90
+art	dlc07_horde/city	p_dlc07_vent_01	0	-26	-9	furniture-side	270
+art	dlc07_horde/city	p_dlc7_city_bench_01	0.035	-29	1	furniture	0
+art	dlc07_horde/city	p_dlc07_vent_01	0	-29	-2	furniture-side	0
+art	dlc07_horde/city	p_dlc07_vent_01	0	-29	4	furniture-side	180
+art	dlc07_horde/city	p_dlc07_vent_01	0	-32	1	furniture-side	90
+art	dlc07_horde/city	p_dlc07_vent_01	0	-26	1	furniture-side	270
+art	dlc07_horde/city	p_dlc7_city_bench_01	0.035	38	-17	furniture	180
+art	dlc07_horde/city	p_dlc07_vent_01	0	38	-20	furniture-side	0
+art	dlc07_horde/city	p_dlc07_vent_01	0	38	-14	furniture-side	180
+art	dlc07_horde/city	p_dlc07_vent_01	0	35	-17	furniture-side	90
+art	dlc07_horde/city	p_dlc07_vent_01	0	41	-17	furniture-side	270
+art	dlc07_horde/city	p_dlc7_city_bench_01	0.035	38	-7	furniture	180
+art	dlc07_horde/city	p_dlc07_vent_01	0	38	-10	furniture-side	0
+art	dlc07_horde/city	p_dlc07_vent_01	0	38	-4	furniture-side	180
+art	dlc07_horde/city	p_dlc07_vent_01	0	35	-7	furniture-side	90
+art	dlc07_horde/city	p_dlc07_vent_01	0	41	-7	furniture-side	270
+art	dlc07_horde/city	p_dlc7_city_bench_01	0.035	38	3	furniture	180
+art	dlc07_horde/city	p_dlc07_vent_01	0	38	0	furniture-side	0
+art	dlc07_horde/city	p_dlc07_vent_01	0	38	6	furniture-side	180
+art	dlc07_horde/city	p_dlc07_vent_01	0	35	3	furniture-side	90
+art	dlc07_horde/city	p_dlc07_vent_01	0	41	3	furniture-side	270
+art	dlc07_horde/city	p_dlc7_city_bench_01	0.035	47	-18	furniture	180
+art	dlc07_horde/city	p_dlc07_vent_01	0	47	-21	furniture-side	0
+art	dlc07_horde/city	p_dlc07_vent_01	0	47	-15	furniture-side	180
+art	dlc07_horde/city	p_dlc07_vent_01	0	44	-18	furniture-side	90
+art	dlc07_horde/city	p_dlc07_vent_01	0	50	-18	furniture-side	270
+art	dlc07_horde/city	p_dlc7_city_bench_01	0.035	47	-10	furniture	180
+art	dlc07_horde/city	p_dlc07_vent_01	0	47	-7	furniture-side	180
+art	dlc07_horde/city	p_dlc07_vent_01	0	44	-10	furniture-side	90
+art	dlc07_horde/city	p_dlc07_vent_01	0	50	-10	furniture-side	270
+art	dlc07_horde/city	p_dlc7_city_bench_01	0.035	47	0	furniture	180
+art	dlc07_horde/city	p_dlc07_vent_01	0	47	-3	furniture-side	0
+art	dlc07_horde/city	p_dlc07_vent_01	0	47	3	furniture-side	180
+art	dlc07_horde/city	p_dlc07_vent_01	0	44	0	furniture-side	90
+art	dlc07_horde/city	p_dlc07_vent_01	0	50	0	furniture-side	270
+art	dlc07_horde/city	p_dlc07_fire_hydrant_01	-0.001	-26	-31	street	0
+art	dlc07_horde/city	p_dlc07_fire_hydrant_01	-0.001	46	-24	street	0
+art	dlc07_horde/city	p_dlc07_fire_hydrant_01	-0.001	-24	-27	street	0
+art	dlc07_horde/city	p_dlc07_fire_hydrant_01	-0.001	44	-28	street	0
