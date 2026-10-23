@@ -18,6 +18,86 @@ BUILD_PS1 = os.environ.get("WELLCOOKED_BUILD_PS1", "")
 BUILD_CMD = os.environ.get("WELLCOOKED_BUILD_CMD", "")
 DEPLOY_SH = os.path.join(ROOT, "deploy.sh")
 STATUS_FILE = os.environ.get("WELLCOOKED_STATUS_FILE", os.path.join(HERE, "build-status.txt"))
+# 美术件实测尺寸表 + 中文名表：Windows 构建机上默认在仓库外的 oc2-level-build 目录，
+# 用环境变量覆盖；都读不到时 /api/art 返回空列表（前端会提示没有尺寸表）。
+ART_SIZES = os.environ.get("WELLCOOKED_ART_SIZES",
+                           r"D:\oc2-level-build\art-sizes.tsv")
+ART_NAMES = os.environ.get("WELLCOOKED_ART_NAMES",
+                           r"D:\oc2-level-build\art-names-zh.json")
+_art_cache = {"mtime": None, "catalog": None}
+_names_cache = {"mtime": None, "names": None}
+
+
+def art_names():
+    """读取中文名表，返回 {"主题/素材名": {zh, zhName, themeZh}}"""
+    if not os.path.isfile(ART_NAMES):
+        return {}
+    mtime = os.path.getmtime(ART_NAMES)
+    if _names_cache["mtime"] == mtime and _names_cache["names"] is not None:
+        return _names_cache["names"]
+    try:
+        with open(ART_NAMES, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except Exception:
+        data = {}
+    _names_cache["mtime"] = mtime
+    _names_cache["names"] = data
+    return data
+
+
+def art_catalog():
+    """art-sizes.tsv -> [{theme,count,items:[{name,w,h,d,minY,colliders,renderers,zh,zhName,themeZh}]}]"""
+    if not os.path.isfile(ART_SIZES):
+        return []
+    mtime = os.path.getmtime(ART_SIZES)
+    if _art_cache["mtime"] == mtime and _art_cache["catalog"] is not None:
+        return _art_cache["catalog"]
+
+    themes = {}
+    order = []
+    with open(ART_SIZES, "r", encoding="utf-8", errors="replace") as fh:
+        for lineno, line in enumerate(fh):
+            line = line.rstrip("\n")
+            if not line:
+                continue
+            cols = line.split("\t")
+            if lineno == 0 or cols[0] == "theme":
+                continue
+            if len(cols) < 9:
+                continue
+            theme, name = cols[0], cols[1]
+            try:
+                w, h, d, miny = (float(cols[3]), float(cols[4]),
+                                 float(cols[5]), float(cols[6]))
+                colliders = int(cols[7])
+                renderers = int(cols[8])
+            except ValueError:
+                continue
+            if theme not in themes:
+                themes[theme] = []
+                order.append(theme)
+            themes[theme].append({
+                "name": name,
+                "w": w, "h": h, "d": d, "minY": miny,
+                "colliders": colliders, "renderers": renderers,
+            })
+
+    names = art_names()
+    for theme, items in themes.items():
+        for item in items:
+            zh = names.get(theme + "/" + item["name"])
+            item["zh"] = (zh or {}).get("zh", item["name"])
+            item["zhName"] = (zh or {}).get("zhName", item["name"])
+            item["themeZh"] = (zh or {}).get("themeZh", theme)
+
+    catalog = []
+    for theme in order:
+        items = sorted(themes[theme], key=lambda item: item["name"].lower())
+        catalog.append({"theme": theme, "count": len(items), "items": items})
+    _art_cache["mtime"] = mtime
+    _art_cache["catalog"] = catalog
+    return catalog
+
 _building = [False]
 
 
@@ -202,6 +282,9 @@ class Handler(SimpleHTTPRequestHandler):
             return
         if parsed.path == "/api/list":
             self._json({"ok": True, "files": layout_files(), "root": ROOT})
+            return
+        if parsed.path == "/api/art":
+            self._json({"ok": True, "themes": art_catalog()})
             return
         if parsed.path == "/api/load":
             name = os.path.basename(urllib.parse.parse_qs(parsed.query).get("name", [""])[0])

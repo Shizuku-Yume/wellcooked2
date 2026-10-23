@@ -2,72 +2,642 @@
 # columns: kind	prefab	so	ingredient	x	z	note
 kind	prefab	so	ingredient	x	z	note
 # menu: Burrito_Chicken_SO, Sushi_PlainPrawn_SO
+art	city_sushi	exterior_path_01	0	-34	-40	ground	0
+art	city_sushi	exterior_path_01	0	-30	-40	ground	0
+art	city_sushi	exterior_path_01	0	-26	-40	ground	0
+art	city_sushi	exterior_path_01	0	-22	-40	ground	0
+art	city_sushi	exterior_path_01	0	-18	-40	ground	0
+art	city_sushi	exterior_path_01	0	-14	-40	ground	0
+art	city_sushi	exterior_path_01	0	-10	-40	ground	0
+art	city_sushi	exterior_path_01	0	-6	-40	ground	0
+art	city_sushi	exterior_path_01	0	-2	-40	ground	0
+art	city_sushi	exterior_path_01	0	2	-40	ground	0
+art	city_sushi	exterior_path_01	0	6	-40	ground	0
+art	city_sushi	exterior_path_01	0	10	-40	ground	0
+art	city_sushi	exterior_path_01	0	14	-40	ground	0
+art	city_sushi	exterior_path_01	0	18	-40	ground	0
+art	city_sushi	exterior_path_01	0	22	-40	ground	0
+art	city_sushi	exterior_path_01	0	26	-40	ground	0
+art	city_sushi	exterior_path_01	0	30	-40	ground	0
+art	city_sushi	exterior_path_01	0	34	-40	ground	0
+art	city_sushi	exterior_path_01	0	38	-40	ground	0
+art	city_sushi	exterior_path_01	0	42	-40	ground	0
+art	city_sushi	exterior_path_01	0	46	-40	ground	0
+art	city_sushi	exterior_path_01	0	-34	-36	ground	0
+art	city_sushi	exterior_path_01	0	-30	-36	ground	0
+art	city_sushi	exterior_path_01	0	-26	-36	ground	0
+art	city_sushi	exterior_path_01	0	-22	-36	ground	0
+art	city_sushi	exterior_path_01	0	-18	-36	ground	0
+art	city_sushi	exterior_path_01	0	-14	-36	ground	0
+art	city_sushi	exterior_path_01	0	-10	-36	ground	0
+art	city_sushi	exterior_path_01	0	-6	-36	ground	0
+art	city_sushi	exterior_path_01	0	-2	-36	ground	0
+art	city_sushi	exterior_path_01	0	2	-36	ground	0
+art	city_sushi	exterior_path_01	0	6	-36	ground	0
+art	city_sushi	exterior_path_01	0	10	-36	ground	0
+art	city_sushi	exterior_path_01	0	14	-36	ground	0
+art	city_sushi	exterior_path_01	0	18	-36	ground	0
+art	city_sushi	exterior_path_01	0	22	-36	ground	0
+art	city_sushi	exterior_path_01	0	26	-36	ground	0
+art	city_sushi	exterior_path_01	0	30	-36	ground	0
+art	city_sushi	exterior_path_01	0	34	-36	ground	0
+art	city_sushi	exterior_path_01	0	38	-36	ground	0
+art	city_sushi	exterior_path_01	0	42	-36	ground	0
+art	city_sushi	exterior_path_01	0	46	-36	ground	0
+art	city_sushi	exterior_path_01	0	-34	-32	ground	0
+art	city_sushi	exterior_path_01	0	-30	-32	ground	0
+art	city_sushi	exterior_path_01	0	-26	-32	ground	0
+art	city_sushi	exterior_path_01	0	-22	-32	ground	0
+art	city_sushi	exterior_path_01	0	-18	-32	ground	0
+art	city_sushi	exterior_path_01	0	-14	-32	ground	0
+art	city_sushi	exterior_path_01	0	-10	-32	ground	0
+art	city_sushi	exterior_path_01	0	-6	-32	ground	0
+art	city_sushi	exterior_path_01	0	-2	-32	ground	0
+art	city_sushi	exterior_path_01	0	2	-32	ground	0
+art	city_sushi	exterior_path_01	0	6	-32	ground	0
+art	city_sushi	exterior_path_01	0	10	-32	ground	0
+art	city_sushi	exterior_path_01	0	14	-32	ground	0
+art	city_sushi	exterior_path_01	0	18	-32	ground	0
+art	city_sushi	exterior_path_01	0	22	-32	ground	0
+art	city_sushi	exterior_path_01	0	26	-32	ground	0
+art	city_sushi	exterior_path_01	0	30	-32	ground	0
+art	city_sushi	exterior_path_01	0	34	-32	ground	0
+art	city_sushi	exterior_path_01	0	38	-32	ground	0
+art	city_sushi	exterior_path_01	0	42	-32	ground	0
+art	city_sushi	exterior_path_01	0	46	-32	ground	0
+art	city_sushi	exterior_tree_green_01	0	-24	-30	street	0
+art	city_sushi	exterior_tree_green_01	0	36	-30	street	0
+art	city_sushi	exterior_path_01	0	-34	-28	ground	0
+art	city_sushi	exterior_path_01	0	-30	-28	ground	0
+art	city_sushi	exterior_path_01	0	-26	-28	ground	0
+art	city_sushi	exterior_path_01	0	-22	-28	ground	0
+art	city_sushi	exterior_path_01	0	-18	-28	ground	0
+art	city_sushi	exterior_path_01	0	-14	-28	ground	0
+art	city_sushi	exterior_fire_hydrant_01	0	-13	-28	street	0
+art	city_sushi	exterior_path_01	0	-10	-28	ground	0
+art	city_sushi	exterior_path_01	0	-6	-28	ground	0
+art	city_sushi	exterior_path_01	0	-2	-28	ground	0
+art	city_sushi	exterior_path_01	0	2	-28	ground	0
+art	city_sushi	exterior_path_01	0	6	-28	ground	0
+art	city_sushi	exterior_path_01	0	10	-28	ground	0
+art	city_sushi	exterior_path_01	0	14	-28	ground	0
+art	city_sushi	exterior_path_01	0	18	-28	ground	0
+art	city_sushi	exterior_path_01	0	22	-28	ground	0
+art	city_sushi	exterior_fire_hydrant_01	0	25	-28	street	0
+art	city_sushi	exterior_path_01	0	26	-28	ground	0
+art	city_sushi	exterior_path_01	0	30	-28	ground	0
+art	city_sushi	exterior_path_01	0	34	-28	ground	0
+art	city_sushi	exterior_path_01	0	38	-28	ground	0
+art	city_sushi	exterior_path_01	0	42	-28	ground	0
+art	city_sushi	exterior_path_01	0	46	-28	ground	0
+art	city_sushi	exterior_street_bench	0	-28	-26	street	0
+art	city_sushi	exterior_street_bench	0	40	-26	street	0
+art	city_sushi	exterior_path_01	0	-34	-24	ground	0
+art	city_sushi	exterior_path_01	0	-30	-24	ground	0
+art	city_sushi	exterior_path_01	0	-26	-24	ground	0
+art	city_sushi	exterior_path_01	0	-22	-24	ground	0
+art	city_sushi	exterior_path_01	0	-18	-24	ground	0
+art	city_sushi	exterior_path_01	0	-14	-24	ground	0
+art	city_sushi	exterior_path_01	0	-10	-24	ground	0
+art	city_sushi	exterior_path_01	0	-6	-24	ground	0
+art	city_sushi	exterior_path_01	0	-2	-24	ground	0
+art	city_sushi	exterior_path_01	0	2	-24	ground	0
+art	city_sushi	exterior_path_01	0	6	-24	ground	0
+art	city_sushi	exterior_path_01	0	10	-24	ground	0
+art	city_sushi	exterior_path_01	0	14	-24	ground	0
+art	city_sushi	exterior_path_01	0	18	-24	ground	0
+art	city_sushi	exterior_path_01	0	22	-24	ground	0
+art	city_sushi	exterior_path_01	0	26	-24	ground	0
+art	city_sushi	exterior_path_01	0	30	-24	ground	0
+art	city_sushi	exterior_path_01	0	34	-24	ground	0
+art	city_sushi	exterior_path_01	0	38	-24	ground	0
+art	city_sushi	exterior_path_01	0	42	-24	ground	0
+art	city_sushi	exterior_path_01	0	46	-24	ground	0
+art	city_sushi	exterior_man_hole_01	0.03	29	-23	street	0
+art	city_sushi	restaurant_chair_04	0	-25	-21	dining	0
+art	city_sushi	restaurant_chair_04	0	-16	-21	dining	0
+art	city_sushi	restaurant_chair_04	0	28	-21	dining	0
+art	city_sushi	restaurant_chair_04	0	37	-21	dining	0
+art	city_sushi	exterior_path_01	0	-34	-20	ground	0
+art	city_sushi	exterior_path_01	0	-30	-20	ground	0
+art	city_sushi	exterior_path_01	0	-26	-20	ground	0
+art	city_sushi	exterior_path_01	0	-22	-20	ground	0
+art	city_sushi	exterior_path_01	0	-18	-20	ground	0
+art	city_sushi	exterior_man_hole_01	0.03	-17	-20	street	0
+art	city_sushi	exterior_path_01	0	-14	-20	ground	0
+art	city_sushi	exterior_path_01	0	-10	-20	ground	0
+art	city_sushi	exterior_path_01	0	-6	-20	ground	0
+art	city_sushi	exterior_path_01	0	-2	-20	ground	0
+art	city_sushi	exterior_path_01	0	2	-20	ground	0
+art	city_sushi	exterior_path_01	0	6	-20	ground	0
+art	city_sushi	exterior_path_01	0	10	-20	ground	0
+art	city_sushi	exterior_path_01	0	14	-20	ground	0
+art	city_sushi	exterior_path_01	0	18	-20	ground	0
+art	city_sushi	exterior_path_01	0	22	-20	ground	0
+art	city_sushi	exterior_path_01	0	26	-20	ground	0
+art	city_sushi	exterior_path_01	0	30	-20	ground	0
+art	city_sushi	exterior_path_01	0	34	-20	ground	0
+art	city_sushi	exterior_path_01	0	38	-20	ground	0
+art	city_sushi	exterior_path_01	0	42	-20	ground	0
+art	city_sushi	exterior_path_01	0	46	-20	ground	0
+art	city_sushi	restaurant_table_01	0	-25	-18	dining	0
+art	city_sushi	restaurant_plate_01	0.63	-25	-18	dining	0
+art	city_sushi	restaurant_table_01	0	-16	-18	dining	0
+art	city_sushi	restaurant_plate_01	0.63	-16	-18	dining	0
+art	extra	floor_tiles_sushi_02_8x14	0.02	-12	-18	floor	0
+art	extra	floor_tiles_sushi_02_8x14	0.02	-8	-18	floor	0
+art	extra	floor_tiles_sushi_02_8x14	0.02	-4	-18	floor	0
+art	extra	floor_tiles_sushi_02_8x14	0.02	0	-18	floor	0
+art	extra	floor_tiles_sushi_02_8x14	0.02	4	-18	floor	0
+art	extra	floor_tiles_sushi_02_8x14	0.02	8	-18	floor	0
+art	extra	floor_tiles_sushi_02_8x14	0.02	12	-18	floor	0
+art	extra	floor_tiles_sushi_02_8x14	0.02	16	-18	floor	0
+art	extra	floor_tiles_sushi_02_8x14	0.02	20	-18	floor	0
+art	extra	floor_tiles_sushi_02_8x14	0.02	24	-18	floor	0
+art	city_sushi	restaurant_table_01	0	28	-18	dining	0
+art	city_sushi	restaurant_plate_01	0.63	28	-18	dining	0
+art	city_sushi	restaurant_table_01	0	37	-18	dining	0
+art	city_sushi	restaurant_plate_01	0.63	37	-18	dining	0
+art	city_sushi	exterior_path_01	0	-34	-16	ground	0
+art	city_sushi	exterior_path_01	0	-30	-16	ground	0
+art	city_sushi	exterior_path_01	0	-26	-16	ground	0
+art	city_sushi	exterior_path_01	0	-22	-16	ground	0
+art	city_sushi	exterior_path_01	0	-18	-16	ground	0
+art	city_sushi	exterior_path_01	0	-14	-16	ground	0
+art	city_sushi	exterior_path_01	0	-10	-16	ground	0
+art	city_sushi	exterior_path_01	0	-6	-16	ground	0
+art	city_sushi	exterior_path_01	0	-2	-16	ground	0
+art	city_sushi	exterior_path_01	0	2	-16	ground	0
+art	city_sushi	exterior_path_01	0	6	-16	ground	0
+art	city_sushi	exterior_path_01	0	10	-16	ground	0
+art	city_sushi	exterior_path_01	0	14	-16	ground	0
+art	city_sushi	exterior_path_01	0	18	-16	ground	0
+art	city_sushi	exterior_path_01	0	22	-16	ground	0
+art	city_sushi	exterior_path_01	0	26	-16	ground	0
+art	city_sushi	exterior_path_01	0	30	-16	ground	0
+art	city_sushi	exterior_path_01	0	34	-16	ground	0
+art	city_sushi	exterior_path_01	0	38	-16	ground	0
+art	city_sushi	exterior_path_01	0	42	-16	ground	0
+art	city_sushi	exterior_path_01	0	46	-16	ground	0
+art	city_sushi	restaurant_chair_04	0	-25	-15	dining	180
+art	city_sushi	restaurant_chair_04	0	-16	-15	dining	180
+art	city_sushi	restaurant_chair_04	0	28	-15	dining	180
+art	city_sushi	restaurant_chair_04	0	37	-15	dining	180
+art	extra	floor_tiles_sushi_02_8x14	0.02	-12	-14	floor	0
 counter	Counter	CounterSO		-8	-14		
-dispenser	Dispenser	Dispenser02SO	SushiPrawnSO	-6	-14	added	
-dispenser	Dispenser	Dispenser01SO	BurritoChickenSO	-4	-14		
+art	extra	floor_tiles_sushi_02_8x14	0.02	-8	-14	floor	0
+counter	Counter	CounterSO		-6	-14		
+counter	Counter	CounterSO		-4	-14		
+art	extra	floor_tiles_sushi_02_8x14	0.02	-4	-14	floor	0
 counter	Counter	CounterSO		-2	-14		
 counter	Counter	CounterSO		0	-14		
+art	extra	floor_tiles_sushi_02_8x14	0.02	0	-14	floor	0
 counter	Counter	CounterSO		2	-14		
 counter	Counter	CounterSO		4	-14		
+art	extra	floor_tiles_sushi_02_8x14	0.02	4	-14	floor	0
 counter	Counter	CounterSO		6	-14		
 frying	FryingStation	FryingStationSO		8	-14		
 utensil	FrierBasket	FrierBasketSO		8	-14		
+art	extra	floor_tiles_sushi_02_8x14	0.02	8	-14	floor	0
 frying	FryingStation	FryingStationSO		10	-14		
 utensil	FrierBasket	FrierBasketSO		10	-14		
 counter	Counter	CounterSO		12	-14		
+art	extra	floor_tiles_sushi_02_8x14	0.02	12	-14	floor	0
 counter	Counter	CounterSO		14	-14		
 counter	Counter	CounterSO		16	-14		
+art	extra	floor_tiles_sushi_02_8x14	0.02	16	-14	floor	0
 counter	Counter	CounterSO		18	-14		
 counter	Counter	CounterSO		20	-14		
+art	extra	floor_tiles_sushi_02_8x14	0.02	20	-14	floor	0
+art	extra	floor_tiles_sushi_02_8x14	0.02	24	-14	floor	0
+art	city_sushi	exterior_path_01	0	-34	-12	ground	0
+art	city_sushi	exterior_path_01	0	-30	-12	ground	0
+art	city_sushi	exterior_path_01	0	-26	-12	ground	0
+art	city_sushi	restaurant_chair_03	0	-25	-12	dining	0
+art	city_sushi	exterior_path_01	0	-22	-12	ground	0
+art	city_sushi	exterior_path_01	0	-18	-12	ground	0
+art	city_sushi	restaurant_chair_03	0	-16	-12	dining	0
+art	city_sushi	exterior_path_01	0	-14	-12	ground	0
+art	city_sushi	exterior_path_01	0	-10	-12	ground	0
 counter	Counter	CounterSO		-8	-12		
+art	city_sushi	exterior_path_01	0	-6	-12	ground	0
+art	city_sushi	exterior_path_01	0	-2	-12	ground	0
 counter	Counter	CounterSO		0	-12		
+art	city_sushi	exterior_path_01	0	2	-12	ground	0
+art	city_sushi	exterior_path_01	0	6	-12	ground	0
+art	city_sushi	exterior_path_01	0	10	-12	ground	0
+art	city_sushi	exterior_path_01	0	14	-12	ground	0
 spawn				16	-12		
+art	city_sushi	exterior_path_01	0	18	-12	ground	0
+art	city_sushi	exterior_path_01	0	22	-12	ground	0
+art	city_sushi	exterior_path_01	0	26	-12	ground	0
+art	city_sushi	restaurant_chair_04	0	28	-12	dining	0
+art	city_sushi	exterior_path_01	0	30	-12	ground	0
+art	city_sushi	exterior_path_01	0	34	-12	ground	0
+art	city_sushi	restaurant_chair_04	0	37	-12	dining	0
+art	city_sushi	exterior_path_01	0	38	-12	ground	0
+art	city_sushi	exterior_path_01	0	42	-12	ground	0
+art	city_sushi	exterior_path_01	0	46	-12	ground	0
 serving	ServingStation	ServingStationSO		20	-11		
-counter	Counter	CounterSO		-8	-10		
+art	extra	floor_tiles_sushi_02_8x14	0.02	-12	-10	floor	0
+dispenser	Dispenser	Dispenser01SO	BurritoMeatSO	-8	-10		
+art	extra	floor_tiles_sushi_02_8x14	0.02	-8	-10	floor	0
 spawn				-4	-10		
+art	extra	floor_tiles_sushi_02_8x14	0.02	-4	-10	floor	0
 counter	Counter	CounterSO		0	-10		
-counter	Counter	CounterSO		-8	-8		
+art	extra	floor_tiles_sushi_02_8x14	0.02	0	-10	floor	0
+art	extra	floor_tiles_sushi_02_8x14	0.02	4	-10	floor	0
+art	extra	floor_tiles_sushi_02_8x14	0.02	8	-10	floor	0
+art	extra	floor_tiles_sushi_02_8x14	0.02	12	-10	floor	0
+art	extra	floor_tiles_sushi_02_8x14	0.02	16	-10	floor	0
+art	extra	floor_tiles_sushi_02_8x14	0.02	20	-10	floor	0
+art	extra	floor_tiles_sushi_02_8x14	0.02	24	-10	floor	0
+art	city_sushi	restaurant_table_02	0	-25	-9	dining	0
+art	city_sushi	decoration_table_plant	0.77	-25	-9	dining	0
+art	city_sushi	restaurant_table_02	0	-16	-9	dining	0
+art	city_sushi	decoration_table_plant	0.77	-16	-9	dining	0
+art	city_sushi	restaurant_table_01	0	28	-9	dining	0
+art	city_sushi	restaurant_plate_01	0.63	28	-9	dining	0
+art	city_sushi	restaurant_table_01	0	37	-9	dining	0
+art	city_sushi	restaurant_plate_01	0.63	37	-9	dining	0
+art	city_sushi	exterior_path_01	0	-34	-8	ground	0
+art	city_sushi	exterior_path_01	0	-30	-8	ground	0
+art	city_sushi	exterior_path_01	0	-26	-8	ground	0
+art	city_sushi	exterior_path_01	0	-22	-8	ground	0
+art	city_sushi	exterior_path_01	0	-18	-8	ground	0
+art	city_sushi	exterior_path_01	0	-14	-8	ground	0
+art	city_sushi	exterior_path_01	0	-10	-8	ground	0
+dispenser	Dispenser	Dispenser01SO	RiceSO	-8	-8		
+art	city_sushi	exterior_path_01	0	-6	-8	ground	0
+art	city_sushi	exterior_path_01	0	-2	-8	ground	0
 counter	Counter	CounterSO		0	-8		
+art	city_sushi	exterior_path_01	0	2	-8	ground	0
+art	city_sushi	exterior_path_01	0	6	-8	ground	0
+art	city_sushi	exterior_path_01	0	10	-8	ground	0
 counter	Counter	CounterSO		12	-8		
+art	city_sushi	exterior_path_01	0	14	-8	ground	0
+art	city_sushi	exterior_path_01	0	18	-8	ground	0
 counter	Counter	CounterSO		20	-8		
-counter	Counter	CounterSO		-8	-6		
+art	city_sushi	exterior_path_01	0	22	-8	ground	0
+art	city_sushi	exterior_path_01	0	26	-8	ground	0
+art	city_sushi	exterior_path_01	0	30	-8	ground	0
+art	city_sushi	exterior_path_01	0	34	-8	ground	0
+art	city_sushi	exterior_path_01	0	38	-8	ground	0
+art	city_sushi	exterior_path_01	0	42	-8	ground	0
+art	city_sushi	exterior_path_01	0	46	-8	ground	0
+art	city_sushi	restaurant_chair_03	0	-25	-6	dining	180
+art	city_sushi	restaurant_chair_03	0	-16	-6	dining	180
+art	extra	floor_tiles_sushi_02_8x14	0.02	-12	-6	floor	0
+dispenser	Dispenser	Dispenser01SO	SushiPrawnSO	-8	-6		
+art	extra	floor_tiles_sushi_02_8x14	0.02	-8	-6	floor	0
+art	extra	floor_tiles_sushi_02_8x14	0.02	-4	-6	floor	0
 counter	Counter	CounterSO		0	-6		
-chopping	ChoppingCounter	ChoppingCounterSO		6	-6		
+art	extra	floor_tiles_sushi_02_8x14	0.02	0	-6	floor	0
+art	extra	floor_tiles_sushi_02_8x14	0.02	4	-6	floor	0
+art	extra	floor_tiles_sushi_02_8x14	0.02	8	-6	floor	0
 counter	Counter	CounterSO		12	-6		
-counter	Counter	CounterSO		20	-6		
-dispenser	Dispenser	Dispenser01SO	TortillaSO	-8	-4		
+art	extra	floor_tiles_sushi_02_8x14	0.02	12	-6	floor	0
+art	extra	floor_tiles_sushi_02_8x14	0.02	16	-6	floor	0
+art	extra	floor_tiles_sushi_02_8x14	0.02	20	-6	floor	0
+plate_return	PlateReturn	PlateReturnSO		20	-6		
+art	extra	floor_tiles_sushi_02_8x14	0.02	24	-6	floor	0
+art	city_sushi	restaurant_chair_04	0	28	-6	dining	180
+art	city_sushi	restaurant_chair_04	0	37	-6	dining	180
+art	city_sushi	exterior_path_01	0	-34	-4	ground	0
+art	city_sushi	exterior_path_01	0	-30	-4	ground	0
+art	city_sushi	exterior_path_01	0	-26	-4	ground	0
+art	city_sushi	exterior_path_01	0	-22	-4	ground	0
+art	city_sushi	exterior_path_01	0	-18	-4	ground	0
+art	city_sushi	exterior_path_01	0	-14	-4	ground	0
+art	city_sushi	exterior_path_01	0	-10	-4	ground	0
+dispenser	Dispenser	Dispenser01SO	SushiFishSO	-8	-4		
+art	city_sushi	exterior_path_01	0	-6	-4	ground	0
+art	city_sushi	exterior_path_01	0	-2	-4	ground	0
 counter	Counter	CounterSO		0	-4		
+art	city_sushi	exterior_path_01	0	2	-4	ground	0
 chopping	ChoppingCounter	ChoppingCounterSO		6	-4		
-dispenser	Dispenser	Dispenser01SO	RiceSO	12	-4		
+art	city_sushi	exterior_path_01	0	6	-4	ground	0
+art	city_sushi	exterior_path_01	0	10	-4	ground	0
+counter	Counter	CounterSO		12	-4		
+art	city_sushi	exterior_path_01	0	14	-4	ground	0
+art	city_sushi	exterior_path_01	0	18	-4	ground	0
 counter	Counter	CounterSO		20	-4		
-counter	Counter	CounterSO		-8	-2		
+art	city_sushi	exterior_path_01	0	22	-4	ground	0
+art	city_sushi	exterior_path_01	0	26	-4	ground	0
+art	city_sushi	exterior_path_01	0	30	-4	ground	0
+art	city_sushi	exterior_path_01	0	34	-4	ground	0
+art	city_sushi	exterior_path_01	0	38	-4	ground	0
+art	city_sushi	exterior_path_01	0	42	-4	ground	0
+art	city_sushi	exterior_path_01	0	46	-4	ground	0
+art	city_sushi	restaurant_chair_04	0	-25	-3	dining	0
+art	city_sushi	restaurant_chair_04	0	-16	-3	dining	0
+art	city_sushi	restaurant_chair_03	0	28	-3	dining	0
+art	city_sushi	restaurant_chair_03	0	37	-3	dining	0
+art	extra	floor_tiles_sushi_02_8x14	0.02	-12	-2	floor	0
+dispenser	Dispenser	Dispenser01SO	TortillaSO	-8	-2		
+art	extra	floor_tiles_sushi_02_8x14	0.02	-8	-2	floor	0
+art	extra	floor_tiles_sushi_02_8x14	0.02	-4	-2	floor	0
 counter	Counter	CounterSO		0	-2		
+art	extra	floor_tiles_sushi_02_8x14	0.02	0	-2	floor	0
+art	extra	floor_tiles_sushi_02_8x14	0.02	4	-2	floor	0
 chopping	ChoppingCounter	ChoppingCounterSO		6	-2		
+art	extra	floor_tiles_sushi_02_8x14	0.02	8	-2	floor	0
 counter	Counter	CounterSO		12	-2		
+art	extra	floor_tiles_sushi_02_8x14	0.02	12	-2	floor	0
+art	extra	floor_tiles_sushi_02_8x14	0.02	16	-2	floor	0
 counter	Counter	CounterSO		20	-2		
+art	extra	floor_tiles_sushi_02_8x14	0.02	20	-2	floor	0
+art	extra	floor_tiles_sushi_02_8x14	0.02	24	-2	floor	0
 spawn				15	-1		
-counter	Counter	CounterSO		-8	0		
+art	city_sushi	exterior_path_01	0	-34	0	ground	0
+art	city_sushi	exterior_path_01	0	-30	0	ground	0
+art	city_sushi	exterior_path_01	0	-26	0	ground	0
+art	city_sushi	restaurant_table_01	0	-25	0	dining	0
+art	city_sushi	restaurant_plate_01	0.63	-25	0	dining	0
+art	city_sushi	exterior_path_01	0	-22	0	ground	0
+art	city_sushi	exterior_path_01	0	-18	0	ground	0
+art	city_sushi	restaurant_table_01	0	-16	0	dining	0
+art	city_sushi	restaurant_plate_01	0.63	-16	0	dining	0
+art	city_sushi	exterior_path_01	0	-14	0	ground	0
+art	city_sushi	exterior_path_01	0	-10	0	ground	0
+dispenser	Dispenser	Dispenser01SO	BurritoChickenSO	-8	0		
+art	city_sushi	exterior_path_01	0	-6	0	ground	0
 spawn				-2	0		
-plate_stack	CleanPlateStack	CleanPlateStackSO		6	0		
+art	city_sushi	exterior_path_01	0	-2	0	ground	0
+art	city_sushi	exterior_path_01	0	2	0	ground	0
+art	city_sushi	exterior_path_01	0	6	0	ground	0
+art	city_sushi	exterior_path_01	0	10	0	ground	0
 counter	Counter	CounterSO		12	0		
+art	city_sushi	exterior_path_01	0	14	0	ground	0
+art	city_sushi	exterior_path_01	0	18	0	ground	0
 counter	Counter	CounterSO		20	0		
+art	city_sushi	exterior_path_01	0	22	0	ground	0
+art	city_sushi	exterior_path_01	0	26	0	ground	0
+art	city_sushi	restaurant_table_02	0	28	0	dining	0
+art	city_sushi	decoration_table_plant	0.77	28	0	dining	0
+art	city_sushi	exterior_path_01	0	30	0	ground	0
+art	city_sushi	exterior_path_01	0	34	0	ground	0
+art	city_sushi	restaurant_table_02	0	37	0	dining	0
+art	city_sushi	decoration_table_plant	0.77	37	0	dining	0
+art	city_sushi	exterior_path_01	0	38	0	ground	0
+art	city_sushi	exterior_path_01	0	42	0	ground	0
+art	city_sushi	exterior_path_01	0	46	0	ground	0
+art	extra	floor_tiles_sushi_02_8x14	0.02	-12	2	floor	0
 counter	Counter	CounterSO		-8	2		
+art	extra	floor_tiles_sushi_02_8x14	0.02	-8	2	floor	0
+art	extra	floor_tiles_sushi_02_8x14	0.02	-4	2	floor	0
+art	extra	floor_tiles_sushi_02_8x14	0.02	0	2	floor	0
+art	extra	floor_tiles_sushi_02_8x14	0.02	4	2	floor	0
+art	extra	floor_tiles_sushi_02_8x14	0.02	8	2	floor	0
 counter	Counter	CounterSO		12	2		
+art	extra	floor_tiles_sushi_02_8x14	0.02	12	2	floor	0
+art	extra	floor_tiles_sushi_02_8x14	0.02	16	2	floor	0
 counter	Counter	CounterSO		20	2		
+art	extra	floor_tiles_sushi_02_8x14	0.02	20	2	floor	0
+art	extra	floor_tiles_sushi_02_8x14	0.02	24	2	floor	0
+art	city_sushi	restaurant_chair_04	0	-25	3	dining	180
+art	city_sushi	restaurant_chair_04	0	-16	3	dining	180
+art	city_sushi	restaurant_plant_01	0	-10	3	plant	0
+art	city_sushi	restaurant_plant_01	0	22	3	plant	0
+art	city_sushi	restaurant_chair_03	0	28	3	dining	180
+art	city_sushi	restaurant_chair_03	0	37	3	dining	180
+art	city_sushi	exterior_path_01	0	-34	4	ground	0
+art	city_sushi	exterior_path_01	0	-30	4	ground	0
+art	city_sushi	exterior_path_01	0	-26	4	ground	0
+art	city_sushi	exterior_path_01	0	-22	4	ground	0
+art	city_sushi	exterior_path_01	0	-18	4	ground	0
+art	city_sushi	exterior_path_01	0	-14	4	ground	0
+art	city_sushi	exterior_path_01	0	-10	4	ground	0
 counter	Counter	CounterSO		-8	4		
 counter	Counter	CounterSO		-6	4		
+art	city_sushi	exterior_path_01	0	-6	4	ground	0
 counter	Counter	CounterSO		-4	4		
 counter	Counter	CounterSO		-2	4		
+art	city_sushi	exterior_path_01	0	-2	4	ground	0
 cooker	Cooker	CookerSO		0	4		
 utensil	Pot	PotSO		0	4		
 cooker	Cooker	CookerSO		2	4		
 utensil	FryPan	FryPanSO		2	4		
-counter	Counter	CounterSO		4	4		
-counter	Counter	CounterSO		6	4		
+art	city_sushi	exterior_path_01	0	2	4	ground	0
+cooker	Cooker	CookerSO		4	4		
+utensil	Pot	PotSO		4	4		
+cooker	Cooker	CookerSO		6	4		
+utensil	FrierBasket	FrierBasketSO		6	4		
+art	city_sushi	exterior_path_01	0	6	4	ground	0
 counter	Counter	CounterSO		8	4		
 counter	Counter	CounterSO		10	4		
+art	city_sushi	exterior_path_01	0	10	4	ground	0
 counter	Counter	CounterSO		12	4		
+art	city_sushi	exterior_path_01	0	14	4	ground	0
 washing	Sink	SinkSO		15	4		
 counter	Counter	CounterSO		18	4		
 utensil	FireExtinguisher	FireExtinguisherSO		18	4		
+art	city_sushi	exterior_path_01	0	18	4	ground	0
 counter	Counter	CounterSO		20	4		
+art	city_sushi	exterior_path_01	0	22	4	ground	0
+art	city_sushi	exterior_path_01	0	26	4	ground	0
+art	city_sushi	exterior_path_01	0	30	4	ground	0
+art	city_sushi	exterior_path_01	0	34	4	ground	0
+art	city_sushi	exterior_path_01	0	38	4	ground	0
+art	city_sushi	exterior_path_01	0	42	4	ground	0
+art	city_sushi	exterior_path_01	0	46	4	ground	0
+art	city_sushi	decoration_spice_rack	1.43	-2	5	wall-decor	180
+art	city_sushi	decoration_ticket_rack	1.29	14	5	wall-decor	180
+art	city_sushi	wall_orange_01	0	-51	6	wall	0
+art	city_sushi	wall_orange_01	0	-49	6	wall	0
+art	city_sushi	wall_orange_01	0	-47	6	wall	0
+art	city_sushi	wall_orange_01	0	-45	6	wall	0
+art	city_sushi	wall_orange_01	0	-43	6	wall	0
+art	city_sushi	wall_orange_01	0	-41	6	wall	0
+art	city_sushi	wall_orange_01	0	-39	6	wall	0
+art	city_sushi	wall_orange_01	0	-37	6	wall	0
+art	city_sushi	wall_orange_01	0	-35	6	wall	0
+art	city_sushi	wall_orange_01	0	-33	6	wall	0
+art	city_sushi	wall_orange_01	0	-31	6	wall	0
+art	city_sushi	wall_orange_01	0	-29	6	wall	0
+art	city_sushi	wall_orange_01	0	-27	6	wall	0
+art	city_sushi	wall_orange_01	0	-25	6	wall	0
+art	city_sushi	wall_orange_01	0	-23	6	wall	0
+art	city_sushi	wall_orange_01	0	-21	6	wall	0
+art	city_sushi	wall_orange_01	0	-19	6	wall	0
+art	city_sushi	wall_orange_01	0	-17	6	wall	0
+art	city_sushi	wall_orange_01	0	-15	6	wall	0
+art	city_sushi	wall_orange_01	0	-13	6	wall	0
+art	extra	floor_tiles_sushi_02_8x14	0.02	-12	6	floor	0
+art	city_sushi	wall_orange_01	0	-11	6	wall	0
+art	city_sushi	wall_orange_01	0	-9	6	wall	0
+art	extra	floor_tiles_sushi_02_8x14	0.02	-8	6	floor	0
+art	city_sushi	wall_orange_01	0	-7	6	wall	0
+art	city_sushi	wall_orange_01	0	-5	6	wall	0
+art	extra	floor_tiles_sushi_02_8x14	0.02	-4	6	floor	0
+art	city_sushi	wall_orange_01	0	-3	6	wall	0
+art	city_sushi	wall_orange_01	0	-1	6	wall	0
+art	extra	floor_tiles_sushi_02_8x14	0.02	0	6	floor	0
+art	city_sushi	wall_orange_01	0	1	6	wall	0
+art	city_sushi	wall_orange_01	0	3	6	wall	0
+art	extra	floor_tiles_sushi_02_8x14	0.02	4	6	floor	0
+art	city_sushi	wall_orange_01	0	5	6	wall	0
+art	city_sushi	wall_orange_01	0	7	6	wall	0
+art	extra	floor_tiles_sushi_02_8x14	0.02	8	6	floor	0
+art	city_sushi	wall_orange_01	0	9	6	wall	0
+art	city_sushi	wall_orange_01	0	11	6	wall	0
+art	extra	floor_tiles_sushi_02_8x14	0.02	12	6	floor	0
+art	city_sushi	wall_orange_01	0	13	6	wall	0
+art	city_sushi	wall_orange_01	0	15	6	wall	0
+art	extra	floor_tiles_sushi_02_8x14	0.02	16	6	floor	0
+art	city_sushi	wall_orange_01	0	17	6	wall	0
+art	city_sushi	wall_orange_01	0	19	6	wall	0
+art	extra	floor_tiles_sushi_02_8x14	0.02	20	6	floor	0
+art	city_sushi	wall_orange_01	0	21	6	wall	0
+art	city_sushi	wall_orange_01	0	23	6	wall	0
+art	extra	floor_tiles_sushi_02_8x14	0.02	24	6	floor	0
+art	city_sushi	wall_orange_01	0	25	6	wall	0
+art	city_sushi	wall_orange_01	0	27	6	wall	0
+art	city_sushi	wall_orange_01	0	29	6	wall	0
+art	city_sushi	wall_orange_01	0	31	6	wall	0
+art	city_sushi	wall_orange_01	0	33	6	wall	0
+art	city_sushi	wall_orange_01	0	35	6	wall	0
+art	city_sushi	wall_orange_01	0	37	6	wall	0
+art	city_sushi	wall_orange_01	0	39	6	wall	0
+art	city_sushi	wall_orange_01	0	41	6	wall	0
+art	city_sushi	wall_orange_01	0	43	6	wall	0
+art	city_sushi	wall_orange_01	0	45	6	wall	0
+art	city_sushi	wall_orange_01	0	47	6	wall	0
+art	city_sushi	wall_orange_01	0	49	6	wall	0
+art	city_sushi	wall_orange_01	0	51	6	wall	0
+art	city_sushi	wall_orange_01	0	53	6	wall	0
+art	city_sushi	wall_orange_01	0	55	6	wall	0
+art	city_sushi	wall_orange_01	0	57	6	wall	0
+art	city_sushi	wall_orange_01	0	59	6	wall	0
+art	city_sushi	wall_orange_01	0	61	6	wall	0
+art	city_sushi	wall_orange_01	0	63	6	wall	0
+art	city_sushi	exterior_path_01	0	-34	8	ground	0
+art	city_sushi	exterior_path_01	0	-30	8	ground	0
+art	city_sushi	exterior_path_01	0	-26	8	ground	0
+art	city_sushi	exterior_path_01	0	-22	8	ground	0
+art	city_sushi	exterior_path_01	0	-18	8	ground	0
+art	city_sushi	exterior_path_01	0	-14	8	ground	0
+art	city_sushi	exterior_path_01	0	-10	8	ground	0
+art	city_sushi	exterior_path_01	0	-6	8	ground	0
+art	city_sushi	exterior_path_01	0	-2	8	ground	0
+art	city_sushi	exterior_path_01	0	2	8	ground	0
+art	city_sushi	exterior_path_01	0	6	8	ground	0
+art	city_sushi	exterior_path_01	0	10	8	ground	0
+art	city_sushi	exterior_path_01	0	14	8	ground	0
+art	city_sushi	exterior_path_01	0	18	8	ground	0
+art	city_sushi	exterior_path_01	0	22	8	ground	0
+art	city_sushi	exterior_path_01	0	26	8	ground	0
+art	city_sushi	exterior_path_01	0	30	8	ground	0
+art	city_sushi	exterior_path_01	0	34	8	ground	0
+art	city_sushi	exterior_path_01	0	38	8	ground	0
+art	city_sushi	exterior_path_01	0	42	8	ground	0
+art	city_sushi	exterior_path_01	0	46	8	ground	0
+art	city_sushi	exterior_fire_hydrant_01	0	-4	10	street-north	0
+art	city_sushi	exterior_fire_hydrant_01	0	14	10	street-north	0
+art	city_sushi	car_position_01	0	-40	12	car	270
+art	city_sushi	exterior_path_01	0	-34	12	ground	0
+art	city_sushi	exterior_path_01	0	-30	12	ground	0
+art	city_sushi	exterior_path_01	0	-26	12	ground	0
+art	city_sushi	exterior_path_01	0	-22	12	ground	0
+art	city_sushi	exterior_path_01	0	-18	12	ground	0
+art	city_sushi	exterior_path_01	0	-14	12	ground	0
+art	city_sushi	exterior_path_01	0	-10	12	ground	0
+art	city_sushi	exterior_path_01	0	-6	12	ground	0
+art	city_sushi	exterior_path_01	0	-2	12	ground	0
+art	city_sushi	exterior_path_01	0	2	12	ground	0
+art	city_sushi	exterior_path_01	0	6	12	ground	0
+art	city_sushi	exterior_path_01	0	10	12	ground	0
+art	city_sushi	exterior_path_01	0	14	12	ground	0
+art	city_sushi	exterior_path_01	0	18	12	ground	0
+art	city_sushi	exterior_path_01	0	22	12	ground	0
+art	city_sushi	exterior_path_01	0	26	12	ground	0
+art	city_sushi	exterior_path_01	0	30	12	ground	0
+art	city_sushi	exterior_path_01	0	34	12	ground	0
+art	city_sushi	exterior_path_01	0	38	12	ground	0
+art	city_sushi	exterior_path_01	0	42	12	ground	0
+art	city_sushi	exterior_path_01	0	46	12	ground	0
+art	city_sushi	exterior_man_hole_01	0.03	4	13	street-north	0
+art	city_sushi	exterior_path_01	0	-34	16	ground	0
+art	city_sushi	exterior_path_01	0	-30	16	ground	0
+art	city_sushi	exterior_path_01	0	-26	16	ground	0
+art	city_sushi	exterior_path_01	0	-22	16	ground	0
+art	city_sushi	exterior_path_01	0	-18	16	ground	0
+art	city_sushi	exterior_path_01	0	-14	16	ground	0
+art	city_sushi	exterior_path_01	0	-10	16	ground	0
+art	city_sushi	exterior_path_01	0	-6	16	ground	0
+art	city_sushi	exterior_path_01	0	-2	16	ground	0
+art	city_sushi	exterior_path_01	0	2	16	ground	0
+art	city_sushi	exterior_path_01	0	6	16	ground	0
+art	city_sushi	exterior_path_01	0	10	16	ground	0
+art	city_sushi	exterior_path_01	0	14	16	ground	0
+art	city_sushi	exterior_path_01	0	18	16	ground	0
+art	city_sushi	exterior_path_01	0	22	16	ground	0
+art	city_sushi	exterior_path_01	0	26	16	ground	0
+art	city_sushi	exterior_path_01	0	30	16	ground	0
+art	city_sushi	exterior_path_01	0	34	16	ground	0
+art	city_sushi	exterior_path_01	0	38	16	ground	0
+art	city_sushi	exterior_path_01	0	42	16	ground	0
+art	city_sushi	exterior_path_01	0	46	16	ground	0
+art	city_sushi	exterior_path_01	0	-34	20	ground	0
+art	city_sushi	exterior_path_01	0	-30	20	ground	0
+art	city_sushi	exterior_path_01	0	-26	20	ground	0
+art	city_sushi	exterior_path_01	0	-22	20	ground	0
+art	city_sushi	exterior_path_01	0	-18	20	ground	0
+art	city_sushi	exterior_path_01	0	-14	20	ground	0
+art	city_sushi	exterior_path_01	0	-10	20	ground	0
+art	city_sushi	exterior_path_01	0	-6	20	ground	0
+art	city_sushi	exterior_path_01	0	-2	20	ground	0
+art	city_sushi	exterior_path_01	0	2	20	ground	0
+art	city_sushi	exterior_path_01	0	6	20	ground	0
+art	city_sushi	exterior_path_01	0	10	20	ground	0
+art	city_sushi	exterior_path_01	0	14	20	ground	0
+art	city_sushi	exterior_path_01	0	18	20	ground	0
+art	city_sushi	exterior_path_01	0	22	20	ground	0
+art	city_sushi	exterior_path_01	0	26	20	ground	0
+art	city_sushi	exterior_path_01	0	30	20	ground	0
+art	city_sushi	exterior_path_01	0	34	20	ground	0
+art	city_sushi	exterior_path_01	0	38	20	ground	0
+art	city_sushi	exterior_path_01	0	42	20	ground	0
+art	city_sushi	exterior_path_01	0	46	20	ground	0
+art	city_sushi	exterior_path_01	0	-34	24	ground	0
+art	city_sushi	exterior_path_01	0	-30	24	ground	0
+art	city_sushi	exterior_path_01	0	-26	24	ground	0
+art	city_sushi	exterior_path_01	0	-22	24	ground	0
+art	city_sushi	exterior_path_01	0	-18	24	ground	0
+art	city_sushi	exterior_path_01	0	-14	24	ground	0
+art	city_sushi	exterior_path_01	0	-10	24	ground	0
+art	city_sushi	exterior_path_01	0	-6	24	ground	0
+art	city_sushi	exterior_path_01	0	-2	24	ground	0
+art	city_sushi	exterior_path_01	0	2	24	ground	0
+art	city_sushi	exterior_path_01	0	6	24	ground	0
+art	city_sushi	exterior_path_01	0	10	24	ground	0
+art	city_sushi	exterior_path_01	0	14	24	ground	0
+art	city_sushi	exterior_path_01	0	18	24	ground	0
+art	city_sushi	exterior_path_01	0	22	24	ground	0
+art	city_sushi	exterior_path_01	0	26	24	ground	0
+art	city_sushi	exterior_path_01	0	30	24	ground	0
+art	city_sushi	exterior_path_01	0	34	24	ground	0
+art	city_sushi	exterior_path_01	0	38	24	ground	0
+art	city_sushi	exterior_path_01	0	42	24	ground	0
+art	city_sushi	exterior_path_01	0	46	24	ground	0
+art	city_sushi	exterior_path_01	0	-34	28	ground	0
+art	city_sushi	exterior_path_01	0	-30	28	ground	0
+art	city_sushi	exterior_path_01	0	-26	28	ground	0
+art	city_sushi	exterior_path_01	0	-22	28	ground	0
+art	city_sushi	exterior_path_01	0	-18	28	ground	0
+art	city_sushi	exterior_path_01	0	-14	28	ground	0
+art	city_sushi	exterior_path_01	0	-10	28	ground	0
+art	city_sushi	exterior_path_01	0	-6	28	ground	0
+art	city_sushi	exterior_path_01	0	-2	28	ground	0
+art	city_sushi	exterior_path_01	0	2	28	ground	0
+art	city_sushi	exterior_path_01	0	6	28	ground	0
+art	city_sushi	exterior_path_01	0	10	28	ground	0
+art	city_sushi	exterior_path_01	0	14	28	ground	0
+art	city_sushi	exterior_path_01	0	18	28	ground	0
+art	city_sushi	exterior_path_01	0	22	28	ground	0
+art	city_sushi	exterior_path_01	0	26	28	ground	0
+art	city_sushi	exterior_path_01	0	30	28	ground	0
+art	city_sushi	exterior_path_01	0	34	28	ground	0
+art	city_sushi	exterior_path_01	0	38	28	ground	0
+art	city_sushi	exterior_path_01	0	42	28	ground	0
+art	city_sushi	exterior_path_01	0	46	28	ground	0

@@ -81,11 +81,45 @@ namespace WellCooked
             }
         }
 
+        /// <summary>最近一次加载失败的原因（空表示已发起加载）。</summary>
+        public static string LastError = "";
+
+        /// <summary>
+        /// 游戏是否已经在关卡里。主菜单（FrontendRootMenu）状态下调用
+        /// ServerMessenger.LoadLevel 不会报错，但会直接黑屏，所以必须先挡住。
+        /// </summary>
+        public static bool InLevel()
+        {
+            // 主菜单/加载屏阶段调用游戏的 LoadLevel 会黑屏（实测每帧 NRE 几千条），
+            // 只有已经进了关卡之后再加载才是安全的。
+            try
+            {
+                Type loading = AccessTools.TypeByName("LoadingScreenUIController");
+                if (loading != null && Resources.FindObjectsOfTypeAll(loading).Length > 0) return false;
+            }
+            catch { }
+            try
+            {
+                Type frontend = AccessTools.TypeByName("FrontendRootMenu");
+                if (frontend != null && Resources.FindObjectsOfTypeAll(frontend).Length > 0) return false;
+            }
+            catch { }
+            return true;
+        }
+
         /// <summary>Load one scene through the game's own kitchen flow. Safe to call from Update.</summary>
         public static void LoadScene(string scene, string source)
         {
+            LastError = "";
             if (string.IsNullOrEmpty(scene))
             {
+                return;
+            }
+
+            if (!InLevel() && Environment.GetEnvironmentVariable("WELLCOOKED_ALLOW_FRONTEND_LOAD") != "1")
+            {
+                LastError = "主菜单里不能直接进关：先进入任意关卡，再按 F9 选关";
+                Log("[Hotkey] refuse load from frontend: " + scene + " (active scene=" + UnityEngine.SceneManagement.SceneManager.GetActiveScene().name + ")");
                 return;
             }
 

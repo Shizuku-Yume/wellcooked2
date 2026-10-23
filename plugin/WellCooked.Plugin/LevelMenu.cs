@@ -24,6 +24,10 @@ namespace WellCooked
             "s_wellcooked_demo_2",
             "s_wellcooked_demo_3",
             "s_wellcooked_demo_4",
+            "s_wellcooked_show_sushi",
+            "s_wellcooked_show_beach",
+            "s_wellcooked_show_summer",
+            "s_wellcooked_show_city",
             "s_test_level",
         };
 
@@ -32,6 +36,8 @@ namespace WellCooked
         private static bool _drawLogged;
         private static int _selected;
         private static string _pendingLoad;
+        private static string _message = "";
+        private static float _messageUntil;
 
         private static GUIStyle _titleStyle;
         private static GUIStyle _itemStyle;
@@ -110,6 +116,7 @@ namespace WellCooked
 
         private static void Open()
         {
+            _message = "";
             _open = true;
             _drawLogged = false;
             Log("[Menu] F9 open; scenes: " + string.Join(", ", Scenes));
@@ -117,6 +124,8 @@ namespace WellCooked
 
         private static void Close(string source)
         {
+            _message = "";
+            _messageUntil = 0f;
             if (!_open)
             {
                 return;
@@ -151,6 +160,13 @@ namespace WellCooked
                 case KeyCode.Return:
                 case KeyCode.KeypadEnter:
                     e.Use();
+                    if (!HotkeyLoad.InLevel())
+                    {
+                        _message = "主菜单里不能直接进关：先进入任意关卡，再按 F9 选关";
+                        _messageUntil = float.MaxValue;
+                        Log("[Menu] refused: frontend state");
+                        break;
+                    }
                     _pendingLoad = Scenes[_selected];
                     Log("[Menu] Enter: queued " + _pendingLoad);
                     Close("Enter");
@@ -220,6 +236,16 @@ namespace WellCooked
                 new Rect(panel.x + padding, panel.y + panel.height - footerHeight, panel.width - padding * 2f, footerHeight),
                 "Up/Down: select    Enter: load    Esc: close    F9: close",
                 _hintStyle);
+
+            if (Time.realtimeSinceStartup < _messageUntil && _message.Length > 0)
+            {
+                GUI.color = new Color(1f, 0.55f, 0.2f, 1f);
+                GUI.Label(
+                    new Rect(panel.x + padding, panel.y + panel.height - footerHeight - 30f * scale, panel.width - padding * 2f, 28f * scale),
+                    _message,
+                    _hintStyle);
+                GUI.color = previous;
+            }
         }
 
         private static void EnsureStyles()
