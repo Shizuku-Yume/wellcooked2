@@ -45,6 +45,10 @@ namespace WellCooked
             public float SlideSign = 1f;
             public float SlideUntil;
             public int SlideCount;
+
+            /// <summary>附近是否真的有另一名厨师。侧向错身只对"两名厨师互推"有用；
+            /// 单人贴墙时错身会朝固定方向推墙，反而卡死（实测 20.6,-5.82）。</summary>
+            public bool Crowded;
         }
 
         private static readonly Dictionary<object, Agent> Agents = new Dictionary<object, Agent>();
@@ -89,6 +93,16 @@ namespace WellCooked
             agent.StartDistance = -1f;
             agent.MinDistance = float.MaxValue;
             agent.Reason = "";
+        }
+
+        /// <summary>告诉导航这个厨师附近有没有别的厨师（由 `Takeover` 每次扫描位置时更新）。</summary>
+        public static void SetCrowded(object owner, bool crowded)
+        {
+            Agent agent;
+            if (Agents.TryGetValue(owner, out agent))
+            {
+                agent.Crowded = crowded;
+            }
         }
 
         public static void Release(object owner)
@@ -152,7 +166,7 @@ namespace WellCooked
                 agent.StuckReported = false;
                 agent.SlideCount = 0;
             }
-            else if (now - agent.LastMovedAt > 0.4f && now >= agent.SlideUntil
+            else if (agent.Crowded && now - agent.LastMovedAt > 0.4f && now >= agent.SlideUntil
                      && Vector2.Distance(position, agent.Target) < Fallbacks.PassByRadius)
             {
                 // 侧向错身：两个厨师面对面互推时（路点正好在对穿位置），谁都不让、双双卡死

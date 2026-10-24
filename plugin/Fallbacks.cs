@@ -40,5 +40,8 @@ namespace WellCooked
         /// 该去掉：寻路按格子做冲突消解（谁先到谁走、另一个等一拍），而不是靠横向偏移绕。
         /// </summary>
         public const float PassByRadius = 3f;
+
+        /// <summary>另一个厨师在这个距离内才算"可能互推"，才允许侧向错身。</summary>
+        public const float CrowdedRadius = 1.2f;
     }
 }

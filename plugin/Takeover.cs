@@ -918,6 +918,40 @@ namespace WellCooked
 
             // control scheme 可能比厨师晚一帧就绪；Attach 可重复调用，装过的直接跳过。
             LogicalInput.Attach(chefs);
+
+            // 侧向错身只在"另一名厨师就在附近"时启用；单人贴墙时错身会朝固定方向推墙。
+            foreach (var entry in ChefControllers)
+            {
+                if (!IsLocalChef(entry.Value))
+                {
+                    continue;
+                }
+
+                Vector2 position;
+                if (!TryPosition(entry.Key, out position))
+                {
+                    continue;
+                }
+
+                bool crowded = false;
+                foreach (var other in ChefControllers)
+                {
+                    if (other.Key == entry.Key || !IsLocalChef(other.Value))
+                    {
+                        continue;
+                    }
+
+                    Vector2 otherPosition;
+                    if (TryPosition(other.Key, out otherPosition)
+                        && Vector2.Distance(position, otherPosition) < Fallbacks.CrowdedRadius)
+                    {
+                        crowded = true;
+                        break;
+                    }
+                }
+
+                Navigation.SetCrowded(entry.Key, crowded);
+            }
         }
 
         private static bool IsLocalChef(PlayerControls chef)

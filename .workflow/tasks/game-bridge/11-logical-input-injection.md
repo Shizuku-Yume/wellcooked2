@@ -5,7 +5,7 @@
 **Base commit:** 0608de6
 **Base branch:** main
 **Started:** 2026-10-24T11:32:09+08:00
-**Status:** blocked
+**Status:** active
 
 **Delivers:** 插件的输入注入从"设备层 InControl 反射"换成**逻辑层**：把 `PlayerControls.ControlScheme` 的
 `m_pickupButton`/`m_worksurfaceUseButton`/`m_dashButton`/`m_moveX`/`m_moveY` 换成自己实现的
@@ -84,25 +84,21 @@ bash scripts/dev-cycle.sh 20 s_wellcooked_demo_2
 | 放料 | `DropOnCounter 按交互（手上「SushiFish」...）` → 下一步 `3/6 切料`、`手上「」` |
 | X 键 | trace `用台面=True`（逻辑层喂给 `m_worksurfaceUseButton`） |
 | 单帧推进 | `step=1`：`Time.time=29.944 frame=4523` → `Time.time=29.952 frame=4524`；`pause=1` 显示 `Time.timeScale=0.00`；`step=0` 恢复 `1.00` |
-| 完成一单 | **未通过**：卡在 `4/6 去拿盘子`，见 Blocked |
+| 完成一单 | **通过**（`s_sushi_1_1`）：`工序: 完成一单（累计 1 单）`，`wellcooked-state.json` 的 `score=28`；完整顺序 1/6 取料 → 2/6 放砧板 → 3/6 切 → 4/6 拿盘子 → 5/7 装盘 → 6/7 拿走 → 7/7 交付 |
 
-## Blocked（2026-10-24：Check 混进了另一个任务的阻塞）
+### 解除（2026-10-24）
 
-任务原计划假设“work=auto 只差输入层”，实测不是。输入层已能驱动移动与 A/X，但同一局的整单
-被两处既有问题挡住：
+原计划以为“完成一单只差输入层”，实测后暴露两处执行面问题；都在本任务里做了最小修复，
+复查后整单通过（上表）：
 
-1. **切菜进度读不到**：`Kitchen.WorkState` 用 `WorldState.Get(workableItem, "HasFinished")`
-   读属性/字段，而 `ClientWorkableItem.HasFinished()` 是**方法**（反编译确认），所以永远 false。
-   日志 `反射: 没找到属性 ClientWorkableItem.HasFinished`。随后工序从 `3/6` 跳到 `4/6`，
-   砧板上的料也不再被识别（`WorkState` 返回 false）。这正是任务 12 的勾选项与技术债
-   「切菜靠按住 X + 超时重试」，不该在本任务里顺手改。
-2. **拿盘子的导航卡住**：`4/6 GetPlate` 目标 `(19.2,-3.6)`，厨师停在 `(20.6,-5.82)`，
-   trace `方向=(1.00,0.00) 侧向错身`，60 秒内没拿到盘子。属技术债
-   「工序就位卡住后退化成 1.4 米内直接按」「导航的第一路点被挡」。
+1. **切菜时料换了位置。** 厨师开始用工位后，料从 `ClientAttachStation.m_item` 转到
+   `ClientWorkstation.m_item`；`Kitchen.WorkState` 只看前者，下一帧就误判“板上没料”，
+   工序于是跳过切菜。现在两处都看（优先 attach station）。
+   日志里的 `反射: 没找到属性/字段 ClientWorkableItem.HasFinished` 是查找过程噪声：
+   `WorldState.Get` 在属性/字段未命中后还会找同名方法，`HasFinished()` 本来就能调到。
+2. **单人贴墙也走侧向错身。** 错身本意是两名厨师互推；单人时它朝固定方向推墙
+   （实测停在 `20.6,-5.82`、方向 `(1,0)`）。`Navigation` 现在只在 1.2 米内有另一名本地厨师
+   时才错身（`Takeover` 每次扫描位置更新 `Crowded`）。
 
-因此本任务的 **Delivers 已完成**，但原 `Check` 的“完成一单”无法在本分支单独通过。建议
-`flow-break` amend：
-
-- 把本任务的验收收窄成“逻辑层驱动移动/A/X + `step` 单帧”（上表已有证据），归档并落地；
-- 把“四张已确认地图上 `work=auto` 完成一单”移到 09/13 的最终验收，排在导航修复与任务 12 之后；
-- 导航那条技术债单独成任务（或并进任务 12 的前置），任务 12 的 Check 也依赖它。
+修完后 `4/6 GetPlate` 能走到盘子堆，`s_sushi_1_1` 完成 1 单（`score=28`）。
+任务 12 仍要做煮/煎与切步的 `HasFinished` 收手；这里只修了“切菜期间料的位置”这条前置。

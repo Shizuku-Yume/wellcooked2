@@ -343,12 +343,17 @@ namespace WellCooked
                 return false;
             }
 
-            // 料在 attach station 上（workstation.m_item 只在**有厨师正在用**的时候才非空，
-            // 平时是 null，所以不能拿它判"板上有没有料"）；进度在同一个物体上的
-            // ClientWorkableItem 组件里（attach station 的 m_item 只是 ClientPhysicalAttachment，
-            // 直接读 m_progress 只会得到一堆 AccessTools 警告）。
+            // 料在 attach station 上；但厨师开始用这个工位后，料会转到
+            // `ClientWorkstation.m_item`，attach station 的 `m_item` 变空。
+            // 只读 attach station 会在切菜开始后的下一帧误判"板上没料"，工序于是跳过切菜
+            // （实测 3/6 只打一行就开始去拿盘子）。两处都看，优先 attach station。
             var attach = occupant.GetComponent("ClientAttachStation");
             var attached = attach == null ? null : WorldState.Get(attach, "m_item") as Component;
+            if (attached == null)
+            {
+                attached = WorldState.Get(workstation, "m_item") as Component;
+            }
+
             if (attached == null)
             {
                 return false;
