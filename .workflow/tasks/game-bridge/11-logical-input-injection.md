@@ -134,4 +134,3 @@ Review boundary: `0608de6...HEAD` + working tree；round 1；paths `plugin/`、`
 日志不可见（本轮最后两次就没抓到日志）；抓证据前先停掉旧的 dev-cycle/游戏进程，
 或启动后直接把日志复制走。若同 run 证据始终抓不到，另一条路是把 Check 收窄成
 “逻辑层驱动移动/A/X + `step` 单帧”，整单验收转给 09/13——这需要用户点头。
-
