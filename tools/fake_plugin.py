@@ -44,10 +44,10 @@ DEFAULT_LISTEN_PORT = 14455     # Bridge 作服务端时的默认端口（两端
 DEFAULT_CONNECT_PORT = 14455    # 插件作服务端时的默认端口，Bridge --link connect 去连它
 HELLO_INSTANCE = "windows-host"
 HELLO_VERSION = "0.1.0"
-HELLO_ACTIONS = ("move", "stop", "press", "release", "tap", "pickup", "dash", "interact")
+HELLO_ACTIONS = ("move", "stop", "interact", "pickup", "dash")
 IDLE_ACTION = "stop"            # 输入槽缺失时 Bridge 下发的空闲动作
-# 线上 action 枚举（protocol/protocol.md §3.6 + schema/action.schema.json）：插件会做八个，
-# 但能调度到的只有这五个。收到别的名字说明 Bridge 与契约不一致，要当硬错误。
+# 线上 action 枚举（protocol/protocol.md §3.6 + schema/action.schema.json）：交付插件只声明
+# 这五个，press/release/tap 没有线上执行分支。收到别的名字说明 Bridge 与契约不一致，要当硬错误。
 WIRE_ACTIONS = ("move", "stop", "interact", "pickup", "dash")
 
 EXIT_OK = 0
@@ -2676,8 +2676,7 @@ def selftest():
     hello = json.loads(msg_hello())
     checks.hard("hello_matches_frozen_protocol",
                 hello == {"type": "hello", "instance": "windows-host", "version": "0.1.0",
-                          "actions": ["move", "stop", "press", "release", "tap",
-                                      "pickup", "dash", "interact"]},
+                          "actions": ["move", "stop", "interact", "pickup", "dash"]},
                 msg_hello())
     ack = json.loads(msg_ack("move", 3, True, "ok"))
     checks.hard("ack_matches_messages_cs",

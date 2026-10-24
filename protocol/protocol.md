@@ -19,8 +19,8 @@ C 侧 `bridge/include/kitchenos/protocol.h` + `bridge/src/protocol.c`，
   插件默认监听 `127.0.0.1:14455`。方向由模式表达，端口号不承担这个责任。
 - 绑定地址默认 **loopback**。链路没有认证，绑 `0.0.0.0` 等于把"谁能当插件"交给同网段的
   任何人；跨机演示时显式传 `--host 0.0.0.0`。
-- 两端都可配置：Bridge 用 `--port` / `--host`；插件侧下面列出的 `Network.*` 是 **net46 参考实现**
-  （`plugin/WellCooked.Plugin/`）的配置键，**net35 演示插件不读它们** —— 它只读
+- 两端都可配置：Bridge 用 `--port` / `--host`；插件侧下面列出的 `Network.*` 是**旧参考工程**
+  （`plugin/WellCooked.Plugin/`，也是 net35）的配置键，**交付插件不读它们** —— 它只读
   `BepInEx/wellcooked-takeover.txt` 里的 `bridge=` / `state_ms=`（见 `plugin/README.md`）。
   （`decisions.md: 2026-10-15 - Bridge 端口可配置，默认 14455`）
   两种拓扑跑同一套协议。
@@ -201,9 +201,9 @@ C 侧构造样例：
 `stop`、`pickup`、`dash` 都是**只有名字**的动作（不带任何附加字段）：`stop` 是空转，
 某个厨师的输入槽缺失或超时时 Bridge 就对他下发
 `{"type":"action","chef_id":N,"action":"stop"}`；`pickup`（取/放厨师脚下的东西）与 `dash`
-（朝当前朝向冲刺）来自输入槽的 `kos_action_kind`，插件 `InputInjector` 本来就实现了它们
-（它一共八个动作），2026-10-15 起允许被调度下发。插件的 `press`/`release`/`tap` 仍然只在
-插件内部可用 —— 需要按帧精确调度原始按键时再扩这里。
+（朝当前朝向冲刺）来自输入槽的 `kos_action_kind`，交付插件的 `ActionDriver` 支持这五个；
+旧参考工程 `WellCooked.Plugin` 的 `InputInjector` 一共八个动作，但它的 `press`/`release`/`tap`
+只在参考实现内部可用，交付插件不声明也不执行它们。
 
 C 侧构造样例（前两条与 §5.2 的两条控制指令一致）：
 

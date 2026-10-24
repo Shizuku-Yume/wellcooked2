@@ -108,7 +108,9 @@ effort 里不成立，跨端契约的基准是 `protocol/`。）
   两种模式各完成一次完整帧交换。
 - **W8.** 实机：Windows 游戏启动后，Bridge 日志出现 `hello` 与 `state_update`（**唯一需要
   启动游戏的一次验证**）。
-  - **动手前先删旧配置。** BepInEx 只给**缺失**的键补默认值，已存在的键原样保留，所以上一次
+  - **用参考工程（`plugin/WellCooked.Plugin/`）跑时，动手前先删旧配置。** 交付插件
+    （`WellCooked.Smoke`）不读 BepInEx 的 `config/*.cfg`，没有这个问题；下面这条只适用于参考工程。
+    BepInEx 只给**缺失**的键补默认值，已存在的键原样保留，所以上一次
     运行留下的 `BepInEx/config/com.wellcooked.plugin.cfg` 会把新默认值全部盖掉。2026-10-15
     实测那份旧文件里 `Network.Port = 12345`、`State.IntervalMs = 500`、
     `Network.ReconnectDelayMs = 3000`，而当时代码默认值已经是 `14455` / `0`（每帧）/ `2000` ——
@@ -133,9 +135,9 @@ Worker 分别写 `pickup`/`dash`，断言它们原样到达对端），它替代
 
 ```
 干净构建 make exit=0         （0 个 error）
-干净构建 make test exit=0    （=== 5 test suites, 0 failed ===，840 项检查）
+干净构建 make test exit=0    （=== 5 test suites, 0 failed ===，885 项检查）
 干净构建 make test-san exit=0（ASan/UBSan 下同样 0 failed、0 sanitizer 报告）
-干净树套件 exit=0            （合计: 10 个场景, 通过 10, 失败 0 ── 结论: 全部通过）
+干净树套件 exit=0            （合计: 11 个场景, 通过 11, 失败 0 ── 结论: 全部通过）
 ```
 
 另有跨实现一致性检查（需要 Windows 侧的 `csc`，见 `plugin/tools/conformance/README.md`）：
@@ -148,7 +150,7 @@ Worker 分别写 `pickup`/`dash`，断言它们原样到达对端），它替代
 
 | 项 | 状态 | 证据 |
 |---|---|---|
-| **W1** | ✅ | 5 套件全绿：framing 151 + json 166 + protocol 226 + net 202 + shm 95 = **840 项检查**，`make test` 退出码 0；`make test-san`（ASan/UBSan）同样 0 failed。protocol 那 226 项里含 5 个 action（move/stop/interact/pickup/dash）的构造、往返与"缓冲区装不下就报错" |
+| **W1** | ✅ | 5 套件全绿：framing 194 + json 166 + protocol 226 + net 204 + shm 95 = **885 项检查**，`make test` 退出码 0；`make test-san`（ASan/UBSan）同样 0 failed。protocol 那 226 项里含 5 个 action（move/stop/interact/pickup/dash）的构造、往返与"缓冲区装不下就报错" |
 | **W2** | ✅ | `happy`：连上、`hello`、60 Hz `state_update`、481 个动作（另一次 480）、`echo_reply` 往返、写共享内存，退出码 0；`pickup-dash`：两个 Worker 分别写 `pickup`/`dash`，对端各收到 120 次且 0 条被拒 |
 | **W3** | ✅ | `one-slot`：缺槽厨师 **240/240 全 `stop`**；活跃槽稳定收到 `move`；日志点名（`slots_missing ... missing=1`） |
 | **W4** | ✅ | `no-heartbeat`：`plugin_timeout silent_ms=801` → 暂停下发（0 动作）→ 重连 → `plugin_resumed` → 恢复 |
@@ -164,9 +166,9 @@ Worker 分别写 `pickup`/`dash`，断言它们原样到达对端），它替代
 | §834-842「Bridge 进程」 | 唯一连游戏的进程、按帧写共享内存、读输入槽汇总下发、按帧同步、崩溃时发 idle 保持连接 | 全部实现；其中"阻塞等待"实现为**有界等待**，理由见下 |
 | §543-553「共享内存 + 信号量」 | `shm_open("/kitchenos_state")` | 默认名一致 |
 | §6.2.3（951-966） | "使用 **seqlock 或** 读写信号量保护"；Bridge 独占写、Scheduler/Worker 并发读、Worker 独占写各自输入槽；"这是典型的读者写者问题" | 选 seqlock；权限划分与文档逐条一致 |
-| §6.2.4（968-975） | "BepInEx 插件在游戏进程内启动 TCP 服务器（localhost:14455）；Linux 侧 Bridge 作为客户端连接" | 反向模式：Bridge `--link connect` 默认拨 `127.0.0.1:14455` 实测 PASS，插件 server 模式监听 `Network.ServerPort`（默认 14455）。插件这一半是静态对齐，未实机跑过 |
+| §6.2.4（968-975） | "BepInEx 插件在游戏进程内启动 TCP 服务器（localhost:14455）；Linux 侧 Bridge 作为客户端连接" | 反向模式：Bridge `--link connect` 默认拨 `127.0.0.1:14455` 实测 PASS。交付插件 `LinkRunner` **只实现 client**，没有 server 模式；server 模式只在旧参考工程里（`Network.ServerPort`，默认 14455），且那一半未实机跑过（静态读代码，无自动检查） |
 | §2.2.1 / §5.1 | Bridge 作 TCP 服务端（样例代码写 `0.0.0.0:12345`） | `--link listen` 实测 PASS；默认端口按组员决策统一成 **14455**、默认绑 **loopback**（`decisions.md: 2026-10-15 - 端口按组员决策统一成 14455`），与课程文档样例的 12345 / `INADDR_ANY` 不同，跨机时用 `--host 0.0.0.0` 覆盖 |
-| §5.2 | 消息类型名与字段 | 与 `Messages.cs` 九个类型名逐字相同，测试里做双向映射校验；`action` 枚举取插件八个动作里的五个（`move`/`stop`/`interact`/`pickup`/`dash`，见 `decisions.md: 2026-10-15 - action 枚举扩到 5 个`）；schema 另用 `jsonschema` 对 150+150 条真实帧校验，并确认 6 条不合契约的形状被拒（`logs/schema-check.out`） |
+| §5.2 | 消息类型名与字段 | 与 `Messages.cs` 九个类型名逐字相同，测试里做双向映射校验；`action` 枚举就是交付插件声明的五个（`move`/`stop`/`interact`/`pickup`/`dash`，见 `decisions.md: 2026-10-15 - action 枚举扩到 5 个`）；schema 另用 `jsonschema` 对 150+150 条真实帧校验，并确认 6 条不合契约的形状被拒（`logs/schema-check.out`） |
 | §5.3 | 解析失败 ⇒ 记录并丢弃；断开 ⇒ 等待重连 | 逐条实现，`bad-frames` / `no-heartbeat` 覆盖 |
 | §6.3 | 用 `sigaction`（不用 `signal`） | `sigaction` + 处理函数只置 `volatile sig_atomic_t` |
 | §6.6 | 日志目录与可读性 | `logs/bridge.log`（超集），`ISO8601(毫秒) 级别 事件名 key=value` |
@@ -199,14 +201,15 @@ Worker 分别写 `pickup`/`dash`，断言它们原样到达对端），它替代
 - **Landing 模式**：`standards.md` 现填 `local-merge`。仓库有一个共享远端
   （Shizuku-Yume/wellcooked2），若确定多人同时推，应改成 `pr`。用户一句话即可定。
 - **插件侧每帧阻塞**：文档 §6.1 把"每帧发送状态消息，阻塞等待输入响应"算作**插件**职责，
-  当前插件是 500ms 定时推送。要不要改由插件 effort 决定；Bridge 两种都能接。
+  交付插件默认每帧推送 `state_update`（`state_ms=0`），但不阻塞等响应；Bridge 两种都能接。
+  （静态读 `LinkRunner`；conformance 不编译它，这一条没有自动检查。）
 
 ## Notes
 
-- 版本基准：插件 `WellCooked.Plugin` 0.1.0（**由本 effort 补写**，`a67ea3b`），分帧见
-  `plugin/WellCooked.Plugin/Net/TcpLink.cs`，消息字段见
-  `plugin/WellCooked.Plugin/Protocol/Messages.cs` 与课程文档 §5.2。两端出自同一轮，
-  跨端一致性的独立证据只有 `plugin/tools/conformance/` 与那次实机运行。
+- 版本基准：交付插件 `WellCooked.Smoke` 0.1.0；分帧见 `plugin/Link/TcpLink.cs`，消息字段见
+  `plugin/Link/Messages.cs` 与课程文档 §5.2（`plugin/WellCooked.Plugin/` 是旧参考实现，
+  conformance 现在编的是交付插件那两个文件）。跨端一致性的独立证据是
+  `plugin/tools/conformance/` 与实机运行。
 - 本机 WSL2 = Ubuntu 26.04，仓库在 `/mnt/d`（9p）；共享内存与信号量在 `/dev/shm`（tmpfs），
   运行时目录（pid、日志）可配置，默认 Linux 原生路径以避开 9p 的文件锁语义差异。
 - 相关任务：`.workflow/done/bridge/01…06`（`tasks/bridge/` 现在为空）。

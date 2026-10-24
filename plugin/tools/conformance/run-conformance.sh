@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 #
-# run-conformance.sh —— 跨实现一致性测试的 WSL 半场：
+# run-conformance.sh —— 跨实现一致性测试的 Linux 半场：
 # 起 C 桥，用「由插件自己的协议代码编译出来的对端」驱动它，并判定双方。
 #
-# 在 WSL 里、仓库根目录下运行：
+# 在仓库根目录下运行（Linux 或 WSL 都行）：
 #
 #     bash plugin/tools/conformance/run-conformance.sh [port] [seconds] [require-kinds] [stub-kind]
 #
@@ -13,21 +13,15 @@
 # `stub-kind` 可以是逗号分隔的一到两个动作名（move/stop/interact/pickup/dash），逐个写进
 # slot 0、slot 1；用它来让"扩过的 action 枚举"也被插件自己的解码器验一遍，例如：
 #
-#     powershell -NoProfile -File plugin/tools/conformance/run-conformance.ps1 \
-#         -RequireKinds pickup,dash -StubKind pickup,dash
+#     bash plugin/tools/conformance/run-conformance.sh 12402 3 pickup,dash pickup,dash
 #
-# 先编译对端（它是 Windows 程序；见 run-conformance.ps1——它用 csc 编译完再来调本脚本）：
-#
-#     powershell -NoProfile -File plugin/tools/conformance/run-conformance.ps1
-#
-# 本脚本为什么不自己编译对端：工作目录是本仓库时，csc.exe 无法经 WSL interop 驱动，
-# 因为检出路径不是 ASCII——它打不开传给它的任何一个源文件（报 "Source file '<仓库>\PluginPeer.cs'
-# could not be opened"）。这是 interop 的事实，不是源码的问题；从 Windows 侧编译正常，
-# 所以 run-conformance.ps1 在那里编译，跨边界只传 ASCII 参数。
-#
-# 这半场为什么用 bash 而不是 PowerShell：桥是 Linux 进程，对端经 WSL interop 运行，
-# 只有一个 shell 能同时管住两个进程的生命周期、两个退出码和日志。用 PowerShell 把 shell 脚本
-# 交给 `wsl.exe -c` 是行不通的：wsl.exe 用空格拼接参数，会静默吃掉引号，跑起来的是别的东西。
+# 本脚本自己编译对端：被测对象是**交付插件**的 plugin/Link/Messages.cs +
+# plugin/Link/TcpLink.cs，对端必须由「此刻磁盘上的字节」编译，而不是旧版本的字节。Linux 上
+# 用 dotnet（`~/.dotnet/dotnet` 或 PATH 里的）build conformance/PluginPeer.csproj；
+# 没有 dotnet 时才退回 Windows 侧 run-conformance.ps1 编译的 PE 可执行文件（WSL interop 能跑）。
+# 跨边界调用用 bash 而不是 PowerShell：桥是 Linux 进程，只有一个 shell 能同时管住两个进程的
+# 生命周期、两个退出码和日志。用 PowerShell 把脚本交给 `wsl.exe -c` 不行：wsl.exe 用空格拼接
+# 参数，会静默吃掉引号，跑起来的是别的东西。
 #
 # 共享内存名是本次测试专用的，所以这一轮既不会撞上、也不会杀掉别人按默认名留着的桥。
 #
@@ -59,11 +53,13 @@ fi
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 cd "$REPO_ROOT" || exit 3
 
-# ---- 被测产物（由 run-conformance.ps1 编译）--------------------------------
+# ---- 被测产物（交付插件，原样编译）------------------------------------------
+PEER_PROJ="plugin/tools/conformance/PluginPeer.csproj"
 PEER_SRC="plugin/tools/conformance/PluginPeer.cs"
-PEER_EXE="plugin/tools/conformance/bin/PluginPeer.exe"
-MESSAGES_SRC="plugin/WellCooked.Plugin/Protocol/Messages.cs"
-TCPLINK_SRC="plugin/WellCooked.Plugin/Net/TcpLink.cs"
+PEER_DLL="plugin/tools/conformance/bin/PluginPeer.dll"
+PEER_EXE="plugin/tools/conformance/bin/PluginPeer.exe"   # 仅当用 ps1 在 Windows 侧编译过
+MESSAGES_SRC="plugin/Link/Messages.cs"
+TCPLINK_SRC="plugin/Link/TcpLink.cs"
 
 BRIDGE_BIN="bridge/build/kitchenos-bridge"
 STUB_BIN="bridge/build/kitchenos-worker-stub"
@@ -73,7 +69,7 @@ LOG="logs/conformance-bridge.log"
 BRIDGE_OUT="logs/conformance-bridge.out"
 STUB_OUT="logs/conformance-stub.out"
 PEER_OUT="logs/conformance-peer.out"
-CSC_OUT="logs/conformance-csc.out"   # written by run-conformance.ps1
+CSC_OUT="logs/conformance-csc.out"   # dotnet build 或 csc 的输出
 
 STATE="/kitchenos_conformance"
 SEM="/kitchenos_conformance_sem"
@@ -118,28 +114,53 @@ field() { grep -m 1 -- "$1" "$LOG" 2>/dev/null || true; }
 
 mkdir -p logs plugin/tools/conformance/bin
 
-# ============================================================ 1. 对端程序
-say "== 1. 对端：由插件自己的源码编译（未改动）=="
-if [ ! -x "$PEER_EXE" ]; then
-    say "  $PEER_EXE 不存在或不可执行。"
-    say "  请先在 Windows 侧编译："
-    say "      powershell -NoProfile -File plugin/tools/conformance/run-conformance.ps1"
-    say "  它执行的就是下面这条命令，用的是 Windows 自带的编译器："
-    say "      C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe /nologo /target:exe /warn:4 \\"
-    say "          /out:$PEER_EXE \\"
-    say "          $PEER_SRC $MESSAGES_SRC $TCPLINK_SRC"
-    exit 3
+# 优先用 dotnet（Linux 原生）。没有时退回 Windows 侧编译的 PE（WSL interop 能执行）。
+DOTNET="${DOTNET:-}"
+if [ -z "$DOTNET" ]; then
+    if command -v dotnet > /dev/null 2>&1; then
+        DOTNET="$(command -v dotnet)"
+    elif [ -x "$HOME/.dotnet/dotnet" ]; then
+        DOTNET="$HOME/.dotnet/dotnet"
+    fi
 fi
 
-# 那两个源文件才是被测对象：对端必须由「此刻磁盘上的字节」编译，而不是旧版本的字节。
-# 拿可执行文件的时间戳和源文件比，能抓住「我改了 Messages.cs 却没重编译就跑」这种情况。
-for src in "$PEER_SRC" "$MESSAGES_SRC" "$TCPLINK_SRC"; do
-    if [ "$src" -nt "$PEER_EXE" ]; then
-        say "  $src 比 $PEER_EXE 新：先重新编译，这一轮才可信"
+# ============================================================ 1. 对端程序
+say "== 1. 对端：由交付插件的源码编译（未改动）=="
+PEER_CMD=()
+if [ -n "$DOTNET" ]; then
+    say "  $DOTNET build $PEER_PROJ -c Release"
+    if ! "$DOTNET" build "$PEER_PROJ" -c Release -o plugin/tools/conformance/bin \
+            > "$CSC_OUT" 2>&1; then
+        say "  编译失败（输出在 $CSC_OUT）："
+        sed 's/^/    /' "$CSC_OUT"
         exit 3
     fi
-done
-ok "$PEER_EXE （$(stat -c %s "$PEER_EXE") 字节）比它所依据的源文件新"
+    # 源码才被测对象：只要有一个源文件比产物新，这个产物就不属于这一轮。
+    for src in "$PEER_SRC" "$MESSAGES_SRC" "$TCPLINK_SRC" "$PEER_PROJ"; do
+        if [ "$src" -nt "$PEER_DLL" ]; then
+            say "  $src 比 $PEER_DLL 新：编译没生效，拒绝用旧字节测试"
+            exit 3
+        fi
+    done
+    ok "$PEER_DLL （$(stat -c %s "$PEER_DLL") 字节）由 $MESSAGES_SRC + $TCPLINK_SRC 编译"
+    PEER_CMD=("$DOTNET" "$PEER_DLL")
+elif [ -x "$PEER_EXE" ]; then
+    for src in "$PEER_SRC" "$MESSAGES_SRC" "$TCPLINK_SRC"; do
+        if [ "$src" -nt "$PEER_EXE" ]; then
+            say "  $src 比 $PEER_EXE 新：先在 Windows 侧重编译（run-conformance.ps1）"
+            exit 3
+        fi
+    done
+    ok "$PEER_EXE （$(stat -c %s "$PEER_EXE") 字节）比它所依据的源文件新（Windows 侧编译）"
+    PEER_CMD=("$PEER_EXE")
+else
+    say "  找不到 dotnet，也没有 Windows 侧编译的 $PEER_EXE。"
+    say "  二选一："
+    say "    * 装 .NET 9 SDK，然后直接重跑本脚本（本机 ~/.dotnet/dotnet 也算）；"
+    say "    * 在 Windows 侧跑："
+    say "      powershell -NoProfile -File plugin/tools/conformance/run-conformance.ps1"
+    exit 3
+fi
 
 # ============================================================ 2. 编译 C 核心
 say ""
@@ -206,10 +227,10 @@ fi
 # ============================================================ 4. 跑对端
 say ""
 say "== 4. 跑对端（插件自己的协议代码）=="
-say "  $PEER_EXE --host 127.0.0.1 --port $PORT --seconds $STREAM_SECONDS --require-kinds $REQUIRE_KINDS"
+say "  ${PEER_CMD[*]} --host 127.0.0.1 --port $PORT --seconds $STREAM_SECONDS --require-kinds $REQUIRE_KINDS"
 say ""
 
-"$PEER_EXE" --host 127.0.0.1 --port "$PORT" --seconds "$STREAM_SECONDS" \
+"${PEER_CMD[@]}" --host 127.0.0.1 --port "$PORT" --seconds "$STREAM_SECONDS" \
     --hz 60 --require-kinds "$REQUIRE_KINDS" \
     2>&1 | tee "$PEER_OUT"
 PEER_RC=${PIPESTATUS[0]}

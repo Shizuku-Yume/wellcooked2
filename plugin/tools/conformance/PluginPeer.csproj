@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- 一致性对端：把交付插件的两个协议源文件原样编进来。
+       Linux 上用 dotnet build 编译（run-conformance.sh 调它）；
+       net35 游戏 Mono 跑不了这个控制台程序，但源码只用到那套 API，
+       编译目标只是宿主运行时。 -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <AssemblyName>PluginPeer</AssemblyName>
+    <RootNamespace>WellCooked.Conformance</RootNamespace>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="PluginPeer.cs" />
+    <Compile Include="../../Link/Messages.cs" Link="Messages.cs" />
+    <Compile Include="../../Link/TcpLink.cs" Link="TcpLink.cs" />
+  </ItemGroup>
+
+</Project>

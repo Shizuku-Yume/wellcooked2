@@ -8,9 +8,12 @@
  *   - 世界状态：Bridge 独占写、其它进程并发读 → seqlock。写者把序号改奇、写屏障、
  *     改数据、写屏障、序号改偶；读者两次读到的序号相同才认这份快照。
  *   - 输入槽：每个厨师一格，只有该厨师的 Worker 写自己那格 → 每格一个独立 seqlock。
- *     Worker 写完 sem_post("/kitchenos_input_ready")。Bridge sem_timedwait 等到有动静后
- *     必须回槽里核对 frame_id：计数信号量分不清是哪一格、哪一帧，它只是门铃，
- *     "第 N 帧该槽是否就绪"的唯一权威是槽本身。
+ *     Worker 写完 sem_post("/kitchenos_input_ready")。Bridge **不阻塞等这个信号量**：
+ *     它用 kos_shm_slot_read() 非阻塞探测各槽的 frame_id，信号量只当门铃（开新帧前
+ *     drain 掉积压的 post），"第 N 帧该槽是否就绪"的唯一权威是槽本身。等到帧截止时间
+ *     （--frame-timeout-ms）仍没有新版本的槽按缺失处理，对应厨师降级成 idle；超过
+ *     --input-grace-ms 都没动静才认为 Worker 死了。实现见 bridge/src/bridge.c 的
+ *     probe_slots()。
  *
  * 版本与残留：段头第一个字段是 magic + version，创建时还会把结构尺寸一起写进去。
  * 版本、magic 或尺寸任一不匹配都拒绝挂接并给出明确错误 —— 绝不复用布局不同的旧段，
