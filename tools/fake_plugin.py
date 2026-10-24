@@ -27,8 +27,10 @@ import select
 import signal
 import socket
 import struct
+import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import traceback
@@ -57,7 +59,7 @@ EXIT_SKIP = 77
 
 SCENARIOS = ("happy", "one-slot", "no-heartbeat", "bad-frames", "connect-mode",
              "reconnect-storm", "silent-connect", "data-shapes", "second-peer",
-             "pickup-dash", "input-grace")
+             "pickup-dash", "input-grace", "os-loop", "os-resources")
 
 # 日志行 = "ISO8601(毫秒) 级别 事件名 key=value ..."（bridge/src/log.c）。
 # 只认行首这个位置上的事件名：key=value 里出现同名词不算一次事件。
@@ -234,6 +236,36 @@ def msg_state_update(n_chefs, frame_index, flat_xy=False, edge_fields=False):
         resources["pot_7"] = {"state": "free"}
         resources["plate_stack"] = {"count": 0}
         msg["unknown_field"] = "parsers must ignore this"
+    return jdump(msg)
+
+
+def msg_state_update_os(chefs, frame_index, cells):
+    """os-loop 用：厨师站在 kitchen 网格里，订单用真实菜名。
+
+    Bridge 只负责把这份状态搬进 shm；Scheduler 从 shm 读订单，Worker 从 shm 读
+    厨师起点。坐标必须落在可走格上，否则 A* 只能从"最近的可走格"起步，测试就看
+    不出起点是否被正确读取。
+    """
+    picks = [cells[0], cells[-1], cells[len(cells) // 2], cells[len(cells) // 4]]
+    out = []
+    for i in range(chefs):
+        cell = picks[i % len(picks)]
+        out.append({"id": i, "position": {"x": cell[0], "y": cell[1]},
+                    "holding": None, "state": "idle"})
+    msg = {
+        "type": "state_update",
+        "timestamp": int(time.time()),
+        "game_time": frame_index // 30,
+        "score": 0,
+        "chefs": out,
+        "orders": [
+            {"id": "world-001", "recipe": "SteamedSpecial_Fish",
+             "time_remaining": 90, "ingredients": ["fish"]},
+            {"id": "world-002", "recipe": "SteamedSpecial_Meat",
+             "time_remaining": 90, "ingredients": ["meat"]},
+        ],
+        "resources": {"plate_stack": {"count": 5}},
+    }
     return jdump(msg)
 
 
@@ -567,7 +599,7 @@ def collect(link, stats, duration):
 
 def run_exchange(link, stats, duration, *, chefs=1, hz=60.0, heartbeat_ms=500,
                  send_state=True, send_heartbeat=True, ack_actions=True,
-                 echo_at=None, edge_at=None, flat_xy=False):
+                 echo_at=None, edge_at=None, flat_xy=False, state_builder=None):
     """主循环：按 hz 发 state_update、按 heartbeat_ms 发心跳，同时收动作并回 ack。
 
     收和发在同一个循环里，select 的等待时间取"下一个发送时刻"，所以 60 Hz 不会
@@ -604,8 +636,11 @@ def run_exchange(link, stats, duration, *, chefs=1, hz=60.0, heartbeat_ms=500,
             echo_sent = True
 
         if send_state and period and now >= next_state and now < end:
-            payload = msg_state_update(chefs, stats.frame_index, flat_xy=flat_xy,
-                                       edge_fields=False)
+            if state_builder is not None:
+                payload = state_builder(chefs, stats.frame_index)
+            else:
+                payload = msg_state_update(chefs, stats.frame_index, flat_xy=flat_xy,
+                                           edge_fields=False)
             if _safe_send(link, stats, payload, "state_update"):
                 stats.tx_states += 1
                 stats.frame_index += 1
@@ -614,8 +649,11 @@ def run_exchange(link, stats, duration, *, chefs=1, hz=60.0, heartbeat_ms=500,
                 next_state = now + period
 
         if edge_at is not None and not edge_sent and now - start >= edge_at and now < end:
-            payload = msg_state_update(chefs, stats.frame_index, flat_xy=flat_xy,
-                                       edge_fields=True)
+            if state_builder is not None:
+                payload = state_builder(chefs, stats.frame_index)
+            else:
+                payload = msg_state_update(chefs, stats.frame_index, flat_xy=flat_xy,
+                                           edge_fields=True)
             if _safe_send(link, stats, payload, "state_update(edge)"):
                 stats.tx_states += 1
                 stats.frame_index += 1
@@ -870,6 +908,72 @@ class WorkerStub:
         return _tail(self.console_path, 15)
 
 
+class SupervisorProc:
+    """被测试的整棵进程树：Supervisor 自己拉起 Bridge/Scheduler/Workers。"""
+
+    def __init__(self, binary, argv, console_path):
+        self.binary = str(binary)
+        self.argv = list(argv)
+        self.console_path = Path(console_path)
+        self.proc = None
+        self.console = None
+        self.pid = None
+        self.term_seconds = None
+        self.term_ok = None
+
+    def start(self):
+        self.console_path.parent.mkdir(parents=True, exist_ok=True)
+        self.console = open(self.console_path, "wb")
+        self.proc = subprocess.Popen(
+            [self.binary] + self.argv,
+            cwd=str(REPO_ROOT),
+            stdin=subprocess.DEVNULL,
+            stdout=self.console,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+        self.pid = self.proc.pid
+
+    def alive(self):
+        return self.proc is not None and self.proc.poll() is None
+
+    def exit_code(self):
+        return None if self.proc is None else self.proc.poll()
+
+    def terminate(self, timeout=5.0):
+        if self.proc is None:
+            return True, 0.0, None
+        if not self.alive():
+            self.term_ok = True
+            self.term_seconds = 0.0
+            return True, 0.0, self.exit_code()
+        start = time.monotonic()
+        try:
+            self.proc.send_signal(signal.SIGTERM)
+        except OSError:
+            pass
+        while time.monotonic() - start < timeout:
+            if not self.alive():
+                self.term_ok = True
+                self.term_seconds = time.monotonic() - start
+                return True, self.term_seconds, self.exit_code()
+            time.sleep(0.05)
+        try:
+            os.killpg(os.getpgid(self.pid), signal.SIGKILL)
+        except OSError:
+            pass
+        try:
+            self.proc.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            pass
+        self.term_ok = False
+        self.term_seconds = time.monotonic() - start
+        return False, self.term_seconds, self.exit_code()
+
+    def console_text(self):
+        return _tail(self.console_path, 40)
+
+
 # --------------------------------------------------------------------------
 # 共享内存世界状态：按 shm.h 的布局直接读，证明 Bridge 究竟写进去了什么
 # --------------------------------------------------------------------------
@@ -1088,6 +1192,9 @@ class Ctx:
         self.log_path = Path(log)
         self.console_path = Path(str(self.log_path) + ".console")
         self.bridge = None
+        self.supervisor = None
+        self.runtime_dir = None
+        self.keep_runtime = False
         self.stubs = []
         self.started_shm = []
 
@@ -1188,6 +1295,81 @@ class Ctx:
         raise InfraError("bridge could not get a usable port after %d attempts (%s)"
                          % (retries, last))
 
+    def start_supervisor(self, *, port, chefs, lease_ttl_ms=None):
+        binary = Path(self.args.supervisor or
+                      Path(self.args.bridge).with_name("kitchenos-supervisor"))
+        if not binary.exists():
+            raise InfraError("supervisor binary not found: %s (build it with: cd bridge && make)"
+                             % binary)
+        self.runtime_dir = Path(tempfile.mkdtemp(prefix="kitchenos-osloop-"))
+        argv = ["--foreground",
+                "--runtime-dir", str(self.runtime_dir),
+                "--state-name", self.state_name, "--sem-name", self.sem_name,
+                "--bridge-port", str(port), "--workers", str(chefs),
+                "--strategy", "fcfs",
+                "--health-interval-ms", "100",
+                "--supervisor-heartbeat-ms", "100",
+                "--heartbeat-timeout-ms", "2000",
+                "--stop-timeout-ms", "2000",
+                "--kitchen", str(self.args.kitchen),
+                "--recipes", str(self.args.recipes),
+                "--orders", str(self.args.orders)]
+        if lease_ttl_ms is not None:
+            argv += ["--lease-ttl-ms", str(lease_ttl_ms)]
+        argv.append("--verbose")
+        console = self.runtime_dir / "supervisor.console"
+        self.supervisor = SupervisorProc(binary, argv, console)
+        self.supervisor.start()
+        _say("    info       supervisor pid=%d runtime=%s" %
+             (self.supervisor.pid, self.runtime_dir))
+        return self.supervisor
+
+    def wait_supervisor_ready(self, port, chefs, timeout):
+        expected = {"bridge", "scheduler"} | {"worker-%d" % i for i in range(chefs)}
+        deadline = time.monotonic() + timeout
+        status_path = self.runtime_dir / "status.json"
+        while time.monotonic() < deadline:
+            if self.supervisor is not None and not self.supervisor.alive():
+                return False
+            try:
+                status = json.loads(status_path.read_text())
+                running = {c.get("role") for c in status.get("children", [])
+                           if c.get("state") == "running" and (c.get("pid") or 0) > 0}
+            except (OSError, ValueError):
+                running = set()
+            if expected <= running:
+                try:
+                    sock = socket.create_connection((self.args.host, port), timeout=0.2)
+                    sock.close()
+                    return True
+                except OSError:
+                    pass
+            time.sleep(0.05)
+        return False
+
+    def supervisor_status(self):
+        if self.runtime_dir is None:
+            return {}
+        try:
+            return json.loads((self.runtime_dir / "status.json").read_text())
+        except (OSError, ValueError):
+            return {}
+
+    def stop_supervisor(self):
+        if self.supervisor is None:
+            return None, None
+        ok, seconds, code = self.supervisor.terminate(5.0)
+        _say("    info       supervisor SIGTERM: ok=%s %.2fs exit=%s" %
+             (ok, seconds or 0.0, code))
+        self.supervisor = None
+        return code, seconds
+
+    def run_dir(self):
+        if self.runtime_dir is None:
+            return None
+        runs = sorted((self.runtime_dir / "runs").glob("*"))
+        return runs[-1] if runs else None
+
     def start_stub(self, *, slot, chefs, hz, duration, kind="move"):
         binary = Path(self.args.worker_stub)
         argv = ["--state-name", self.state_name, "--sem-name", self.sem_name,
@@ -1202,6 +1384,8 @@ class Ctx:
         return stub
 
     def stop_all(self):
+        if self.supervisor is not None:
+            self.stop_supervisor()
         for stub in self.stubs:
             stub.terminate()
         if self.bridge is not None:
@@ -1226,6 +1410,8 @@ class Ctx:
                         pass
         else:
             _say("    info       no shm objects left after exit")
+        if self.runtime_dir is not None and not self.keep_runtime:
+            shutil.rmtree(self.runtime_dir, ignore_errors=True)
 
     # -- 证据 --
     def log_text(self):
@@ -1254,6 +1440,24 @@ class Ctx:
             text = stub.console_text()
             if text:
                 parts.append("--- worker-stub slot #%d (tail) ---\n%s" % (i, text))
+        if self.supervisor is not None:
+            parts.append("supervisor pid=%s alive=%s exit=%s" %
+                         (self.supervisor.pid, self.supervisor.alive(),
+                          self.supervisor.exit_code()))
+            text = self.supervisor.console_text()
+            if text:
+                parts.append("--- supervisor console (tail) ---\n" + text)
+        if self.runtime_dir is not None:
+            for name in ("supervisor", "scheduler", "worker-0", "worker-1", "bridge"):
+                path = self.runtime_dir / "logs" / (name + ".log")
+                text = _tail(path, 25)
+                if text:
+                    parts.append("--- %s.log (tail) ---\n%s" % (name, text))
+            run_dir = self.run_dir()
+            if run_dir is not None:
+                text = _tail(run_dir / "decisions.jsonl", 10)
+                if text:
+                    parts.append("--- decisions.jsonl (tail) ---\n" + text)
         leftovers = self.leftover_shm()
         if leftovers:
             parts.append("/dev/shm leftovers: " + ", ".join(leftovers))
@@ -2427,6 +2631,431 @@ def scenario_second_peer(ctx, checks):
             % (first.describe(), winner, a_closed, sockets_one_peer, sockets_after))
 
 
+def _read_jsonl(path):
+    rows = []
+    bad = []
+    try:
+        text = Path(path).read_text(errors="replace")
+    except OSError:
+        return rows, bad
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        try:
+            rows.append(json.loads(line))
+        except ValueError as exc:
+            bad.append("%s: %s" % (line[:80], exc))
+    return rows, bad
+
+
+def scenario_os_loop(ctx, checks):
+    """整棵 Supervisor 树的闭环：plugin → Bridge → shm → Scheduler → mq → Worker → 槽 → plugin。
+
+    这个场景不启动游戏：fake_plugin 提供状态与订单，Supervisor 拉起 Bridge、
+    Scheduler 与两个 Worker。断言分三层：
+      * 调度器把任务发到了每个厨师（events.jsonl 的 task_dispatched）；
+      * Worker 的输入槽经 Bridge 变成对端的 move/interact，且到站前没有 stop；
+      * SIGHUP 之后 decisions.jsonl 的政策名从 FCFS 变成 EDF。
+    """
+    args = ctx.args
+    chefs = args.chefs or 2
+    ctx.clear_stale_shm()
+    port = args.listen_port or pick_free_port(args.host)
+    ctx.start_supervisor(port=port, chefs=chefs)
+    if not ctx.wait_supervisor_ready(port, chefs, args.ready_timeout):
+        raise InfraError("Supervisor tree never reached running state on %s:%d\n%s" %
+                         (args.host, port, ctx.diagnostics()))
+    checks.note("supervisor_tree", "bridge+scheduler+%d workers running" % chefs)
+
+    try:
+        kitchen = json.loads(Path(args.kitchen).read_text())
+        cells = kitchen["grid"]["cells"]
+    except (OSError, ValueError, KeyError) as exc:
+        raise InfraError("cannot read kitchen grid from %s: %s" % (args.kitchen, exc))
+    builder = lambda n, idx: msg_state_update_os(n, idx, cells)
+
+    link = Link(connect(args.host, port, args.ready_timeout))
+    link.send_json(msg_hello())
+    stats = Stats("os-loop")
+
+    pre = min(2.0, max(1.0, args.os_duration * 0.3))
+    run_exchange(link, stats, pre, chefs=chefs, hz=args.hz,
+                 heartbeat_ms=args.heartbeat_ms, ack_actions=True,
+                 state_builder=builder)
+    if ctx.supervisor is None:
+        raise InfraError("supervisor died during first half")
+    os.kill(ctx.supervisor.pid, signal.SIGHUP)
+    checks.note("sighup_sent_at_s", "%.1f" % pre)
+
+    # Kill a Worker while a task is in flight; the Supervisor restarts it and the
+    # Scheduler must requeue the lost task on the Worker's RECOVERED event.
+    # Kill after the first station interaction (chef0's fetch takes ~4.8 s of travel)
+    # but while the follow-up task is in flight; the recovery requeue then has a
+    # RUNNING task to move back to PENDING.
+    mid = 4.0 if args.os_duration > pre + 5.5 else 1.0
+    run_exchange(link, stats, mid, chefs=chefs, hz=args.hz,
+                 heartbeat_ms=args.heartbeat_ms, ack_actions=True,
+                 state_builder=builder)
+    status = ctx.supervisor_status()
+    killed_chef = 0
+    killed_pid = next((c.get("pid") for c in status.get("children", [])
+                       if c.get("role") == "worker-%d" % killed_chef), None)
+    if not killed_pid:
+        raise InfraError("no running worker-%d in status.json: %s" % (killed_chef, status))
+    os.kill(killed_pid, signal.SIGKILL)
+    checks.note("worker_killed", "chef=%d pid=%s at ~%.1fs" %
+                (killed_chef, killed_pid, pre + mid))
+    tail = max(0.5, args.os_duration - pre - mid)
+    run_exchange(link, stats, tail, chefs=chefs, hz=args.hz,
+                 heartbeat_ms=args.heartbeat_ms, ack_actions=True,
+                 state_builder=builder)
+    link.close()
+    time.sleep(0.5)
+
+    run_dir = ctx.run_dir()
+    decisions = []
+    events = []
+    bad_lines = []
+    if run_dir is None:
+        checks.hard("runs_dir_created", False, "no <runtime>/runs/* directory")
+    else:
+        checks.hard("runs_dir_created", True, str(run_dir))
+        decisions, bad_d = _read_jsonl(run_dir / "decisions.jsonl")
+        events, bad_e = _read_jsonl(run_dir / "events.jsonl")
+        bad_lines = bad_d + bad_e
+        checks.hard("runs_files_exist",
+                    (run_dir / "decisions.jsonl").exists() and
+                    (run_dir / "events.jsonl").exists(),
+                    "%s" % run_dir)
+    checks.hard("decisions_parse_as_json", not bad_lines,
+                "%d bad line(s): %s" % (len(bad_lines), bad_lines[:2] or "none"))
+    checks.hard("decisions_nonempty", len(decisions) > 0, "%d lines" % len(decisions))
+
+    dispatch = [d for d in decisions if d.get("kind") == "dispatch"]
+    dispatchers = {d.get("chef_id") for d in dispatch}
+    checks.hard("scheduler_dispatched_each_chef",
+                set(range(chefs)) <= dispatchers,
+                "dispatch chefs=%s expected 0..%d (%d dispatch lines)" %
+                (sorted(dispatchers), chefs - 1, len(dispatch)))
+
+    policies = Counter(d.get("policy") for d in dispatch)
+    checks.hard("decisions_name_fcfs", policies.get("FCFS", 0) > 0,
+                "dispatch policies=%s" % dict(policies))
+    switch_positions = [i for i, d in enumerate(decisions)
+                        if d.get("kind") == "strategy" and d.get("to") == "EDF"]
+    edf_after = [i for i, d in enumerate(decisions)
+                 if d.get("policy") == "EDF" and switch_positions and i > switch_positions[0]]
+    checks.hard("sighup_flips_policy",
+                bool(switch_positions) and bool(edf_after),
+                "strategy lines=%s; EDF decisions after switch=%s" %
+                (switch_positions, edf_after[:3]))
+    checks.hard("sighup_flip_logged_in_events",
+                any(e.get("event") == "strategy_switch" and e.get("to") == "EDF"
+                    for e in events),
+                "events strategy_switch=%s" %
+                [e for e in events if e.get("event") == "strategy_switch"][:2])
+
+    task_events = [e for e in events if e.get("event") == "task_dispatched"]
+    checks.hard("scheduler_events_parse_as_json", not bad_lines,
+                "%d bad line(s)" % len(bad_lines))
+    checks.hard("task_events_each_chef",
+                {e.get("chef_id") for e in task_events} >= set(range(chefs)),
+                "task chefs=%s (%d dispatched)" %
+                (sorted({e.get("chef_id") for e in task_events}), len(task_events)))
+
+    checks.hard("actions_wellformed", not stats.bad_actions,
+                "%d malformed: %s" % (len(stats.bad_actions),
+                                      stats.bad_actions[:2] or "none"))
+    moves = Counter(a.get("chef_id") for a in stats.actions if a.get("action") == "move")
+    interacts = Counter(a.get("chef_id") for a in stats.actions
+                        if a.get("action") == "interact")
+    checks.hard("worker_move_forwarded_each_chef",
+                all(moves.get(c, 0) >= 5 for c in range(chefs)),
+                "moves per chef=%s" % dict(moves))
+    checks.hard("worker_interact_forwarded_each_chef",
+                all(interacts.get(c, 0) >= 1 for c in range(chefs)),
+                "interacts per chef=%s" % dict(interacts))
+
+    nonstop = True
+    detail = []
+    for chef in range(chefs):
+        seq = [a for a in stats.actions if a.get("chef_id") == chef]
+        try:
+            first_move = next(i for i, a in enumerate(seq) if a.get("action") == "move")
+            first_interact = next(i for i, a in enumerate(seq)
+                                  if a.get("action") == "interact" and i > first_move)
+        except StopIteration:
+            nonstop = False
+            detail.append("chef%d missing move→interact" % chef)
+            continue
+        stops = sum(1 for a in seq[first_move:first_interact]
+                    if a.get("action") == IDLE_ACTION)
+        if stops:
+            nonstop = False
+            detail.append("chef%d %d stop(s) before arrival" % (chef, stops))
+    checks.hard("worker_slot_nonstop_move", nonstop, "; ".join(detail) or "no stop before first interact")
+
+    recovered = [e for e in events if e.get("event") == "worker_recovered" and
+                 e.get("chef_id") == killed_chef]
+    requeued = [e for e in events if e.get("event") == "task_requeued" and
+                e.get("chef_id") == killed_chef]
+    first_recovery_t = recovered[0].get("t_ms") if recovered else None
+    post_recovery_dispatch = [e for e in events
+                              if e.get("event") == "task_dispatched" and
+                              e.get("chef_id") == killed_chef and
+                              first_recovery_t is not None and
+                              (e.get("t_ms") or 0) >= first_recovery_t]
+    checks.hard("worker_restart_detected", bool(recovered),
+                "worker_recovered chef=%d: %s" % (killed_chef, recovered[:1] or "none"))
+    checks.hard("worker_restart_requeues_task", bool(requeued),
+                "task_requeued: %s" % (requeued[:2] or "none"))
+    checks.hard("worker_restart_gets_new_task", bool(post_recovery_dispatch),
+                "dispatch after recovery: %s" % (post_recovery_dispatch[:2] or "none"))
+    status = ctx.supervisor_status()
+    worker_status = next((c for c in status.get("children", [])
+                          if c.get("role") == "worker-%d" % killed_chef), {})
+    checks.hard("worker_process_restarted", (worker_status.get("spawns") or 0) >= 2,
+                "worker-%d status=%s" % (killed_chef, worker_status))
+    checks.hard("supervisor_alive_during_run",
+                ctx.supervisor is not None and ctx.supervisor.alive(),
+                "exit=%s" % (ctx.supervisor.exit_code() if ctx.supervisor else "gone"))
+    checks.hard("bridge_actions_per_chef",
+                stats.per_chef() and set(stats.per_chef()) >= set(range(chefs)),
+                "%s" % stats.describe())
+
+    code, seconds = ctx.stop_supervisor()
+    checks.hard("supervisor_clean_shutdown", code == 0,
+                "exit=%s in %.2fs" % (code, seconds or 0.0))
+    pidfile = (ctx.runtime_dir / "kitchend.pid") if ctx.runtime_dir else None
+    checks.hard("supervisor_removes_pidfile",
+                pidfile is not None and not pidfile.exists(), "%s" % pidfile)
+    leftovers = [p.name for p in Path("/dev/shm").glob(ctx.state_name.lstrip("/") + "*")]
+    checks.hard("supervisor_unlinks_shm", not leftovers, ", ".join(leftovers) or "none")
+
+    return ("%s; dispatch=%d chefs=%s; policies=%s; moves=%s; interacts=%s; run_dir=%s" %
+            (stats.describe(), len(dispatch), sorted(dispatchers), dict(policies),
+             dict(moves), dict(interacts), run_dir))
+
+
+def _resource_holder(events, chef):
+    """最近一次 acquire 之后没有被 released/reclaimed 的 task_id。"""
+    held = {}
+    for event in events:
+        if event.get("event") == "resource_acquired" and event.get("chef_id") == chef:
+            held[event.get("task_id")] = event
+        elif event.get("event") in ("resource_released", "resource_reclaimed"):
+            held.pop(event.get("task_id"), None)
+    return list(held.values())[-1] if held else None
+
+
+def scenario_os_resources(ctx, checks):
+    """一个 cooker、两个厨师：争用、租约到期、持租约 Worker 被 kill 后回收。
+
+    先造一个只有单个 cooker 工位的 kitchen 和只含 SteamedSpecial_Fish 的订单，
+    让两个厨师必然抢同一台锅。租约 TTL 压到 5 秒，使 5 秒的 cook 节点跨过到期点；
+    在确认 worker-0 仍持租约时 SIGKILL 它，Supervisor 重启后用 RECOVERED 触发
+    reclaim；另一个厨师的租约则由 Scheduler 的到期扫描回收。最后停整棵树，核对
+    Supervisor 在 unlink 前记录的 sem value、metrics.json 与 /dev/shm 残留。
+    """
+    args = ctx.args
+    tmp = Path(tempfile.mkdtemp(prefix="kitchenos-resources-"))
+    try:
+        kitchen = json.loads(Path(args.kitchen).read_text())
+        cookers = [st for st in kitchen.get("stations", []) if st.get("kind") == "cooker"]
+        if not cookers:
+            raise InfraError("kitchen %s has no cooker station" % args.kitchen)
+        kitchen["stations"] = [st for st in kitchen["stations"]
+                               if st.get("kind") != "cooker" or st is cookers[0]]
+        kitchen_path = tmp / "kitchen.json"
+        kitchen_path.write_text(json.dumps(kitchen))
+        orders_path = tmp / "orders.json"
+        orders_path.write_text(json.dumps({
+            "seed": 7,
+            "level": kitchen.get("scene", "s_city_h5"),
+            "menu": [{"recipes": ["SteamedSpecial_Fish"]}],
+        }))
+        args.kitchen = str(kitchen_path)
+        args.orders = str(orders_path)
+
+        ctx.clear_stale_shm()
+        port = args.listen_port or pick_free_port(args.host)
+        ctx.start_supervisor(port=port, chefs=2, lease_ttl_ms=8000)
+        if not ctx.wait_supervisor_ready(port, 2, args.ready_timeout):
+            raise InfraError("Supervisor tree never ready\n%s" % ctx.diagnostics())
+        checks.note("single_cooker", "capacity=1, chefs=2, lease_ttl_ms=8000")
+
+        cells = kitchen["grid"]["cells"]
+        builder = lambda n, idx: msg_state_update_os(n, idx, cells)
+        link = Link(connect(args.host, port, args.ready_timeout))
+        link.send_json(msg_hello())
+        stats = Stats("os-resources")
+
+        run_exchange(link, stats, 5.0, chefs=2, hz=args.hz,
+                     heartbeat_ms=args.heartbeat_ms, ack_actions=True,
+                     state_builder=builder)
+        run_dir = ctx.run_dir()
+        events = []
+        if run_dir is not None:
+            events, _ = _read_jsonl(run_dir / "events.jsonl")
+
+        # SIGUSR1 的 metrics 快照必须在不关机时就落盘，且带 reason=sigusr1。
+        status = ctx.supervisor_status()
+        scheduler_pid = next((c.get("pid") for c in status.get("children", [])
+                              if c.get("role") == "scheduler"), None)
+        # 通过 Supervisor 转发，验证操作者只需要知道整棵树的 pid。
+        os.kill(ctx.supervisor.pid, signal.SIGUSR1)
+        sig_metrics = {}
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            if run_dir is not None:
+                try:
+                    sig_metrics = json.loads((run_dir / "metrics.json").read_text())
+                except (OSError, ValueError):
+                    sig_metrics = {}
+                if sig_metrics.get("reason") == "sigusr1":
+                    break
+            run_exchange(link, stats, 0.2, chefs=2, hz=args.hz,
+                         heartbeat_ms=args.heartbeat_ms, ack_actions=True,
+                         state_builder=builder)
+        checks.hard("metrics_sigusr1_snapshot", sig_metrics.get("reason") == "sigusr1",
+                    "scheduler_pid=%s reason=%s" %
+                    (scheduler_pid, sig_metrics.get("reason")))
+
+        holder = _resource_holder(events, 0)
+        waited = 0.0
+        # 等到 cooker 租约再杀，证明确实是"持锅时被 kill"；超时则退化为任意租约。
+        while (holder is None or holder.get("kind") != "cooker") and waited < 6.0:
+            run_exchange(link, stats, 0.5, chefs=2, hz=args.hz,
+                         heartbeat_ms=args.heartbeat_ms, ack_actions=True,
+                         state_builder=builder)
+            waited += 0.5
+            if run_dir is not None:
+                events, _ = _read_jsonl(run_dir / "events.jsonl")
+                holder = _resource_holder(events, 0)
+        checks.hard("worker_killed_while_holding_lease", holder is not None,
+                    "held=%s after %.1fs extra" % (holder, waited))
+        checks.note("killed_lease_kind", "%s" % (holder.get("kind") if holder else "none"))
+        status = ctx.supervisor_status()
+        killed_pid = next((c.get("pid") for c in status.get("children", [])
+                           if c.get("role") == "worker-0"), None)
+        if not killed_pid:
+            raise InfraError("no running worker-0 in status.json: %s" % status)
+        os.kill(killed_pid, signal.SIGKILL)
+        killed_task = holder.get("task_id") if holder else None
+        killed_kind = holder.get("kind") if holder else None
+        checks.note("worker_killed", "chef=0 pid=%s task=%s kind=%s" %
+                    (killed_pid, killed_task, killed_kind))
+
+        run_exchange(link, stats, 10.0, chefs=2, hz=args.hz,
+                     heartbeat_ms=args.heartbeat_ms, ack_actions=True,
+                     state_builder=builder)
+        link.close()
+        time.sleep(0.5)
+
+        code, seconds = ctx.stop_supervisor()
+        checks.hard("supervisor_clean_shutdown", code == 0,
+                    "exit=%s in %.2fs" % (code, seconds or 0.0))
+
+        run_dir = ctx.run_dir()
+        if run_dir is None:
+            checks.hard("run_dir_layout", False, "no run dir")
+            return "no run dir"
+        events, bad_e = _read_jsonl(run_dir / "events.jsonl")
+        decisions, bad_d = _read_jsonl(run_dir / "decisions.jsonl")
+        checks.hard("run_dir_layout",
+                    (run_dir / "events.jsonl").exists() and
+                    (run_dir / "decisions.jsonl").exists() and
+                    (run_dir / "metrics.json").exists(),
+                    "%s" % run_dir)
+        checks.hard("run_files_parse_as_json", not (bad_e + bad_d),
+                    "%d bad lines" % len(bad_e + bad_d))
+
+        acquired = [e for e in events if e.get("event") == "resource_acquired"]
+        released = [e for e in events if e.get("event") == "resource_released"]
+        reclaimed = [e for e in events if e.get("event") == "resource_reclaimed"]
+        expired = [e for e in events if e.get("event") == "lease_expired"]
+        waits = [e for e in events if e.get("event") == "resource_wait"]
+        checks.hard("resource_acquired_events", bool(acquired), "%d acquired" % len(acquired))
+        checks.hard("resource_released_events", bool(released), "%d released" % len(released))
+        checks.hard("resource_reclaimed_events", bool(reclaimed),
+                    "%d reclaimed: %s" % (len(reclaimed), reclaimed[:2]))
+        checks.hard("lease_expired_event", bool(expired), "%d expired" % len(expired))
+        checks.hard("contention_observed", bool(waits),
+                    "wait events=%s" % waits[:2])
+        checks.hard("killed_lease_reclaimed_by_worker_death",
+                    killed_task is not None and
+                    any(e.get("task_id") == killed_task and
+                        e.get("reason") == "worker-recovered" for e in reclaimed),
+                    "task=%s reclaimed=%s" % (killed_task, reclaimed[:3]))
+        checks.hard("other_chef_acquires_after_reclaim",
+                    any(e.get("kind") == "cooker" and e.get("chef_id") != 0
+                        for e in acquired),
+                    "cooker acquisitions=%s" %
+                    [(e.get("chef_id"), e.get("task_id")) for e in acquired
+                     if e.get("kind") == "cooker"])
+        recovered = [e for e in events if e.get("event") == "worker_recovered" and
+                     e.get("chef_id") == 0]
+        checks.hard("worker_restart_detected", bool(recovered),
+                    "worker_recovered=%s" % recovered[:1])
+
+        metrics_path = run_dir / "metrics.json"
+        metrics = {}
+        try:
+            metrics = json.loads(metrics_path.read_text())
+        except (OSError, ValueError) as exc:
+            checks.hard("metrics_fields_complete", False, "read %s: %s" % (metrics_path, exc))
+        else:
+            resources = {r.get("kind"): r for r in metrics.get("resources", [])}
+            cooker = resources.get("cooker", {})
+            per_order = metrics.get("orders", {}).get("per_order", [])
+            complete = (
+                metrics.get("schema") == "kitchenos.metrics.v1" and
+                "orders" in metrics and "resources" in metrics and
+                "dispatch" in metrics and
+                "worker_restarts" in metrics and
+                cooker.get("capacity") == 1 and
+                cooker.get("in_use") == 0 and
+                per_order and all("lateness_ms" in o and "finished_ms" in o
+                                  for o in per_order))
+            checks.hard("metrics_fields_complete", complete,
+                        "cooker=%s orders=%d dispatch=%s restarts=%s" %
+                        (cooker, len(per_order), metrics.get("dispatch"),
+                         metrics.get("worker_restarts")))
+            checks.hard("metrics_worker_restarts", (metrics.get("worker_restarts") or 0) >= 1,
+                        "worker_restarts=%s" % metrics.get("worker_restarts"))
+            checks.hard("metrics_resource_wait",
+                        (cooker.get("waits") or 0) > 0 and (cooker.get("wait_ms") or 0) > 0,
+                        "cooker waits=%s wait_ms=%s" %
+                        (cooker.get("waits"), cooker.get("wait_ms")))
+
+        supervisor_log = ctx.runtime_dir / "logs" / "supervisor.log"
+        values = []
+        try:
+            for line in supervisor_log.read_text(errors="replace").splitlines():
+                if "resource_values" in line:
+                    values.append(line)
+        except OSError:
+            pass
+        cooker_values = [line for line in values if "kind=cooker" in line]
+        checks.hard("resource_values_logged_before_unlink", bool(cooker_values),
+                    "%s" % (cooker_values[-1:] or "none"))
+        checks.hard("sem_value_back_to_capacity",
+                    bool(cooker_values) and "value=1 capacity=1" in cooker_values[-1],
+                    "%s" % (cooker_values[-1:] or "none"))
+        leftovers = sorted(p.name for p in Path("/dev/shm").glob("sem.kitchenos*"))
+        checks.hard("no_semaphore_left_after_stop", not leftovers,
+                    ", ".join(leftovers) or "none")
+
+        actions = len(stats.actions)
+        checks.hard("bridge_actions_flowing", actions > 0, "%d actions" % actions)
+        return ("single cooker; acquired=%d released=%d reclaimed=%d expired=%d "
+                "waits=%d killed_task=%s; metrics=%s; actions=%d; run_dir=%s" %
+                (len(acquired), len(released), len(reclaimed), len(expired),
+                 len(waits), killed_task, metrics.get("dispatch"), actions, run_dir))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 SCENARIO_IMPL = {
     "happy": scenario_happy,
     "one-slot": scenario_one_slot,
@@ -2439,6 +3068,8 @@ SCENARIO_IMPL = {
     "second-peer": scenario_second_peer,
     "pickup-dash": scenario_pickup_dash,
     "input-grace": scenario_input_grace,
+    "os-loop": scenario_os_loop,
+    "os-resources": scenario_os_resources,
 }
 
 
@@ -2765,6 +3396,16 @@ def parse_args(argv):
                             "KITCHENOS_WORKER_STUB",
                             str(REPO_ROOT / "bridge" / "build" / "kitchenos-worker-stub")),
                         help="kitchenos-worker-stub 路径（或设 $KITCHENOS_WORKER_STUB）")
+    parser.add_argument("--supervisor", default=os.environ.get("KITCHENOS_SUPERVISOR"),
+                        help="kitchenos-supervisor 路径（默认取 --bridge 同目录）")
+    parser.add_argument("--kitchen", default=str(REPO_ROOT / "config" / "kitchen.example.json"),
+                        help="os-loop 的 kitchen.json")
+    parser.add_argument("--recipes", default=str(REPO_ROOT / "config" / "recipes.example.json"),
+                        help="os-loop 的 recipes.json")
+    parser.add_argument("--orders", default=str(REPO_ROOT / "config" / "orders.example.json"),
+                        help="os-loop 的 orders.json")
+    parser.add_argument("--os-duration", type=float, default=10.0,
+                        help="os-loop 的运行时长（秒）")
     parser.add_argument("--host", default="127.0.0.1", help="listen 模式为绑定地址，connect 模式为拨号目标")
     parser.add_argument("--listen-port", type=int, default=None,
                         help="listen 模式端口；默认由内核挑一个空闲端口，"
@@ -2804,7 +3445,10 @@ def parse_args(argv):
                         help="把 echo_reply 往返当硬断言（spec 未要求 Bridge 回，默认只记录）")
     parser.add_argument("--require-bridge-ack", action="store_true",
                         help="把 Bridge 主动发 ack 当硬断言（spec 未要求，默认只记录）")
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if not args.supervisor:
+        args.supervisor = str(Path(args.bridge).with_name("kitchenos-supervisor"))
+    return args
 
 
 def main(argv=None):
@@ -2840,6 +3484,7 @@ def main(argv=None):
         status = EXIT_ERROR
     finally:
         try:
+            ctx.keep_runtime = bool(checks.failures) or status != EXIT_OK
             ctx.stop_all()
         except Exception:                              # noqa: BLE001 - 清理失败不该掩盖结论
             traceback.print_exc()

@@ -536,3 +536,132 @@ user may overturn on sight. `Revisit when` of "never" is allowed but suspicious;
 - **Revisit when:** 组员的 Windows 实验室需要一份独立部署的插件（例如课程要求两个实验室各自交付），
   或 net46 那份承载了 net35 编不出来的东西（例如只在新 Mono 上可用的 API）。
 - **Effort:** game-bridge
+
+## 2026-10-24 - 任务/事件链路用 POSIX 消息队列，每厨师一条任务队列
+
+- **Decided:** Scheduler→Worker 用 POSIX mq：每个厨师一条 `/kitchenos_tasks_<chef>`，
+  优先级字段 = 策略算出的紧急度；Worker→Scheduler 共用 `/kitchenos_events`。队列由
+  Scheduler 创建与 `mq_unlink`。Supervisor 与子进程之间另有一条匿名管道专做心跳。
+- **Instead of:** 用 pipe 传递任务，或让所有 Worker 抢同一条 mq。
+- **Because:** 管道没有消息边界与优先级，EDF/列表调度的输出要自己编码成帧再排序；单条共享
+  队列会让一个 Worker 取走本来派给另一个厨师的任务，而任务携带 chef_id 与位置相关目标。
+  mq 的 `mq_timedreceive` 让 Worker 在没任务时也能按时响应 SIGTERM 与心跳。一条队列的
+  创建/清理成本很小（名字由厨师数决定），换来优先级与解耦直接对应 §6.2.2。
+- **Mine:** yes
+- **Revisit when:** mq 的优先级反转在实测里伤害到调度效果，或需要把任务广播给所有 Worker
+  （那时改为共享队列 + 任务认领）。
+- **Effort:** os-core
+
+## 2026-10-24 - 日志每进程一个文件、单写者，不共写同一文件
+
+- **Decided:** `runtime/logs/{supervisor,scheduler,worker-N,bridge}.log` 各由一个进程写；
+  跨进程事件由 Scheduler 汇总进 `runs/<ts>/events.jsonl`。多进程共写同一文件不加锁。
+- **Instead of:** 所有进程追加同一个 `logs/kitchenos.log`，用 fcntl 写锁串行化。
+- **Because:** fcntl 锁只保护单次 `write` 调用，一条事件跨多个 `write` 时仍会交错；而一个
+  进程卡死会连累全部日志。§6.6 本来就列了"每个进程写独立文件"这一方案，且现有 `log` 模块
+  的契约就是单写者。需要一条合并时间线时读 `events.jsonl`，不是读日志文件。
+- **Mine:** yes
+- **Revisit when:** 演示需要一个严格按墙钟排序的单一流水，且事件级锁的原子追加被证明必要。
+- **Effort:** os-core
+
+## 2026-10-24 - 运行目录默认放 Linux 原生 tmpfs，不用 /var/run
+
+- **Decided:** 运行目录优先级 `--runtime-dir` > `$KITCHENOS_RUNTIME_DIR` >
+  `$XDG_RUNTIME_DIR/kitchenos` > `/tmp/kitchenos-<uid>`；pid 文件是其中的
+  `kitchend.pid`，用 `fcntl` 写锁保证单实例。
+- **Instead of:** 按 §6.1 原文把 pid 文件放 `/var/run/kitchend.pid`。
+- **Because:** 课程实验室里的普通用户写不了 `/var/run`；仓库在 WSL2 里可能位于 9p
+  （`/mnt/d`），而 9p 上的 fcntl 锁语义不可靠，共享内存与信号量又必须放 `/dev/shm`
+  （tmpfs）。默认 Linux 原生路径同时满足权限与锁语义，两个实验室都不用改代码。
+  见 `standards.md` 的"运行时目录（pid、日志）必须可配置"。
+- **Mine:** yes
+- **Revisit when:** 系统以 root 部署并要求把状态放进 `/var/run`，或课程验收指定该路径。
+- **Effort:** os-core
+
+## 2026-10-24 - 共享资源用命名计数信号量 + 租约回收，不用 robust mutex
+
+- **Decided:** 锅、砧板、盘子等按 `config/kitchen.json` 的 `kind` 建命名计数信号量
+  `/kitchenos_res_<kind>`；Scheduler 在派发前 `sem_trywait`，同时记下租约
+  `(kind, chef, task_id, acquired, deadline)`；tick 里回收过期租约并 `sem_post`。
+  Worker 不碰信号量：它只执行任务，释放统一由 Scheduler 在收到 DONE/FAILED 时做。
+- **Instead of:** 按 §6.4 方案 1 用放在共享内存里的 `PTHREAD_MUTEX_ROBUST` 保护资源。
+- **Because:** robust mutex 保护的是临界区，没有"哪个厨师持有、租到什么时候"的身份信息；
+  租约能在日志里说清持有者与回收理由，直接对应"检测并恢复死锁"的验收点，也不要求资源
+  对象本身放在共享内存里。POSIX 命名信号量没有 robust 语义，所以回收必须由第三方
+  （Scheduler）做。代价是回收延迟等于租约长度，可配。
+- **Mine:** yes
+- **Revisit when:** 租约超时无法与烹饪/切菜的长工序匹配，或需要把资源状态也放进 shm 给
+  监控面板读。
+- **Effort:** os-core
+
+## 2026-10-24 - 死锁 victim 规则：环上 chef_id 最大的那个
+
+- **Decided:** 资源分配图检测到环时，victim = 环上 `chef_id` 最大者；Scheduler 记
+  `deadlock_detected`（带 cycle）与 `deadlock_recovered`，按 task_id 删除 victim 的租约，
+  `sem_post` 一次，把它的任务改回 PENDING 并重新排队。victim 自己继续参与后续调度。
+- **Instead of:** 选资源数最多/持锁最久的厨师，或按到达顺序 FIFO 回退。
+- **Because:** 当前每个任务只持有一个资源，正常调度不会成环；这个规则是给以后多资源任务
+  的兜底，必须一眼能复现。chef_id 最大是确定性的、无需额外记账，而且与 Worker 启动顺序
+  一致，日志里 cycle 与 victim 可以直接对上。所有释放仍走同一条"先删租约、成功才
+  sem_post"的路径，breaking deadlock 不会引入第二次释放。
+- **Mine:** yes
+- **Revisit when:** 有任务同时持有多把资源并需要最小化回退代价，或需要按订单价值而不是
+  chef 编号选 victim。
+- **Effort:** os-core
+
+## 2026-10-24 - 路径规划放 Worker，Scheduler 只派高层目标
+
+- **Decided:** Scheduler 派发的是 `{op, station/target, duration}` 这类高层任务；A* 与
+  逐帧动作由 Worker 用 `config/kitchen.json` 的网格算，写入自己的输入槽。
+- **Instead of:** Scheduler 算好整条路径再通过 mq 发给 Worker。
+- **Because:** 厨师位置每帧都在变，路径必须在执行前按当前位置重算；把路径塞进 mq 既浪费
+  带宽，又让"Worker 崩溃重启"必须回头找 Scheduler 要一份新路径。这也符合既有分工：
+  Bridge 不规划路径，插件只执行动作。
+- **Mine:** yes
+- **Revisit when:** 多个 Worker 之间的避让需要全局协调（窄道相遇），那时 Scheduler 需要
+  参与路径预约。
+- **Effort:** os-core
+
+## 2026-10-24 - 重启退避用 §6.1 的三档（0 / 2 s / 10 s），不是几何翻倍
+
+- **Decided:** 默认退避序列 `0,2000,10000`，窗口 60 s、上限 5 次；序列由
+  `--backoff-ms` 覆盖，最后一项重复使用。
+- **Instead of:** 严格的几何退避（1 s、2 s、4 s、8 s……）。
+- **Because:** 课程文档 §6.1 把"首次立即、10 秒内再次失败等 2 秒、1 分钟内失败 3 次等
+  10 秒、5 次后停止"写成了明确策略，答辩时要能逐条对上。几何翻倍与它冲突，而且
+  0→2→10 已经覆盖了"快速恢复一次、随后迅速拉开"。需要严格翻倍做实验时用
+  `--backoff-ms 0,1000,2000,4000,8000` 即可，不用改代码。
+- **Mine:** yes
+- **Revisit when:** 老师明确要求指数退避公式，或实验表明 2 s/10 s 的固定档在长时间崩溃
+  循环下仍过于频繁（那时把默认序列换成几何）。
+- **Effort:** os-core
+
+## 2026-10-24 - SIGHUP 重读配置在有活跃订单时延后应用
+
+- **Decided:** SIGHUP 每次都重新读取 recipes/kitchen；若还有活跃订单，只记
+  `config_reload_deferred` 并切换策略，等订单全部结束后的下一次 SIGHUP 才替换 DAG/
+  网格并重建资源表。
+- **Instead of:** 收到 SIGHUP 立即热替换订单图与网格。
+- **Because:** 已派发/运行中的任务用 dish 下标引用工序；运行中换表会让下一轮事件落到
+  另一道菜的节点上，表现为"任务完成了但 DAG 没往前"且没有报错。延后应用保住一致性，
+  策略切换仍然即时（演示要的是 FCFS/EDF 立刻可比较）。
+- **Mine:** yes
+- **Revisit when:** 任务记录改为按全局 node id 而不是 dish 下标引用，或 Scheduler 增加
+  了可撤销/重放的调度日志能够迁移在途任务。
+- **Effort:** os-core
+
+## 2026-10-24 - 配置订单的到达/截止期由 Scheduler 合成
+
+- **Decided:** `config/orders.example.json` 只有 menu（固定菜单），Scheduler 按它生成
+  5 条配置订单：到达间隔 700 ms，截止期 = 到达 + 20 s + 2×工时 + (i%2)×8 s；同时把
+  shm 世界状态里新出现的游戏订单按真实 `time_remaining` 收进同一个订单模型。
+- **Instead of:** 扩写 orders.json 增加 arrival/deadline 字段（要同步插件与协议），或
+  只依赖游戏上报的订单。
+- **Because:** 课程阶段的 orders.json 契约是"一份配置=一个阶段一列菜名"，插件只读 menu；
+  改字段会把一个纯演示配置变成跨端协议。合成值足以让 FCFS/EDF 在本机产生不同顺序、
+  让无游戏闭环跑起来；仿真实验以后需要精确到达时刻时应新增独立实验输入，而不是偷偷改
+  现有文件语义。
+- **Mine:** yes
+- **Revisit when:** 插件侧开始按配置文件生成带到达时刻的订单，或模拟器需要可复现的
+  精确到达序列。
+- **Effort:** os-core

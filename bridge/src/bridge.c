@@ -108,6 +108,10 @@ typedef struct {
     int input_grace_ms; /* 槽多久没新版本才算"这一格缺席"（默认见 DEFAULT_INPUT_GRACE_MS） */
     int heartbeat_timeout_ms; /* 0 disables the plugin liveness check */
     int heartbeat_interval_ms;
+    /* The Supervisor's heartbeat pipe (spec: os-core W4). 0 = standalone run. */
+    int supervisor_fd;
+    int supervisor_heartbeat_ms;
+    int64_t last_supervisor_beat_ms;
     long max_frames; /* > 0: exit 0 after this many dispatched frames */
     int verbose;
 
@@ -290,6 +294,7 @@ static void print_usage(FILE *out)
             "                        [--chefs N] [--state-name NAME] [--sem-name NAME]\n"
             "                        [--log FILE] [--frame-timeout-ms M]\n"
             "                        [--heartbeat-timeout-ms M] [--heartbeat-interval-ms M]\n"
+            "                        [--supervisor-fd N] [--supervisor-heartbeat-ms M]\n"
             "                        [--max-frames N] [--verbose] [--help] [--version]\n");
 }
 
@@ -323,6 +328,9 @@ static void print_help(void)
            "                          插件失联，暂停下发).\n"
            "  --heartbeat-interval-ms M  send a heartbeat every M ms, 0 disables\n"
            "                          (default %d).\n"
+           "  --supervisor-fd N       write one byte to the Supervisor's heartbeat pipe\n"
+           "                          every --supervisor-heartbeat-ms (default: none).\n"
+           "  --supervisor-heartbeat-ms M  Supervisor heartbeat interval (default 0).\n"
            "  --max-frames N          exit 0 after N dispatched frames (deterministic\n"
            "                          runs); 0 = run until signalled (default).\n"
            "  --verbose               log DEBUG events (per-frame state_update, acks).\n"
@@ -386,6 +394,8 @@ static int parse_args(int argc, char **argv, bridge *b)
     b->input_grace_ms = DEFAULT_INPUT_GRACE_MS;
     b->heartbeat_timeout_ms = DEFAULT_HEARTBEAT_TIMEOUT_MS;
     b->heartbeat_interval_ms = DEFAULT_HEARTBEAT_INTERVAL_MS;
+    b->supervisor_fd = -1;
+    b->supervisor_heartbeat_ms = 0;
     b->max_frames = 0;
     b->verbose = 0;
 
@@ -498,6 +508,18 @@ static int parse_args(int argc, char **argv, bridge *b)
                 return ARG_ERR;
             }
             b->heartbeat_interval_ms = (int)number;
+        } else if (strcmp(name, "--supervisor-fd") == 0) {
+            const char *v = take_value(value, argc, argv, &i);
+            if (parse_long(v, 0, 65535, &number) != 0) {
+                return ARG_ERR;
+            }
+            b->supervisor_fd = (int)number;
+        } else if (strcmp(name, "--supervisor-heartbeat-ms") == 0) {
+            const char *v = take_value(value, argc, argv, &i);
+            if (parse_long(v, 0, 3600000, &number) != 0) {
+                return ARG_ERR;
+            }
+            b->supervisor_heartbeat_ms = (int)number;
         } else if (strcmp(name, "--max-frames") == 0) {
             const char *v = take_value(value, argc, argv, &i);
             if (parse_long(v, 0, 1000000000L, &number) != 0) {
@@ -1332,9 +1354,40 @@ static int open_link(bridge *b)
     return 0;
 }
 
+/*
+ * One byte per interval tells the Supervisor this process is still running its loop.
+ * A broken pipe means the Supervisor is gone; the Bridge then exits like any other
+ * child instead of becoming an orphan holding /kitchenos_state. Only active when the
+ * Supervisor passed the fd, so a standalone `kitchenos-bridge` is unchanged.
+ */
+static void beat_supervisor(bridge *b)
+{
+    char byte = '.';
+    int64_t now;
+    ssize_t n;
+
+    if (b->supervisor_fd < 0 || b->supervisor_heartbeat_ms <= 0) {
+        return;
+    }
+    now = now_ms();
+    if (now - b->last_supervisor_beat_ms < b->supervisor_heartbeat_ms) {
+        return;
+    }
+    n = write(b->supervisor_fd, &byte, 1);
+    b->last_supervisor_beat_ms = now;
+    if (n == 1 || (n < 0 && errno == EAGAIN)) {
+        return;
+    }
+    kos_log_warn(b->log, "supervisor_gone", "fd=%d error=%s", b->supervisor_fd,
+                 strerror(errno));
+    b->stop_reason = "supervisor_gone";
+    g_stop = 1;
+}
+
 static void run_loop(bridge *b)
 {
     b->link_state = KOS_NET_DOWN; /* the first real transition logs link_up */
+    b->last_supervisor_beat_ms = now_ms();
 
     while (!g_stop) {
         int timeout = next_wakeup_ms(b);
@@ -1377,6 +1430,7 @@ static void run_loop(bridge *b)
         }
 
         service_pending_frame(b);
+        beat_supervisor(b);
     }
 }
 
