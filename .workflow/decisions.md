@@ -536,3 +536,20 @@ user may overturn on sight. `Revisit when` of "never" is allowed but suspicious;
 - **Revisit when:** 组员的 Windows 实验室需要一份独立部署的插件（例如课程要求两个实验室各自交付），
   或 net46 那份承载了 net35 编不出来的东西（例如只在新 Mono 上可用的 API）。
 - **Effort:** game-bridge
+
+## 2026-10-24 - stop 不夺取插件侧的驱动归属
+
+- **Decided:** Bridge 下发的 `stop` 不把厨师纳入 `ActionDriver` 的归属集合：槽未被动作接管时它是
+  no-op（照常回 `ok=true` 的 ack），已被接管时只清掉当前命令、厨师原地站住，归属保留到链路断开
+  （`ReleaseAll`）。只有 `move`/`interact`/`pickup`/`dash` 建立归属。
+- **Instead of:** 保持任务 04 的实现（`stop` 也 `Owned.Add`）；或反过来让 `stop` 交还归属给本地驱动。
+- **Because:** Bridge 对输入槽缺失/超时的厨师每帧都发 `stop`（`decisions.md: 2026-10-15 - 帧屏障以
+  state_update 为帧边界，等待 Worker 而非等待插件`），所以默认 `bridge=on` + `work=auto`、只起
+  Bridge 不起 Scheduler/Worker 时，第一帧 `stop` 就把两个厨师从本地工序手里夺走，此后每帧喂零输入，
+  厨师原地不动 —— 任务 04 引入 `ActionDriver` 后的回归，任务 03 记录里"每帧下发 idle/stop 也不影响
+  本地驱动"因此不再成立。反过来让 `stop` 交还归属同样不行：Bridge 每帧都在发消息，本地驱动会在
+  手势间隙插进来抢同一个手柄。已被接管的厨师收到 `stop` 仍需站住，保留归属同时满足这两条。
+- **Mine:** yes
+- **Revisit when:** 调度器落地后需要"把某个厨师永久还给本地驱动"的显式指令（例如工序结束或人工
+  接管），或 Bridge 不再对缺席的 Worker 每帧下发 `stop`。
+- **Effort:** game-bridge

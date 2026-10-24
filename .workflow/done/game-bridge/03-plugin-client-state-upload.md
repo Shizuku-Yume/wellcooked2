@@ -76,6 +76,10 @@ Dirty at start: none（从 `9d72d38` 起，叠在 `game-bridge/10-plugin-cleanup
 | kill Bridge 游戏不崩 | 游戏侧 `link: 与 Bridge 断开，后台每 2 秒重试`，`wellcooked-state.json` 仍在更新（`scene s_sushi_1_1 chefs 2`） |
 | 重启 Bridge 自动恢复 | 重启后 1 秒内桥侧又出现 `link_up` + `plugin_hello`（同一次运行内实测） |
 
+> 2026-10-24 注：上表"每帧下发 idle/stop 也不影响本地驱动"一句已被任务 04 推翻——它引入的
+> `ActionDriver` 在收到 `stop` 时就夺取归属，链路连着时本地驱动不再碰该厨师；任务 18 改成
+> `stop` 不建立归属后这条结论恢复。原文保留，不改写当次记录。
+
 **Check after（第一轮）**（2026-10-16，`bash scripts/build-plugin.sh` 0 警告 0 错误；Bridge 用
 `bridge/build/kitchenos-bridge --link listen --host 127.0.0.1 --port 14455 --log logs/bridge.log`，
 游戏用 `bash scripts/dev-cycle.sh 20 s_sushi_1_1` 进关卡）：

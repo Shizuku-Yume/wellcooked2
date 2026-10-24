@@ -80,6 +80,19 @@
 | 两条路都要维护 | 前端只能设备层、关卡内两层都写，注入相关的 bug 要分别到两层看（`LogicalInput` 与 `VirtualPad`） |
 | 逻辑层要按"这一局谁是谁"写 | 逻辑层的键是 per-player 的，写错玩家号不会报错，只会让另一个厨师动 |
 
+## 谁在驱动厨师（归属，任务 04 / 18）
+
+同一时刻一个玩家位只有一个驱动源：Bridge 下发的动作（`ActionDriver`）或本地驱动
+（`WorkOrder` 工序 / 来回走）。
+
+- `move`/`interact`/`pickup`/`dash` 到达时，`ActionDriver` 把这个玩家位记为归 Bridge；本地驱动
+  跳过它，直到链路断开（`LinkRunner` 调 `ActionDriver.ReleaseAll()`）。
+- `stop` **不建立归属**。没被动作接管过的厨师收到 `stop` 照常由本地驱动 —— Bridge 在 Worker
+  缺席或输入槽超时时每帧都发 `stop`，如果它夺取归属，`bridge=on` + `work=auto` 但没起
+  Scheduler/Worker 时本地工序第一帧就会被冻住。已被接管的厨师收到 `stop` 只清掉当前命令、原地
+  站住，归属仍保留；否则 Bridge 每帧消息之间本地驱动会插进来抢同一个手柄。
+- `stop` 两种情况都回 `ok=true` 的 ack；被接管的厨师站住后，Bridge 继续下发 `stop` 不会改变状态。
+
 ## 一次真实操作的日志片段（任务 04，2026-10-16，`s_sushi_1_1`）
 
 Bridge（`--link listen`）+ 替身 Worker（`kitchenos-worker-stub`，写共享内存输入槽）→ 游戏插件：

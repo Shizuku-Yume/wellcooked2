@@ -199,7 +199,8 @@ C 侧构造样例：
 | `hold_ms` | number | 否 | 长按时长 |
 
 `stop`、`pickup`、`dash` 都是**只有名字**的动作（不带任何附加字段）：`stop` 是空转，
-某个厨师的输入槽缺失或超时时 Bridge 就对他下发
+不建立插件侧的驱动归属（对未被动作接管的厨师是 no-op；已接管的厨师只清当前命令、原地站住，
+归属保留到链路断开），某个厨师的输入槽缺失或超时时 Bridge 就对他下发
 `{"type":"action","chef_id":N,"action":"stop"}`；`pickup`（取/放厨师脚下的东西）与 `dash`
 （朝当前朝向冲刺）来自输入槽的 `kos_action_kind`，插件 `InputInjector` 本来就实现了它们
 （它一共八个动作），2026-10-15 起允许被调度下发。插件的 `press`/`release`/`tap` 仍然只在
