@@ -2,7 +2,10 @@
 
 **Effort:** game-bridge
 **Task type:** feature
-**Base commit:** <commit-sha>
+**Base commit:** 0608de6
+**Base branch:** main
+**Started:** 2026-10-24T11:32:09+08:00
+**Status:** active
 
 **Delivers:** 插件的输入注入从"设备层 InControl 反射"换成**逻辑层**：把 `PlayerControls.ControlScheme` 的
 `m_pickupButton`/`m_worksurfaceUseButton`/`m_dashButton`/`m_moveX`/`m_moveY` 换成自己实现的
@@ -36,3 +39,7 @@
 **Done when:** 上面每条打勾，Check 里两处证据都有（完成一单 + 单帧推进）。
 
 ## Progress
+
+Dirty at start: none（本任务在独立 worktree `../overcooked-schedule-gb11`；主工作树里
+`plugin/` 与 `levels/` 有用户未提交的改动，本任务不碰）。
+
