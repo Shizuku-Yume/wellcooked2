@@ -30,6 +30,7 @@
 
 #include <arpa/inet.h>
 #include <errno.h>
+#include <dirent.h>
 #include <fcntl.h>
 #include <netinet/in.h>
 #include <signal.h>
@@ -324,11 +325,11 @@ static void make_runtime(char *out, size_t cap)
  * `make test` 里这些集成用例总耗时可控。stdout/stderr 落到 runtime 下的文件，
  * 失败时人可以直接看。
  */
-static pid_t spawn_supervisor(const char *runtime, const char *state, const char *sem,
-                              int port, int workers, const char *worker_bin,
-                              int no_bridge, int no_scheduler, int crash_limit,
-                              const char *backoff, int hb_ms, int hb_timeout,
-                              int health_ms)
+static pid_t spawn_supervisor_ext(const char *runtime, const char *state, const char *sem,
+                                  int port, int workers, const char *worker_bin,
+                                  int no_bridge, int no_scheduler, int crash_limit,
+                                  const char *backoff, int hb_ms, int hb_timeout,
+                                  int health_ms, const char *runs_dir)
 {
     char port_buf[16];
     char workers_buf[16];
@@ -385,6 +386,10 @@ static pid_t spawn_supervisor(const char *runtime, const char *state, const char
         argv[ac++] = (char *)"--worker-bin";
         argv[ac++] = (char *)worker_bin;
     }
+    if (runs_dir != NULL) {
+        argv[ac++] = (char *)"--runs-dir";
+        argv[ac++] = (char *)runs_dir;
+    }
     argv[ac] = NULL;
 
     snprintf(err_path, sizeof err_path, "%s/supervisor-stderr.log", runtime);
@@ -407,6 +412,17 @@ static pid_t spawn_supervisor(const char *runtime, const char *state, const char
     }
     return pid;
 }
+static pid_t spawn_supervisor(const char *runtime, const char *state, const char *sem,
+                              int port, int workers, const char *worker_bin,
+                              int no_bridge, int no_scheduler, int crash_limit,
+                              const char *backoff, int hb_ms, int hb_timeout,
+                              int health_ms)
+{
+    return spawn_supervisor_ext(runtime, state, sem, port, workers, worker_bin, no_bridge,
+                                no_scheduler, crash_limit, backoff, hb_ms, hb_timeout,
+                                health_ms, NULL);
+}
+
 
 static void unlink_objects(const char *state, const char *sem)
 {
@@ -895,6 +911,103 @@ static void test_orphans(void)
     cleanup_run(&r);
 }
 
+/* ================================================== 8. --runs-dir 指定目录生效 ======= */
+
+static void test_runs_dir(void)
+{
+    sup_run r;
+    char custom_runs[KOS_DAEMON_PATH_MAX + 32];
+    char scheduler_log[KOS_DAEMON_PATH_MAX + 32];
+    char default_runs[KOS_DAEMON_PATH_MAX + 32];
+    long sched_pid = 0;
+    int status = 0;
+    DIR *d;
+    struct dirent *ent;
+    int found_run = 0;
+    char found_run_name[256];
+
+    printf("[test_supervisor] 8. --runs-dir 指定目录生效\n");
+    init_run(&r, "runsdir");
+    snprintf(custom_runs, sizeof custom_runs, "%s/custom_runs", r.runtime);
+    snprintf(scheduler_log, sizeof scheduler_log, "%s/logs/scheduler.log", r.runtime);
+    snprintf(default_runs, sizeof default_runs, "%s/runs", r.runtime);
+
+    r.pid = spawn_supervisor_ext(r.runtime, r.state, r.sem, r.port, 0, NULL, 1, 0, 5,
+                                 "0,50", 50, 1000, 100, custom_runs);
+    expect(r.pid > 0, "runs_dir_supervisor_spawned");
+    if (r.pid <= 0) {
+        cleanup_run(&r);
+        return;
+    }
+
+    expect(wait_child_running(r.runtime, "scheduler", 1, STARTUP_TIMEOUT_MS, &sched_pid),
+           "runs_dir_scheduler_running");
+    expect(wait_log(scheduler_log, "run_dir path=", 2000), "run_dir_logged");
+
+    /* 检查日志中记录的 run_dir 路径确实以 custom_runs 开头 */
+    {
+        char line[2048];
+        int has_path = 0;
+        FILE *fp = fopen(scheduler_log, "r");
+        if (fp != NULL) {
+            while (fgets(line, sizeof line, fp) != NULL) {
+                if (strstr(line, "run_dir path=") != NULL &&
+                    strstr(line, custom_runs) != NULL) {
+                    has_path = 1;
+                    break;
+                }
+            }
+            fclose(fp);
+        }
+        expect(has_path, "run_dir_uses_custom_runs_path");
+    }
+
+    /* 检查 custom_runs 目录下生成了时间戳目录且包含 events.jsonl, decisions.jsonl */
+    d = opendir(custom_runs);
+    expect(d != NULL, "custom_runs_dir_exists");
+    if (d != NULL) {
+        while ((ent = readdir(d)) != NULL) {
+            if (ent->d_name[0] != '.') {
+                found_run = 1;
+                snprintf(found_run_name, sizeof found_run_name, "%s", ent->d_name);
+                break;
+            }
+        }
+        closedir(d);
+    }
+    expect(found_run, "run_subdir_created_in_custom_runs");
+
+    if (found_run) {
+        char file_path[KOS_DAEMON_PATH_MAX + 320];
+        snprintf(file_path, sizeof file_path, "%s/%s/events.jsonl", custom_runs, found_run_name);
+        expect(access(file_path, F_OK) == 0, "events_jsonl_in_custom_runs");
+        snprintf(file_path, sizeof file_path, "%s/%s/decisions.jsonl", custom_runs, found_run_name);
+        expect(access(file_path, F_OK) == 0, "decisions_jsonl_in_custom_runs");
+    }
+
+    /* 默认的 <runtime>/runs 目录由 runtime_dir 预建，但不应包含任何运行子目录 */
+    {
+        int default_has_runs = 0;
+
+        d = opendir(default_runs);
+        if (d != NULL) {
+            while ((ent = readdir(d)) != NULL) {
+                if (ent->d_name[0] != '.') {
+                    default_has_runs = 1;
+                    break;
+                }
+            }
+            closedir(d);
+        }
+        expect(default_has_runs == 0, "default_runtime_runs_has_no_subdirs");
+    }
+
+    kill(r.pid, SIGTERM);
+    expect(wait_exit(r.pid, EXIT_TIMEOUT_MS, &status), "sigterm_runs_dir_supervisor_exits");
+    r.pid = -1;
+    cleanup_run(&r);
+}
+
 static void resolve_binaries(void)
 {
     char exe[KOS_DAEMON_PATH_MAX];
@@ -927,6 +1040,7 @@ int main(void)
     test_silent_child();
     test_cleanup_without_bridge();
     test_orphans();
+    test_runs_dir();
 
     printf("[test_supervisor] 检查 %d 项，失败 %d 项\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;

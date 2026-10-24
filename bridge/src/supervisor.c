@@ -105,6 +105,7 @@ typedef struct {
     int kitchen_loaded;
     char supervisor_log_path[KOS_DAEMON_PATH_MAX];
     char status_path[KOS_DAEMON_PATH_MAX];
+    char runs_dir_buf[KOS_DAEMON_PATH_MAX];
 
     /* ---- 运行时 ---- */
     kos_daemon daemon;
@@ -452,7 +453,7 @@ static void record_spawn_failure(supervisor *s, sup_child *sc, int index, const 
 static int spawn_child(supervisor *s, int index)
 {
     sup_child *sc = &s->children[index];
-    char *argv[24];
+    char *argv[48];
     int ac = 0;
     char port_buf[16];
     char workers_buf[16];
@@ -1524,6 +1525,24 @@ static int supervisor_main(supervisor *s)
         return EXIT_STARTUP;
     } else {
         s->kitchen_path = s->kitchen_file;
+    }
+    if (s->runs_dir != NULL) {
+        if (s->runs_dir[0] == '/') {
+            copy_str(s->runs_dir_buf, sizeof s->runs_dir_buf, s->runs_dir);
+        } else {
+            char cwd[KOS_DAEMON_PATH_MAX];
+
+            if (getcwd(cwd, sizeof cwd) == NULL) {
+                fprintf(stderr, "kitchenos-supervisor: 无法获取当前工作目录\n");
+                return EXIT_STARTUP;
+            }
+            if (snprintf(s->runs_dir_buf, sizeof s->runs_dir_buf, "%s/%s", cwd, s->runs_dir) >=
+                (int)sizeof s->runs_dir_buf) {
+                fprintf(stderr, "kitchenos-supervisor: runs-dir 路径过长\n");
+                return EXIT_STARTUP;
+            }
+        }
+        s->runs_dir = s->runs_dir_buf;
     }
 
     if (!s->foreground) {
