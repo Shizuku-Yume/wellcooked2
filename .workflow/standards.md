@@ -22,9 +22,9 @@ python3 tools/fake_plugin.py --scenario happy
 bash tools/run-bridge-scenarios.sh        # 全部场景
 bash tools/run-real-game.sh               # 真游戏 W8 验收（需要人进关卡）
 
-# Windows 侧插件
-dotnet build plugin/WellCooked.Plugin/WellCooked.Plugin.csproj -c Debug
-plugin/tools/deploy-plugin.ps1 -Build     # 编译并部署到游戏目录
+# Windows 侧插件（交付工程；只构建，不部署）
+dotnet build plugin/WellCooked.Smoke.csproj -c Debug -p:GameDir="${GAME_DIR:?先设 GAME_DIR}"
+plugin/tools/deploy-plugin.ps1 -Build     # 部署参考工程（plugin/WellCooked.Plugin/）
 ```
 
 ```sh
@@ -153,8 +153,9 @@ python3 scripts/export-kitchen.py --out /tmp/k.json --out-recipes /tmp/r.json   
 - `bridge/tests/` — C 单元测试，`make test` 驱动
 - `protocol/` — 两端共享的协议说明与 JSON Schema，是跨端唯一契约
 - `tools/` — 开发期工具，最重要的是不依赖游戏的协议级模拟插件与场景 harness
-- `plugin/` — Windows 侧 BepInEx 插件。`plugin/WellCooked.Plugin/`（net46，bridge effort 写的，
-  含 TCP 客户端、状态读取、输入注入）；`plugin/SmokePlugin.cs`（net35，组员写的 BepInEx+Harmony 冒烟）
+- `plugin/` — Windows 侧 BepInEx 插件。交付工程是 `plugin/WellCooked.Smoke.csproj`（net35，入口
+  `SmokePlugin.cs` + `Link/`，含状态读取、导航、工序、接管、调试指令）。`plugin/WellCooked.Plugin/`
+  是旧参考工程（也是 net35，HintPath 指向仓库里不存在的 `..\Libs2017\`，不能直接构建），去留待用户决定。
 - `scripts/` — 组员的部署、构建、启动、验证脚本
 
 Workflow files live where CONVENTIONS §2 says.

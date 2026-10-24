@@ -1,5 +1,6 @@
-﻿# run-conformance.ps1 —— 一致性测试的 Windows 半场：把对端从插件自己的协议代码编译出来，
-# 再把运行交给 WSL。
+﻿# run-conformance.ps1 —— 一致性测试的 Windows 编译路径（备用；Linux 本机有 dotnet 时
+# run-conformance.sh 会自己用 conformance/PluginPeer.csproj 编译，不需要本脚本）：
+# 把对端从交付插件的协议代码编译出来，再把运行交给 WSL。
 #
 #     powershell -NoProfile -File plugin/tools/conformance/run-conformance.ps1
 #     powershell -NoProfile -File plugin/tools/conformance/run-conformance.ps1 -Port 12401 -Seconds 3
@@ -34,8 +35,8 @@ $Csc = 'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe'
 $PeerExe = Join-Path $RepoRoot 'plugin\tools\conformance\bin\PluginPeer.exe'
 $Sources = @(
     (Join-Path $RepoRoot 'plugin\tools\conformance\PluginPeer.cs'),
-    (Join-Path $RepoRoot 'plugin\WellCooked.Plugin\Protocol\Messages.cs'),
-    (Join-Path $RepoRoot 'plugin\WellCooked.Plugin\Net\TcpLink.cs')
+    (Join-Path $RepoRoot 'plugin\Link\Messages.cs'),
+    (Join-Path $RepoRoot 'plugin\Link\TcpLink.cs')
 )
 $CscLog = Join-Path $RepoRoot 'logs\conformance-csc.out'
 

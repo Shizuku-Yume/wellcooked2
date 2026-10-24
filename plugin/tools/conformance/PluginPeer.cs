@@ -4,21 +4,20 @@
  * 它要解决的问题：tools/fake_plugin.py 是对线格式的**重新实现**，
  * 所以只要两套实现错得一样，它就会和 C 桥一致。
  * 能证伪这一点的只有插件自己的代码。于是本程序与定义契约的
- * 那两个插件源文件一起编译，但从不修改它们：
- * 
+ * 那两个**交付**插件源文件一起编译，但从不修改它们：
  *
- *   plugin/WellCooked.Plugin/Protocol/Messages.cs   JsonBuilder, Msg, MsgType, InboundMessage
- *   plugin/WellCooked.Plugin/Net/TcpLink.cs         行分帧（一行一条 JSON）+ TCP 链路
+ *   plugin/Link/Messages.cs   JsonBuilder, Msg, MsgType, InboundMessage
+ *   plugin/Link/TcpLink.cs    行分帧（一行一条 JSON）+ TCP 链路
  *
  * 它发到线上的每个字节都由插件自己的构造器产生
  * （Msg.Hello / Msg.Ack / Msg.Heartbeat，state_update 用 JsonBuilder 按
- * StateReader.cs 发出的精确形状搭建）。它读回来的每一样东西都经反射绑定到
+ * Link/StateFrame.cs 发出的精确形状搭建）。它读回来的每一样东西都经反射绑定到
  * 插件自己的 InboundMessage 字段：Messages.cs 里改了字段名或类型，
  * 这个对端接受的形状就跟着变，不需要改本文件。
  *
  * 它做不到什么，以及为什么不装作做到了：
  *
- *   Plugin.cs 用 UnityEngine.JsonUtility 解析入站 JSON，那需要 Unity 引擎，
+ *   LinkRunner.cs 用 UnityEngine.JsonUtility 解析入站 JSON，那需要 Unity 引擎，
  *   无法链接进控制台程序。所以本对端自己解析 JSON 语法，
  *   并通过反射对 InboundMessage 强制插件的**字段契约**：
  *   未知的字段名、
@@ -34,10 +33,9 @@
  *     这些帧打向**桥**，而桥一旦分帧失步就会断开链路，
  *     所以「扛住了」这件事是能观察到的。
  *
- *   阶段 2「会话」——插件自己的 TcpLink 跑客户端模式，用插件的
- *     默认配置（Network.Mode=client、HeartbeatMs=2000、
- *     HeartbeatTimeoutMs=0、ReconnectDelayMs=3000）：先 hello，再以
- *     60 Hz 发 state_update，并把桥回的每条 action 解码、回 ack。
+ *   阶段 2「会话」——插件自己的 TcpLink 跑客户端模式，用 LinkRunner
+ *     写死的参数（client、心跳 2000 ms、心跳超时关、重连 2000 ms）：
+ *     先 hello，再以 60 Hz 发 state_update，并把桥回的每条 action 解码、回 ack。
  *
  * 退出码：0 全部检查通过，1 契约分歧或前置条件不满足，
  * 2 参数错误。
@@ -53,8 +51,7 @@ using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
-using WellCooked.Net;
-using WellCooked.Protocol;
+using WellCooked;
 
 namespace WellCooked.Conformance
 {
@@ -86,7 +83,7 @@ namespace WellCooked.Conformance
     internal sealed class Options
     {
         public string Host = "127.0.0.1";
-        public int Port = 14455;              /* the plugin's Network.Port default */
+        public int Port = 14455;              /* LinkRunner's default bridge port */
         public double Seconds = 3.0;
         public int Hz = 60;
         public bool RawPhase = true;
@@ -221,12 +218,13 @@ namespace WellCooked.Conformance
         private const int CapProbeDropped = CapProbeResources - 48;
         private const int CapProbeTruncated = 1;
 
-        /* 插件自己的握手取值，抄自 Plugin.cs：桥必须
-         * 看到和真游戏一模一样的 hello。 */
+        /* 插件自己的握手取值，抄自 LinkRunner.HostActions：桥必须
+         * 看到和真游戏一模一样的 hello。ActionDriver 只认这五个；
+         * press/release/tap 是旧参考工程的能力，交付插件在线上不支持。 */
         private const string PluginVersion = "0.1.0";
-        private static readonly string[] HostActions =
+        private static readonly List<string> HostActions = new List<string>
         {
-            "move", "stop", "press", "release", "tap", "pickup", "dash", "interact"
+            "move", "stop", "interact", "pickup", "dash"
         };
 
         private readonly Options _opt;
@@ -264,8 +262,8 @@ namespace WellCooked.Conformance
             }
 
             /* 本对端在 state_update 里上报的厨师，就是
-             * 插件 InputInjector 唯一会接受的 action 目标（否则 TryHandleAction 会报
-             * "chef_id out of range"），所以入站 action 就是拿这个集合校验的。
+             * 插件 ActionDriver 唯一会接受的 action 目标（否则会回
+             * "玩家位 N 不在我们占的位里"），所以入站 action 就是拿这个集合校验的。
              * */
             for (int i = 0; i < StateFrames.ChefIds.Length; i++)
                 _knownChefs.Add(StateFrames.ChefIds[i].ToString(CultureInfo.InvariantCulture));
@@ -287,7 +285,7 @@ namespace WellCooked.Conformance
         {
             Say("=== KitchenOS 一致性对端（插件自己的协议代码）===");
             Say("对端       : {0}", Environment.Version + " / " + Path.GetFileName(CurrentExecutable()));
-            Say("编译来源   : Protocol/Messages.cs + Net/TcpLink.cs，未改动");
+            Say("编译来源   : Link/Messages.cs + Link/TcpLink.cs，未改动");
             string root = _opt.SourceRoot;
             if (root == null)
             {
@@ -295,9 +293,9 @@ namespace WellCooked.Conformance
                 root = Path.GetFullPath(Path.Combine(dir, Path.Combine("..", Path.Combine("..", Path.Combine("..", "..")))));
             }
             Say("源码根目录 : {0}", root);
-            SaySource(root, Path.Combine("plugin", Path.Combine("WellCooked.Plugin", Path.Combine("Protocol", "Messages.cs"))));
-            SaySource(root, Path.Combine("plugin", Path.Combine("WellCooked.Plugin", Path.Combine("Net", "TcpLink.cs"))));
-            Say("目标       : {0}:{1}  （TcpLink.Mode.Client，插件默认 Network.Mode=client）", _opt.Host, _opt.Port);
+            SaySource(root, Path.Combine("plugin", Path.Combine("Link", "Messages.cs")));
+            SaySource(root, Path.Combine("plugin", Path.Combine("Link", "TcpLink.cs")));
+            Say("目标       : {0}:{1}  （TcpLink.Mode.Client，LinkRunner 默认 bridge=127.0.0.1:14455）", _opt.Host, _opt.Port);
             Say("本对端能构造的消息 : {0}", Join(new string[] { MsgType.Hello, MsgType.StateUpdate, MsgType.Heartbeat, MsgType.Ack, MsgType.Echo }));
             Say("本对端接受的消息   : {0}", Join(MsgTypeNames()));
             Say("");
@@ -462,7 +460,7 @@ namespace WellCooked.Conformance
             Say("--- 阶段 2：插件 TcpLink 客户端会话（{0} Hz 的 state_update，跑 {1} 秒）---",
                 _opt.Hz, _opt.Seconds.ToString(CultureInfo.InvariantCulture));
 
-            /* Plugin.StartLink()：插件的 Network.* 默认配置。 */
+            /* LinkRunner.Tick 建链路时写死的参数。 */
             var link = new TcpLink(
                 TcpLink.Mode.Client,
                 _opt.Host,
@@ -470,7 +468,7 @@ namespace WellCooked.Conformance
                 "127.0.0.1",   /* ListenAddress: unused in client mode */
                 2000,          /* HeartbeatMs */
                 0,             /* HeartbeatTimeoutMs */
-                3000);         /* ReconnectDelayMs */
+                2000);         /* ReconnectDelayMs */
             link.Log = delegate(string message) { Say("  [tcplink] {0}", message); };
             link.Start();
 
@@ -484,7 +482,7 @@ namespace WellCooked.Conformance
                 return;
             }
 
-            /* Plugin.Update() 在 Connected 翻转后的第一帧发 hello。
+            /* LinkRunner.Tick 在 Connected 翻转后的第一帧发 hello。
              * TcpLink 在置上 _connected 之后立刻清空发送队列，
              * 所以同一瞬间入队的 hello 可能被丢掉；插件靠「晚一帧再反应」
              * 从来没有踩到这个竞态。这里照做。 */
@@ -586,7 +584,7 @@ namespace WellCooked.Conformance
             }
             if (!_msgTypeConstants.ContainsKey(type))
             {
-                Fail("{0}: 入站 type {1} 不在 MsgType 的名字里；Plugin.HandleInbound 会打日志 'unknown message type' 并忽略它",
+                Fail("{0}: 入站 type {1} 不在 MsgType 的名字里；LinkRunner.PumpInbound 会打日志 '不认识的消息类型' 并忽略它",
                     where, Quote(type));
                 return type;
             }
@@ -623,21 +621,21 @@ namespace WellCooked.Conformance
             if (kind.Length == 0)
             {
                 _actionsFailed++;
-                Fail("{0}: action 帧没有 action 名（InputInjector 会说 'missing action'）\n      raw: {1}", where, Truncate(root.Text, 400));
+                Fail("{0}: action 帧没有 action 名（ActionDriver 会说 '空动作'）\n      raw: {1}", where, Truncate(root.Text, 400));
                 return;
             }
 
             bool ok = true;
-            if (Array.IndexOf(HostActions, kind) < 0)
+            if (HostActions.IndexOf(kind) < 0)
             {
                 ok = false;
-                Fail("{0}: action {1} 不在插件声明支持的 action 里（{2}）；InputInjector 会回 'unknown action'",
-                    where, Quote(kind), Join(HostActions));
+                Fail("{0}: action {1} 不在插件声明支持的 action 里（{2}）；ActionDriver 会回 '不认识的动作'",
+                    where, Quote(kind), Join(HostActions.ToArray()));
             }
             if (_knownChefs.IndexOf(m.chef_id.ToString(CultureInfo.InvariantCulture)) < 0)
             {
                 ok = false;
-                Fail("{0}: action 指向 chef_id={1}，但本对端在 state_update 里只上报过厨师 {2}；插件 InputInjector 会回 'chef_id out of range'",
+                Fail("{0}: action 指向 chef_id={1}，但本对端在 state_update 里只上报过厨师 {2}；ActionDriver 会回 '玩家位 N 不在我们占的位里'",
                     where, m.chef_id, Join(_knownChefs.ToArray()));
             }
 
@@ -647,7 +645,7 @@ namespace WellCooked.Conformance
                 if (m.target == null || target == null || target.Kind != JsonKind.Object)
                 {
                     ok = false;
-                    Fail("{0}: move 没有 target 对象（InputInjector 会说 'missing target'）", where);
+                    Fail("{0}: move 没有 target 对象（ActionDriver 会说 'move 缺 target'）", where);
                 }
                 else
                 {
@@ -676,16 +674,16 @@ namespace WellCooked.Conformance
             else if (kind == "interact" && m.target_object == null)
             {
                 /* protocol/README §3.6 说 interact 的 target_object 是必填，
-                 * 但 InputInjector 处理 interact 就是点一下按钮，
+                 * 但 ActionDriver 处理 interact 就是点一下按钮，
                  * 从不读 target_object。C 桥总是会带上它，所以这说的是
                  * 插件有多宽容，不是线格式失败。 */
-                Say("  [note] interact 帧没带 target_object：文档说它必填，InputInjector 不读它");
+                Say("  [note] interact 帧没带 target_object：文档说它必填，ActionDriver 不读它");
             }
 
             if (!ok) _actionsFailed++;
 
             /* 插件对每条 action 都回 ack，不管接受与否
-             * （Plugin.HandleAction -> _link.Send(Msg.Ack(...))），于是桥的
+             * （LinkRunner.HandleAction -> _link.Send(Msg.Ack(...))），于是桥的
              * protocol_parse_ack 这条路径也被插件自己的构造器覆盖到了。
              * 阶段 1 没有 TcpLink，故意不回 ack。 */
             if (_ackLink != null)
@@ -721,7 +719,7 @@ namespace WellCooked.Conformance
                 FieldInfo f;
                 if (!_inboundFields.TryGetValue(name, out f))
                 {
-                    error = "field " + Quote(name) + " does not exist on WellCooked.Protocol.InboundMessage (JsonUtility would silently ignore it)";
+                    error = "field " + Quote(name) + " does not exist on WellCooked.InboundMessage (JsonUtility would silently ignore it)";
                     return null;
                 }
                 string fieldError = null;
@@ -1103,7 +1101,7 @@ namespace WellCooked.Conformance
     }
 
     /* ==================================================================== */
-    /* 出站 state_update，形状与 StateReader.cs 发出的完全一致            */
+    /* 出站 state_update，形状与 Link/StateFrame.cs 发出的完全一致        */
     /* ==================================================================== */
 
     internal static class StateFrames
@@ -1121,13 +1119,13 @@ namespace WellCooked.Conformance
 
         /// <summary>
         /// 用插件的 JsonBuilder 搭出来的 state_update，结构完全照
-        /// StateReader.BuildStateJson：顶层 {type,timestamp,game_time,
+        /// Link/StateFrame.cs：顶层 {type,timestamp,game_time,
         /// score,chefs[],orders[],resources{}}，每个 chef/order/resource 的值
         /// 都由各自的嵌套 JsonBuilder 产出，再用 Raw() 拼进来。
         ///
         /// 内容是写实的：两个有坐标的厨师，其中一个手里拿着东西；
-        /// 两张订单（其中一张的菜谱解析不出来，StateReader 遇到这种情况
-        /// 就发 JSON null）；资源覆盖 StateReader 能产生的全部五种形状——
+        /// 两张订单（其中一张的菜谱解析不出来，StateFrame 遇到这种情况
+        /// 就发 JSON null）；资源覆盖 StateFrame 能产生的全部五种形状——
         /// 带 time_left 的锅、空闲的灶、
         /// 被占用的具名工位（cutting_board_0）、plate_stack 计数，
         /// 外加一个 C 侧归不了类的键。

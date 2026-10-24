@@ -86,21 +86,19 @@ An entry leaves this file in one of two ways:
 
 ## 两个插件工程并存，状态读取与输入注入各有一份
 
-- **Where:** `plugin/*.cs` + `plugin/WellCooked.Smoke.csproj`（世界状态、导航、工序、关卡接管、调试指令）
-  与 `plugin/WellCooked.Plugin/`（协议编解码、TCP 链路、每帧状态上报、动作注入）
+- **Where:** `plugin/*.cs` + `plugin/WellCooked.Smoke.csproj`（交付工程）与
+  `plugin/WellCooked.Plugin/`（旧参考工程）
 - **Added:** 2026-10-15
 - **Priority:** worth-doing
-- **Problem:** 两条线并行做插件，合并后仓库里有两个 BepInEx 工程，职责有实质重叠：状态读取有
-  `WorldState.cs`/`Kitchen.cs` 与 `StateReader.cs` 两份，输入注入有 `LogicalInput.cs`+`VirtualPad.cs`
-  与 `InputInjector.cs` 两份。类型名实测不冲突（两边 10 : 4 个类型无交集），所以各自都能编过、
-  互不报错 —— 也正因如此，编译器不会提醒任何人这里重了。
-- **Impact:** 同一条游戏事实（厨师坐标怎么取、交互键是哪个）改一处不改另一处就会漂移；两个工程都往
-  `BepInEx/plugins/` 拷，装哪个、要不要一起装，只能靠人记。
-- **Solution:** 先定一个存活方向再合并：按链路层（协议/上报/注入接口）与游戏控制层（导航/工序/接管）
-  分层，让组员那份当控制层、本分支那份当链路层，共用一套状态读取。`game-bridge.md` 把插件定义成
-  "状态读取、输入注入、TCP 客户端"三件事，正好是两边各做了一半 —— 合并方向在那份 spec 里已经有依据。
-  **方向已定，由任务 03 + 04 一起做完**：`decisions.md: 2026-10-16 - 两个插件工程合并到 net35 那份`
-  选了 net35 那份（演示机）存活，net46 退成参考实现。任务 03 已经把**状态读取与链路**这一半并进来
-  （`plugin/Link/`，上报走 `WorldState` 的同一套读取），**输入注入**那一半在任务 04（动作分发与
-  按键注入并进 `Takeover`/`LogicalInput`）；04 落地后删掉本条目。
-- **Cost:** 大，要动两边共 15 个文件，而且输入注入那条路只有进游戏才能验（本机测不了）。
+- **Problem:** 两条线并行做插件，合并后仓库里有两个 BepInEx 工程，职责有实质重叠。**现状
+  （2026-10-24）：** 链路（`plugin/Link/Messages.cs`、`TcpLink.cs`）与动作分发（`ActionDriver`）
+  已经并入交付工程，`LinkRunner` 实际连 Bridge；参考工程仍留着另一份状态读取（`StateReader`）与
+  输入注入（`InputInjector`）。两份都是 net35；参考工程的 HintPath 指向仓库里不存在的
+  `..\Libs2017\`，不能直接构建。参考工程还含 `ProcessingTuner`，运行时会改烹饪/切菜时长 ——
+  若它被部署进游戏，会违反方案 §8.3"不用改变游戏速度、加速加工等功能制造得分优势"（静态读代码；
+  运行时效果未在游戏里验证）。
+- **Impact:** 装哪个、要不要一起装，只能靠人记；`ProcessingTuner` 被误部署会直接破坏策略对比的
+  公平性，而日志里不会报"你在用加速加工"。
+- **Solution:** 剩下一件事是参考工程的去留：删除，或留作只读参考。**待用户决定**；决定前不要
+  部署它。若保留，至少把 `ProcessingTuner` 标成演示专用并默认关闭。
+- **Cost:** 小；删除会丢掉一份可对照实现与动作执行器的历史，需要用户拍板。

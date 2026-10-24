@@ -6,7 +6,7 @@ using System.Text;
 namespace WellCooked
 {
     // 跨端协议的消息层（任务 03 从 plugin/WellCooked.Plugin/Protocol/Messages.cs 搬过来）。
-    // 那份是 net46 的参考实现，这里按本工程的写法落在同一个 `WellCooked` 命名空间下，
+    // 那份是旧参考工程（也是 net35）的实现，这里按本工程的写法落在同一个 `WellCooked` 命名空间下，
     // 逐字保留字段名与转义规则 —— 两端必须与 protocol/protocol.md 和 bridge/src/protocol.c 对齐。
 
     /// <summary>2D 向量（映射游戏世界 x/z 平面）。</summary>

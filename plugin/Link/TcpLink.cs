@@ -13,7 +13,7 @@ namespace WellCooked
     /// TCP 链路（单后台线程）：分帧 = 一行一条 UTF-8 JSON，以 '\n' 结尾，单行上限 1MB。
     /// 字节级收发都在 worker 线程；入站投递到队列，由 Unity 主线程消费（任务 03）。
     ///
-    /// 这份是从 `plugin/WellCooked.Plugin/Net/TcpLink.cs`（net46 参考实现）搬过来的，只改了三处
+    /// 这份是从 `plugin/WellCooked.Plugin/Net/TcpLink.cs`（旧参考工程，也是 net35）搬过来的，只改了三处
     /// **net35/游戏 Mono 上没有的类型**，其余逐字保留（分帧规则与上限是协议的一部分）：
     ///   - `ConcurrentQueue` → `Queue` + 自己的锁（net35 没有 System.Collections.Concurrent）
     ///   - `ManualResetEventSlim` → `ManualResetEvent`

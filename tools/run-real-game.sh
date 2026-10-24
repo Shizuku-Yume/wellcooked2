@@ -6,12 +6,15 @@
 #     bash tools/run-real-game.sh
 # 然后按提示启动 Overcooked! 2。
 #
+# 只验证游戏侧判据（不启动 Bridge、不需要游戏）：
+#     BEPINEX_LOG=/path/to/LogOutput.log bash tools/run-real-game.sh --check-game
+# 退出码 0 = 日志里有交付插件的启动行；1 = 没有。
+#
 # 脚本自己起 Bridge、自己等插件、自己判定 task 05 的 Check，不要求你读日志下结论：
 #     logs/bridge.log 里有 >=1 条 hello 与 >=10 条 state_update，且没有解析错误。
 #
-# 之所以先起 Bridge 再让你启动游戏：插件是 client（Network.Mode=client，
-# Network.Port=14455），收不到连接就每 ReconnectDelayMs 重试一次。所以顺序反过来
-# 也照样能连上，你不用掐时间。
+# 之所以先起 Bridge 再让你启动游戏：插件是 client（LinkRunner 默认连 127.0.0.1:14455，
+# 断线后等 2 秒再连），收不到连接就自己重试。所以顺序反过来也照样能连上，你不用掐时间。
 
 set -u
 
@@ -25,13 +28,17 @@ HOST="${HOST:-127.0.0.1}"
 WAIT_SECONDS="${WAIT_SECONDS:-120}"
 NEED_HELLO="${NEED_HELLO:-1}"
 NEED_STATE="${NEED_STATE:-10}"
-# 游戏侧日志。插件在 Awake 里会写一行 "[Plugin] WellCooked <版本> loaded (game=...)"，
-# 这一行是"插件真的初始化了"与"BepInEx 只是找到了这个类型"之间的分界。
+# 游戏侧日志。交付插件（SmokePlugin.cs）在 Awake 里写
+# "[Info   :WellCooked.Smoke] WellCooked.Smoke loaded; Unity ..."；这一行是"插件真的
+# 初始化了"与"BepInEx 只是找到了这个类型（Loading [WellCooked.Smoke 0.1.0]）"之间的分界。
 GAME_DIR="${GAME_DIR:-/mnt/d/EPIC/Games/Overcooked2}"
 BEPINEX_LOG="${BEPINEX_LOG:-${GAME_DIR}/BepInEx/LogOutput.log}"
-# Awake 的第一件事是 BindConfig()，BepInEx 在 Bind 时会写这个文件。它是"Awake 跑过"
-# 的第二个独立证据，与日志行互不依赖 —— 只看日志会把"没启动"和"日志没写出来"混为一谈。
-PLUGIN_CFG="${GAME_DIR}/BepInEx/config/com.wellcooked.plugin.cfg"
+PLUGIN_LOG_MARK="WellCooked.Smoke loaded"
+# 插件每 0.5 秒写一份状态快照（WorldState.Tick）。它是"插件 tick 循环跑过"的第二个独立证据，
+# 与日志行互不依赖 —— 只看日志会把"没启动"和"日志没写出来"混为一谈。
+PLUGIN_STATE="${GAME_DIR}/BepInEx/wellcooked-state.json"
+# 开关文件是插件的输入配置，不是它生成的；写 bridge=off 时插件在跑也不会连。
+PLUGIN_SWITCH="${GAME_DIR}/BepInEx/wellcooked-takeover.txt"
 
 BRIDGE_PID=""
 
@@ -44,6 +51,24 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 say() { printf '%s\n' "$*"; }
+
+# 游戏侧判据：BepInEx 日志里必须有交付插件自己的启动行。旧参考工程写的是
+# "[Plugin] WellCooked <版本> loaded"，不算数 —— 它只能证明参考工程在跑。
+game_plugin_initialized() {
+    [ -f "$BEPINEX_LOG" ] && grep -qF -- "$PLUGIN_LOG_MARK" "$BEPINEX_LOG"
+}
+
+# 给判据做双向证明用：只判定游戏侧证据，不启动 Bridge、不需要游戏。
+#   BEPINEX_LOG=/tmp/fake.log bash tools/run-real-game.sh --check-game
+# 退出码 0 = 找到交付插件的启动行；1 = 没找到（含文件不存在）。
+if [ "${1:-}" = "--check-game" ]; then
+    if game_plugin_initialized; then
+        say "PASS 游戏侧：$BEPINEX_LOG 有 '$PLUGIN_LOG_MARK'"
+        exit 0
+    fi
+    say "FAIL 游戏侧：$BEPINEX_LOG 没有 '$PLUGIN_LOG_MARK'"
+    exit 1
+fi
 
 # ---------------------------------------------------------------- 前置检查
 if [ ! -x "$BIN" ]; then
@@ -148,26 +173,30 @@ while :; do
                 say "   x 插件加载失败：日志里有 'could not be instantiated'"
                 grep -nF "could not be instantiated" "$BEPINEX_LOG" | tail -n 2 | sed 's/^/       /'
                 say "     → 这是插件自身的问题，与网络无关。"
-            elif grep -qF "[Plugin] WellCooked" "$BEPINEX_LOG"; then
+            elif game_plugin_initialized; then
                 say "   v 插件已初始化（它自己写了启动行）："
-                grep -nF "[Plugin] WellCooked" "$BEPINEX_LOG" | tail -n 1 | sed 's/^/       /'
+                grep -nF -- "$PLUGIN_LOG_MARK" "$BEPINEX_LOG" | tail -n 1 | sed 's/^/       /'
                 say ""
                 say "     插件输出的其余日志："
-                grep -nF "[Plugin]" "$BEPINEX_LOG" | tail -n 6 | sed 's/^/       /'
+                grep -nF "WellCooked.Smoke]" "$BEPINEX_LOG" | tail -n 6 | sed 's/^/       /'
                 say "     → 插件在跑却连不上，属于网络问题："
-                say "       把插件配置 Network.Host 改成 ${WSL_IP}，或查 Windows 防火墙入站规则。"
+                say "       在 $PLUGIN_SWITCH 写 bridge=${WSL_IP}:${PORT}，或查 Windows 防火墙入站规则。"
             else
-                say "   x 插件没有写出启动行 '[Plugin] WellCooked ... loaded'"
-                if [ -f "$PLUGIN_CFG" ]; then
-                    say "     但它的配置文件已生成（$(basename "$PLUGIN_CFG")）——"
-                    say "     Awake 至少跑到了 BindConfig，所以插件其实启动了，"
-                    say "     更可能是这一行日志没写出来。"
+                say "   x 插件没有写出启动行 '$PLUGIN_LOG_MARK'"
+                if [ -f "$PLUGIN_STATE" ]; then
+                    say "     但状态快照已生成（$(basename "$PLUGIN_STATE")，修改时间 $(date -r "$PLUGIN_STATE" '+%F %T')）——"
+                    say "     WorldState 每 0.5 秒写一次，说明插件 tick 循环跑过；"
+                    say "     更可能是这一行日志没写出来或被截断。"
                 else
-                    say "     配置文件也没有生成（$(basename "$PLUGIN_CFG")）。"
-                    say "     Awake 干的第一件事就是 BindConfig，BepInEx 会在那时写这个文件，"
-                    say "     所以两个互相独立的信号都指向同一结论：插件没有被初始化。"
+                    say "     状态快照也没有生成（$(basename "$PLUGIN_STATE")）。"
+                    say "     WorldState 每 0.5 秒写一次，与启动行互相独立，"
+                    say "     所以两个信号都指向同一结论：插件没有被初始化。"
                 fi
-                say "     BepInEx 打印 'Loading [WellCooked ...]' 只说明它扫描到了这个类型，"
+                if [ -f "$PLUGIN_SWITCH" ] &&
+                   grep -Eiq '^[[:space:]]*bridge[[:space:]]*=[[:space:]]*(off|false|0)[[:space:]]*$' "$PLUGIN_SWITCH"; then
+                    say "     ! $PLUGIN_SWITCH 里写着 bridge=off：插件在跑也不会连。"
+                fi
+                say "     BepInEx 打印 'Loading [WellCooked.Smoke ...]' 只说明它扫描到了这个类型，"
                 say "     不等于 Awake 跑过了；两者必须分开看。"
                 say ""
                 say "     游戏侧日志末尾："
@@ -179,7 +208,7 @@ while :; do
             say "  - Windows 防火墙是否拦了 WSL 的入站连接"
         else
             say " 插件连上了但状态不够。可能是停在菜单里没有进入关卡 ——"
-            say " StateReader 只有在关卡内才拿得到厨师/订单，菜单阶段没有状态可发。"
+            say " WorldState 只有在关卡内才读得到厨师/订单，菜单阶段状态帧里没有这些内容。"
         fi
         say ""
         say " 日志末尾："

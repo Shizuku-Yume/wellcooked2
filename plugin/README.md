@@ -1,7 +1,7 @@
 # `plugin/`：游戏侧插件
 
 跑在《胡闹厨房2》进程里的 BepInEx 5 插件（net35，`WellCooked.Smoke.csproj`）。
-它只做三件事，**不做任何调度决策**（`specs/game-bridge.md`）：
+协议链路层只做搬运，**不做任何调度决策**（`specs/game-bridge.md`）：
 
 1. **读世界状态**：写 `BepInEx/wellcooked-state.json`（给人看、给 `scripts/export-kitchen.py` 读），
    并把同一批数据按协议编码成 `state_update` 发给 Linux 侧的 Bridge（任务 03）。
@@ -9,6 +9,11 @@
    （`LogicalInput`），由本地的工序状态机（`WorkOrder`）或 Bridge 下发的动作驱动。
 3. **调试通道**：`BepInEx/wellcooked-command.txt` 一行一条指令（`load`/`restart`/`mech`/`levels`/…），
    配置在 `BepInEx/wellcooked-takeover.txt`（见 `.workflow/standards.md`）。
+
+例外是 `WorkOrder.cs`：`wellcooked-takeover.txt` 里写 `work=auto` 时，它自己选厨师、选单、选工位，
+是 **Scheduler 落地前的本地替身策略**（`PickChef` 的注释写着"等 Scheduler 接管"），不是调度器。
+默认 `work` 关，`Takeover` 只做"来回走 + 周期按交互"；Bridge 下发的动作走 `ActionDriver`，与它无关。
+（这条是代码现状说明；没有自动检查锁住它，本机也未实机验证。）
 
 ## 读的是游戏的哪些对象与字段
 
@@ -48,7 +53,8 @@
 | `state_ms=<毫秒>` | 只改上报间隔（`0` = 每帧）；**不重建 TCP 连接** | 同上 |
 
 心跳与重连参数这一版写死在 `LinkRunner` 里（心跳 2000 ms、断线后等 2000 ms 再连），
-没有做成可热改的配置键 —— 协议文档里 `Network.*` 那些键是 net46 参考实现的，net35 演示插件不读它们。
+没有做成可热改的配置键 —— 协议文档里 `Network.*` 那些键属于旧参考工程
+（`plugin/WellCooked.Plugin/`，也是 net35），交付插件不读它们。
 
 重连的两种耗时别混：**对端立刻拒绝**（端口没人听）时约 2 秒一次；**连接建立阶段超时**时还要叠加
 最多 3 秒的 connect 等待，所以两次尝试之间可能看到约 5 秒。日志里都有重试次数。
@@ -112,7 +118,7 @@ action: 厨师位 1 按 dash
 | `WorldState.cs` | 世界状态读取与落盘、可走格采样、反射缓存（`Get/Invoke/StaticMethod/FindAll`） |
 | `Kitchen.cs` | 工序要用的查询：料箱/盘子/砧板/出菜台、面前是什么、切菜进度 |
 | `Orders.cs` | 固定订单与固定随机源（策略对比要用同一组订单） |
-| `WorkOrder.cs` | 工序状态机：取料 → 放砧板 → 切 → 拿盘子 → 装盘 → 拿走 → 交付 |
+| `WorkOrder.cs` | 工序状态机（`work=auto` 时生效）：取料 → 放砧板 → 切 → 拿盘子 → 装盘 → 拿走 → 交付；`PickChef` 是 Scheduler 落地前的本地替身策略 |
 | `Takeover.cs` | 占位、进关卡后接管、每帧把"想去哪、按不按"喂给手柄 |
 | `Navigation.cs` | 0.6 米格上的 A*、路点跟随、卡住处理 |
 | `VirtualPad.cs` / `LogicalInput.cs` | 设备层虚拟手柄 / 逻辑层注入 |
