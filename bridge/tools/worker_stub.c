@@ -188,8 +188,10 @@ int main(int argc, char **argv)
     struct sigaction sa;
     struct timespec next;
     struct timespec start;
+    struct timespec end;
     long period_ns;
     uint64_t frame = 0;
+    double elapsed;
     int i;
     int rc;
 
@@ -355,8 +357,13 @@ int main(int argc, char **argv)
         frame++;
         sleep_until(&next);
 
-        /* 错过的那一拍直接跳过，不补发。落后就连发会把 stub 变成一台压力机，
-         * 而它在这里的角色是"一个有固定写槽频率的 Worker"。 */
+        /* 下一拍的截止时刻按绝对时间推进；错过的那一拍直接跳过，不补发。
+         * 选跳过的理由：槽里只有"最新一版输入"，Bridge 一帧也只读一次，补发的
+         * 旧帧会在同一个桥帧里互相覆盖，对端看不到更多输入，却会让时间戳挤成
+         * 一团、看起来像 Worker 突然加频；跳过则让节奏继续由绝对时刻决定，
+         * 不会像"发完再睡 1/hz"那样把每次延迟累积成永久降频。
+         * 真的被抢占到少发了帧，退出行会同时打印实际帧数与按时钟推算的期望
+         * 帧数，不把它藏起来。 */
         clock_gettime(CLOCK_MONOTONIC, &now);
         add_ns(&next, period_ns);
         if (ts_before(&next, &now)) {
@@ -365,7 +372,21 @@ int main(int argc, char **argv)
         }
     }
 
-    printf("worker-stub slot=%ld published %llu frames\n", slot, (unsigned long long)frame);
+    clock_gettime(CLOCK_MONOTONIC, &end);
+    elapsed = seconds_between(&start, &end);
+    /* 期望值按 stub 实际运行的时长算：场景会在 --duration 到期前用 SIGTERM
+     * 收尾，只拿配置时长算会把"提前结束"误报成"少发了帧"（166 帧就是这么
+     * 被读成 10 秒的欠账的）。配置时长下的目标另写在括号里。 */
+    if (duration > 0.0) {
+        printf("worker-stub slot=%ld published %llu frames in %.2fs "
+               "(expected %.0f at %.1f Hz; configured duration %.2fs -> %.0f)\n",
+               slot, (unsigned long long)frame, elapsed, elapsed * hz, hz, duration,
+               duration * hz);
+    } else {
+        printf("worker-stub slot=%ld published %llu frames in %.2fs "
+               "(expected %.0f at %.1f Hz)\n",
+               slot, (unsigned long long)frame, elapsed, elapsed * hz, hz);
+    }
     fflush(stdout);
 
     /* 只解除映射：段和信号量归 Bridge，替身无权删除它们。 */

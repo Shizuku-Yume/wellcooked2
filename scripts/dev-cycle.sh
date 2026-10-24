@@ -19,14 +19,17 @@
 # 标题画面（插件只挂手柄，没人按 A）。脚本会改这一行并在退出时还原。
 set -euo pipefail
 
-GAME_DIR="${GAME_DIR:-/run/media/shizuku/File/Steam/steamapps/common/Overcooked! 2}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib.sh"
+resolve_game_dir
+
 WATCH="${1:-20}"
 SCENE="${2:-}"
 LOG="$GAME_DIR/BepInEx/LogOutput.log"
 STATE="$GAME_DIR/BepInEx/wellcooked-state.json"
 TAKEOVER="$GAME_DIR/BepInEx/wellcooked-takeover.txt"
 
-cd "$(dirname "$0")/.."
+cd "$SCRIPT_DIR/.."
 
 # 只改指定的几行，文件里其它配置（slots、work）保持不动；退出时整份还原（本来没有这个文件就删掉，
 # 否则脚本留下的 `diag=true` 会一直生效，"默认不刷屏"就落空了）。
@@ -67,7 +70,7 @@ set_key frontend_press true
 set_key diag true
 pkill -f 'Overcooked2.exe' >/dev/null 2>&1 || true
 # 等进程真的没了再启动：Steam 还认为游戏在跑时，`steam -applaunch` 是个空操作
-# （实测：上一局没退干净，这一次就只打印一行"启动 appid 728880"，游戏根本没起来）。
+# （实测：上一局没退干净，这一次就只打印一行"启动 appid <id>"，游戏根本没起来）。
 for _ in $(seq 1 20); do
     pgrep -f 'Overcooked2.exe' >/dev/null 2>&1 || break
     sleep 1

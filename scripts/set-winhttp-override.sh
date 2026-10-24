@@ -7,11 +7,13 @@
 # WINEDLLOVERRIDES="winhttp.dll=n,b" %command%，但不用改 Steam 配置。
 #
 # 用法: bash scripts/set-winhttp-override.sh
-#   APPID  默认 728880（Overcooked! 2）
+#   APPID  Steam AppID，默认值在 scripts/lib.sh（Overcooked! 2）
 #   STEAM_COMPAT_DATA_PATH  兼容数据目录（不是前缀目录），默认按 APPID 推出来
 set -euo pipefail
 
-APPID="${APPID:-728880}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib.sh"
+
 # Proton 把 STEAM_COMPAT_DATA_PATH 当作 compatdata/<appid>，前缀是它下面的 pfx/
 COMPAT_DATA="${STEAM_COMPAT_DATA_PATH:-$HOME/.local/share/Steam/steamapps/compatdata/$APPID}"
 REG="$COMPAT_DATA/pfx/user.reg"
