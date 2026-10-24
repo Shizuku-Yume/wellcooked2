@@ -7,17 +7,11 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-GAME="${GAME_DIR:-/run/media/shizuku/File/Steam/steamapps/common/Overcooked! 2}"
+source "$ROOT/scripts/lib.sh"
+resolve_game_dir
+GAME="$GAME_DIR"
 DOTNET="${DOTNET:-$HOME/.dotnet/dotnet}"
 PLUGIN="WellCooked.Smoke"
-
-if [ ! -d "$GAME" ]; then
-    echo "游戏目录不存在: $GAME（用 GAME_DIR=<路径> 指定）" >&2
-    exit 1
-fi
-# MSBuild 按项目目录解析 HintPath，shell 按调用者工作目录解析 cp；
-# 传相对路径会让两边指向不同目录，所以先统一成绝对路径
-GAME="$(cd "$GAME" && pwd)"
 
 if [ ! -x "$DOTNET" ]; then
     DOTNET="$(command -v dotnet || true)"

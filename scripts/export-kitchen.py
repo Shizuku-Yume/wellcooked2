@@ -20,17 +20,26 @@
 import argparse
 import json
 import os
+import subprocess
 import sys
 import time
 
-GAME_DIR = os.environ.get(
-    "GAME_DIR", "/run/media/shizuku/File/Steam/steamapps/common/Overcooked! 2"
-)
-DEFAULT_STATE = os.path.join(GAME_DIR, "BepInEx", "wellcooked-state.json")
-DEFAULT_TERRAIN = os.path.join(GAME_DIR, "BepInEx", "wellcooked-terrain.json")
+LIB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib.sh")
 DEFAULT_OUT = "config/kitchen.json"
-DEFAULT_MENU = os.path.join(GAME_DIR, "BepInEx", "wellcooked-menu.json")
 DEFAULT_OUT_RECIPES = "config/recipes.json"
+
+
+def game_dir():
+    """GAME_DIR 的默认值、存在性检查与绝对化只在 scripts/lib.sh。
+
+    直接运行 lib.sh 会打印解析结果；这里再抄一份默认路径就会在换机器时漂移。
+    """
+    proc = subprocess.run(["bash", LIB], capture_output=True, text=True)
+    if proc.returncode != 0:
+        sys.stderr.write(proc.stderr)
+        raise SystemExit(proc.returncode)
+    return proc.stdout.strip()
+
 
 # 组件类型 → 资源语义。优先级从上到下：一个物体上挂多个组件时取最上面那个当 kind。
 KINDS = [
@@ -357,12 +366,25 @@ def build_recipes(menu, state):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--state", default=DEFAULT_STATE)
-    parser.add_argument("--terrain", default=DEFAULT_TERRAIN)
+    parser.add_argument("--state", default=None,
+                        help="插件导出的世界状态（默认 $GAME_DIR/BepInEx/wellcooked-state.json）")
+    parser.add_argument("--terrain", default=None,
+                        help="插件导出的地形（默认 $GAME_DIR/BepInEx/wellcooked-terrain.json）")
     parser.add_argument("--out", default=DEFAULT_OUT)
-    parser.add_argument("--menu", default=DEFAULT_MENU)
+    parser.add_argument("--menu", default=None,
+                        help="插件导出的菜谱（默认 $GAME_DIR/BepInEx/wellcooked-menu.json）")
     parser.add_argument("--out-recipes", default=DEFAULT_OUT_RECIPES)
     args = parser.parse_args()
+
+    # 只有用默认输入时才解析游戏目录：显式给了路径的运行不需要游戏，--help 也不会因此失败。
+    if args.state is None or args.terrain is None or args.menu is None:
+        base = os.path.join(game_dir(), "BepInEx")
+        if args.state is None:
+            args.state = os.path.join(base, "wellcooked-state.json")
+        if args.terrain is None:
+            args.terrain = os.path.join(base, "wellcooked-terrain.json")
+        if args.menu is None:
+            args.menu = os.path.join(base, "wellcooked-menu.json")
 
     for path in (args.state, args.terrain):
         if not os.path.exists(path):

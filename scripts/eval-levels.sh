@@ -7,8 +7,12 @@
 # 输出每关：菜谱、工位数、连通性（主块占可走格的比例——"一块厨房"就看它接近 1）、机制组件。
 set -uo pipefail
 
-cd "$(dirname "$0")/.."
-GAME_DIR="${GAME_DIR:-/run/media/shizuku/File/Steam/steamapps/common/Overcooked! 2}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib.sh"
+# 没有 set -e：解析失败必须在这里停下，不能拿空路径继续删日志/写指令文件
+resolve_game_dir || exit 1
+
+cd "$SCRIPT_DIR/.."
 LOG="$GAME_DIR/BepInEx/LogOutput.log"
 STATE="$GAME_DIR/BepInEx/wellcooked-state.json"
 CMD="$GAME_DIR/BepInEx/wellcooked-command.txt"

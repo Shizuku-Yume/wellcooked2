@@ -6,7 +6,9 @@
     <RootNamespace>WellCooked</RootNamespace>
     <Version>0.1.0</Version>
     <LangVersion>7.3</LangVersion>
-    <!-- 游戏目录：默认本机 Fedora 的 Steam 库；其他机器用 -p:GameDir=... 覆盖 -->
+    <!-- 游戏目录：命令行构建由 scripts/build-plugin.sh 用 -p:GameDir=... 传入；
+         这里只是 IDE 直接 build 的兜底，必须与 scripts/lib.sh 的 DEFAULT_GAME_DIR
+         保持一致（换机器时两边一起改）。 -->
     <GameDir Condition="'$(GameDir)' == ''">/run/media/shizuku/File/Steam/steamapps/common/Overcooked! 2</GameDir>
     <UnityManaged>$(GameDir)/Overcooked2_Data/Managed</UnityManaged>
   </PropertyGroup>

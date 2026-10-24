@@ -10,17 +10,14 @@
 # 装错架构的 doorstop（winhttp.dll）不会被加载。
 set -euo pipefail
 
-GAME="${GAME_DIR:-/run/media/shizuku/File/Steam/steamapps/common/Overcooked! 2}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib.sh"
+
+resolve_game_dir
+GAME="$GAME_DIR"
 VERSION="${BEPINEX_VERSION:-5.4.23.5}"
 CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/wellcooked"
 
-if [ ! -d "$GAME" ]; then
-    echo "游戏目录不存在: $GAME" >&2
-    echo "用 GAME_DIR=<路径> 指定。" >&2
-    exit 1
-fi
-# 统一成绝对路径：脚本里后续的 unzip/cp 都按调用者工作目录解析，相对路径会飘
-GAME="$(cd "$GAME" && pwd)"
 if [ ! -f "$GAME/Overcooked2.exe" ]; then
     echo "找不到 Overcooked2.exe，这不像游戏目录: $GAME" >&2
     exit 1

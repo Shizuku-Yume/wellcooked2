@@ -19,13 +19,28 @@
 import collections
 import os
 import re
+import subprocess
 import sys
 
-GAME = os.environ.get(
-    "GAME_DIR",
-    "/run/media/shizuku/File/Steam/steamapps/common/Overcooked! 2",
-)
-BUNDLES = os.path.join(GAME, "Overcooked2_Data", "StreamingAssets", "Windows")
+LIB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib.sh")
+_BUNDLES = None
+
+
+def game_dir():
+    """GAME_DIR 的默认值、存在性检查与绝对化只在 scripts/lib.sh。"""
+    proc = subprocess.run(["bash", LIB], capture_output=True, text=True)
+    if proc.returncode != 0:
+        sys.stderr.write(proc.stderr)
+        raise SystemExit(proc.returncode)
+    return proc.stdout.strip()
+
+
+def bundles_dir():
+    global _BUNDLES
+    if _BUNDLES is None:
+        _BUNDLES = os.path.join(game_dir(), "Overcooked2_Data", "StreamingAssets", "Windows")
+    return _BUNDLES
+
 
 # 真正的关卡机制（出现这些名字基本就不能用：传送带、传送门、桥、开关、冰面、黏液…）
 MECH = re.compile(
@@ -46,7 +61,7 @@ NOISE = re.compile(
 def load_bundle(level):
     import UnityPy
 
-    return UnityPy.load(os.path.join(BUNDLES, level))
+    return UnityPy.load(os.path.join(bundles_dir(), level))
 
 
 def game_objects(env):
@@ -87,7 +102,7 @@ def summarize(level):
 
 
 def main():
-    levels = sorted(f for f in os.listdir(BUNDLES) if f.startswith("s_"))
+    levels = sorted(f for f in os.listdir(bundles_dir()) if f.startswith("s_"))
     if len(sys.argv) > 1:
         for level in sys.argv[1:]:
             go = game_objects(load_bundle(level))
