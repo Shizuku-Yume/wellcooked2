@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:kitchenos:schema:action",
   "title": "action",
-  "description": "Bridge → 插件：让某个厨师做一件事。stop 是空转动作，输入槽缺失或超时时下发。",
+  "description": "Bridge → 插件：让某个厨师做一件事。stop 是空转动作（不建立驱动归属），输入槽缺失或超时时下发。",
   "type": "object",
   "required": ["type", "chef_id", "action"],
   "properties": {
@@ -14,7 +14,7 @@
     },
     "action": {
       "enum": ["move", "stop", "interact", "pickup", "dash"],
-      "description": "move 需要 target；interact 需要 target_object；stop / pickup / dash 不带附加字段。pickup 与 dash 是插件本来就实现的动作（它一共八个），2026-10-15 才允许被调度下发。"
+      "description": "move 需要 target；interact 需要 target_object；stop / pickup / dash 不带附加字段。stop 不建立驱动归属：未被动作接管的厨师不受影响，已接管者只清当前命令。pickup 与 dash 是插件本来就实现的动作（它一共八个），2026-10-15 才允许被调度下发。"
     },
     "target": {
       "type": "object",
