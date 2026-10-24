@@ -5,7 +5,7 @@
 **Base commit:** 0608de6
 **Base branch:** main
 **Started:** 2026-10-24T11:32:09+08:00
-**Status:** active
+**Status:** paused
 
 **Delivers:** 插件的输入注入从"设备层 InControl 反射"换成**逻辑层**：把 `PlayerControls.ControlScheme` 的
 `m_pickupButton`/`m_worksurfaceUseButton`/`m_dashButton`/`m_moveX`/`m_moveY` 换成自己实现的
@@ -84,7 +84,7 @@ bash scripts/dev-cycle.sh 20 s_wellcooked_demo_2
 | 放料 | `DropOnCounter 按交互（手上「SushiFish」...）` → 下一步 `3/6 切料`、`手上「」` |
 | X 键 | trace `用台面=True`（逻辑层喂给 `m_worksurfaceUseButton`） |
 | 单帧推进 | `step=1`：`Time.time=29.944 frame=4523` → `Time.time=29.952 frame=4524`；`pause=1` 显示 `Time.timeScale=0.00`；`step=0` 恢复 `1.00` |
-| 完成一单 | **通过**（`s_sushi_1_1`）：`工序: 完成一单（累计 1 单）`，`wellcooked-state.json` 的 `score=28`；完整顺序 1/6 取料 → 2/6 放砧板 → 3/6 切 → 4/6 拿盘子 → 5/7 装盘 → 6/7 拿走 → 7/7 交付 |
+| 完成一单 | **运行时通过、证据未保留**（`s_sushi_1_1`）：日志出现 `工序: 完成一单（累计 1 单）`，完整顺序 1/6 取料 → 2/6 放砧板 → 3/6 切 → 4/6 拿盘子 → 5/7 装盘 → 6/7 拿走 → 7/7 交付；同一 run 的 state 读数 `score=28`。随后一次 run 覆盖了 state 文件，`score=28` 的 artifact 没留下（Brief A blocking 1）。 |
 
 ### 解除（2026-10-24）
 
@@ -100,5 +100,38 @@ bash scripts/dev-cycle.sh 20 s_wellcooked_demo_2
    （实测停在 `20.6,-5.82`、方向 `(1,0)`）。`Navigation` 现在只在 1.2 米内有另一名本地厨师
    时才错身（`Takeover` 每次扫描位置更新 `Crowded`）。
 
-修完后 `4/6 GetPlate` 能走到盘子堆，`s_sushi_1_1` 完成 1 单（`score=28`）。
+修完后 `4/6 GetPlate` 能走到盘子堆，`s_sushi_1_1` 完成 1 单（同一 run 的 state 读数 `score=28`）。
 任务 12 仍要做煮/煎与切步的 `HasFinished` 收手；这里只修了“切菜期间料的位置”这条前置。
+
+## Review（round 1）
+
+Review boundary: `0608de6...HEAD` + working tree；round 1；paths `plugin/`、`scripts/dev-cycle.sh`、
+`.workflow/standards.md`、任务 11；briefs A,B；trust boundaries: 前端虚拟手柄、关卡内逻辑输入、
+指令文件帧步进；findings: 2 blocking / 1 nonblocking。
+
+- **Brief A（built as asked / process）：blocked**，2 条 blocking：
+  1. `score=28` 没有同 run 的 state/log artifact（后续 run 覆盖了 state）；日志能证明完成一单，
+     但没有同 run 的分数记录。
+  2. `step=1` 的 `Time.time/frame` 前进有日志，但没有记录 `wellcooked-state.json` 的前后变化；
+     Check 原文要求“状态文件随之更新”。
+- **Brief B（quality）：pass**，1 条 nonblocking：`FrameStep` 在“游戏本来已暂停”或连续 `step` 时
+  会把 0 当成原始倍率，`step=0` 恢复成 1。已在 `FrameStep` 加 `_ownsPause`：只记录第一次接管前的
+  倍率，`step=0` 只恢复自己按下的暂停；该修复尚未重跑单帧 Check。
+
+## Paused（2026-10-24）
+
+代码已完成（分支 `game-bridge/11-logical-input-injection`，worktree
+`/home/shizuku/Project/overcooked-schedule-gb11`）。未归档，因为 Brief A 的两条证据缺口还没消。
+下一步（不需要改代码）：
+
+1. 跑一次 `bash scripts/dev-cycle.sh 180 s_sushi_1_1`，在日志出现 `工序: 完成一单` 后立刻把
+   `wellcooked-state.json` 和 `LogOutput.log` 复制到 `/tmp/`（下一次 run 会覆盖/删除它们）。
+2. 在暂停状态读一次 state 的 `t`/mtime，`step=1` 后再读一次，记录文件确实更新；同时保留
+   `step: 已暂停 → 已推进 1 帧` 日志。
+3. 证据到手后重跑 Brief A；Brief B 已 pass，`FrameStep` 的暂停所有权修复只需补一次 step 日志。
+
+环境注意：连续 `dev-cycle.sh` 会在游戏仍持有日志时 `rm BepInEx/LogOutput.log`，之后该 run 的
+日志不可见（本轮最后两次就没抓到日志）；抓证据前先停掉旧的 dev-cycle/游戏进程，
+或启动后直接把日志复制走。若同 run 证据始终抓不到，另一条路是把 Check 收窄成
+“逻辑层驱动移动/A/X + `step` 单帧”，整单验收转给 09/13——这需要用户点头。
+

@@ -22,6 +22,7 @@ namespace WellCooked
         private static Coroutine _running;
         private static int _pending = -1;
         private static float _savedScale = 1f;
+        private static bool _ownsPause;
 
         private static object _timeManager;
         private static FieldInfo _debugScale;
@@ -65,9 +66,26 @@ namespace WellCooked
 
             if (frames == 0)
             {
-                SetScale(_savedScale > 0f ? _savedScale : 1f);
-                _log.LogInfo("step: 恢复 timeScale=" + ReadScale().ToString("F2"));
+                // 只恢复我们自己按下的暂停；游戏本来就在暂停（比如打开菜单）时不动它。
+                if (_ownsPause)
+                {
+                    SetScale(_savedScale);
+                    _ownsPause = false;
+                    _log.LogInfo("step: 恢复 timeScale=" + ReadScale().ToString("F2"));
+                }
+                else
+                {
+                    _log.LogInfo("step: 没有被 step 暂停，保持 timeScale=" + ReadScale().ToString("F2"));
+                }
+
                 return;
+            }
+
+            // 连续 step 时不要把"已经暂停的 0"当成原始倍率；只记录第一次接管前的值。
+            if (!_ownsPause)
+            {
+                _savedScale = ReadScale();
+                _ownsPause = true;
             }
 
             _running = _host.StartCoroutine(Run(frames));
@@ -75,8 +93,6 @@ namespace WellCooked
 
         private static IEnumerator Run(int frames)
         {
-            float current = ReadScale();
-            _savedScale = current > 0f ? current : 1f;
             SetScale(0f);
             _log.LogInfo("step: 已暂停，准备推进 " + frames + " 帧（原 timeScale="
                          + _savedScale.ToString("F2") + "，Time.time=" + Time.time.ToString("F3")
