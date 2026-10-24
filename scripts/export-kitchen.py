@@ -203,7 +203,7 @@ RESOURCE_BY_OP = {
     "fetch": "dispenser",
     "cook": "cooker",
     "mix": "mixer",
-    "assemble": "counter",
+    "assemble": "container",
     "plate": "plate_stack",
     "deliver": "serving",
 }
@@ -433,6 +433,16 @@ def main():
     recipes = build_recipes(menu, state)
     recipes["scene"] = menu.get("scene") or kitchen["scene"]
     recipes["generated"] = kitchen["generated"]
+    station_kinds = set(kitchen["kinds"].keys())
+    missing_kinds = {}
+    for node in recipes["nodes"]:
+        res = node.get("resource")
+        if res and res not in station_kinds:
+            missing_kinds.setdefault(res, []).append(node["id"])
+    if missing_kinds:
+        for res, node_ids in sorted(missing_kinds.items()):
+            print("  !! 警告：工序节点缺少对应工位类型 %s，涉及节点：%s"
+                  % (res, ", ".join(node_ids)), file=sys.stderr)
     with open(args.out_recipes, "w", encoding="utf-8") as handle:
         json.dump(recipes, handle, ensure_ascii=False, indent=2)
         handle.write("\n")

@@ -778,6 +778,8 @@ static int prepare_run_dir(scheduler *s)
 
     if (s->runs_dir[0] != '\0') {
         copy_str(base, sizeof base, s->runs_dir);
+    } else if (s->rt.opts.runs_dir[0] != '\0') {
+        copy_str(base, sizeof base, s->rt.opts.runs_dir);
     } else if (path_join(base, sizeof base, s->rt.runtime_dir, "runs") != 0) {
         kos_log_error(s->rt.log, "run_dir_failed", "runtime path too long");
         return -1;
@@ -1595,6 +1597,21 @@ static int load_config(scheduler *s)
                  "edges=%d resources=%d", s->kitchen_path, s->kitchen.cell_count,
                  s->kitchen.station_count, s->recipes_path, s->recipes.node_count,
                  s->recipes.dish_count, s->recipes.edge_count, s->resources.count);
+    {
+        int i;
+
+        for (i = 0; i < s->recipes.node_count; i++) {
+            int dummy = -1;
+            const kos_recipe_node *node = &s->recipes.nodes[i];
+            const char *hint = node->ingredient[0] != '\0' ? node->ingredient : node->label;
+
+            if (kos_kitchen_pick_station(&s->kitchen, node->resource, hint, 0, &dummy) !=
+                KOS_OK) {
+                kos_log_error(s->rt.log, "recipe_no_station", "node=%s resource=%s",
+                              node->id, node->resource);
+            }
+        }
+    }
 
     if (resolve_path(s->rt.opts.orders_path, "orders.example.json", s->orders_path,
                      sizeof s->orders_path, 0, s->rt.log) == 0 &&
@@ -1647,6 +1664,9 @@ static int scheduler_main(scheduler *s, const kos_child_opts *opts)
 
     memset(s, 0, sizeof *s);
     s->rt.opts = *opts;
+    if (opts->runs_dir[0] != '\0') {
+        copy_str(s->runs_dir, sizeof s->runs_dir, opts->runs_dir);
+    }
     s->events_fd = -1;
     s->decisions_fd = -1;
     s->events = (mqd_t)-1;
