@@ -113,7 +113,7 @@ Windows 平台构建 —— 事件本身不该卡在这里，换一台能正常�
 | `s_wellcooked_demo_1` | Basic Kitchen | 43 | Burrito + SushiPrawn | 3 块；216 / 丢弃 168（≈56%）；关键工位 A* 2-5 路点 | 可用（多块是采样口袋） |
 | `s_wellcooked_demo_2` | Twin Lines | 44 | Burrito + SushiFish + SushiPrawn | **1 块；154 / 丢弃 0（100%）** | **可用** |
 | `s_wellcooked_demo_3` | Ring Bar | 44 | Burrito + SushiFish + SushiPrawn | 8 块；151 / 丢弃 264（≈36%）；关键工位 A* 1-3 路点 | 可用（多块是采样口袋） |
-| `s_wellcooked_demo_4` | Big Kitchen | 45 | 实测 Burrito + SushiPrawn（TSV 写 3 道） | 12 块；219 / 丢弃 296（≈43%）；关键工位 A* 1-6 路点 | 可用（多块是采样口袋）；菜谱与 bundle 可能不同步 |
+| `s_wellcooked_demo_4` | Big Kitchen | 45 | Burrito + SushiFish + SushiPrawn（3 道） | 12 块；219 / 丢弃 296（≈43%）；关键工位 A* 1-6 路点 | 可用（多块是采样口袋） |
 
 下表的详细验收只跑了 `_2`：
 
@@ -141,8 +141,6 @@ Windows 平台构建 —— 事件本身不该卡在这里，换一台能正常�
   是 3 米采样边距里的口袋（墙外/台面后）；四张地图的厨师位置与关键工位都在主块内，`path=` 探测
   A* 1-6 路点可达。任务 Check 的“主连通块 ≥90%”应改成“所有 spawn + 关键工位在主块内且两两
   A* 可达”，否则会把可用地图误判成不可用。若仍要主块占比，得先把采样边距/口袋从分母里去掉。
-- **2026-10-19：`_4` 的菜谱与 bundle 可能不同步。** `layout_4.tsv` 写 3 道菜，实测菜单只有
-  2 道（Burrito + SushiPrawn）；需要在编辑器里按当前 layout 重新生成并打包，或核对 bundle 版本。
 - **2026-10-19：`work=auto` 在 `_2` 完成 1 单被导航阻塞**（技术债「导航的第一路点被挡：
   A* 说可达，转向却原地不动或侧向错身」）。`_2` 已能加载、连通、出单；导航修好后回来重跑
   这一项即可。

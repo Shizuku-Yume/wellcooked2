@@ -1,7 +1,7 @@
 # wellcooked_demo layout (unit: 0.6 m grid; x right, z up)
 # columns: kind	prefab	so	ingredient	x	z	note
 kind	prefab	so	ingredient	x	z	note
-# menu: Burrito_Chicken_SO, Sushi_PlainFish_SO, Sushi_PlainPrawn_SO, Burrito_Beef_SO
+# menu: Burrito_Chicken_SO, Sushi_PlainFish_SO, Sushi_PlainPrawn_SO
 counter	Counter	CounterSO		1	-15		
 counter	Counter	CounterSO		3	-15		
 counter	Counter	CounterSO		5	-15		
