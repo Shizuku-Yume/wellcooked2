@@ -39,10 +39,19 @@ namespace WellCooked
             LogicalInput.Install(_log);
             Navigation.Install(_log);
             Commands.Install(_log);
+            FrameStep.Install(_log);
             WorkOrder.Install(_log);
             Orders.Install(_log);
             Takeover.Install(_log);
             DumpGameInventory();
+        }
+
+        private void Update()
+        {
+            // 指令通道放在自己的 Update 里：即使在暂停/帧步进期间也照常读文件，
+            // 不依赖游戏内部的 PlayerInputLookup.Update 有没有跑。
+            Commands.Tick();
+            FrameStep.Tick(this);
         }
 
         /// <summary>

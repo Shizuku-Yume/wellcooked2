@@ -23,9 +23,8 @@ namespace WellCooked
     ///    不必靠猜（任务清单要求"超时回一条失败事件，避免上层永远等"）。
     /// 没实现的动作名当场回 `ok=false`。
     ///
-    /// 输入层：两手都写，且写同样的值 —— 设备层（我们占的虚拟手柄）与逻辑层
-    /// （`LogicalInput`，按厨师的游戏玩家号）正好互为备份；逻辑层一旦激活会覆盖设备层的
-    /// 三个逻辑键与移动轴，所以两边的值必须一致。
+    /// 输入层：只写逻辑层（`LogicalInput`，按厨师的游戏玩家号）。关卡内的
+    /// `PlayerControls` 已经换成逻辑层包装，设备层虚拟手柄只负责前端"按 A 加入"。
     /// </summary>
     public static class ActionDriver
     {
@@ -166,7 +165,7 @@ namespace WellCooked
         /// <summary>
         /// 驱动这个玩家位（返回 true 表示这一帧归动作执行器管）。`takeover` 在本地驱动之前调用它。
         /// </summary>
-        public static bool Drive(int slot, VirtualPad pad, Vector2 position, float now)
+        public static bool Drive(int slot, Vector2 position, float now)
         {
             if (!Owned.Contains(slot))
             {
@@ -177,7 +176,7 @@ namespace WellCooked
             if (!Commands.TryGetValue(slot, out command) || command.Done)
             {
                 // 归属还在、当前没有活着的命令：站住不动（stop/到达/超时之后就是这个状态）
-                Feed(slot, pad, Vector2.zero, false, false, false);
+                Feed(slot, Vector2.zero, false, false, false);
                 return true;
             }
 
@@ -192,7 +191,7 @@ namespace WellCooked
                     _log.LogInfo("action: 厨师位 " + (slot + 1) + " " + arrived);
                     Report(slot, "move", true, arrived);
                     command.Done = true;
-                    Feed(slot, pad, Vector2.zero, false, false, false);
+                    Feed(slot, Vector2.zero, false, false, false);
                     return true;
                 }
 
@@ -205,7 +204,7 @@ namespace WellCooked
                                     + ")，" + failed);
                     Report(slot, "move", false, failed);
                     command.Done = true;
-                    Feed(slot, pad, Vector2.zero, false, false, false);
+                    Feed(slot, Vector2.zero, false, false, false);
                     return true;
                 }
 
@@ -216,7 +215,7 @@ namespace WellCooked
                 Diag.Trace("action: 移动中 厨师位 " + (slot + 1) + " 位置=("
                            + position.x.ToString("F1") + "," + position.y.ToString("F1")
                            + ") 距目标=" + distance.ToString("F1") + " 寻路=" + status);
-                Feed(slot, pad, direction, false, false, false);
+                Feed(slot, direction, false, false, false);
                 return true;
             }
 
@@ -240,7 +239,7 @@ namespace WellCooked
                 _log.LogWarning("action: 厨师位 " + (slot + 1) + " " + command.Kind + " " + late);
                 Report(slot, command.Kind, false, late);
                 command.Done = true;
-                Feed(slot, pad, Vector2.zero, false, false, false);
+                Feed(slot, Vector2.zero, false, false, false);
                 return true;
             }
 
@@ -249,13 +248,13 @@ namespace WellCooked
                 string done = "已按键 " + command.Pulses + " 次";
                 Report(slot, command.Kind, true, done);
                 command.Done = true;
-                Feed(slot, pad, Vector2.zero, false, false, false);
+                Feed(slot, Vector2.zero, false, false, false);
                 return true;
             }
 
             bool pickup = command.Kind == "pickup" || command.Kind == "interact";
             bool dash = command.Kind == "dash";
-            Feed(slot, pad, Vector2.zero, pickup && pressed, dash && pressed, false);
+            Feed(slot, Vector2.zero, pickup && pressed, dash && pressed, false);
             return true;
         }
 
@@ -266,17 +265,11 @@ namespace WellCooked
         }
 
         /// <summary>
-        /// 两手同时写：我们占的虚拟手柄（设备层）+ 逻辑层（按厨师自己的游戏玩家号）。
-        /// 逻辑层激活时覆盖设备层的三个逻辑键与移动轴，所以两处必须是同一组值。
+        /// 只写逻辑层（按厨师自己的游戏玩家号）。关卡内的输入由 `LogicalInput` 接管，
+        /// 设备层留给前端"按 A 加入"。
         /// </summary>
-        private static void Feed(int slot, VirtualPad pad, Vector2 direction,
-                                 bool pickup, bool dash, bool work)
+        private static void Feed(int slot, Vector2 direction, bool pickup, bool dash, bool work)
         {
-            if (pad != null)
-            {
-                pad.Want(pickup, dash, work, direction);
-            }
-
             PlayerInputLookup.Player player;
             if (Takeover.TryPlayerOf(slot, out player))
             {

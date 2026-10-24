@@ -129,18 +129,27 @@ else
     done
 fi
 
-python3 -c "
+# 状态文件由插件整份重写，读到一半会撞上空文件/半截 JSON；读失败不算进关失败，重试到下一份。
+state_read=0
+for _ in $(seq 1 10); do
+    if python3 -c "
 import json
 d=json.load(open('$STATE'))
 print('=== 进关: %s 厨师=%d 订单=%d' % (d['scene'], len(d['chefs']), len(d.get('orders',[]))))
-"
+" 2>/dev/null; then
+        state_read=1
+        break
+    fi
+    sleep 1
+done
+[ "$state_read" = 1 ] || echo "=== 进关: $SCENE（状态文件暂时读不到，继续观察）"
 end=$((SECONDS + WATCH))
 while [ $SECONDS -lt $end ]; do
     python3 -c "
 import json
 d=json.load(open('$STATE'))
 print('t=%6.1f'%d['t'], ' '.join('%s(%.2f,%.2f)'%(c['player'],c['pos'][0],c['pos'][1]) for c in d['chefs']))
-"
+" 2>/dev/null || true
     sleep 2
 done
 

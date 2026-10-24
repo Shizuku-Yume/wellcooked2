@@ -1,112 +1,195 @@
 using System;
 using System.Collections.Generic;
-using System.Reflection;
 using BepInEx.Logging;
-using HarmonyLib;
 using UnityEngine;
 
 namespace WellCooked
 {
     /// <summary>
-    /// 逻辑层注入：补 `PlayerInputLookup.GetValue/GetButton`，让指定玩家读到我们给的轴和按键。
+    /// 逻辑层注入：替换 `PlayerControls.ControlScheme` 里的按键与摇杆对象
+    /// （`m_pickupButton` / `m_worksurfaceUseButton` / `m_dashButton` / `m_moveX` / `m_moveY`）。
     ///
-    /// 为什么需要它：设备层只能控制"我们自己的虚拟手柄占住的那几个玩家位"。
-    /// 键盘一被使用就会抢走 1 号位（截图实证），那一号厨师的输入来自键盘，我们的手柄写不进去。
-    /// 逻辑层在设备之上，不管玩家位绑的是键盘还是手柄都能接管——supercharged 在关卡内
-    /// 控制小人走的就是这条路（补同一个入口）。
+    /// 为什么在逻辑层而不是设备层：设备层只能写进我们自己的虚拟手柄，而且要看 InControl
+    /// 的控制项枚举（`Action1` 是不是 A、`Action3` 是不是 X）——任务 09 就在这里丢过一次交互。
+    /// 逻辑层直接对应游戏的 `ControlSchemeData` 字段，天然 per-player，按键边沿也由
+    /// `LogicalButtonBase` 的领取/释放语义给出。
     ///
-    /// 边界：spike game-bridge/06 实测逻辑层驱动不了**前端**（标题画面按 A 不响应），
-    /// 所以前端仍然走设备层；这里只用于关卡内的动作。
+    /// 边界：前端“按 A 加入”仍然走设备层虚拟手柄（`VirtualPad`）。逻辑层在前端没有
+    /// `PlayerControls` 可替换；spike game-bridge/06 实测过这条分界。
+    ///
+    /// 门控：每个 `IsDown/GetValue` 都问一次 `PlayerControls.CanButtonBePressed()`，
+    /// 和游戏自己的 `GateLogicalButton` / `GateLogicalValue` 一致——暂停、对话框、
+    /// 菜单打开时输入自动归零。
     /// </summary>
     public static class LogicalInput
     {
         private static ManualLogSource _log;
         private static readonly Dictionary<PlayerInputLookup.Player, Drive> Drives =
             new Dictionary<PlayerInputLookup.Player, Drive>();
+        private static readonly Dictionary<PlayerInputLookup.Player, Attachment> Attached =
+            new Dictionary<PlayerInputLookup.Player, Attachment>();
 
         private sealed class Drive
         {
             public bool Active;
             public float MoveX;
             public float MoveY;
-            public bool Action;   // 交互键（A / LogicalButtonID.PickupAndDrop）
-            public bool Dash;     // 冲刺/投掷（LogicalButtonID.Dash）
-            public bool Work;     // 用台面（X / LogicalButtonID.WorkstationInteract）
+            public bool Pickup;
+            public bool Dash;
+            public bool Work;
+        }
+
+        /// <summary>某个玩家替换前的 control scheme 字段，退出关卡时原样装回去。</summary>
+        private sealed class Attachment
+        {
+            public PlayerControls Controls;
+            public ILogicalButton Pickup;
+            public ILogicalButton Use;
+            public ILogicalButton Dash;
+            public ILogicalValue MoveX;
+            public ILogicalValue MoveY;
+            public DrivenButton PickupDriver;
+            public DrivenButton UseDriver;
+            public DrivenButton DashDriver;
+            public DrivenValue MoveXDriver;
+            public DrivenValue MoveYDriver;
         }
 
         public static void Install(ManualLogSource log)
         {
             _log = log;
-
-            // 关键：从插件加载起就把四个玩家的包装准备好。
-            // 游戏在关卡加载时会把 GetValue/GetButton 返回的对象缓存进玩家的控制映射，
-            // 那一次调用如果发生在"我们开始驱动"之前，缓存到的就是原对象，之后再补也没用。
-            // 未开始驱动时包装原样透传，所以不影响正常游玩。
-            foreach (PlayerInputLookup.Player player in new[]
-                     {
-                         PlayerInputLookup.Player.One, PlayerInputLookup.Player.Two,
-                         PlayerInputLookup.Player.Three, PlayerInputLookup.Player.Four
-                     })
-            {
-                Drives[player] = new Drive();
-            }
-            var harmony = new Harmony("wellcooked.logical-input");
-
-            var valuePostfix = new HarmonyMethod(typeof(LogicalInput).GetMethod(
-                nameof(AfterGetValue), BindingFlags.Static | BindingFlags.NonPublic));
-            var buttonPostfix = new HarmonyMethod(typeof(LogicalInput).GetMethod(
-                nameof(AfterGetButton), BindingFlags.Static | BindingFlags.NonPublic));
-
-            int patched = 0;
-            foreach (var method in typeof(PlayerInputLookup).GetMethods(BindingFlags.Public | BindingFlags.Static))
-            {
-                if (method.GetParameters().Length != 2)
-                {
-                    continue;
-                }
-
-                var first = method.GetParameters()[0].ParameterType;
-                var second = method.GetParameters()[1].ParameterType;
-                if (second != typeof(PlayerInputLookup.Player))
-                {
-                    continue;
-                }
-
-                try
-                {
-                    if (method.ReturnType == typeof(ILogicalValue) && first == typeof(PlayerInputLookup.LogicalValueID))
-                    {
-                        harmony.Patch(method, postfix: valuePostfix);
-                        patched++;
-                    }
-                    else if (method.ReturnType == typeof(ILogicalButton) && first == typeof(PlayerInputLookup.LogicalButtonID))
-                    {
-                        harmony.Patch(method, postfix: buttonPostfix);
-                        patched++;
-                    }
-                }
-                catch (Exception e)
-                {
-                    _log.LogWarning("logical: 补不上 " + method.Name + ": " + e.Message);
-                }
-            }
-
-            _log.LogInfo("logical: 逻辑层注入入口 " + patched + " 个");
         }
 
         /// <summary>
-        /// 开始/停止驱动某个玩家：轴取 [-1,1]，`action` 是交互键（A）。
-        /// 调用点（`Takeover` 的非自有玩家那条路）本意就是"周期按交互键"，与设备层的
-        /// `Pad.Want(action, …)` 是同一个键；这里补上 Dash/Work 两个键给动作指令用。
+        /// 给每个本地厨师的 control scheme 换上我们的包装。可重复调用：已经装过的跳过。
+        /// 在 `PlayerControls` 就绪后调用（`Takeover` 每次扫描厨师时都会调一次，防止
+        /// 关卡刚加载时 control scheme 还没建好）。
         /// </summary>
-        public static void Set(PlayerInputLookup.Player player, Vector2 move, bool action)
+        public static void Attach(IEnumerable<PlayerControls> chefs)
         {
-            SetButtons(player, move, action, false, false);
+            if (chefs == null)
+            {
+                return;
+            }
+
+            foreach (var chef in chefs)
+            {
+                if (chef == null)
+                {
+                    continue;
+                }
+
+                var provider = chef.GetComponent<PlayerIDProvider>();
+                if (provider == null || !provider.IsLocallyControlled())
+                {
+                    continue;
+                }
+
+                var player = provider.GetID();
+                Attachment existing;
+                if (Attached.TryGetValue(player, out existing))
+                {
+                    if (existing.Controls == chef)
+                    {
+                        continue;
+                    }
+
+                    // 同一玩家换了一个 PlayerControls（换关卡/重开）：先把旧对象还原，
+                    // 否则新对象上的字段会叠第二层包装。
+                    Restore(existing);
+                    Attached.Remove(player);
+                }
+
+                var scheme = chef.ControlScheme;
+                if (scheme == null)
+                {
+                    continue;
+                }
+
+                var drive = DriveFor(player);
+                var attachment = new Attachment { Controls = chef };
+                attachment.Pickup = scheme.m_pickupButton;
+                attachment.Use = scheme.m_worksurfaceUseButton;
+                attachment.Dash = scheme.m_dashButton;
+                attachment.MoveX = scheme.m_moveX;
+                attachment.MoveY = scheme.m_moveY;
+
+                attachment.PickupDriver = new DrivenButton(chef, drive, DrivenButton.Which.Pickup, attachment.Pickup);
+                attachment.UseDriver = new DrivenButton(chef, drive, DrivenButton.Which.Use, attachment.Use);
+                attachment.DashDriver = new DrivenButton(chef, drive, DrivenButton.Which.Dash, attachment.Dash);
+                attachment.MoveXDriver = new DrivenValue(chef, drive, true, attachment.MoveX);
+                attachment.MoveYDriver = new DrivenValue(chef, drive, false, attachment.MoveY);
+
+                scheme.m_pickupButton = attachment.PickupDriver;
+                scheme.m_worksurfaceUseButton = attachment.UseDriver;
+                scheme.m_dashButton = attachment.DashDriver;
+                scheme.m_moveX = attachment.MoveXDriver;
+                scheme.m_moveY = attachment.MoveYDriver;
+
+                Attached[player] = attachment;
+                _log.LogInfo("logical: 玩家 " + player + " 的 control scheme 已接管");
+            }
         }
 
-        /// <summary>按三个逻辑键分别驱动（任务 04 的动作执行器用它）。</summary>
-        public static void SetButtons(PlayerInputLookup.Player player, Vector2 move,
-                                      bool pickup, bool dash, bool work)
+        /// <summary>把 control scheme 还原成游戏原来的对象，并停止所有驱动。</summary>
+        public static void Detach()
+        {
+            foreach (var attachment in Attached.Values)
+            {
+                Restore(attachment);
+            }
+
+            if (Attached.Count > 0)
+            {
+                _log.LogInfo("logical: 还原 " + Attached.Count + " 名玩家的 control scheme");
+            }
+
+            Attached.Clear();
+            Clear();
+        }
+
+        private static void Restore(Attachment attachment)
+        {
+            if (attachment == null || attachment.Controls == null)
+            {
+                return;
+            }
+
+            var scheme = attachment.Controls.ControlScheme;
+            if (scheme == null)
+            {
+                return;
+            }
+
+            // 只还原仍然是我们装上去的那个对象：期间游戏可能自己重建过 control scheme,
+            // 那时候硬写回旧对象会把游戏的新输入映射覆盖掉。
+            if (ReferenceEquals(scheme.m_pickupButton, attachment.PickupDriver))
+            {
+                scheme.m_pickupButton = attachment.Pickup;
+            }
+
+            if (ReferenceEquals(scheme.m_worksurfaceUseButton, attachment.UseDriver))
+            {
+                scheme.m_worksurfaceUseButton = attachment.Use;
+            }
+
+            if (ReferenceEquals(scheme.m_dashButton, attachment.DashDriver))
+            {
+                scheme.m_dashButton = attachment.Dash;
+            }
+
+            if (ReferenceEquals(scheme.m_moveX, attachment.MoveXDriver))
+            {
+                scheme.m_moveX = attachment.MoveX;
+            }
+
+            if (ReferenceEquals(scheme.m_moveY, attachment.MoveYDriver))
+            {
+                scheme.m_moveY = attachment.MoveY;
+            }
+        }
+
+        private static Drive DriveFor(PlayerInputLookup.Player player)
         {
             Drive drive;
             if (!Drives.TryGetValue(player, out drive))
@@ -115,14 +198,31 @@ namespace WellCooked
                 Drives[player] = drive;
             }
 
+            return drive;
+        }
+
+        /// <summary>
+        /// 开始/停止驱动某个玩家：轴取 [-1,1]，`action` 是交互键（A）。
+        /// </summary>
+        public static void Set(PlayerInputLookup.Player player, Vector2 move, bool action)
+        {
+            SetButtons(player, move, action, false, false);
+        }
+
+        /// <summary>按三个逻辑键分别驱动（A / 冲刺 / X 用台面）。</summary>
+        public static void SetButtons(PlayerInputLookup.Player player, Vector2 move,
+                                      bool pickup, bool dash, bool work)
+        {
+            var drive = DriveFor(player);
             drive.Active = true;
             drive.MoveX = move.x;
             drive.MoveY = move.y;
-            drive.Action = pickup;
+            drive.Pickup = pickup;
             drive.Dash = dash;
             drive.Work = work;
         }
 
+        /// <summary>这一帧没人驱动：所有轴与键归零（包装对象仍留在 control scheme 上）。</summary>
         public static void Clear()
         {
             foreach (var drive in Drives.Values)
@@ -130,10 +230,20 @@ namespace WellCooked
                 drive.Active = false;
                 drive.MoveX = 0f;
                 drive.MoveY = 0f;
-                drive.Action = false;
+                drive.Pickup = false;
                 drive.Dash = false;
                 drive.Work = false;
             }
+        }
+
+        public static bool IsAttached(PlayerInputLookup.Player player)
+        {
+            return Attached.ContainsKey(player);
+        }
+
+        public static int AttachedCount
+        {
+            get { return Attached.Count; }
         }
 
         public static int Driving
@@ -153,169 +263,100 @@ namespace WellCooked
             }
         }
 
-        // 补丁签名按 spike 里验证过的那种写法：用 __args 取参数，避免 Harmony 生成包装时踩类型坑
-        private static void AfterGetValue(object[] __args, ref ILogicalValue __result)
+        /// <summary>
+        /// 逻辑按键。继承 `LogicalButtonBase` 而不是自己实现 ILogicalButton：领取/释放语义
+        /// （`JustPressed` 只给一次、松开后重新可领取）都由游戏基类保证，和真按键一致。
+        /// </summary>
+        private sealed class DrivenButton : LogicalButtonBase
         {
-            if (__result == null || __args == null || __args.Length < 2)
+            public enum Which
             {
-                return;
+                Pickup,
+                Use,
+                Dash
             }
 
-            if (__args[0] == null)
+            private readonly PlayerControls _controls;
+            private readonly Drive _drive;
+            private readonly Which _which;
+            private readonly ILogicalButton _original;
+
+            public DrivenButton(PlayerControls controls, Drive drive, Which which, ILogicalButton original)
             {
-                return;
+                _controls = controls;
+                _drive = drive;
+                _which = which;
+                _original = original;
             }
 
-            var axis = __args[0].ToString();
-            if (axis != "MovementX" && axis != "MovementY")
+            public override bool IsDown()
             {
-                return;
+                if (!_drive.Active || _controls == null || !_controls.CanButtonBePressed())
+                {
+                    return false;
+                }
+
+                return _which == Which.Pickup ? _drive.Pickup
+                    : _which == Which.Use ? _drive.Work
+                    : _drive.Dash;
             }
 
-            var player = (PlayerInputLookup.Player)__args[1];
-            Drive drive;
-            if (!Drives.TryGetValue(player, out drive))
+            public override void GetLogicTreeData(
+                out AcyclicGraph<ILogicalElement, LogicalLinkInfo> graph,
+                out AcyclicGraph<ILogicalElement, LogicalLinkInfo>.Node node)
             {
-                return;
-            }
+                if (_original != null)
+                {
+                    _original.GetLogicTreeData(out graph, out node);
+                    return;
+                }
 
-            __result = new DrivenValue(__result, drive, axis == "MovementX");
+                graph = new AcyclicGraph<ILogicalElement, LogicalLinkInfo>();
+                node = graph.GetNode(this);
+            }
         }
 
-        private static void AfterGetButton(object[] __args, ref ILogicalButton __result)
-        {
-            if (__result == null || __args == null || __args.Length < 2)
-            {
-                return;
-            }
-
-            if (__args[0] == null)
-            {
-                return;
-            }
-
-            // 三个逻辑键都要能驱动：A=PickupAndDrop（取/放）、Dash（冲刺/投掷）、
-            // WorkstationInteract=X（用台面/切菜）。别的键原样透传。
-            var buttonId = __args[0].ToString();
-            if (buttonId != "PickupAndDrop" && buttonId != "Dash" && buttonId != "WorkstationInteract")
-            {
-                return;
-            }
-
-            var player = (PlayerInputLookup.Player)__args[1];
-            Drive drive;
-            if (!Drives.TryGetValue(player, out drive))
-            {
-                return;
-            }
-
-            __result = new DrivenButton(__result, drive, buttonId);
-        }
-
-        /// <summary>移动轴：直接给策略算出来的值，其余成员转给原对象。</summary>
+        /// <summary>逻辑摇杆：门控与按键相同，未驱动时给 0。</summary>
         private sealed class DrivenValue : ILogicalValue
         {
-            private readonly ILogicalValue _inner;
+            private readonly PlayerControls _controls;
             private readonly Drive _drive;
             private readonly bool _horizontal;
+            private readonly ILogicalValue _original;
 
-            public DrivenValue(ILogicalValue inner, Drive drive, bool horizontal)
+            public DrivenValue(PlayerControls controls, Drive drive, bool horizontal, ILogicalValue original)
             {
-                _inner = inner;
+                _controls = controls;
                 _drive = drive;
                 _horizontal = horizontal;
+                _original = original;
             }
 
             public float GetValue()
             {
-                if (!_drive.Active)
+                if (!_drive.Active || _controls == null || !_controls.CanButtonBePressed())
                 {
-                    return _inner.GetValue();
+                    return 0f;
                 }
 
-                return _horizontal ? _drive.MoveX : _drive.MoveY;
+                // 游戏把逻辑 Y 变成世界 z 时会取反（PlayerControlsHelper.GetControlAxis:
+                // z = -MoveY）。调用方给的是世界方向 (x, z)，所以这里把 Y 翻回来，
+                // 否则“往南走”会让厨师往北走（实测卡在料箱的反方向）。
+                return _horizontal ? _drive.MoveX : -_drive.MoveY;
             }
 
-            public void GetLogicTreeData(out AcyclicGraph<ILogicalElement, LogicalLinkInfo> graph,
-                                         out AcyclicGraph<ILogicalElement, LogicalLinkInfo>.Node node)
+            public void GetLogicTreeData(
+                out AcyclicGraph<ILogicalElement, LogicalLinkInfo> graph,
+                out AcyclicGraph<ILogicalElement, LogicalLinkInfo>.Node node)
             {
-                _inner.GetLogicTreeData(out graph, out node);
-            }
-        }
-
-        /// <summary>交互键：按下 → 被领取 → 释放，和真按键一样。</summary>
-        private sealed class DrivenButton : ILogicalButton
-        {
-            private readonly ILogicalButton _inner;
-            private readonly Drive _drive;
-            private readonly string _buttonId;
-            private bool _claimed;
-
-            public DrivenButton(ILogicalButton inner, Drive drive, string buttonId)
-            {
-                _inner = inner;
-                _drive = drive;
-                _buttonId = buttonId;
-            }
-
-            private bool Wanted
-            {
-                get
+                if (_original != null)
                 {
-                    if (!_drive.Active)
-                    {
-                        return false;
-                    }
-
-                    return _buttonId == "PickupAndDrop" ? _drive.Action
-                        : _buttonId == "Dash" ? _drive.Dash
-                        : _drive.Work;
+                    _original.GetLogicTreeData(out graph, out node);
+                    return;
                 }
-            }
 
-            public void GetLogicTreeData(out AcyclicGraph<ILogicalElement, LogicalLinkInfo> graph,
-                                         out AcyclicGraph<ILogicalElement, LogicalLinkInfo>.Node node)
-            {
-                _inner.GetLogicTreeData(out graph, out node);
-            }
-
-            public bool JustPressed()
-            {
-                return _drive.Active ? Wanted && !_claimed : _inner.JustPressed();
-            }
-
-            public bool JustReleased()
-            {
-                return _drive.Active ? !Wanted && _claimed : _inner.JustReleased();
-            }
-
-            public bool HasUnclaimedPressEvent()
-            {
-                return _drive.Active ? Wanted && !_claimed : _inner.HasUnclaimedPressEvent();
-            }
-
-            public void ClaimPressEvent()
-            {
-                _claimed = true;
-            }
-
-            public bool HasUnclaimedReleaseEvent()
-            {
-                return false;
-            }
-
-            public void ClaimReleaseEvent()
-            {
-            }
-
-            public float GetHeldTimeLength()
-            {
-                return _drive.Active ? (Wanted ? 1f : 0f) : _inner.GetHeldTimeLength();
-            }
-
-            public bool IsDown()
-            {
-                return _drive.Active ? Wanted : _inner.IsDown();
+                graph = new AcyclicGraph<ILogicalElement, LogicalLinkInfo>();
+                node = graph.GetNode(this);
             }
         }
     }

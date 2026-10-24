@@ -45,7 +45,6 @@ namespace WellCooked
         private static int _retargets;
 
         private static readonly List<int> Slots = new List<int> { 0, 1 };
-        private static readonly List<PlayerInputLookup.Player> LogicalPlayers = new List<PlayerInputLookup.Player>();
         private static bool _frontendPress;
 
         private sealed class Owned
@@ -166,7 +165,6 @@ namespace WellCooked
         private static void Tick()
         {
             var now = Time.realtimeSinceStartup;
-            Commands.Tick();
             WorldState.Tick(now);
             LinkRunner.Tick(now);
 
@@ -222,7 +220,7 @@ namespace WellCooked
             var chefs = UnityEngine.Object.FindObjectsOfType<PlayerControls>();
             if (chefs.Length > 0 && !_driving)
             {
-                StartDriving(chefs.Length, now);
+                StartDriving(chefs, now);
             }
             else if (chefs.Length == 0 && _driving)
             {
@@ -482,74 +480,19 @@ namespace WellCooked
             return -1;
         }
 
-        private static void StartDriving(int chefCount, float now)
+        private static void StartDriving(PlayerControls[] chefs, float now)
         {
             _driving = true;
             _drivingSince = now;
-            _log.LogInfo("takeover: 检测到 " + chefCount + " 名厨师，开始接管驱动（我们占了 " + OwnedPads.Count + " 位）");
-            ChooseLogicalPlayers(UnityEngine.Object.FindObjectsOfType<PlayerControls>());
+            _log.LogInfo("takeover: 检测到 " + chefs.Length + " 名厨师，开始接管驱动（我们占了 " + OwnedPads.Count + " 位）");
+            // 立刻扫一遍并装逻辑层：关卡刚出现时 control scheme 可能还没建好，
+            // ScanChefPositions 每次扫描都会重试 Attach（已装过的跳过）。
+            ScanChefPositions(now, true);
             CollectTargets();
             _log.LogInfo("takeover: 系统手柄槽位数=" + PlayerInputLookup.GetSystemControllerMaximum());
             LogDevices();
             LogPadInventory();
             LogUsers();
-        }
-
-        /// <summary>
-        /// 挑出设备层管不到的玩家（典型是键盘占住的 1 号位），改成逻辑层注入驱动。
-        /// 设备层只能写进我们自己的虚拟手柄，键盘占的位写不进去——截图实证键盘会抢 1 号位。
-        /// </summary>
-        private static void ChooseLogicalPlayers(PlayerControls[] chefs)
-        {
-            LogicalPlayers.Clear();
-            foreach (var chef in chefs)
-            {
-                var provider = chef.GetComponent<PlayerIDProvider>();
-                if (provider == null || !provider.IsLocallyControlled())
-                {
-                    continue;
-                }
-
-                var player = provider.GetID();
-                int pad;
-                try
-                {
-                    pad = (int)PlayerInputLookup.GetPadForPlayer(player);
-                }
-                catch (Exception)
-                {
-                    pad = -1;
-                }
-
-                bool ours = false;
-                foreach (var owned in OwnedPads)
-                {
-                    if (owned.PadNumber == pad)
-                    {
-                        ours = true;
-                    }
-                }
-
-                if (!ours)
-                {
-                    LogicalPlayers.Add(player);
-                }
-            }
-
-            if (LogicalPlayers.Count == 0)
-            {
-                _log.LogInfo("takeover: 所有本地玩家都在我们的手柄上，不需要逻辑层注入");
-                return;
-            }
-
-            var names = new List<string>();
-            foreach (var player in LogicalPlayers)
-            {
-                names.Add(player.ToString());
-            }
-
-            _log.LogInfo("takeover: 逻辑层接管玩家 " + string.Join(",", names.ToArray())
-                         + "（他们的设备不是我们的手柄）");
         }
 
         /// <summary>InControl 认得的所有设备：键盘、物理手柄、我们挂的虚拟手柄都在这里。</summary>
@@ -645,12 +588,8 @@ namespace WellCooked
         private static void StopDriving()
         {
             _driving = false;
-            foreach (var owned in OwnedPads)
-            {
-                owned.Pad.Want(false, false, Vector2.zero);
-            }
-
-            LogicalInput.Clear();
+            // 关卡结束：把 control scheme 装回游戏原来的对象，避免下一关叠第二层包装。
+            LogicalInput.Detach();
 
             _log.LogInfo("takeover: 离开关卡，停止驱动");
         }
@@ -665,6 +604,10 @@ namespace WellCooked
             bool action = elapsed % ActionPeriod < ActionLength;
             ScanChefPositions(now);
 
+            // 逻辑层每帧先归零：下面没被设过的厨师这一帧就停住，不会保留上一帧的方向。
+            // 设备层在关卡内不再写控制项；虚拟手柄只负责前端"按 A 加入"。
+            LogicalInput.Clear();
+
             if (_workMode)
             {
                 DriveWorkOrder(now);
@@ -676,33 +619,41 @@ namespace WellCooked
                 CollectTargets();
             }
 
-            foreach (var owned in OwnedPads)
+            foreach (var entry in ChefControllers)
             {
-                Vector2 position;
-                if (!TryPosition(owned.Slot, out position))
+                int slot = entry.Key;
+                var chef = entry.Value;
+                if (!IsLocalChef(chef))
                 {
                     continue;
                 }
 
-                if (ActionDriver.Drive(owned.Slot, owned.Pad, position, now))
+                Vector2 position;
+                if (!TryPosition(slot, out position))
+                {
+                    continue;
+                }
+
+                var player = (PlayerInputLookup.Player)slot;
+                if (ActionDriver.Drive(slot, position, now))
                 {
                     continue; // 这个玩家位收到过 Bridge 的动作，归动作执行器（任务 04）
                 }
 
-                if (!Navigation.HasArrived(owned.Slot))
+                if (!Navigation.HasArrived(slot))
                 {
                     string status;
-                    var direction = Navigation.Steer(owned.Slot, position, now, out status);
-                    owned.Pad.Want(action, false, direction);
+                    var direction = Navigation.Steer(slot, position, now, out status);
+                    LogicalInput.SetButtons(player, direction, action, false, false);
                     // 每帧一行：`diag=true` 才打（卡住时看抖动从哪来）
-                    Diag.Trace("trace 玩家位=" + (owned.Slot + 1)
+                    Diag.Trace("trace 玩家位=" + (slot + 1) + " 逻辑层=" + (LogicalInput.IsAttached(player) ? "已装" : "未装")
                                + " 方向=(" + direction.x.ToString("F2") + "," + direction.y.ToString("F2") + ")"
                                + " 位置=(" + position.x.ToString("F3") + "," + position.y.ToString("F3") + ")"
                                + " " + status);
 
                     if (now >= _nextDriveLog)
                     {
-                        Diag.Trace("takeover: 走位 玩家位=" + (owned.Slot + 1) + " 厨师=" + owned.ChefName + " " + status
+                        Diag.Trace("takeover: 走位 玩家位=" + (slot + 1) + " 厨师=" + chef.name + " " + status
                                    + " 方向=(" + direction.x.ToString("F2") + "," + direction.y.ToString("F2") + ")"
                                    + " 位置=(" + position.x.ToString("F2") + "," + position.y.ToString("F2") + ")");
                     }
@@ -710,9 +661,9 @@ namespace WellCooked
                     // 只有"这个目标做完了"才换目标（到达/不可达/卡住都会把 Arrived 置上）。
                     // 不能一看方向是零就换：局部跳过路点时会短暂给零向量，那样会把整条路丢掉。
                     if (direction == Vector2.zero
-                        && (Navigation.HasArrived(owned.Slot) || !Navigation.HasTarget(owned.Slot)))
+                        && (Navigation.HasArrived(slot) || !Navigation.HasTarget(slot)))
                     {
-                        AssignNextTarget(owned.Slot, position, now);
+                        AssignNextTarget(slot, position, now);
                     }
                 }
                 else
@@ -720,38 +671,14 @@ namespace WellCooked
                     // 到达是"走到路径终点"就成立，而走位日志每 2 秒才一行，正好会错过它。
                     // 所以到达单独计数、单独打日志，别让它看起来像"0 次到达"。
                     Vector2 reached;
-                    string reachedText = Navigation.TryTarget(owned.Slot, out reached)
+                    string reachedText = Navigation.TryTarget(slot, out reached)
                         ? "目标=(" + reached.x.ToString("F1") + "," + reached.y.ToString("F1") + ") 距离="
                           + Vector2.Distance(position, reached).ToString("F2")
                         : "没有目标";
-                    _log.LogInfo("takeover: 到达 玩家位=" + (owned.Slot + 1)
+                    _log.LogInfo("takeover: 到达 玩家位=" + (slot + 1)
                                  + " 位置=(" + position.x.ToString("F2") + "," + position.y.ToString("F2") + ") "
                                  + reachedText);
-                    AssignNextTarget(owned.Slot, position, now);
-                }
-            }
-
-            foreach (var player in LogicalPlayers)
-            {
-                Vector2 position;
-                if (!TryPosition((int)player, out position))
-                {
-                    continue;
-                }
-
-                int slot = (int)player;   // 逻辑层的玩家号与本插件的槽号是同一套编号
-                if (ActionDriver.Drive(slot, null, position, now))
-                {
-                    continue;
-                }
-
-                string status;
-                var direction = Navigation.Steer(player, position, now, out status);
-                LogicalInput.Set(player, direction, action);
-                if (direction == Vector2.zero
-                    && (Navigation.HasArrived(player) || !Navigation.HasTarget(player)))
-                {
-                    AssignNextTarget(player, position, now);
+                    AssignNextTarget(slot, position, now);
                 }
             }
 
@@ -759,14 +686,8 @@ namespace WellCooked
             {
                 _nextDriveLog = now + 2f;
                 Diag.Trace("takeover: 驱动中 交互=" + action
-                           + " 设备层=" + OwnedPads.Count + " 逻辑层=" + LogicalPlayers.Count
+                           + " 逻辑层=" + LogicalInput.Driving + "/" + LogicalInput.AttachedCount
                            + " 目标点=" + Targets.Count + " 到达次数=" + _arrivals + " 换目标次数=" + _retargets);
-                foreach (var owned in OwnedPads)
-                {
-                    Diag.Trace("takeover: 手柄 玩家位=" + (owned.Slot + 1) + " pad=" + owned.PadNumber
-                               + " 想要 " + owned.Pad.Wanted + " | " + owned.Pad.State);
-                }
-
                 LogChefs();
             }
         }
@@ -778,29 +699,34 @@ namespace WellCooked
         private static void DriveWorkOrder(float now)
         {
             var states = new List<WorkOrder.ChefState>();
-            foreach (var owned in OwnedPads)
+            foreach (var entry in ChefControllers)
             {
-                Vector2 position;
-                if (!TryPosition(owned.Slot, out position))
+                int slot = entry.Key;
+                var chef = entry.Value;
+                if (!IsLocalChef(chef))
                 {
                     continue;
                 }
 
-                if (ActionDriver.Owns(owned.Slot))
+                Vector2 position;
+                if (!TryPosition(slot, out position))
+                {
+                    continue;
+                }
+
+                if (ActionDriver.Owns(slot))
                 {
                     continue; // 归动作执行器，工序不要碰它
                 }
 
-                PlayerControls chef;
-                ChefControllers.TryGetValue(owned.Slot, out chef);
                 Vector2 facingPosition = Vector2.zero;
-                bool hasFacing = chef != null && Kitchen.FacingObjectPosition(chef, out facingPosition);
+                bool hasFacing = Kitchen.FacingObjectPosition(chef, out facingPosition);
                 states.Add(new WorkOrder.ChefState
                 {
-                    Slot = owned.Slot,
+                    Slot = slot,
                     Position = position,
-                    Held = chef == null ? "" : Kitchen.HeldSummary(chef),
-                    FacingName = chef == null ? "?" : Kitchen.FacingObjectName(chef),
+                    Held = Kitchen.HeldSummary(chef),
+                    FacingName = Kitchen.FacingObjectName(chef),
                     FacingPosition = facingPosition,
                     HasFacing = hasFacing
                 });
@@ -808,15 +734,23 @@ namespace WellCooked
 
             WorkOrder.Tick(now, states);
 
-            foreach (var owned in OwnedPads)
+            foreach (var entry in ChefControllers)
             {
-                Vector2 position;
-                if (!TryPosition(owned.Slot, out position))
+                int slot = entry.Key;
+                var chef = entry.Value;
+                if (!IsLocalChef(chef))
                 {
                     continue;
                 }
 
-                if (ActionDriver.Drive(owned.Slot, owned.Pad, position, now))
+                Vector2 position;
+                if (!TryPosition(slot, out position))
+                {
+                    continue;
+                }
+
+                var player = (PlayerInputLookup.Player)slot;
+                if (ActionDriver.Drive(slot, position, now))
                 {
                     continue;
                 }
@@ -824,23 +758,22 @@ namespace WellCooked
                 Vector2 target;
                 bool interact;
                 bool work;
-                if (!WorkOrder.DesireFor(owned.Slot, out target, out interact, out work))
+                if (!WorkOrder.DesireFor(slot, out target, out interact, out work))
                 {
-                    owned.Pad.Want(false, false, Vector2.zero);
+                    LogicalInput.SetButtons(player, Vector2.zero, false, false, false);
                     continue;
                 }
 
                 Vector2 face;
-                if (WorkOrder.FaceFor(owned.Slot, out face))
+                if (WorkOrder.FaceFor(slot, out face))
                 {
                     // 朝向阶段：直接喂方向让厨师转身（交互按的是"面前那一格"），
-                    // 但交互键必须照样写下去——之前这里写死 false，导致 A 从来没到过手柄，
-                    // 表现就是"面前明明是料箱、日志一直说在按，游戏那边一点反应没有"。
-                    owned.Pad.Want(interact, false, work, face);
+                    // 交互键必须照样写下去；否则面前明明是料箱、日志说在按，游戏那边没有反应。
+                    LogicalInput.SetButtons(player, face, interact, false, work);
 
                     // 每帧一行：`diag=true` 才打（看"键有没有喂出去、朝向对不对"时开）
-                    Diag.Trace("trace 工序 玩家位=" + (owned.Slot + 1)
-                               + " 手柄=" + owned.Pad.State
+                    Diag.Trace("trace 工序 玩家位=" + (slot + 1)
+                               + " 逻辑层=" + (LogicalInput.IsAttached(player) ? "已装" : "未装")
                                + " 交互=" + interact
                                + " 用台面=" + work
                                + " 朝向=(" + face.x.ToString("F2") + "," + face.y.ToString("F2") + ")"
@@ -849,9 +782,9 @@ namespace WellCooked
                     continue;
                 }
 
-                Navigation.Assign(owned.Slot, target);
+                Navigation.Assign(slot, target);
                 string status;
-                var direction = Navigation.Steer(owned.Slot, position, now, out status);
+                var direction = Navigation.Steer(slot, position, now, out status);
 
                 // 最后一段（1 米内）不走寻路，直接朝格子中心收：
                 // 寻路是"走到附近就算到"，收不进 0.25 米的格子中心（实测停在 1.4 米外）。
@@ -861,10 +794,10 @@ namespace WellCooked
                     direction = toTarget < 0.05f ? Vector2.zero : (target - position).normalized;
                     status = "收尾 " + toTarget.ToString("F2") + " 米";
                 }
-                owned.Pad.Want(interact, false, work, direction);
+                LogicalInput.SetButtons(player, direction, interact, false, work);
 
-                Diag.Trace("trace 工序 玩家位=" + (owned.Slot + 1)
-                           + " 手柄=" + owned.Pad.State
+                Diag.Trace("trace 工序 玩家位=" + (slot + 1)
+                           + " 逻辑层=" + (LogicalInput.IsAttached(player) ? "已装" : "未装")
                            + " 交互=" + interact
                            + " 用台面=" + work
                            + " 方向=(" + direction.x.ToString("F2") + "," + direction.y.ToString("F2") + ")"
@@ -876,10 +809,16 @@ namespace WellCooked
             {
                 _nextDriveLog = now + 2f;
                 var detail = new StringBuilder("takeover: 工序模式 " + WorkOrder.Status);
-                foreach (var owned in OwnedPads)
+                foreach (var entry in ChefControllers)
                 {
+                    int slot = entry.Key;
+                    if (!IsLocalChef(entry.Value))
+                    {
+                        continue;
+                    }
+
                     Vector2 position;
-                    if (!TryPosition(owned.Slot, out position))
+                    if (!TryPosition(slot, out position))
                     {
                         continue;
                     }
@@ -887,14 +826,14 @@ namespace WellCooked
                     Vector2 target;
                     bool interact;
                     bool work;
-                    if (!WorkOrder.DesireFor(owned.Slot, out target, out interact, out work))
+                    if (!WorkOrder.DesireFor(slot, out target, out interact, out work))
                     {
                         continue;
                     }
 
                     string status;
-                    Navigation.Steer(owned.Slot, position, now, out status);
-                    detail.Append(" | 厨师位=").Append(owned.Slot + 1)
+                    Navigation.Steer(slot, position, now, out status);
+                    detail.Append(" | 厨师位=").Append(slot + 1)
                         .Append(" 位置=(").Append(position.x.ToString("F1")).Append(',').Append(position.y.ToString("F1"))
                         .Append(") 距目标=").Append(Vector2.Distance(position, target).ToString("F1"))
                         .Append(" 寻路=").Append(status);
@@ -950,9 +889,9 @@ namespace WellCooked
             }
         }
 
-        private static void ScanChefPositions(float now)
+        private static void ScanChefPositions(float now, bool force = false)
         {
-            if (now < _nextChefScan)
+            if (!force && now < _nextChefScan)
             {
                 return;
             }
@@ -960,7 +899,8 @@ namespace WellCooked
             _nextChefScan = now + 0.1f;
             ChefPositions.Clear();
             ChefControllers.Clear();
-            foreach (var chef in UnityEngine.Object.FindObjectsOfType<PlayerControls>())
+            var chefs = UnityEngine.Object.FindObjectsOfType<PlayerControls>();
+            foreach (var chef in chefs)
             {
                 var provider = chef.GetComponent<PlayerIDProvider>();
                 if (provider != null)
@@ -975,11 +915,33 @@ namespace WellCooked
                                + chef.transform.position.z.ToString("F1") + ")");
                 }
             }
+
+            // control scheme 可能比厨师晚一帧就绪；Attach 可重复调用，装过的直接跳过。
+            LogicalInput.Attach(chefs);
         }
 
-        /// <summary>这个玩家位是不是我们占的（动作执行器据此拒绝不属于我们的 chef_id）。</summary>
+        private static bool IsLocalChef(PlayerControls chef)
+        {
+            if (chef == null)
+            {
+                return false;
+            }
+
+            var provider = chef.GetComponent<PlayerIDProvider>();
+            return provider != null && provider.IsLocallyControlled();
+        }
+
+        /// <summary>这个玩家位是不是我们能驱动的（动作执行器据此拒绝不属于我们的 chef_id）。</summary>
         public static bool IsOwnedSlot(int slot)
         {
+            PlayerInputLookup.Player player;
+            if (TryPlayerOf(slot, out player) && LogicalInput.IsAttached(player))
+            {
+                return true;
+            }
+
+            // 关卡刚加载、逻辑层还没装上的那一瞬间，仍按占位结果接受指令（ActionDriver 的
+            // 归属来自 Bridge，不是来自某一帧的输入层状态）。
             foreach (var owned in OwnedPads)
             {
                 if (owned.Slot == slot)

@@ -5,8 +5,8 @@
 
 1. **读世界状态**：写 `BepInEx/wellcooked-state.json`（给人看、给 `scripts/export-kitchen.py` 读），
    并把同一批数据按协议编码成 `state_update` 发给 Linux 侧的 Bridge（任务 03）。
-2. **注入输入**：前端"按 A 加入"走设备层虚拟手柄；关卡内的动作走设备层手柄 + 逻辑层
-   （`LogicalInput`），由本地的工序状态机（`WorkOrder`）或 Bridge 下发的动作驱动。
+2. **注入输入**：前端"按 A 加入"走设备层虚拟手柄；关卡内的动作只走逻辑层（`LogicalInput`），
+   由本地的工序状态机（`WorkOrder`）或 Bridge 下发的动作驱动。
 3. **调试通道**：`BepInEx/wellcooked-command.txt` 一行一条指令（`load`/`restart`/`mech`/`levels`/…），
    配置在 `BepInEx/wellcooked-takeover.txt`（见 `.workflow/standards.md`）。
 
@@ -26,7 +26,7 @@
 | 盘子 | `ClientCleanPlateStack`（`GetSize()`）、`ClientPlateStation`（交付口） | 上报里 `plate_stack.count` |
 | 料箱给什么 | `ClientPickupItemSpawner.GetItemPrefab()` 的名字（如 `SushiFish`）；prefab 上挂的 `Choppable*`/`Cookable*` 组件决定它要不要切/煮（菜谱树里看不出来） | 导出到 `wellcooked-state.json` 的 `gives`/`prefab_components` |
 | 网格 | `GridManager.GetActive(0)` → `GetUnclampedGridLocationFromPos`/`GetPosFromGridLocation`/`GetGridOccupant`，格坐标类型 `GridIndex` | 游戏自己的网格是 **1.2 米**，台面摆在 0.6 米格上，粗一半表示不出中间的障碍 —— 所以可走格自己按 0.6 米采样（`WorldState`） |
-| 输入 | 逻辑层 `PlayerInputLookup.GetButton/GetValue`（`ILogicalButton`/`ILogicalValue`，按 `LogicalButtonID`：`PickupAndDrop`/`Dash`/`WorkstationInteract`）；设备层 InControl `InputDevice`（`AddControl` 注册控制项，`InputManager.AttachDevice` 挂上） | 前端"按 A 加入"只能走设备层；关卡内动作两层都能用 |
+| 输入 | 逻辑层 `PlayerControls.ControlScheme`（`ILogicalButton`/`ILogicalValue`，字段 `m_pickupButton`/`m_worksurfaceUseButton`/`m_dashButton`/`m_moveX`/`m_moveY`）；设备层 InControl `InputDevice`（`AddControl` 注册控制项，`InputManager.AttachDevice` 挂上） | 前端"按 A 加入"只能走设备层；关卡内动作只走逻辑层 |
 
 ## 两种状态形状（同一批数据，别混淆）
 
@@ -61,11 +61,11 @@
   （`AddControl` 注册控制项）→ `InputManager.AttachDevice` 挂上 → 每帧 `UpdateWithState` 设置按键。
   逻辑层在前端没有对应对象（`PlayerInputLookup` 要玩家位先存在），spike game-bridge/06 实测过这条能
   从标题画面推进到过场。
-- **关卡内动作走逻辑层 + 设备层两手都写。** 逻辑层替换 `PlayerControls.ControlScheme` 的
-  `m_pickupButton`/`m_worksurfaceUseButton`/`m_dashButton`/`m_moveX`/`m_moveY`（自实现
-  `ILogicalButton`/`ILogicalValue`），这是游戏内动作真正读的那一层；设备层再写一遍，是因为厨师是
-  挂在我们占的虚拟手柄上的（`EngagePadToSlot`），两条路径都可能是它这次取值的来源，写一致的意图
-  比猜哪一层生效便宜。
+- **关卡内动作只走逻辑层。** 厨师出现后，`LogicalInput` 把 `PlayerControls.ControlScheme` 的
+  `m_pickupButton`/`m_worksurfaceUseButton`/`m_dashButton`/`m_moveX`/`m_moveY` 换成自己的
+  `ILogicalButton`/`ILogicalValue`（按键继承 `LogicalButtonBase`，领取/释放边沿与真按键一致），
+  每次取值都按 `CanButtonBePressed()` 门控。设备层在关卡内不再写控制项；它只负责前端把玩家位占上。
+  退出关卡时 `Detach()` 把原对象装回去，避免下一关叠第二层包装。
 - **槽号与玩家号是同一个数。** 协议里的 `chef_id` = 输入槽（0 基）；实测
   `(int)PlayerIDProvider.GetID()` 也是 0 基（名字 `Player 1` 的厨师，`GetID()` 转 int 得 0），
   所以 `chef_id` 可以直接喂给逻辑层。**别按名字里的数字猜** —— 这一轮就是先把它当成 1 基，
@@ -77,7 +77,7 @@
 |---|---|
 | 依赖游戏私有接口 | 逻辑层的字段名、`ILogicalButton` 的签名、`EngagePadToSlot` 都是反射调的私有成员，游戏一更新就可能失效；失效表现为 `反射: 没找到…` 日志 + 动作没效果（`Fallbacks.cs` 集中兜底） |
 | 占用 pad 位 | 设备层每接管一个玩家位要挂一个虚拟手柄，一台机器最多 4 个，所以能同时接管的厨师数受空闲 pad 限制 |
-| 两条路都要维护 | 前端只能设备层、关卡内两层都写，注入相关的 bug 要分别到两层看（`LogicalInput` 与 `VirtualPad`） |
+| 两层边界 | 前端只能设备层、关卡内只能逻辑层；改错层不会报错，只会让输入没反应（前端看 `VirtualPad`，关卡内看 `LogicalInput`） |
 | 逻辑层要按"这一局谁是谁"写 | 逻辑层的键是 per-player 的，写错玩家号不会报错，只会让另一个厨师动 |
 
 ## 一次真实操作的日志片段（任务 04，2026-10-16，`s_sushi_1_1`）
@@ -115,5 +115,6 @@ action: 厨师位 1 按 dash
 | `WorkOrder.cs` | 工序状态机：取料 → 放砧板 → 切 → 拿盘子 → 装盘 → 拿走 → 交付 |
 | `Takeover.cs` | 占位、进关卡后接管、每帧把"想去哪、按不按"喂给手柄 |
 | `Navigation.cs` | 0.6 米格上的 A*、路点跟随、卡住处理 |
-| `VirtualPad.cs` / `LogicalInput.cs` | 设备层虚拟手柄 / 逻辑层注入 |
+| `VirtualPad.cs` / `LogicalInput.cs` | 设备层虚拟手柄（前端加入）/ 逻辑层注入（关卡内动作） |
+| `FrameStep.cs` | `step=<n>` 帧步进：暂停、推进 n 帧、保持暂停 |
 | `Commands.cs` / `Diag.cs` / `Fallbacks.cs` | 调试指令通道 / 诊断开关 / 兜底集中处 |

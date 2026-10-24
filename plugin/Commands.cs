@@ -24,6 +24,7 @@ namespace WellCooked
     ///   engage=1         标题画面：直接替我们的占位完成"加入"（等价于按 A）
     ///   dump=&lt;类型名&gt;    把这个类型的所有方法签名打到日志
     ///   pause=1          打当前暂停状态（TimeManager 各层）
+    ///   step=&lt;n&gt;         暂停并推进 n 帧（n=0 恢复）；见 `FrameStep`
     /// </summary>
     public static class Commands
     {
@@ -149,6 +150,9 @@ namespace WellCooked
                     break;
                 case "pause":
                     DumpPause();
+                    break;
+                case "step":
+                    FrameStep.Request(value);
                     break;
                 default:
                     _log.LogWarning("指令: 不认识 " + key);
@@ -796,7 +800,9 @@ namespace WellCooked
             var field = type.GetField("s_timeManager", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
             object manager = field != null ? field.GetValue(null) : null;
             _log.LogInfo("指令: TimeManager 实例=" + (manager != null)
-                         + " Time.timeScale=" + Time.timeScale.ToString("F2"));
+                         + " Time.timeScale=" + Time.timeScale.ToString("F2")
+                         + " Time.time=" + Time.time.ToString("F3")
+                         + " frame=" + Time.frameCount);
             if (manager == null)
             {
                 return;

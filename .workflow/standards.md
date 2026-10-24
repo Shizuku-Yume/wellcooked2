@@ -88,6 +88,7 @@ printf 'mech=1\n' ...           # 数当前场景真实存在的机制组件与�
 printf 'levels=city\n' ...      # 打印关卡表（菜单位置 ↔ 场景名 ↔ 解锁/通关），可按场景名过滤
 printf 'unlock=1\n' ...         # 解锁当前存档全部关卡（含 IsLevelUnlocked 自检）
 printf 'orders=reload\n' ...    # 重读订单配置并打印当前配置与已生成单数
+printf 'step=1\n' ...           # 暂停并推进 1 帧（调试确定性）；step=0 恢复
 ```
 
 固定订单（策略对比要用同一组订单，游戏自己随机出单做不到）：

@@ -5,7 +5,7 @@
 **Base commit:** 24a18a7
 **Base branch:** game-bridge/04-action-injection-single-chef
 **Started:** 2026-10-16T12:00:00+08:00
-**Status:** blocked（关卡已验收；`work=auto` 一单等导航修好，菜谱共享中间产物待定，见文末）
+**Status:** blocked
 
 **Delivers:** 一个**自制关卡**能在游戏里加载并跑通调度演示：单一连通厨房、无传送带/轨道/开关/桥/平台，
 菜谱包含多个料与加工步骤（切 + 煮/煎），并把"关卡怎么来的、怎么装"写进文档，使换台机器也能复现。
