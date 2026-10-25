@@ -120,12 +120,17 @@ static int open_queues(worker *w)
 {
     kos_error err;
     char name[KOS_MQ_NAME_MAX];
+    char events_name[KOS_MQ_NAME_MAX];
     char text[256];
 
     if (w->rt.opts.chefs <= 0) {
         return -1;
     }
-    if (kos_mq_task_name(w->rt.opts.chef_id, name, sizeof name) != KOS_OK) {
+    if (kos_mq_task_name(w->rt.opts.chef_id, w->rt.opts.instance, name, sizeof name) !=
+        KOS_OK) {
+        return -1;
+    }
+    if (kos_mq_events_name(w->rt.opts.instance, events_name, sizeof events_name) != KOS_OK) {
         return -1;
     }
     kos_error_clear(&err);
@@ -138,13 +143,12 @@ static int open_queues(worker *w)
         return -1;
     }
     kos_error_clear(&err);
-    if (kos_mq_open(KOS_MQ_EVENTS_NAME, O_WRONLY, &w->events_queue, &err) != KOS_OK) {
+    if (kos_mq_open(events_name, O_WRONLY, &w->events_queue, &err) != KOS_OK) {
         kos_mq_close(w->task_queue);
         w->task_queue = (mqd_t)-1;
         if (!w->mq_wait_logged) {
             error_text(&err, text, sizeof text);
-            kos_log_info(w->rt.log, "mq_wait", "queue=%s error=%s", KOS_MQ_EVENTS_NAME,
-                         text);
+            kos_log_info(w->rt.log, "mq_wait", "queue=%s error=%s", events_name, text);
             w->mq_wait_logged = 1;
         }
         return -1;

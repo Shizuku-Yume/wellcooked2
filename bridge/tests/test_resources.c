@@ -77,14 +77,26 @@ int main(void)
 
     printf("[test_resources] 1. 创建/attach 容量\n");
     kos_error_clear(&err);
-    expect(kos_resources_create(&kitchen, &err) == KOS_OK, "sem_created");
+    expect(kos_resources_create(&kitchen, KOS_INSTANCE_NONE, &err) == KOS_OK, "sem_created");
     kos_error_clear(&err);
-    expect(kos_resources_attach(&kitchen, &set, &err) == KOS_OK, "sem_attached");
+    expect(kos_resources_attach(&kitchen, &set, KOS_INSTANCE_NONE, &err) == KOS_OK, "sem_attached");
     expect(set.count == 1 && set.items[0].capacity == 2, "one_kind_capacity_two");
     expect(sem_value(&set, kind) == 2, "initial_value_equals_capacity");
-    expect(kos_resource_name(kind, name, sizeof name) != NULL &&
+    expect(kos_resource_name(kind, KOS_INSTANCE_NONE, name, sizeof name) != NULL &&
                strncmp(name, "/kitchenos_res_", 15) == 0,
            "named_sem_prefix");
+    {
+        char suffixed[KOS_RES_NAME_MAX];
+        char expected[KOS_RES_NAME_MAX];
+
+        snprintf(expected, sizeof expected, "/kitchenos_res_%s_3", kind);
+        expect(kos_resource_name(kind, 3, suffixed, sizeof suffixed) != NULL &&
+                   strcmp(suffixed, expected) == 0,
+               "instance_appends_suffix");
+        expect(kos_resource_name(kind, KOS_INSTANCE_NONE, suffixed, sizeof suffixed) != NULL &&
+                   strcmp(suffixed, name) == 0,
+               "no_instance_keeps_old_name");
+    }
 
     printf("[test_resources] 2. wait_then_acquire\n");
     expect(kos_resource_try_acquire(&set, kind) == KOS_OK, "acquire_first");
@@ -155,10 +167,10 @@ int main(void)
     printf("[test_resources] 6. unlink 幂等\n");
     kos_resources_close(&set);
     kos_error_clear(&err);
-    expect(kos_resources_unlink(&kitchen, &err) == KOS_OK, "unlink_first");
-    expect(kos_resources_unlink(&kitchen, &err) == KOS_OK, "unlink_second_idempotent");
+    expect(kos_resources_unlink(&kitchen, KOS_INSTANCE_NONE, &err) == KOS_OK, "unlink_first");
+    expect(kos_resources_unlink(&kitchen, KOS_INSTANCE_NONE, &err) == KOS_OK, "unlink_second_idempotent");
     kos_error_clear(&err);
-    expect(kos_resources_attach(&kitchen, &set, &err) == KOS_ERR_MISSING,
+    expect(kos_resources_attach(&kitchen, &set, KOS_INSTANCE_NONE, &err) == KOS_ERR_MISSING,
            "attach_after_unlink_missing");
 
     /* 另一个 kind 从未创建过，unlink 也不应失败。 */
@@ -167,7 +179,7 @@ int main(void)
 
         make_kitchen(&other_kitchen, other);
         kos_error_clear(&err);
-        expect(kos_resources_unlink(&other_kitchen, &err) == KOS_OK,
+        expect(kos_resources_unlink(&other_kitchen, KOS_INSTANCE_NONE, &err) == KOS_OK,
                "unlink_absent_ok");
     }
 
