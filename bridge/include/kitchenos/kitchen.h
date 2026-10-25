@@ -3,7 +3,7 @@
  *
  * Worker、Scheduler 和 navd 都需要的只有三样：可走网格（坐标 + 邻居掩码）、工位
  * （kind、位置、料箱给什么）和由网格+工位导出的站位格/距离场（stand.c 在加载时算，
- * 不读 JSON）。解析放在这里，A* 放在 nav.h，两边都不读 JSON。
+ * 不读 JSON）。解析放在这里，相邻判定在 nav.h，两边都不读 JSON。
  */
 #ifndef KITCHENOS_KITCHEN_H
 #define KITCHENOS_KITCHEN_H

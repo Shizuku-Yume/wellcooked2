@@ -69,7 +69,8 @@ competing names, omit the line rather than inventing fake synonyms.
 - **navd**: Supervisor 下的走位进程，统一为所有厨师规划路径（PIBT，或对照基线 `pa`），
   通过共享内存导航表 `/kitchenos_nav` 与 Worker 交换目标和计划。
 - **PIBT**: Priority Inheritance with Backtracking。每一步按优先级给每个厨师挑下一格，挡路的人
-  继承优先级先让开，让不开就回退换格。_Avoid_: 死锁退让（PIBT 不靠事后检测死锁）。
+  继承优先级先让开，让不开就回退换格；换目标后步数 + 紧迫度是优先级，`pinned` 与已到站的
+  目标厨师是固定障碍。_Avoid_: 死锁退让（PIBT 不靠事后检测死锁）。
 - **执行依赖图（action dependency graph）**: `navd` 放行路点的依据：某格的下一位使用者要等
   上一位实际离开该格才放行，厨师快慢不一时也不会同格。
 - **游戏实例（instance）**: 一个独立目录里启动的 Overcooked2 进程，配一棵 `--instance k` 的

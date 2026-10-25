@@ -45,12 +45,14 @@ MAX_FRAME_BYTES = 1024 * 1024   # TcpLink.cs 的 MaxFrameBytes：一行的上限
 DEFAULT_LISTEN_PORT = 14455     # Bridge 作服务端时的默认端口（两端同一个号，谁在听由模式决定）
 DEFAULT_CONNECT_PORT = 14455    # 插件作服务端时的默认端口，Bridge --link connect 去连它
 HELLO_INSTANCE = "windows-host"
-HELLO_VERSION = "0.1.0"
-HELLO_ACTIONS = ("move", "stop", "press", "release", "tap", "pickup", "dash", "interact")
+HELLO_VERSION = "0.2.0"
+HELLO_ACTIONS = ("move", "stop", "press", "release", "tap", "pickup", "dash", "interact",
+                 "path", "face", "work")
 IDLE_ACTION = "stop"            # 输入槽缺失时 Bridge 下发的空闲动作
 # 线上 action 枚举（protocol/protocol.md §3.6 + schema/action.schema.json）：插件会做八个，
-# 但能调度到的只有这五个。收到别的名字说明 Bridge 与契约不一致，要当硬错误。
-WIRE_ACTIONS = ("move", "stop", "interact", "pickup", "dash")
+# 桥能下发的也是这八个（path/face/work 在 kitchen-control 任务 02 上线）。
+# 收到别的名字说明 Bridge 与契约不一致，要当硬错误。
+WIRE_ACTIONS = ("move", "stop", "interact", "pickup", "dash", "path", "face", "work")
 
 EXIT_OK = 0
 EXIT_FAIL = 1
@@ -59,7 +61,8 @@ EXIT_SKIP = 77
 
 SCENARIOS = ("happy", "one-slot", "no-heartbeat", "bad-frames", "connect-mode",
              "reconnect-storm", "silent-connect", "data-shapes", "second-peer",
-             "pickup-dash", "input-grace", "os-loop", "os-resources")
+             "pickup-dash", "path-face-work", "input-grace", "os-loop", "os-resources",
+             "nav-corridor", "nav-stuck", "nav-crash")
 
 # 日志行 = "ISO8601(毫秒) 级别 事件名 key=value ..."（bridge/src/log.c）。
 # 只认行首这个位置上的事件名：key=value 里出现同名词不算一次事件。
@@ -185,9 +188,12 @@ def msg_heartbeat(now=None):
                   "timestamp": int(time.time() if now is None else now)})
 
 
-def msg_ack(action, chef_id, ok=True, detail=""):
-    return jdump({"type": "ack", "action": action or "", "chef_id": int(chef_id),
-                  "ok": bool(ok), "detail": detail or ""})
+def msg_ack(action, chef_id, ok=True, detail="", seq=None):
+    out = {"type": "ack", "action": action or "", "chef_id": int(chef_id),
+           "ok": bool(ok), "detail": detail or ""}
+    if seq is not None:
+        out["seq"] = int(seq)
+    return jdump(out)
 
 
 def msg_echo(token):
@@ -207,7 +213,7 @@ def msg_state_update(n_chefs, frame_index, flat_xy=False, edge_fields=False):
     for i in range(n_chefs):
         x = round(10.5 + 1.25 * i, 3)
         y = round(5.2 + 0.75 * i, 3)
-        chef = {"id": i, "position": {"x": x, "y": y},
+        chef = {"id": i, "position": {"x": x, "y": y}, "facing": 0.0,
                 "holding": "tomato" if i % 2 == 0 else None,
                 "state": "moving" if i % 2 == 0 else "idle"}
         if flat_xy:
@@ -226,6 +232,7 @@ def msg_state_update(n_chefs, frame_index, flat_xy=False, edge_fields=False):
         "type": "state_update",
         "timestamp": int(time.time()),
         "game_time": frame_index // 60,
+        "game_time_ms": int((frame_index / 60.0) * 1000),
         "score": 450,
         "chefs": chefs,
         "orders": [{"id": "order_001", "recipe": "salad", "time_remaining": 45,
@@ -239,23 +246,27 @@ def msg_state_update(n_chefs, frame_index, flat_xy=False, edge_fields=False):
     return jdump(msg)
 
 
-def msg_state_update_os(chefs, frame_index, cells):
+def msg_state_update_os(chefs, frame_index, cells, positions=None, game_ms=None,
+                        resources=None):
     """os-loop 用：厨师站在 kitchen 网格里，订单用真实菜名。
 
-    Bridge 只负责把这份状态搬进 shm；Scheduler 从 shm 读订单，Worker 从 shm 读
-    厨师起点。坐标必须落在可走格上，否则 A* 只能从"最近的可走格"起步，测试就看
-    不出起点是否被正确读取。
+    positions 给出时用它（NavSim 模拟的实时坐标）；否则按 picks 放进网格。
+    game_ms 由调用方按状态帧率给，确保 Worker/navd 与插件看到同一个游戏时钟。
     """
     picks = [cells[0], cells[-1], cells[len(cells) // 2], cells[len(cells) // 4]]
     out = []
     for i in range(chefs):
-        cell = picks[i % len(picks)]
-        out.append({"id": i, "position": {"x": cell[0], "y": cell[1]},
+        if positions is not None and i < len(positions):
+            cell = positions[i]
+        else:
+            cell = picks[i % len(picks)]
+        out.append({"id": i, "position": {"x": cell[0], "y": cell[1]}, "facing": 0.0,
                     "holding": None, "state": "idle"})
     msg = {
         "type": "state_update",
         "timestamp": int(time.time()),
-        "game_time": frame_index // 30,
+        "game_time": int((game_ms or 0) // 1000),
+        "game_time_ms": int(game_ms or 0),
         "score": 0,
         "chefs": out,
         "orders": [
@@ -264,7 +275,8 @@ def msg_state_update_os(chefs, frame_index, cells):
             {"id": "world-002", "recipe": "SteamedSpecial_Meat",
              "time_remaining": 90, "ingredients": ["meat"]},
         ],
-        "resources": {"plate_stack": {"count": 5}},
+        "resources": resources if resources is not None else
+                     {"plate_stack": {"count": 5}},
     }
     return jdump(msg)
 
@@ -293,6 +305,28 @@ def validate_action(msg):
         target_object = msg.get("target_object")
         if not isinstance(target_object, str) or not target_object:
             errs.append("interact without a target_object")
+    elif action == "path":
+        seq = msg.get("seq")
+        if not isinstance(seq, int) or isinstance(seq, bool) or seq < 0:
+            errs.append("path without non-negative seq")
+        waypoints = msg.get("waypoints")
+        if not isinstance(waypoints, list) or len(waypoints) < 1 or len(waypoints) > 8:
+            errs.append("path waypoints must be list of 1..8 items")
+        else:
+            for idx, wp in enumerate(waypoints):
+                if not isinstance(wp, dict) or not isinstance(wp.get("x"), (int, float)) or not isinstance(wp.get("y"), (int, float)):
+                    errs.append("path waypoint %d invalid" % idx)
+    elif action == "face":
+        target = msg.get("target")
+        target_obj = msg.get("target_object")
+        has_target = isinstance(target, dict) and isinstance(target.get("x"), (int, float)) and isinstance(target.get("y"), (int, float))
+        has_obj = isinstance(target_obj, str) and bool(target_obj)
+        if not has_target and not has_obj:
+            errs.append("face requires target or target_object")
+    elif action == "work":
+        target_obj = msg.get("target_object")
+        if not isinstance(target_obj, str) or not target_obj:
+            errs.append("work without a target_object")
     elif action not in WIRE_ACTIONS:
         errs.append("action %r is not on the wire (allowed: %s)"
                     % (action, "/".join(WIRE_ACTIONS)))
@@ -695,9 +729,12 @@ def _absorb(msg, stats, link, ack_actions, chefs):
         if ack_actions and link is not None:
             chef_id = msg.get("chef_id")
             ok = not errs
-            if _safe_send(link, stats, msg_ack(msg.get("action", ""),
+            action = msg.get("action", "")
+            seq = msg.get("seq") if action == "path" else None
+            if _safe_send(link, stats, msg_ack(action,
                                                chef_id if isinstance(chef_id, int) else -1,
-                                               ok, "fake_plugin executed" if ok else "rejected"),
+                                               ok, "fake_plugin executed" if ok else "rejected",
+                                               seq),
                           "ack"):
                 stats.tx_acks += 1
     elif mtype == "echo_reply":
@@ -988,6 +1025,7 @@ class SupervisorProc:
 
 class _Chef(ctypes.Structure):
     _fields_ = [("id", ctypes.c_int32), ("x", ctypes.c_float), ("y", ctypes.c_float),
+                ("facing", ctypes.c_float),
                 ("holding", ctypes.c_char * 32), ("state", ctypes.c_char * 24)]
 
 
@@ -1000,11 +1038,13 @@ class _Order(ctypes.Structure):
 class _Resource(ctypes.Structure):
     _fields_ = [("name", ctypes.c_char * 32), ("state", ctypes.c_char * 24),
                 ("content", ctypes.c_char * 32), ("time_left", ctypes.c_float),
+                ("progress", ctypes.c_float),
                 ("chef_id", ctypes.c_int32), ("count", ctypes.c_int32)]
 
 
 class _World(ctypes.Structure):
     _fields_ = [("score", ctypes.c_int64), ("game_time", ctypes.c_int64),
+                ("game_time_ms", ctypes.c_int64),
                 ("chef_count", ctypes.c_uint32), ("reserved0", ctypes.c_uint32),
                 ("chefs", _Chef * 8),
                 ("order_count", ctypes.c_uint32), ("reserved1", ctypes.c_uint32),
@@ -1295,7 +1335,11 @@ class Ctx:
         raise InfraError("bridge could not get a usable port after %d attempts (%s)"
                          % (retries, last))
 
-    def start_supervisor(self, *, port, chefs, lease_ttl_ms=None):
+    def start_supervisor(self, *, port, chefs, lease_ttl_ms=None, kitchen=None,
+                         recipes=None, orders=None, backoff_ms=None):
+        kitchen = kitchen or self.args.kitchen
+        recipes = recipes or self.args.recipes
+        orders = orders or self.args.orders
         binary = Path(self.args.supervisor or
                       Path(self.args.bridge).with_name("kitchenos-supervisor"))
         if not binary.exists():
@@ -1311,11 +1355,13 @@ class Ctx:
                 "--supervisor-heartbeat-ms", "100",
                 "--heartbeat-timeout-ms", "2000",
                 "--stop-timeout-ms", "2000",
-                "--kitchen", str(self.args.kitchen),
-                "--recipes", str(self.args.recipes),
-                "--orders", str(self.args.orders)]
+                "--kitchen", str(kitchen),
+                "--recipes", str(recipes),
+                "--orders", str(orders)]
         if lease_ttl_ms is not None:
             argv += ["--lease-ttl-ms", str(lease_ttl_ms)]
+        if backoff_ms is not None:
+            argv += ["--backoff-ms", str(backoff_ms)]
         argv.append("--verbose")
         console = self.runtime_dir / "supervisor.console"
         self.supervisor = SupervisorProc(binary, argv, console)
@@ -1325,7 +1371,8 @@ class Ctx:
         return self.supervisor
 
     def wait_supervisor_ready(self, port, chefs, timeout):
-        expected = {"bridge", "scheduler"} | {"worker-%d" % i for i in range(chefs)}
+        expected = {"bridge", "scheduler", "navd"} | {
+            "worker-%d" % i for i in range(chefs)}
         deadline = time.monotonic() + timeout
         status_path = self.runtime_dir / "status.json"
         while time.monotonic() < deadline:
@@ -1370,11 +1417,13 @@ class Ctx:
         runs = sorted((self.runtime_dir / "runs").glob("*"))
         return runs[-1] if runs else None
 
-    def start_stub(self, *, slot, chefs, hz, duration, kind="move"):
+    def start_stub(self, *, slot, chefs, hz, duration, kind="move", waypoints=None):
         binary = Path(self.args.worker_stub)
         argv = ["--state-name", self.state_name, "--sem-name", self.sem_name,
                 "--chefs", str(chefs), "--slot", str(slot),
                 "--hz", str(hz), "--duration", str(duration), "--kind", kind]
+        if waypoints is not None:
+            argv.extend(["--waypoints", str(waypoints)])
         console = Path(str(self.log_path) + ".slot%d.console" % slot)
         stub = WorkerStub(binary, argv, console)
         stub.start()
@@ -1684,6 +1733,131 @@ def scenario_pickup_dash(ctx, checks):
                 "exit=%s" % ctx.bridge.exit_code())
     return ("%s in %.1fs; chef 0 -> %s; chef 1 -> %s"
             % (stats.describe(), window, Counter(seen0) or "none", Counter(seen1) or "none"))
+
+
+def scenario_path_face_work(ctx, checks):
+    """path/face/work：槽里的新动作必须按契约到插件，而不是被降级成 idle。
+
+    2026-10-25（kitchen-control 任务 02）加。判据同时看三个槽：
+    path 的 seq 与路点数（1 与 8）、face/work 的 target_object；再加桥自己的
+    actions_sent 计数与"没有 slot-action-rejected"两条日志断言，免得只看线格式
+    时把"其实每个动作都被降级、只是凑巧发过 stop"当成通过。
+    """
+    args = ctx.args
+    chefs = 4
+    stub_binary = Path(args.worker_stub)
+    if not stub_binary.exists():
+        raise Skipped("worker-stub not built (%s); this scenario needs a live slot writer "
+                      "— build with: cd bridge && make" % stub_binary)
+
+    ctx.clear_stale_shm()
+    port = ctx.start_bridge_and_wait(link="listen", host=args.host, chefs=chefs,
+                                     frame_timeout_ms=args.frame_timeout_ms,
+                                     heartbeat_timeout_ms=args.heartbeat_timeout_ms,
+                                     port=args.listen_port)
+    link = Link(connect(args.host, port, args.ready_timeout))
+    link.send_json(msg_hello())
+    priming = Stats("priming")
+    run_exchange(link, priming, 1.0, chefs=chefs, hz=args.hz,
+                 heartbeat_ms=args.heartbeat_ms, ack_actions=not args.no_ack,
+                 flat_xy=args.flat_xy)
+    checks.hard("bridge_writes_state_shm", ctx.wait_shm(3.0), "%s" % ctx.shm_paths()[0])
+
+    checks.note("worker_stubs",
+                "slot 0 -> path(1), slot 1 -> path(8), slot 2 -> face, slot 3 -> work")
+    ctx.start_stub(slot=0, chefs=chefs, hz=args.stub_hz, duration=args.duration + 6,
+                   kind="path", waypoints=1)
+    ctx.start_stub(slot=1, chefs=chefs, hz=args.stub_hz, duration=args.duration + 6,
+                   kind="path", waypoints=8)
+    ctx.start_stub(slot=2, chefs=chefs, hz=args.stub_hz, duration=args.duration + 6,
+                   kind="face")
+    ctx.start_stub(slot=3, chefs=chefs, hz=args.stub_hz, duration=args.duration + 6,
+                   kind="work")
+
+    warm = Stats("warmup")
+    run_exchange(link, warm, 1.5, chefs=chefs, hz=args.hz, heartbeat_ms=args.heartbeat_ms,
+                 ack_actions=not args.no_ack, flat_xy=args.flat_xy)
+    checks.note("warmup", warm.describe())
+
+    window = max(1.5, args.duration)
+    stats = Stats("measure")
+    run_exchange(link, stats, window, chefs=chefs, hz=args.hz, heartbeat_ms=args.heartbeat_ms,
+                 ack_actions=not args.no_ack, flat_xy=args.flat_xy)
+    link.close()
+
+    by_chef = {slot: [a for a in stats.actions if a.get("chef_id") == slot]
+               for slot in range(chefs)}
+    checks.note("measured_window", "%s; %s" % (
+        stats.describe(),
+        "; ".join("chef%d=%s" % (slot, Counter(a.get("action") for a in by_chef[slot]) or "none")
+                  for slot in range(chefs))))
+
+    paths1 = [a for a in by_chef[0] if a.get("action") == "path"]
+    paths8 = [a for a in by_chef[1] if a.get("action") == "path"]
+    faces = [a for a in by_chef[2] if a.get("action") == "face"]
+    works = [a for a in by_chef[3] if a.get("action") == "work"]
+
+    checks.hard("one_waypoint_path_reaches_the_peer", len(paths1) >= 3,
+                "chef 0: %d path of %d actions (%s)"
+                % (len(paths1), len(by_chef[0]),
+                   Counter(a.get("action") for a in by_chef[0]) or "none"))
+    checks.hard("eight_waypoint_path_reaches_the_peer", len(paths8) >= 3,
+                "chef 1: %d path of %d actions (%s)"
+                % (len(paths8), len(by_chef[1]),
+                   Counter(a.get("action") for a in by_chef[1]) or "none"))
+    if paths1:
+        checks.hard("path_carries_seq", all(a.get("seq") == 1000 for a in paths1),
+                    "seqs=%s" % sorted({a.get("seq") for a in paths1}))
+        checks.hard("one_waypoint_count", all(len(a.get("waypoints") or []) == 1
+                                              for a in paths1),
+                    "counts=%s" % sorted({len(a.get("waypoints") or []) for a in paths1}))
+    if paths8:
+        checks.hard("eight_waypoints_count", all(len(a.get("waypoints") or []) == 8
+                                                 for a in paths8),
+                    "counts=%s" % sorted({len(a.get("waypoints") or []) for a in paths8}))
+        checks.hard("path_waypoints_are_numbers",
+                    all(isinstance(w.get("x"), (int, float)) and
+                        isinstance(w.get("y"), (int, float))
+                        for a in paths8 for w in (a.get("waypoints") or [])),
+                    "first=%s" % ((paths8[0].get("waypoints") or [None])[0],))
+    checks.hard("face_reaches_the_peer", len(faces) >= 3,
+                "chef 2: %d face of %d actions (%s)"
+                % (len(faces), len(by_chef[2]),
+                   Counter(a.get("action") for a in by_chef[2]) or "none"))
+    if faces:
+        checks.hard("face_carries_target_object",
+                    all(a.get("target_object") == "cutting_board_2" for a in faces)
+                    and all(a.get("target") is None for a in faces),
+                    "objects=%s targets=%s"
+                    % (sorted({a.get("target_object") for a in faces}),
+                       [a.get("target") for a in faces[:2]]))
+    checks.hard("work_reaches_the_peer", len(works) >= 3,
+                "chef 3: %d work of %d actions (%s)"
+                % (len(works), len(by_chef[3]),
+                   Counter(a.get("action") for a in by_chef[3]) or "none"))
+    if works:
+        checks.hard("work_carries_target_object",
+                    all(a.get("target_object") == "cutting_board_3" for a in works),
+                    "objects=%s" % sorted({a.get("target_object") for a in works}))
+
+    log = ctx.log_text()
+    sent_lines = [line for line in log.splitlines() if "actions_sent" in line]
+    checks.hard("bridge_counted_new_actions",
+                bool(re.search(r"actions_sent .*path=[1-9]\d*", log))
+                and bool(re.search(r"actions_sent .*face=[1-9]\d*", log))
+                and bool(re.search(r"actions_sent .*work=[1-9]\d*", log)),
+                "actions_sent lines: %s" % (sent_lines[-1:] or "none"))
+    checks.hard("no_new_action_rejected",
+                "slot-action-rejected" not in log,
+                "rejected: %s" % ([line for line in log.splitlines()
+                                   if "slot-action-rejected" in line][:3] or "none"))
+    checks.hard("no_unknown_action_names", not stats.bad_actions,
+                "%d actions the peer rejected: %s"
+                % (len(stats.bad_actions), stats.bad_actions[:2]))
+    checks.hard("bridge_alive_after_new_actions", ctx.bridge.alive(),
+                "exit=%s" % ctx.bridge.exit_code())
+    return ("%s in %.1fs; path1/path8/face/work reached %d/%d/%d/%d times"
+            % (stats.describe(), window, len(paths1), len(paths8), len(faces), len(works)))
 
 
 def scenario_input_grace(ctx, checks):
@@ -2044,7 +2218,7 @@ def scenario_connect_mode(ctx, checks):
 def _shape_state_update(chefs=None, orders=None, resources=None, frame_index=0):
     """按 §5.2 拼一帧，但三个集合都由调用方给：数据形状边界要能单独摆出来。"""
     if chefs is None:
-        chefs = [{"id": 0, "position": {"x": 1.0, "y": 2.0},
+        chefs = [{"id": 0, "position": {"x": 1.0, "y": 2.0}, "facing": 0.0,
                   "holding": None, "state": "idle"}]
     if orders is None:
         orders = [{"id": "order_001", "recipe": "salad", "time_remaining": 30,
@@ -2052,7 +2226,7 @@ def _shape_state_update(chefs=None, orders=None, resources=None, frame_index=0):
     if resources is None:
         resources = {"pot_0": {"state": "free"}, "plate_stack": {"count": 3}}
     return jdump({"type": "state_update", "timestamp": int(time.time()),
-                  "game_time": frame_index // 60, "score": 100,
+                  "game_time": frame_index // 60, "game_time_ms": int((frame_index / 60.0) * 1000), "score": 100,
                   "chefs": chefs, "orders": orders, "resources": resources})
 
 
@@ -2648,13 +2822,467 @@ def _read_jsonl(path):
     return rows, bad
 
 
+
+# --------------------------------------------------------------------------
+# 走位场景：走廊地图、按 path 移动的模拟厨师
+# --------------------------------------------------------------------------
+
+NAV_SPEED_MPS = 5.6          # 任务 01 实测 0.107 s/格（0.6 m）≈ 5.6 m/s
+NAV_STEP = 0.6
+
+
+def nav_corridor_configs(directory, *, stations, cells, masks):
+    """写一套最小的 kitchen/recipes/orders，用于走位场景（不依赖真游戏导出的图）。"""
+    directory = Path(directory)
+    kitchen = {
+        "scene": "nav_corridor",
+        "grid": {
+            "step": NAV_STEP,
+            "map": [1, 1],
+            "edge_bits": "1:+x 2:-x 4:+z 8:-z",
+            "cells": cells,
+            "mask": masks,
+            "areas": {"count": 1, "largest": len(cells), "sizes": [len(cells)]},
+        },
+        "stations": stations,
+    }
+    nodes = []
+    dishes = []
+    for station in stations:
+        ing = station["gives"]
+        node_id = "fetch:" + ing
+        nodes.append({"id": node_id, "op": "fetch", "label": ing,
+                      "resource": "dispenser", "ingredient": ing,
+                      "duration": 0.2})
+        dishes.append({"dish": ing + "_Dish", "score": 1, "root": node_id,
+                       "nodes": [node_id]})
+    recipes = {"scene": "nav_corridor", "nodes": nodes, "edges": [],
+               "dishes": dishes, "durations": {"fetch": 0.2}}
+    orders = {"seed": 7, "level": "nav_corridor",
+              "menu": [{"recipes": [d["dish"] for d in dishes]}]}
+    paths = {}
+    for name, payload in (("kitchen.json", kitchen), ("recipes.json", recipes),
+                          ("orders.json", orders)):
+        path = directory / name
+        path.write_text(json.dumps(payload, ensure_ascii=False))
+        paths[name] = str(path)
+    return paths
+
+
+def nav_line_map(*, length, bay, station_sides):
+    """一格宽走廊；bay 为 True 时在中间加一个错身凹槽。"""
+    cells = [[round(i * NAV_STEP, 3), 0.0] for i in range(length)]
+    masks = [0] * length
+    for i in range(length):
+        if i > 0:
+            masks[i] |= 2  # -x
+        if i + 1 < length:
+            masks[i] |= 1  # +x
+    if bay:
+        middle = length // 2
+        cells.append([round(middle * NAV_STEP, 3), round(NAV_STEP, 3)])
+        masks.append(8)  # 朝 -z 回主道
+        masks[middle] |= 4  # +z 进凹槽
+    stations = []
+    for side in station_sides:
+        if side == "left":
+            stations.append({"id": "dispenser-left", "kind": "dispenser",
+                             "name": "dispenser_left", "types": ["ClientPickupItemSpawner"],
+                             "pos": [-NAV_STEP, 0.0], "height": 0.0,
+                             "gives": "Left", "contents": []})
+        else:
+            stations.append({"id": "dispenser-right", "kind": "dispenser",
+                             "name": "dispenser_right", "types": ["ClientPickupItemSpawner"],
+                             "pos": [round(length * NAV_STEP, 3), 0.0], "height": 0.0,
+                             "gives": "Right", "contents": []})
+    return cells, masks, stations
+
+
+def nav_ring_map(*, length=11):
+    """一格宽的矩形环走廊；左右两端是料箱站位，用于两人对向错身。"""
+    cells = []
+    masks = []
+    for i in range(length):
+        cells.append([round(i * NAV_STEP, 3), 0.0])
+        masks.append((2 if i > 0 else 0) | (1 if i + 1 < length else 0))
+    for i in range(length):
+        cells.append([round(i * NAV_STEP, 3), round(2 * NAV_STEP, 3)])
+        masks.append((2 if i > 0 else 0) | (1 if i + 1 < length else 0))
+    left_mid = len(cells)
+    cells.append([0.0, round(NAV_STEP, 3)])
+    masks.append(8 | 4)  # -z 接上排 0，+z 接下排 length
+    right_mid = len(cells)
+    cells.append([round((length - 1) * NAV_STEP, 3), round(NAV_STEP, 3)])
+    masks.append(8 | 4)
+    masks[0] |= 4
+    masks[length] |= 8
+    masks[length - 1] |= 4
+    masks[2 * length - 1] |= 8
+    stations = [
+        {"id": "dispenser-right", "kind": "dispenser", "name": "dispenser_right",
+         "types": ["ClientPickupItemSpawner"],
+         "pos": [round(length * NAV_STEP, 3), round(NAV_STEP, 3)],
+         "height": 0.0, "gives": "Right", "contents": []},
+        {"id": "dispenser-left", "kind": "dispenser", "name": "dispenser_left",
+         "types": ["ClientPickupItemSpawner"],
+         "pos": [-NAV_STEP, round(NAV_STEP, 3)],
+         "height": 0.0, "gives": "Left", "contents": []},
+    ]
+    return cells, masks, stations, left_mid, right_mid
+
+
+def nav_cell_index(cells, x, y):
+    """离 (x,y) 最近的可走格下标；坐标在两个格之间时取欧氏最近。"""
+    best = -1
+    best_d = None
+    for i, (cx, cy) in enumerate(cells):
+        dx = cx - x
+        dy = cy - y
+        d = dx * dx + dy * dy
+        if best_d is None or d < best_d:
+            best_d = d
+            best = i
+    return best
+
+
+class NavSim:
+    """按 path 动作移动模拟厨师，并记录每帧位置/同格/到达时刻。
+
+    seq 语义与插件一致：同一 seq 只在路点变长时追加，新 seq 替换整条命令；
+    stop 清掉当前命令（navd 崩溃时 Worker 发的 stop 必须真的让厨师停下）。
+    """
+
+    def __init__(self, positions, cells, *, speed=NAV_SPEED_MPS, frozen=()):
+        self.positions = [[float(x), float(y)] for x, y in positions]
+        self.cells = cells
+        self.speed = speed
+        self.frozen = {int(c) for c in frozen}
+        self.commands = [None] * len(positions)
+        self.seen_actions = 0
+        self.last_game_ms = 0
+        self.collisions = []
+        self.arrivals = {}
+        self.stops = {}
+        self.path_actions = Counter()
+        self.move_actions = Counter()
+        self.frames = 0
+
+    def _chef(self, action):
+        chef = action.get("chef_id")
+        if not isinstance(chef, int) or isinstance(chef, bool):
+            return None
+        if chef < 0 or chef >= len(self.positions):
+            return None
+        return chef
+
+    def process_actions(self, actions, game_ms):
+        for action in actions[self.seen_actions:]:
+            chef = self._chef(action)
+            if chef is None:
+                continue
+            kind = action.get("action")
+            if kind == "path":
+                self.path_actions[chef] += 1
+                waypoints = action.get("waypoints") or []
+                seq = action.get("seq", -1)
+                command = self.commands[chef]
+                if command is not None and command["seq"] == seq:
+                    if len(waypoints) > len(command["waypoints"]):
+                        command["waypoints"].extend(waypoints[len(command["waypoints"]):])
+                else:
+                    self.commands[chef] = {"seq": seq,
+                                           "waypoints": list(waypoints),
+                                           "index": 0}
+            elif kind == "move":
+                self.move_actions[chef] += 1
+            elif kind == "stop":
+                self.commands[chef] = None
+                self.stops.setdefault(chef, []).append(game_ms)
+        self.seen_actions = len(actions)
+
+    def advance(self, game_ms):
+        dt = max(0, game_ms - self.last_game_ms)
+        self.last_game_ms = game_ms
+        if dt <= 0:
+            return
+        for chef, command in enumerate(self.commands):
+            if command is None or chef in self.frozen:
+                continue
+            budget = self.speed * dt / 1000.0
+            while budget > 0 and command["index"] < len(command["waypoints"]):
+                waypoint = command["waypoints"][command["index"]]
+                tx = float(waypoint["x"])
+                ty = float(waypoint["y"])
+                x, y = self.positions[chef]
+                dx = tx - x
+                dy = ty - y
+                distance = (dx * dx + dy * dy) ** 0.5
+                if distance <= 1e-6:
+                    command["index"] += 1
+                    continue
+                if distance <= budget:
+                    self.positions[chef] = [tx, ty]
+                    command["index"] += 1
+                    budget -= distance
+                else:
+                    self.positions[chef] = [x + dx * budget / distance,
+                                            y + dy * budget / distance]
+                    budget = 0
+
+    def frame(self, game_ms):
+        """记录这一帧的格子占用；返回是否发生同格。"""
+        occupied = [nav_cell_index(self.cells, x, y) for x, y in self.positions]
+        counts = Counter(occupied)
+        same = any(n > 1 for n in counts.values())
+        if same:
+            self.collisions.append((game_ms, occupied))
+        self.frames += 1
+        return same
+
+    def note_arrival(self, chef, x, y, game_ms, tolerance=0.15):
+        px, py = self.positions[chef]
+        dx = px - x
+        dy = py - y
+        if dx * dx + dy * dy <= tolerance * tolerance and chef not in self.arrivals:
+            self.arrivals[chef] = game_ms
+
+
+def read_log_events(path):
+    counts = Counter()
+    try:
+        text = Path(path).read_text(errors="replace")
+    except OSError:
+        return counts
+    for line in text.splitlines():
+        match = LOG_LINE.match(line)
+        if match:
+            counts[match.group(1)] += 1
+    return counts
+
+
+def _nav_scenario(ctx, checks, *, name, length, bay, station_sides, starts,
+                  goal_xy, duration, freeze=(), backoff_ms=None, kill_after=None,
+                  require_blocked=False, ring=False):
+    """nav-corridor / nav-stuck / nav-crash 共用的编排。"""
+    args = ctx.args
+    chefs = len(starts)
+    workdir = Path(tempfile.mkdtemp(prefix="kitchenos-%s-" % name))
+    if ring:
+        cells, masks, stations, _left, _right = nav_ring_map(length=11)
+    else:
+        cells, masks, stations = nav_line_map(length=length, bay=bay,
+                                              station_sides=station_sides)
+    paths = nav_corridor_configs(workdir, stations=stations, cells=cells, masks=masks)
+    period_ms = 1000.0 / args.hz
+    sim = NavSim(starts, cells, frozen=freeze)
+
+    ctx.clear_stale_shm()
+    port = args.listen_port or pick_free_port(args.host)
+    ctx.start_supervisor(port=port, chefs=chefs, kitchen=paths["kitchen.json"],
+                         recipes=paths["recipes.json"], orders=paths["orders.json"],
+                         backoff_ms=backoff_ms)
+    if not ctx.wait_supervisor_ready(port, chefs, args.ready_timeout):
+        raise InfraError("Supervisor tree never reached running state on %s:%d\n%s" %
+                         (args.host, port, ctx.diagnostics()))
+    checks.note("supervisor_tree", "bridge+scheduler+navd+%d workers running" % chefs)
+
+    clock = {"paused": False, "pause_game_ms": 0, "frozen_frames": 0}
+
+    def current_game_ms(frame_index):
+        if clock["paused"]:
+            clock["frozen_frames"] += 1
+            return clock["pause_game_ms"]
+        return int(round((frame_index - clock["frozen_frames"]) * period_ms))
+
+    def builder(n, frame_index):
+        game_ms = current_game_ms(frame_index)
+        sim.process_actions(stats.actions, game_ms)
+        sim.advance(game_ms)
+        sim.frame(game_ms)
+        for chef, (gx, gy) in goal_xy.items():
+            sim.note_arrival(chef, gx, gy, game_ms)
+        return msg_state_update_os(n, frame_index, cells,
+                                   positions=[tuple(p) for p in sim.positions],
+                                   game_ms=game_ms, resources={})
+
+    link = Link(connect(args.host, port, args.ready_timeout))
+    link.send_json(msg_hello())
+    stats = Stats(name)
+    killed_at = None
+    pause_replans_before = None
+    pause_replans_after = None
+    try:
+        if require_blocked:
+            # 先正常跑 1 s，再把游戏时钟冻结 2.5 s：暂停期间坐标不动，navd 不得
+            # 判卡住；恢复后仍应凑满 3 次重规划。
+            pre, paused = 1.0, 2.5
+            run_exchange(link, stats, pre, chefs=chefs, hz=args.hz,
+                         heartbeat_ms=args.heartbeat_ms, ack_actions=True,
+                         state_builder=builder)
+            nav_log_path = (ctx.runtime_dir / "logs" / "navd.log") if ctx.runtime_dir else None
+            pause_replans_before = (read_log_events(nav_log_path).get("nav_replan", 0)
+                                    if nav_log_path else 0)
+            clock["pause_game_ms"] = current_game_ms(stats.frame_index)
+            clock["paused"] = True
+            run_exchange(link, stats, paused, chefs=chefs, hz=args.hz,
+                         heartbeat_ms=args.heartbeat_ms, ack_actions=True,
+                         state_builder=builder)
+            clock["paused"] = False
+            pause_replans_after = (read_log_events(nav_log_path).get("nav_replan", 0)
+                                   if nav_log_path else 0)
+            run_exchange(link, stats, duration - pre - paused, chefs=chefs, hz=args.hz,
+                         heartbeat_ms=args.heartbeat_ms, ack_actions=True,
+                         state_builder=builder)
+        elif kill_after is None:
+            run_exchange(link, stats, duration, chefs=chefs, hz=args.hz,
+                         heartbeat_ms=args.heartbeat_ms, ack_actions=True,
+                         state_builder=builder)
+        else:
+            run_exchange(link, stats, kill_after, chefs=chefs, hz=args.hz,
+                         heartbeat_ms=args.heartbeat_ms, ack_actions=True,
+                         state_builder=builder)
+            killed_at = int(round(stats.frame_index * period_ms))
+            status = ctx.supervisor_status()
+            navd_pid = next((c.get("pid") for c in status.get("children", [])
+                             if c.get("role") == "navd"), None)
+            if not navd_pid:
+                raise InfraError("no running navd in status.json: %s" % status)
+            os.kill(navd_pid, signal.SIGKILL)
+            checks.note("navd_killed", "pid=%s at game_ms=%d" % (navd_pid, killed_at))
+            run_exchange(link, stats, duration - kill_after, chefs=chefs, hz=args.hz,
+                         heartbeat_ms=args.heartbeat_ms, ack_actions=True,
+                         state_builder=builder)
+            deadline = time.monotonic() + 8.0
+            restarted = False
+            while time.monotonic() < deadline:
+                status = ctx.supervisor_status()
+                navd = next((c for c in status.get("children", [])
+                             if c.get("role") == "navd"), {})
+                if (navd.get("spawns") or 0) >= 2:
+                    restarted = True
+                    break
+                time.sleep(0.05)
+            checks.hard("navd_restarted", restarted,
+                        "navd spawns=%s" % (navd or {}))
+    finally:
+        link.close()
+        if ctx.supervisor is not None:
+            ctx.stop_supervisor()
+
+    checks.note("sim_final_positions", sim.positions)
+    checks.note("sim_arrivals", sim.arrivals)
+    first_paths = {}
+    for chef in range(chefs):
+        seen = [a for a in stats.actions
+                if a.get("chef_id") == chef and a.get("action") == "path"]
+        first_paths[chef] = [
+            (a.get("seq"), len(a.get("waypoints") or []),
+             (a.get("waypoints") or [{}])[0], (a.get("waypoints") or [{}])[-1])
+            for a in seen[:1]
+        ]
+    checks.note("first_paths", first_paths)
+    checks.hard("path_actions_seen", sum(sim.path_actions.values()) > 0,
+                "paths per chef=%s" % dict(sim.path_actions))
+    checks.hard("no_move_action",
+                sum(sim.move_actions.values()) == 0,
+                "move per chef=%s (system path must only send path)" %
+                dict(sim.move_actions))
+    checks.hard("no_same_cell_frames", not sim.collisions,
+                "collisions=%s" % (sim.collisions[:3] or "none"))
+
+    nav_log = (ctx.runtime_dir / "logs" / "navd.log") if ctx.runtime_dir else None
+    nav_events = read_log_events(nav_log) if nav_log is not None else Counter()
+    checks.note("navd_events", dict(nav_events))
+
+    run_dir = ctx.run_dir()
+    events, bad = _read_jsonl(run_dir / "events.jsonl") if run_dir else ([], [])
+    checks.hard("events_parse_as_json", not bad, "%d bad line(s)" % len(bad))
+    dispatch = [e for e in events if e.get("event") == "task_dispatched"]
+    checks.note("task_dispatched", dispatch[:4])
+
+    if require_blocked:
+        blocked = [e for e in events if e.get("event") == "task_blocked" and
+                   e.get("chef_id") == 0]
+        replans = nav_events.get("nav_replan", 0)
+        checks.hard("paused_clock_does_not_count_stuck",
+                    pause_replans_before is not None and
+                    pause_replans_after == pause_replans_before,
+                    "replans before pause=%s, after pause=%s" %
+                    (pause_replans_before, pause_replans_after))
+        checks.hard("stuck_replans_reported", replans >= 3,
+                    "nav_replan=%d (need >=3)" % replans)
+        checks.hard("worker_reports_blocked", bool(blocked),
+                    "task_blocked chef0: %s" % (blocked[:1] or "none"))
+        blocked_at = blocked[0].get("t_ms") if blocked else None
+        reassign = [e for e in dispatch if e.get("chef_id") != 0 and
+                    e.get("node") == (blocked[0].get("node") if blocked else None) and
+                    (blocked_at is None or (e.get("t_ms") or 0) >= blocked_at)]
+        checks.hard("blocked_task_reassigned", bool(reassign),
+                    "same node dispatched to another chef after blocked: %s" %
+                    (reassign[:2] or "none"))
+    else:
+        for chef, (gx, gy) in goal_xy.items():
+            at = sim.arrivals.get(chef)
+            checks.hard("chef%d_arrived_within_10s" % chef,
+                        at is not None and at <= 10000,
+                        "arrival game_ms=%s" % at)
+
+    if kill_after is not None:
+        first_stop = None
+        for when in sim.stops.get(0, []):
+            if killed_at is not None and when > killed_at:
+                first_stop = when
+                break
+        latency = (first_stop - killed_at) if first_stop is not None else None
+        checks.hard("stop_after_navd_crash",
+                    latency is not None and latency <= 700,
+                    "stop latency game_ms=%s (stale threshold 500)" % latency)
+        at = sim.arrivals.get(0)
+        checks.hard("chef_resumed_after_restart", at is not None and
+                    killed_at is not None and at > killed_at,
+                    "arrival game_ms=%s killed_at=%s" % (at, killed_at))
+
+    shutil.rmtree(workdir, ignore_errors=True)
+    return stats.describe()
+
+
+def scenario_nav_corridor(ctx, checks):
+    """1 格宽环走廊两端对向走：10 s 游戏时钟内两人到达，任何一帧不同格。
+
+    环走廊没有死胡同，PIBT 的可达性前提成立（每对相邻格都在环上）；两人从
+    下排两端出发，目标分别是右、左中点的料箱站位，路径自然对向并在环上错身。
+    """
+    return _nav_scenario(ctx, checks, name="nav-corridor", length=11, bay=False,
+                         station_sides=("right", "left"), ring=True,
+                         starts=[(0.0, 1.2), (6.0, 1.2)],
+                         goal_xy={0: (6.0, 0.6), 1: (0.0, 0.6)},
+                         duration=4.0)
+
+
+def scenario_nav_stuck(ctx, checks):
+    """一个厨师被冻住 → navd 重规划 3 次 → BLOCKED → Scheduler 改派另一个厨师。"""
+    return _nav_scenario(ctx, checks, name="nav-stuck", length=12, bay=False,
+                         station_sides=("right",),
+                         starts=[(0.0, 0.0), (6.6, 0.0)],
+                         goal_xy={1: (6.6, 0.0)},
+                         duration=10.0, freeze=(0,), require_blocked=True)
+
+
+def scenario_nav_crash(ctx, checks):
+    """SIGKILL navd：Worker 在 500 ms 级延迟内 stop；Supervisor 重启后继续到达。"""
+    return _nav_scenario(ctx, checks, name="nav-crash", length=12, bay=False,
+                         station_sides=("right",), starts=[(0.0, 0.0)],
+                         goal_xy={0: (6.6, 0.0)}, duration=5.0,
+                         kill_after=0.6, backoff_ms="2000")
+
+
 def scenario_os_loop(ctx, checks):
     """整棵 Supervisor 树的闭环：plugin → Bridge → shm → Scheduler → mq → Worker → 槽 → plugin。
 
     这个场景不启动游戏：fake_plugin 提供状态与订单，Supervisor 拉起 Bridge、
     Scheduler 与两个 Worker。断言分三层：
       * 调度器把任务发到了每个厨师（events.jsonl 的 task_dispatched）；
-      * Worker 的输入槽经 Bridge 变成对端的 move/interact，且到站前没有 stop；
+      * Worker 的输入槽经 Bridge 变成对端的 path/interact，系统路径不再发 move；
       * SIGHUP 之后 decisions.jsonl 的政策名从 FCFS 变成 EDF。
     """
     args = ctx.args
@@ -2672,7 +3300,19 @@ def scenario_os_loop(ctx, checks):
         cells = kitchen["grid"]["cells"]
     except (OSError, ValueError, KeyError) as exc:
         raise InfraError("cannot read kitchen grid from %s: %s" % (args.kitchen, exc))
-    builder = lambda n, idx: msg_state_update_os(n, idx, cells)
+    picks = [cells[0], cells[-1], cells[len(cells) // 2], cells[len(cells) // 4]]
+    starts = [tuple(picks[i % len(picks)]) for i in range(chefs)]
+    sim = NavSim(starts, cells)
+    period_ms = 1000.0 / args.hz
+
+    def builder(n, frame_index):
+        game_ms = int(round(frame_index * period_ms))
+        sim.process_actions(stats.actions, game_ms)
+        sim.advance(game_ms)
+        sim.frame(game_ms)
+        return msg_state_update_os(n, frame_index, cells,
+                                   positions=[tuple(p) for p in sim.positions],
+                                   game_ms=game_ms)
 
     link = Link(connect(args.host, port, args.ready_timeout))
     link.send_json(msg_hello())
@@ -2767,33 +3407,19 @@ def scenario_os_loop(ctx, checks):
                 "%d malformed: %s" % (len(stats.bad_actions),
                                       stats.bad_actions[:2] or "none"))
     moves = Counter(a.get("chef_id") for a in stats.actions if a.get("action") == "move")
+    paths = Counter(a.get("chef_id") for a in stats.actions if a.get("action") == "path")
     interacts = Counter(a.get("chef_id") for a in stats.actions
                         if a.get("action") == "interact")
-    checks.hard("worker_move_forwarded_each_chef",
-                all(moves.get(c, 0) >= 5 for c in range(chefs)),
-                "moves per chef=%s" % dict(moves))
+    checks.hard("worker_never_sends_move", sum(moves.values()) == 0,
+                "move per chef=%s" % dict(moves))
+    checks.hard("worker_path_forwarded_each_chef",
+                all(paths.get(c, 0) >= 3 for c in range(chefs)),
+                "paths per chef=%s" % dict(paths))
     checks.hard("worker_interact_forwarded_each_chef",
                 all(interacts.get(c, 0) >= 1 for c in range(chefs)),
                 "interacts per chef=%s" % dict(interacts))
-
-    nonstop = True
-    detail = []
-    for chef in range(chefs):
-        seq = [a for a in stats.actions if a.get("chef_id") == chef]
-        try:
-            first_move = next(i for i, a in enumerate(seq) if a.get("action") == "move")
-            first_interact = next(i for i, a in enumerate(seq)
-                                  if a.get("action") == "interact" and i > first_move)
-        except StopIteration:
-            nonstop = False
-            detail.append("chef%d missing move→interact" % chef)
-            continue
-        stops = sum(1 for a in seq[first_move:first_interact]
-                    if a.get("action") == IDLE_ACTION)
-        if stops:
-            nonstop = False
-            detail.append("chef%d %d stop(s) before arrival" % (chef, stops))
-    checks.hard("worker_slot_nonstop_move", nonstop, "; ".join(detail) or "no stop before first interact")
+    checks.hard("no_same_cell_frames", not sim.collisions,
+                "collisions=%s" % (sim.collisions[:3] or "none"))
 
     recovered = [e for e in events if e.get("event") == "worker_recovered" and
                  e.get("chef_id") == killed_chef]
@@ -3067,9 +3693,13 @@ SCENARIO_IMPL = {
     "data-shapes": scenario_data_shapes,
     "second-peer": scenario_second_peer,
     "pickup-dash": scenario_pickup_dash,
+    "path-face-work": scenario_path_face_work,
     "input-grace": scenario_input_grace,
     "os-loop": scenario_os_loop,
     "os-resources": scenario_os_resources,
+    "nav-corridor": scenario_nav_corridor,
+    "nav-stuck": scenario_nav_stuck,
+    "nav-crash": scenario_nav_crash,
 }
 
 
@@ -3277,11 +3907,11 @@ def selftest():
     state = json.loads(msg_state_update(2, 7))
     chefs_keys = set(state["chefs"][0]) if state.get("chefs") else set()
     checks.hard("state_update_top_level_keys",
-                set(state) == {"type", "timestamp", "game_time", "score", "chefs",
+                set(state) == {"type", "timestamp", "game_time", "game_time_ms", "score", "chefs",
                                "orders", "resources"},
                 "keys=%s" % sorted(state))
     checks.hard("state_update_chef_shape",
-                chefs_keys == {"id", "position", "holding", "state"}
+                chefs_keys == {"id", "position", "facing", "holding", "state"}
                 and set(state["chefs"][0]["position"]) == {"x", "y"},
                 "chef keys=%s" % sorted(chefs_keys))
     checks.hard("state_update_order_shape",
@@ -3306,9 +3936,9 @@ def selftest():
     # 8) hello 必须与冻结的那条一致
     hello = json.loads(msg_hello())
     checks.hard("hello_matches_frozen_protocol",
-                hello == {"type": "hello", "instance": "windows-host", "version": "0.1.0",
+                hello == {"type": "hello", "instance": "windows-host", "version": "0.2.0",
                           "actions": ["move", "stop", "press", "release", "tap",
-                                      "pickup", "dash", "interact"]},
+                                      "pickup", "dash", "interact", "path", "face", "work"]},
                 msg_hello())
     ack = json.loads(msg_ack("move", 3, True, "ok"))
     checks.hard("ack_matches_messages_cs",

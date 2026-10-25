@@ -18,6 +18,8 @@
 #include <string.h>
 
 #include <kitchenos/json.h>
+#include <kitchenos/kitchen.h>
+#include <kitchenos/zones.h>
 
 static void copy_str(char *dst, size_t cap, const char *src)
 {
@@ -193,6 +195,7 @@ int kos_recipes_load(const char *path, kos_recipes *out, kos_error *err)
         } else {
             node->duration_ms = 1000; /* 缺失工时按 1 s，日志里能从决策看出来 */
         }
+        node->zone = -1;
         out->node_count++;
     }
 
@@ -418,4 +421,133 @@ int kos_recipe_menu_load(const char *path, char dishes[][KOS_RECIPE_NAME_MAX], i
 done:
     json_free(root);
     return rc;
+}
+
+int kos_recipes_apply_zones(kos_recipes *recipes, const kos_kitchen *kitchen,
+                            const kos_zones *zones, kos_error *err)
+{
+    int i;
+    int d;
+
+    if (recipes == NULL || kitchen == NULL || zones == NULL) {
+        return KOS_ERR_INVAL;
+    }
+    if (!zones->from_file || zones->zone_count <= 1) {
+        return KOS_OK;
+    }
+
+    /* 1. 为每个现有节点根据工位确定所属分区 */
+    for (i = 0; i < recipes->node_count; i++) {
+        kos_recipe_node *node = &recipes->nodes[i];
+        const char *hint = node->ingredient[0] != '\0' ? node->ingredient : node->label;
+        int st_idx = -1;
+
+        if (kos_kitchen_pick_station(kitchen, node->resource, hint, 0, &st_idx) == KOS_OK) {
+            node->zone = kos_zones_station_zone(zones, kitchen->stations[st_idx].id);
+        } else {
+            node->zone = -1;
+        }
+    }
+
+    /* 2. 扫描原始边，对跨区边插入 drop/fetch 对 */
+    {
+        int orig_edge_count = recipes->edge_count;
+        int e;
+
+        for (e = 0; e < orig_edge_count; e++) {
+            int u = recipes->edges[e].from;
+            int v = recipes->edges[e].to;
+            int drop_idx = -1;
+            int fetch_idx = -1;
+            char drop_id[KOS_RECIPE_ID_MAX];
+            char fetch_id[KOS_RECIPE_ID_MAX];
+
+            if (recipes->nodes[u].zone < 0 || recipes->nodes[v].zone < 0 ||
+                recipes->nodes[u].zone == recipes->nodes[v].zone) {
+                continue;
+            }
+
+            if (strncmp(recipes->nodes[u].id, "fetch:", 6) == 0) {
+                snprintf(drop_id, sizeof drop_id, "drop:%s", recipes->nodes[u].id + 6);
+                snprintf(fetch_id, sizeof fetch_id, "fetch:handoff:%s", recipes->nodes[u].id + 6);
+            } else if (strncmp(recipes->nodes[u].id, "plate:", 6) == 0) {
+                snprintf(drop_id, sizeof drop_id, "drop:plated:%s", recipes->nodes[u].id + 6);
+                snprintf(fetch_id, sizeof fetch_id, "fetch:plated:%s", recipes->nodes[u].id + 6);
+            } else {
+                snprintf(drop_id, sizeof drop_id, "drop:%s", recipes->nodes[u].label);
+                snprintf(fetch_id, sizeof fetch_id, "fetch:%s", recipes->nodes[u].label);
+            }
+
+            drop_idx = kos_recipes_node_index(recipes, drop_id);
+            if (drop_idx < 0) {
+                if (recipes->node_count >= KOS_RECIPE_MAX_NODES) {
+                    return set_error(err, KOS_ERR_RANGE, "工序节点数超限");
+                }
+                drop_idx = recipes->node_count++;
+                kos_recipe_node *dn = &recipes->nodes[drop_idx];
+                memset(dn, 0, sizeof *dn);
+                copy_str(dn->id, sizeof dn->id, drop_id);
+                copy_str(dn->op, sizeof dn->op, "drop");
+                copy_str(dn->resource, sizeof dn->resource,
+                         zones->handoff.kind[0] ? zones->handoff.kind : "counter");
+                copy_str(dn->label, sizeof dn->label, recipes->nodes[u].label);
+                dn->duration_ms = 1000;
+                dn->zone = recipes->nodes[u].zone;
+            }
+
+            fetch_idx = kos_recipes_node_index(recipes, fetch_id);
+            if (fetch_idx < 0) {
+                if (recipes->node_count >= KOS_RECIPE_MAX_NODES) {
+                    return set_error(err, KOS_ERR_RANGE, "工序节点数超限");
+                }
+                fetch_idx = recipes->node_count++;
+                kos_recipe_node *fn = &recipes->nodes[fetch_idx];
+                memset(fn, 0, sizeof *fn);
+                copy_str(fn->id, sizeof fn->id, fetch_id);
+                copy_str(fn->op, sizeof fn->op, "fetch");
+                copy_str(fn->resource, sizeof fn->resource,
+                         zones->handoff.kind[0] ? zones->handoff.kind : "counter");
+                copy_str(fn->label, sizeof fn->label, recipes->nodes[u].label);
+                fn->duration_ms = 1000;
+                fn->zone = recipes->nodes[v].zone;
+            }
+
+            recipes->edges[e].to = drop_idx;
+
+            if (recipes->edge_count >= KOS_RECIPE_MAX_EDGES) {
+                return set_error(err, KOS_ERR_RANGE, "工序边数超限");
+            }
+            recipes->edges[recipes->edge_count].from = drop_idx;
+            recipes->edges[recipes->edge_count].to = fetch_idx;
+            recipes->edge_count++;
+
+            if (recipes->edge_count >= KOS_RECIPE_MAX_EDGES) {
+                return set_error(err, KOS_ERR_RANGE, "工序边数超限");
+            }
+            recipes->edges[recipes->edge_count].from = fetch_idx;
+            recipes->edges[recipes->edge_count].to = v;
+            recipes->edge_count++;
+
+            for (d = 0; d < recipes->dish_count; d++) {
+                kos_dish *dish = &recipes->dishes[d];
+                int pos_u = -1;
+                int pos_v = -1;
+                int k;
+
+                for (k = 0; k < dish->node_count; k++) {
+                    if (dish->nodes[k] == u) pos_u = k;
+                    if (dish->nodes[k] == v) pos_v = k;
+                }
+                if (pos_u >= 0 && pos_v >= 0 && dish->node_count + 2 <= KOS_RECIPE_MAX_DISH_NODES) {
+                    for (k = dish->node_count - 1; k > pos_u; k--) {
+                        dish->nodes[k + 2] = dish->nodes[k];
+                    }
+                    dish->nodes[pos_u + 1] = drop_idx;
+                    dish->nodes[pos_u + 2] = fetch_idx;
+                    dish->node_count += 2;
+                }
+            }
+        }
+    }
+    return KOS_OK;
 }

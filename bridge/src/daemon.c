@@ -165,6 +165,53 @@ int kos_runtime_dir(const char *override, char *buf, size_t len, kos_error *err)
     return KOS_OK;
 }
 
+int kos_runtime_dir_instance(const char *override, int instance, char *buf, size_t len,
+                             kos_error *err)
+{
+    char base[KOS_DAEMON_PATH_MAX];
+    char raw[KOS_DAEMON_PATH_MAX];
+    char resolved[KOS_DAEMON_PATH_MAX];
+    char logs[KOS_DAEMON_PATH_MAX];
+    int rc;
+
+    if (instance < 0 || (override != NULL && override[0] != '\0')) {
+        return kos_runtime_dir(override, buf, len, err);
+    }
+    rc = kos_runtime_dir(NULL, base, sizeof base, err);
+    if (rc != KOS_OK) {
+        return rc;
+    }
+    if (snprintf(raw, sizeof raw, "%s/instance-%d", base, instance) >= (int)sizeof raw) {
+        return set_error(err, KOS_ERR_INVAL, 0, "实例运行目录过长: %s", base);
+    }
+    rc = make_dirs(raw, 0700, err);
+    if (rc != KOS_OK) {
+        return rc;
+    }
+    if (snprintf(logs, sizeof logs, "%s/logs", raw) >= (int)sizeof logs) {
+        return set_error(err, KOS_ERR_INVAL, 0, "日志目录过长: %s", raw);
+    }
+    rc = make_dirs(logs, 0755, err);
+    if (rc != KOS_OK) {
+        return rc;
+    }
+    if (snprintf(logs, sizeof logs, "%s/runs", raw) >= (int)sizeof logs) {
+        return set_error(err, KOS_ERR_INVAL, 0, "runs 目录过长: %s", raw);
+    }
+    rc = make_dirs(logs, 0755, err);
+    if (rc != KOS_OK) {
+        return rc;
+    }
+    if (realpath(raw, resolved) == NULL) {
+        return set_error(err, KOS_ERR_IO, errno, "realpath('%s')", raw);
+    }
+    if (strlen(resolved) + 1 > len) {
+        return set_error(err, KOS_ERR_INVAL, 0, "运行目录缓冲区太小: %s", resolved);
+    }
+    copy_str(buf, len, resolved);
+    return KOS_OK;
+}
+
 int kos_runtime_log_path(const char *runtime_dir, const char *name, char *buf, size_t len,
                          kos_error *err)
 {

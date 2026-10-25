@@ -48,12 +48,17 @@ static int set_error(kos_error *err, int code, int sys_errno, const char *what,
     return code;
 }
 
-const char *kos_resource_name(const char *kind, char *buf, size_t len)
+const char *kos_resource_name(const char *kind, int instance, char *buf, size_t len)
 {
+    char base[KOS_RES_NAME_MAX];
+
     if (kind == NULL || buf == NULL || len == 0 || kind[0] == '\0') {
         return NULL;
     }
-    if (snprintf(buf, len, "/kitchenos_res_%s", kind) >= (int)len) {
+    if (snprintf(base, sizeof base, "/kitchenos_res_%s", kind) >= (int)sizeof base) {
+        return NULL;
+    }
+    if (kos_name_instance(base, instance, buf, len) != KOS_OK) {
         return NULL;
     }
     return buf;
@@ -104,7 +109,7 @@ static int collect_kinds(const kos_kitchen *kitchen, char kinds[][KOS_RES_KIND_M
     return KOS_OK;
 }
 
-int kos_resources_create(const kos_kitchen *kitchen, kos_error *err)
+int kos_resources_create(const kos_kitchen *kitchen, int instance, kos_error *err)
 {
     char kinds[KOS_RES_MAX][KOS_RES_KIND_MAX];
     int count = 0;
@@ -126,7 +131,7 @@ int kos_resources_create(const kos_kitchen *kitchen, kos_error *err)
         int capacity = kind_count(kitchen, kinds[i]);
         sem_t *sem;
 
-        if (kos_resource_name(kinds[i], name, sizeof name) == NULL) {
+        if (kos_resource_name(kinds[i], instance, name, sizeof name) == NULL) {
             return set_error(err, KOS_ERR_INVAL, 0, "资源名太长", kinds[i]);
         }
         if (sem_unlink(name) != 0 && errno != ENOENT) {
@@ -141,7 +146,8 @@ int kos_resources_create(const kos_kitchen *kitchen, kos_error *err)
     return KOS_OK;
 }
 
-int kos_resources_attach(const kos_kitchen *kitchen, kos_resource_set *set, kos_error *err)
+int kos_resources_attach(const kos_kitchen *kitchen, kos_resource_set *set, int instance,
+                         kos_error *err)
 {
     char kinds[KOS_RES_MAX][KOS_RES_KIND_MAX];
     int count = 0;
@@ -164,7 +170,7 @@ int kos_resources_attach(const kos_kitchen *kitchen, kos_resource_set *set, kos_
         sem_t *sem;
 
         copy_str(item->kind, sizeof item->kind, kinds[i]);
-        if (kos_resource_name(kinds[i], item->name, sizeof item->name) == NULL) {
+        if (kos_resource_name(kinds[i], instance, item->name, sizeof item->name) == NULL) {
             kos_resources_close(set);
             return set_error(err, KOS_ERR_INVAL, 0, "资源名太长", kinds[i]);
         }
@@ -201,7 +207,7 @@ void kos_resources_close(kos_resource_set *set)
     set->count = 0;
 }
 
-int kos_resources_unlink(const kos_kitchen *kitchen, kos_error *err)
+int kos_resources_unlink(const kos_kitchen *kitchen, int instance, kos_error *err)
 {
     char kinds[KOS_RES_MAX][KOS_RES_KIND_MAX];
     int count = 0;
@@ -221,7 +227,7 @@ int kos_resources_unlink(const kos_kitchen *kitchen, kos_error *err)
     for (i = 0; i < count; i++) {
         char name[KOS_RES_NAME_MAX];
 
-        if (kos_resource_name(kinds[i], name, sizeof name) == NULL) {
+        if (kos_resource_name(kinds[i], instance, name, sizeof name) == NULL) {
             return KOS_ERR_INVAL;
         }
         if (sem_unlink(name) != 0 && errno != ENOENT) {

@@ -88,11 +88,11 @@ Bridge（`--link listen`）+ 替身 Worker（`kitchenos-worker-stub`，写共享
 
 ```
 # 桥侧：每帧把输入槽转成一条 action 下发，插件回 ack
-INFO  actions_sent frame=1542 chefs=2 sent=2 idle=1 move=1 interact=0 pickup=0 dash=0 timed_out=0
+INFO  actions_sent frame=1542 chefs=2 sent=2 idle=1 move=1 interact=0 pickup=0 dash=0 path=0 face=0 work=0 timed_out=0
 DEBUG plugin_ack chef=0 action=move ok=1 detail=ok
-INFO  actions_sent frame=444  chefs=2 sent=2 idle=1 move=0 interact=0 pickup=1 dash=0 timed_out=0
+INFO  actions_sent frame=444  chefs=2 sent=2 idle=1 move=0 interact=0 pickup=1 dash=0 path=0 face=0 work=0 timed_out=0
 DEBUG plugin_ack chef=0 action=pickup ok=1 detail=ok
-INFO  actions_sent frame=351  chefs=2 sent=2 idle=1 move=0 interact=0 pickup=0 dash=1 timed_out=0
+INFO  actions_sent frame=351  chefs=2 sent=2 idle=1 move=0 interact=0 pickup=0 dash=1 path=0 face=0 work=0 timed_out=0
 DEBUG plugin_ack chef=0 action=dash ok=1 detail=ok
 
 # 插件侧（游戏日志 BepInEx/LogOutput.log）
@@ -101,6 +101,11 @@ action: 厨师位 1 去 (11.4,-4.6)
 action: 移动中 厨师位 1 位置=(11.4,-1.7) 距目标=3.0 寻路=路点 1/3 剩余 3.0 路点坐标=(11.4,-2.3)
 action: 厨师位 1 按 pickup
 action: 厨师位 1 按 dash
+action: 厨师位 1 path seq=7 路点数=4
+action: 厨师位 1 path 到达终点 (12.0,6.0) seq=7，用时 1.8 秒
+ack: action=path chef=0 seq=7 ok=True detail=path 到达终点 (12.0,6.0) seq=7，用时 1.8 秒
+action: 厨师位 1 work 按住 cutting_board_0（直到下一条动作）
+action: 厨师位 1 work 松开（收到 stop）
 ```
 
 `action: 厨师位 1` 里的"1"是**日志给人看的**编号（槽号 + 1）；协议与状态文件里是 0 基的 `chef_id`。

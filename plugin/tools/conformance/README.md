@@ -61,8 +61,9 @@ bash plugin/tools/conformance/run-conformance.sh 12402 3 pickup,dash pickup,dash
   - 连上后延迟一帧发 `hello`（与 `Plugin.Update()` 的时序一致，避开 TcpLink 清空队列的竞态）；
   - 以 60 Hz 发写实的 `state_update`（两个厨师含坐标与手持物、两张订单其中一张菜谱为 null、
     锅/灶/工位/`plate_stack` 等五种资源形状，外加一个 C 侧归不了类的键）；
-  - 解码桥回的每一条 `action`：`action` 名必须在 `Plugin.HostActions` 的 8 个之内（线上的
-    枚举是其中 5 个：`move`/`stop`/`interact`/`pickup`/`dash`，见 `protocol/protocol.md` §3.6）、
+  - 解码桥回的每一条 `action`：`action` 名必须在 `Plugin.HostActions` 声明的 11 个之内（线上
+    枚举是其中 8 个：`move`/`stop`/`interact`/`pickup`/`dash`/`path`/`face`/`work`，见
+    `protocol/protocol.md` §3.6）、
     `chef_id` 必须是本对端上报过的、`move` 必须带有限数值的 `x`/`y`；同时按 `Plugin.HandleAction`
     的做法回 `Msg.Ack`（这条路径也因此被 C 侧的 `plugin_ack` 覆盖到）；
   - 桥日志要求：`parse_error=0`、`frame_error=0`、`plugin_timeout=0`。

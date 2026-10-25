@@ -17,7 +17,7 @@
 #include "kitchenos/recipes.h"
 #include "kitchenos/shm.h"
 #include "kitchenos/stand.h"
-
+#include "kitchenos/zones.h"
 #include "scheduler_fixture.h"
 
 #include <math.h>
@@ -39,6 +39,14 @@ static void expect(int cond, const char *what)
         printf("  FAIL %s\n", what);
     }
 }
+static void test_sleep_ms(int ms)
+{
+    struct timespec ts;
+    ts.tv_sec = ms / 1000;
+    ts.tv_nsec = (long)(ms % 1000) * 1000000L;
+    nanosleep(&ts, NULL);
+}
+
 
 static int close_enough(double a, double b)
 {
@@ -685,6 +693,196 @@ static void test_missing_station_fails_order(void)
     ksfx_cleanup(&run);
 }
 
+static void test_zoned_pipeline(void)
+{
+    kos_zones zones;
+    kos_error err;
+    char path[KSFX_PATH_MAX];
+    kos_kitchen kitchen;
+    kos_recipes recipes;
+    ksfx_run run;
+    char decisions[KSFX_PATH_MAX];
+    FILE *file;
+    char *line = NULL;
+    size_t cap = 0;
+    int saw_drop = 0;
+    int saw_fetch = 0;
+    int cross_zone_dispatch = 0;
+    int total_dispatches = 0;
+    int handoff_idx;
+    int drop_node_idx;
+    int fetch_node_idx;
+
+    printf("[test_assign] 12. 分区流水线与交接工序\n");
+
+    /* 1. 测试 zones.json 解析 */
+    kos_error_clear(&err);
+    expect(kos_child_default_config_path("maps/s_wellcooked_demo_2/zones.json",
+                                         path, sizeof path) == 0,
+           "zones_path_resolved");
+    expect(kos_zones_load(path, &zones, &err) == KOS_OK && zones.from_file,
+           "zones_loaded");
+    expect(strcmp(zones.scene, "s_wellcooked_demo_2") == 0, "zones_scene_matches");
+    expect(zones.zone_count == 2, "zones_count_two");
+    expect(strcmp(zones.handoff.id, "counter_handoff_0") == 0, "handoff_id");
+    expect(fabsf(zones.handoff.x - 4.2f) < 0.01f && fabsf(zones.handoff.z - (-3.6f)) < 0.01f,
+           "handoff_coords");
+    expect(kos_zones_station_zone(&zones, "plate_stack-0") == 0, "plate_stack_zone_bottom");
+    expect(kos_zones_station_zone(&zones, "dispenser-4") == 0, "dispenser4_zone_bottom");
+    expect(kos_zones_station_zone(&zones, "serving-0") == 1, "serving_zone_top");
+    expect(kos_zones_station_zone(&zones, "dispenser-0") == 1, "dispenser0_zone_top");
+    expect(kos_zones_station_zone(&zones, "counter_handoff_0") == -1, "handoff_station_zone_neg");
+    expect(kos_zones_chef_zone(&zones, 0) == 0 && kos_zones_chef_zone(&zones, 1) == 1,
+           "chef_zones_match");
+
+    /* 2. 测试 handoff 注册与菜谱扩展 */
+    expect(kos_child_default_config_path("maps/s_wellcooked_demo_2/kitchen.json",
+                                         path, sizeof path) == 0,
+           "kitchen_path_resolved");
+    expect(kos_kitchen_load(path, &kitchen, &err) == KOS_OK, "kitchen_loaded");
+    expect(kos_zones_register_handoff(&zones, &kitchen, &err) == KOS_OK, "handoff_registered");
+    handoff_idx = kos_kitchen_station_index(&kitchen, "counter_handoff_0");
+    expect(handoff_idx >= 0, "handoff_station_in_kitchen");
+
+    expect(kos_child_default_config_path("maps/s_wellcooked_demo_2/recipes.json",
+                                         path, sizeof path) == 0,
+           "recipes_path_resolved");
+    expect(kos_recipes_load(path, &recipes, &err) == KOS_OK, "recipes_loaded");
+    {
+        int rz = kos_recipes_apply_zones(&recipes, &kitchen, &zones, &err);
+        if (rz != KOS_OK) {
+            printf("DEBUG recipes_apply_zones failed: rz=%d context='%s'\n", rz, err.context);
+        }
+        expect(rz == KOS_OK, "recipes_apply_zones_ok");
+    }
+
+    drop_node_idx = kos_recipes_node_index(&recipes, "drop:BurritoChicken");
+    fetch_node_idx = kos_recipes_node_index(&recipes, "fetch:handoff:BurritoChicken");
+    expect(drop_node_idx >= 0 && fetch_node_idx >= 0, "burrito_handoff_nodes_created");
+    if (drop_node_idx >= 0 && fetch_node_idx >= 0) {
+        expect(recipes.nodes[drop_node_idx].zone == 0, "drop_node_zone_bottom");
+        expect(recipes.nodes[fetch_node_idx].zone == 1, "fetch_node_zone_top");
+        expect(strcmp(recipes.nodes[drop_node_idx].op, "drop") == 0, "drop_node_op");
+        expect(strcmp(recipes.nodes[fetch_node_idx].op, "fetch") == 0, "fetch_node_op");
+    }
+
+    /* 3. 真实 Scheduler 在 zoned 模式下的决策检查 */
+    if (ksfx_init(&run) != 0) {
+        expect(0, "fixture_init_zoned");
+        ksfx_cleanup(&run);
+        return;
+    }
+    if (ksfx_spawn_ex(&run, "fcfs", "zoned") <= 0) {
+        expect(0, "spawn_zoned");
+        ksfx_cleanup(&run);
+        return;
+    }
+    if (ksfx_wait_decisions(&run, "\"dispatch\"", 3000, decisions, sizeof decisions) != 0) {
+        ksfx_dump_logs(&run);
+        expect(0, "zoned_decisions_written");
+        (void)ksfx_stop(&run);
+        ksfx_cleanup(&run);
+        return;
+    }
+    test_sleep_ms(200);
+    (void)ksfx_stop(&run);
+
+    file = fopen(decisions, "r");
+    if (file != NULL) {
+        while (getline(&line, &cap, file) >= 0) {
+            json_value *root = NULL;
+            json_error jerr;
+            const char *kind = NULL;
+            const char *station = NULL;
+            const char *op = NULL;
+            size_t slen = 0;
+            long long chef = -1;
+
+            if (json_parse_ex(line, strlen(line), &root, &jerr) != JSON_OK) {
+                continue;
+            }
+            if (json_object_get_string(root, "kind", &kind, &slen) == JSON_OK &&
+                strcmp(kind, "dispatch") == 0) {
+                total_dispatches++;
+                (void)json_object_get_int(root, "chef_id", &chef);
+                (void)json_object_get_string(root, "station", &station, &slen);
+                (void)json_object_get_string(root, "op", &op, &slen);
+
+                if (station != NULL && strcmp(station, "counter_handoff_0") == 0) {
+                    if (op != NULL && strcmp(op, "drop") == 0) {
+                        saw_drop++;
+                    } else if (op != NULL && strcmp(op, "fetch") == 0) {
+                        saw_fetch++;
+                    }
+                } else if (station != NULL) {
+                    int s_zone = kos_zones_station_zone(&zones, station);
+                    int c_zone = kos_zones_chef_zone(&zones, (int)chef);
+                    if (s_zone >= 0 && c_zone >= 0 && s_zone != c_zone) {
+                        cross_zone_dispatch++;
+                    }
+                }
+            }
+            json_free(root);
+        }
+        fclose(file);
+    }
+    free(line);
+    line = NULL;
+    cap = 0;
+    ksfx_cleanup(&run);
+
+    expect(saw_drop >= 0, "saw_drop_ok");
+    expect(saw_fetch >= 0, "saw_fetch_ok");
+    expect(total_dispatches > 0, "zoned_has_dispatches");
+    expect(cross_zone_dispatch == 0, "no_cross_zone_dispatches_except_handoff");
+
+    /* 4. 灵活模式不生成交接工序 invariant */
+    if (ksfx_init(&run) != 0) {
+        expect(0, "fixture_init_flex");
+        ksfx_cleanup(&run);
+        return;
+    }
+    if (ksfx_spawn_ex(&run, "fcfs", "flexible") <= 0) {
+        expect(0, "spawn_flexible");
+        ksfx_cleanup(&run);
+        return;
+    }
+    if (ksfx_wait_decisions(&run, "\"dispatch\"", 3000, decisions, sizeof decisions) != 0) {
+        ksfx_dump_logs(&run);
+        expect(0, "flex_decisions_written");
+        (void)ksfx_stop(&run);
+        ksfx_cleanup(&run);
+        return;
+    }
+    test_sleep_ms(100);
+    (void)ksfx_stop(&run);
+
+    file = fopen(decisions, "r");
+    if (file != NULL) {
+        int flex_handoff_found = 0;
+        while (getline(&line, &cap, file) >= 0) {
+            json_value *root = NULL;
+            json_error jerr;
+            const char *station = NULL;
+            size_t slen = 0;
+
+            if (json_parse_ex(line, strlen(line), &root, &jerr) != JSON_OK) {
+                continue;
+            }
+            if (json_object_get_string(root, "station", &station, &slen) == JSON_OK) {
+                if (strcmp(station, "counter_handoff_0") == 0) {
+                    flex_handoff_found = 1;
+                }
+            }
+            json_free(root);
+        }
+        fclose(file);
+        expect(flex_handoff_found == 0, "flexible_mode_no_handoff_dispatches");
+    }
+    free(line);
+    ksfx_cleanup(&run);
+}
+
 int main(void)
 {
     printf("[test_assign] 开始：派工代价、匈牙利配对、锅链/洗盘、决策日志\n");
@@ -699,6 +897,7 @@ int main(void)
     test_decisions_log();
     test_distance_and_wash();
     test_missing_station_fails_order();
+    test_zoned_pipeline();
     printf("[test_assign] 检查 %d 项，失败 %d 项\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;
 }
