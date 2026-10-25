@@ -2,8 +2,10 @@
 
 **Effort:** kitchen-control
 **Task type:** feature
-**Base commit:** <commit-sha>
-**Base branch:** small/os-core-acceptance-fixes
+**Base commit:** 0eee7c05d00d2ac189c0960cf9124f129eb2986b
+**Base branch:** plan/kitchen-control
+**Started:** 2026-10-25T13:35:33+08:00
+**Status:** active
 
 **Delivers:** `config/maps/s_wellcooked_demo_{1..4}/` 各有从实机导出的 `kitchen.json`、
 `recipes.json`，Scheduler 与 Worker 用现有的 kitchen/recipes 路径开关能加载任意一张；
@@ -24,3 +26,10 @@ Notes；`.workflow/done/game-bridge/15-kitchen-config-export.md`；`config/kitch
 - [ ] 导出的工位数与 `layout_*.tsv` 的差异记在 spec Notes（以导出为准）
 - [ ] `_2` 上一个厨师直线走 10 格，取 3 次均值，写出每格时间
 - [ ] 加载检查覆盖四个目录（单元检查或 `make test` 里的一个用例）
+
+## Progress
+
+Dirty at start: none（从 `origin/plan/kitchen-control` 的 0eee7c0 起，
+`kitchen-control/01-map-configs`）。
+
+**Check before:** 还不能跑——`config/maps/` 下四个目录不存在，四张地图尚未实机导出。

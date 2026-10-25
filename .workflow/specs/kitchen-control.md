@@ -1,6 +1,6 @@
 # 厨房控制：多厨师走位、宏动作与调度代价
 
-**Status:** proposed
+**Status:** in progress
 **Priority:** high
 
 ## What this is for
