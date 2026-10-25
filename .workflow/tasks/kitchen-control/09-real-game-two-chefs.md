@@ -5,7 +5,7 @@
 **Base commit:** b0129232ece42cb481a5821c2688a86a0a631d7e
 **Base branch:** kitchen-control/05-ring-and-pa-baseline
 **Started:** 2026-10-25T16:50:00+08:00
-**Status:** paused
+**Status:** blocked
 
 **Delivers:** 插件 `work=auto` 关掉 `WorkOrder.cs` 的替身逻辑后，`s_wellcooked_demo_2` 上两个
 厨师完全由 Linux 侧控制，无手动输入完成至少一单；`_1`（没有干净盘堆）上洗盘让盘子循环起来。
@@ -87,3 +87,21 @@ DEBUG/探针查 `task_dispatch_ready`、`task_station_index`、`station_reachabl
 并删除 `/tmp/wellcooked-game.lock`；游戏与 supervisor 已停止。
 
 **2026-10-25T18:00 继续联调：** `build_candidates()` 现在对因当前空闲厨师所在连通区不可达而跳过的工序写 `task_station_unreachable`（带 station 与 compact idle chef cell），用于区分工序依赖未就绪和 `_2` 两条厨房带的站位不可达；`run-real-game.sh` 增加 `REAL_GAME=1 RUNTIME_DIR=... SCENE=... CHEFS=...` 的 supervisor 全树断言入口（order_completed、双 worker 宏链、navd 放行、无手动输入）。实机重跑前仍需锁定共享游戏资源；未将轻量 W8 证据冒充 W9/W11。
+
+**2026-10-25T21:10 pause handoff:** FACE stable station mapping and a `dispenser-4` coordinate regression test are implemented. `cd bridge && make test` last passed 15 suites with 0 failures; the suite is being rerun after these edits. Shell syntax and diff checks passed earlier. One setup run reached `_2` with exactly two chefs; its observed score was -390 and that is not acceptance evidence.
+
+The supported branch script `scripts/build-plugin.sh` builds/deploys only `WellCooked.Smoke.dll`, not the Bridge integration plugin required for OS-driven work. A direct integration-project build also failed because this checkout lacks `plugin/Libs2017/*.dll`. No alternate plugin build path was used. A later dev-cycle restart failed after two attempts because `BepInEx/LogOutput.log` never appeared; `scripts/run-game.sh` explicitly returned `Steam 没在运行，先启动 Steam。` The remaining requirement is paused on external Steam/game availability and missing plugin references—not marked plan-blocked.
+
+No Supervisor acceptance run occurred. There is no evidence for positive score, `order_completed`, both workers' completed macro chains, navd path, or absence of manual input. `_1` wash/cook-priority and the plate/wash gap are untested. Do not count demo2/two-chef setup or W8 Bridge traffic as acceptance.
+
+Game configs were verified restored byte-for-byte against `/tmp/kc09-backup`; `wellcooked-command.txt` is absent. No game, Bridge, or Supervisor process remains; the lock was already absent at handoff (previous owner record was this task's `A 09` session).
+
+## Blocked
+
+**假设：** 前置 05、06、07 已归档并可作为本任务的已完成依赖。
+
+**实际：** `git fetch -q origin` 后，`origin/kitchen-control/06-macro-actions` 的任务文件仍为 `Status: blocked`，其 `## Blocked` 明确记录 `plate` 节点使用 `plate_stack`、而 L2 规范要求从锅取熟菜；`kos_mq_msg` 没有订单到锅的映射，Worker 无法正确完成该工序。该分支也没有 `.workflow/done/kitchen-control/06-macro-actions.md`，因此按通道规则不能把 06 当作已完成前置。当前 09 的实机验收还缺少可证明的盘/锅契约，继续跑实机会把错误计划冒充为任务 Check。
+
+需要 `flow-break` amend 任务 06/09 的计划与接口契约（或先落地锅盘映射）后再恢复本任务；本分支已有的诊断、坐标 helper 与 launcher 改动保留在工作树，未将其作为完成证据。
+
+**Next:** `flow-break` amend 06/09 的计划与锅盘接口契约并恢复前置归档后，再解除本任务 blocked；恢复时重新取得共享锁、按本分支部署并严格执行 `_2` 与 `_1` 实机 Check。
