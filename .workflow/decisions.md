@@ -776,4 +776,24 @@ user may overturn on sight. `Revisit when` of "never" is allowed but suspicious;
 - **Mine:** yes
 - **Revisit when:** 导出里带上工位占用的格子或游戏 1.2 m 网格原点，能直接算交互邻居而不必按
   坐标取最近格。
+## 2026-10-25 - 手柄竖轴与游戏世界 z 轴反向
+
+- **Decided:** `ActionDriver.Feed` 在写设备层与逻辑层之前统一把方向向量的 y(z) 取反；
+  `Navigation`/`face` 仍用世界坐标，`Feed` 是唯一的坐标到输入转换点。
+- **Instead of:** 让每个动作（move/path/face）各自记住翻转，或改所有本地驾驶代码。
+- **Because:** 2026-10-25 `s_city_h5` 实机验证：喂 `stick=(0,1)` 时厨师向 `-z` 走，path 的
+  第一个 +z 路点越走越远（3.35 m 后超时）；翻转后同一条 4 路点 path 连续切换并到达。
+- **Mine:** yes
+- **Revisit when:** 游戏或输入注入层改变坐标约定（例如换 InControl 版本），用一条 +z path 复测。
+- **Effort:** kitchen-control
+
+## 2026-10-25 - game_time_ms 字段与计时消费者的任务边界
+
+- **Decided:** 任务 02 只交付 `game_time_ms` 的插件上报、协议/ shm 字段与 fake/测试；
+  现有 Scheduler/Worker 里仍用墙钟的计时路径，由后续任务 03/04/06/07 在改各自算法时接入。
+- **Instead of:** 在 02 里跨任务改 Scheduler/Worker 的超时、预约和卡住判定。
+- **Because:** 那些计时路径本来就要在导航、宏动作、派工任务里重写；在 02 提前改会与它们的边界重叠，
+  也无法在本任务内证明新计时语义。02 的 Check 只要求字段暂停不走。
+- **Mine:** yes
+- **Revisit when:** 任务 04 或 06 落地后，`grep CLOCK_MONOTONIC` 仍能看到本应使用游戏时钟的计时。
 - **Effort:** kitchen-control

@@ -1010,6 +1010,11 @@ namespace WellCooked
             player = provider.GetID();
             return true;
         }
+        public static bool TryChefOf(int slot, out PlayerControls chef)
+        {
+            return ChefControllers.TryGetValue(slot, out chef) && chef != null;
+        }
+
 
         private static bool TryPosition(int playerIndex, out Vector2 position)
         {

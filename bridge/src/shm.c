@@ -425,7 +425,14 @@ int kos_shm_slot_publish(kos_shm *shm, uint32_t slot, const kos_input_action *ac
 
     if (!s || !action)
         return (action == NULL) ? KOS_ERR_INVAL : KOS_ERR_RANGE;
-    if (action->kind < (int32_t)KOS_ACTION_NONE || action->kind > (int32_t)KOS_ACTION_DASH)
+    if (action->kind < (int32_t)KOS_ACTION_NONE || action->kind > (int32_t)KOS_ACTION_WORK)
+        return KOS_ERR_INVAL;
+    /* The payload crosses a process boundary. A target name without a NUL can
+     * make the Bridge's strlen read past kos_input_action, so reject it here
+     * (and check it once more on the read side). */
+    if (memchr(action->target_object, '\0', sizeof action->target_object) == NULL)
+        return KOS_ERR_INVAL;
+    if (action->waypoint_count > KOS_MAX_WAYPOINTS)
         return KOS_ERR_INVAL;
 
     publish = seqlock_begin(&s->seq);
@@ -1149,7 +1156,7 @@ int kos_shm_unlink(const kos_shm_opts *opts, kos_error *err)
 
 /* ================================================================ 杂项 */
 
-static const char *const action_names[] = {"none", "move", "stop", "interact", "pickup", "dash"};
+static const char *const action_names[] = {"none", "move", "stop", "interact", "pickup", "dash", "path", "face", "work"};
 
 #define KOS_ACTION_NAME_COUNT ((int)(sizeof action_names / sizeof action_names[0]))
 

@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Reflection;
 using UnityEngine;
@@ -47,6 +48,181 @@ namespace WellCooked
             return _facingLookup == null
                 ? null
                 : _facingLookup.Invoke(null, new object[] { chef.transform, -1 }) as Component;
+        }
+
+        /// <summary>砧板的名字判定。`StateFrame` 的资源编号与动作目标的解析必须用同一条规则。</summary>
+        public static bool IsChoppingBoard(string name)
+        {
+            return !string.IsNullOrEmpty(name)
+                   && (name.IndexOf("Chop", StringComparison.OrdinalIgnoreCase) >= 0
+                       || name.IndexOf("Cut", StringComparison.OrdinalIgnoreCase) >= 0);
+        }
+
+        /// <summary>
+        /// 场上所有砧板，顺序就是 `cutting_board_&lt;N&gt;` 的编号顺序（`FindAll` 的返回顺序）。
+        /// 动作目标的 `cutting_board_N` 与状态上报必须指向同一块板。
+        /// </summary>
+        public static List<Station> ChoppingBoards()
+        {
+            var result = new List<Station>();
+            foreach (var component in WorldState.FindAll("ClientWorkstation"))
+            {
+                var unity = component as Component;
+                if (unity == null || !IsChoppingBoard(unity.gameObject.name))
+                {
+                    continue;
+                }
+
+                var p = unity.transform.position;
+                result.Add(new Station
+                {
+                    Type = "ChoppingBoard",
+                    Name = unity.gameObject.name,
+                    Position = new Vector2(p.x, p.z),
+                    Component = unity
+                });
+            }
+
+            return result;
+        }
+
+        /// <summary>
+        /// 锅的处理器按位置排序（x 优先、再 z），与 `state_update` 的 `pot_&lt;N&gt;` 编号一致。
+        /// 返回的 Value 是 `ServerCookingHandler`，`Component` 是它交出的 CookingHandler。
+        /// </summary>
+        public static List<KeyValuePair<Vector2, object>> SortedCookingHandlers()
+        {
+            var getHandlers = WorldState.StaticMethod("ServerCookingHandler", "GetCookingHandlers");
+            var raw = getHandlers == null ? null : getHandlers.Invoke(null, null);
+            var sorted = new List<KeyValuePair<Vector2, object>>();
+            if (raw == null)
+            {
+                return sorted;
+            }
+
+            foreach (var handler in (IEnumerable)raw)
+            {
+                if (handler == null)
+                {
+                    continue;
+                }
+
+                var component = handler as Component
+                                ?? WorldState.Get(handler, "GetCookingHandler") as Component;
+                if (component == null)
+                {
+                    continue;
+                }
+
+                var p = component.transform.position;
+                sorted.Add(new KeyValuePair<Vector2, object>(new Vector2(p.x, p.z), handler));
+            }
+
+            sorted.Sort(delegate(KeyValuePair<Vector2, object> a, KeyValuePair<Vector2, object> b)
+            {
+                int byX = a.Key.x.CompareTo(b.Key.x);
+                return byX != 0 ? byX : a.Key.y.CompareTo(b.Key.y);
+            });
+            return sorted;
+        }
+
+        /// <summary>
+        /// 把 `state_update` 的资源键（`cutting_board_2`、`pot_0`、`plate_stack`、
+        /// `dirty_plates`、`sink_1`）解析成世界坐标。插件收到的 `face.target_object`
+        /// 用的就是这套键，所以编号必须与 `StateFrame` 的上报顺序完全一致。
+        /// 认不出的键最后按 GameObject 名字找一次；找不到返回 false。
+        /// </summary>
+        public static bool TryStationPosition(string key, out Vector2 position)
+        {
+            position = Vector2.zero;
+            if (string.IsNullOrEmpty(key))
+            {
+                return false;
+            }
+
+            if (key == "plate_stack" || key == "dirty_plates")
+            {
+                string type = key == "plate_stack" ? "ClientCleanPlateStack" : "ClientDirtyPlateStack";
+                foreach (var found in WorldState.FindAll(type))
+                {
+                    var unity = found as Component;
+                    if (unity != null)
+                    {
+                        position = new Vector2(unity.transform.position.x, unity.transform.position.z);
+                        return true;
+                    }
+                }
+                return false;
+            }
+
+            int index;
+            if (TrySuffixIndex(key, "cutting_board_", out index))
+            {
+                var boards = ChoppingBoards();
+                if (index >= 0 && index < boards.Count)
+                {
+                    position = boards[index].Position;
+                    return true;
+                }
+                return false;
+            }
+
+            if (TrySuffixIndex(key, "pot_", out index))
+            {
+                var pots = SortedCookingHandlers();
+                if (index >= 0 && index < pots.Count)
+                {
+                    var handler = pots[index].Value;
+                    var component = handler as Component
+                                    ?? WorldState.Get(handler, "GetCookingHandler") as Component;
+                    if (component != null)
+                    {
+                        position = new Vector2(component.transform.position.x,
+                                               component.transform.position.z);
+                        return true;
+                    }
+                }
+                return false;
+            }
+
+            if (TrySuffixIndex(key, "sink_", out index))
+            {
+                int at = 0;
+                foreach (var found in WorldState.FindAll("ClientWashingStation"))
+                {
+                    var unity = found as Component;
+                    if (unity == null)
+                    {
+                        continue;
+                    }
+                    if (at == index)
+                    {
+                        position = new Vector2(unity.transform.position.x,
+                                               unity.transform.position.z);
+                        return true;
+                    }
+                    at++;
+                }
+                return false;
+            }
+
+            var obj = GameObject.Find(key);
+            if (obj == null)
+            {
+                return false;
+            }
+            position = new Vector2(obj.transform.position.x, obj.transform.position.z);
+            return true;
+        }
+
+        private static bool TrySuffixIndex(string key, string prefix, out int index)
+        {
+            index = -1;
+            if (!key.StartsWith(prefix, StringComparison.Ordinal))
+            {
+                return false;
+            }
+            return int.TryParse(key.Substring(prefix.Length), out index);
         }
 
         /// <summary>

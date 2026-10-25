@@ -36,6 +36,8 @@ namespace WellCooked
         public int state_interval_ms;
         public string input_mode;
         public string strategy;
+        public long seq;
+        public Vec2[] waypoints;
     }
 
     /// <summary>
@@ -203,6 +205,9 @@ namespace WellCooked
         public const string EchoReply = "echo_reply";
         public const string Hello = "hello";
         public const string Ack = "ack";
+        public const string Path = "path";
+        public const string Face = "face";
+        public const string Work = "work";
     }
 
     /// <summary>常用出站消息构造。</summary>
@@ -229,17 +234,19 @@ namespace WellCooked
             return b.ToString();
         }
 
-        public static string Ack(string action, int chefId, bool ok, string detail)
+        public static string Ack(string action, int chefId, bool ok, string detail, long seq = -1)
         {
-            return new JsonBuilder(256)
+            var b = new JsonBuilder(256)
                 .Obj()
                 .Field("type", MsgType.Ack)
                 .Field("action", action ?? "")
                 .FieldInt("chef_id", chefId)
-                .FieldBool("ok", ok)
-                .Field("detail", detail ?? "")
-                .EndObj()
-                .ToString();
+                .FieldBool("ok", ok);
+            if (seq >= 0)
+            {
+                b.FieldInt("seq", seq);
+            }
+            return b.Field("detail", detail ?? "").EndObj().ToString();
         }
 
         public static string EchoReply(string token)

@@ -70,6 +70,7 @@ C 侧 `bridge/include/kitchenos/protocol.h` + `bridge/src/protocol.c`，
 | `type` | string | 是 | — | 固定 `"state_update"` |
 | `timestamp` | integer | 否 | `timestamp` | Unix 秒 |
 | `game_time` | number | 否 | `game_time` | 游戏内已进行秒数 |
+| `game_time_ms` | integer | 是 | `game_time_ms` | 游戏内已进行毫秒数（暂停不走；缺失当错误被拒） |
 | `score` | number | 否 | `score` | 当前分数 |
 | `chefs` | array | 否 | `chefs[]` | 最多 16 个，见下 |
 | `orders` | array | 否 | `orders[]` | 最多 32 张，见下 |
@@ -83,6 +84,7 @@ C 侧 `bridge/include/kitchenos/protocol.h` + `bridge/src/protocol.c`，
 | `position` | object `{x,y}` | 否 | 世界坐标（映射游戏 x/z 平面） |
 | `holding` | string \| null | 否 | 手上的东西；`null` 表示空手，C 侧存成 `""`（`proto_chef.holding`） |
 | `state` | string | 否 | 取自游戏，例如 `moving` / `idle` |
+| `facing` | number | 否 | 厨师朝向（弧度） |
 
 `orders[]`：
 
@@ -93,7 +95,8 @@ C 侧 `bridge/include/kitchenos/protocol.h` + `bridge/src/protocol.c`，
 | `time_remaining` | number | 否 | 剩余秒数 |
 | `ingredients` | string[] | 否 | 已放入的原料，最多 8 个 |
 
-`resources` 的**键是动态的**：`pot_0`、`pot_1`、`cutting_board_0`、`plate_stack`。
+`resources` 的**键是动态的**：`pot_0`、`pot_1`、`cutting_board_0`、`plate_stack`、
+`dirty_plates`、`sink_0`。
 将来游戏新增 `pot_7`、`sink_2` 之类也必须能收，所以 C 侧按前缀分类后保留**原始键名**，
 认不出的键归 `PROTO_RES_UNKNOWN`，绝不因为"键不认识"而拒绝整条消息。
 
@@ -102,7 +105,7 @@ C 侧 `bridge/include/kitchenos/protocol.h` + `bridge/src/protocol.c`，
 | `pot_<N>` | `PROTO_RES_POT` | N |
 | `cutting_board_<N>` | `PROTO_RES_CUTTING_BOARD` | N |
 | `plate_stack` | `PROTO_RES_PLATE_STACK` | -1 |
-| 其它 | `PROTO_RES_UNKNOWN` | -1 |
+| `dirty_plates`、`sink_<N>` 等其它 | `PROTO_RES_UNKNOWN` | -1 |
 
 每个键的值是一个对象：
 
@@ -113,6 +116,7 @@ C 侧 `bridge/include/kitchenos/protocol.h` + `bridge/src/protocol.c`，
 | `time_left` | number | 否 | `time_left` + `has_time_left` | 剩余烹饪时间 |
 | `chef_id` | integer | 否 | `chef_id` + `has_chef_id` | 占用该工位的厨师 |
 | `count` | integer | 否 | `count` + `has_count` | 盘子数量（`plate_stack`）；`0` 与"没这个字段"不同，靠 `has_count` 区分 |
+| `progress` | number | 否 | `progress` + `has_progress` | 烹饪/切菜/洗盘进度（0..1） |
 
 样例见 `overcooked_os_course_project.md` §5.2；`bridge/tests/test_protocol.c` 逐字段核对了那份样例，
 并额外覆盖了样例里没有的 `pot_7` 与未知键。
@@ -151,7 +155,7 @@ Bridge 判为失联（断链、清空注入、3 秒后重连）。要改这个�
 | `actions` | string[] | 否 | 本端支持的动作名，最多 32 个 |
 
 C 侧构造样例：
-`{"type":"hello","instance":"linux-bridge","version":"0.1.0","actions":["move","stop","interact"]}`
+`{"type":"hello","instance":"linux-bridge","version":"0.2.0","actions":["move","stop","interact"]}`
 
 ### 3.4 `echo` / `echo_reply`
 
@@ -181,10 +185,12 @@ C 侧构造样例：
 | `action` | string | 是 | 被回执的动作名 |
 | `chef_id` | integer | 是 | 哪个厨师 |
 | `ok` | boolean | 是 | 必须是 JSON 布尔，不接受 `"true"` 字符串 |
+| `seq` | integer | 否 | `path` 的规划序号；插件在 `path` 的两次 ack 里都带回，其它动作不带 |
 | `detail` | string | 否 | 失败原因等，可读文本 |
 
 C 侧构造样例：
-`{"type":"ack","action":"move","chef_id":1,"ok":true,"detail":"ok"}`
+`{"type":"ack","action":"move","chef_id":1,"ok":true,"detail":"ok"}`；
+`path` 的结局 ack：`{"type":"ack","action":"path","chef_id":1,"ok":true,"seq":7,"detail":"path 到达终点 …"}`
 
 ### 3.6 `action`（Bridge → 插件）
 
@@ -192,12 +198,15 @@ C 侧构造样例：
 |---|---|---|---|
 | `type` | string | 是（`"action"`） | |
 | `chef_id` | integer | 是 | 目标厨师 |
-| `action` | string | 是 | `move` / `stop` / `interact` / `pickup` / `dash` |
-| `target` | object `{x,y}` | `move` 时必填 | 目标坐标 |
-| `target_object` | string | `interact` 时必填 | 例如 `cutting_board_0`；**插件当前不读它**（`interact` = 对厨师脚下的工位按键），带上是为了日志与将来扩展 |
+| `action` | string | 是 | `move` / `stop` / `interact` / `pickup` / `dash` / `path` / `face` / `work` |
+| `target` | object `{x,y}` | `move` 必填，`face` 可选 | 目标坐标 |
+| `target_object` | string | `interact`/`work` 必填，`face` 可选 | 例如 `cutting_board_0`；`work` 按住加工键直到下一条动作 |
+| `waypoints` | array | `path` 必填 | 1..8 个相邻格中心坐标 `{x,y}` |
+| `seq` | integer | `path` 必填 | 规划序号，同 seq 只追加路点 |
 | `button` | string | 否 | 附加按键，插件透传给游戏 |
 | `hold_ms` | number | 否 | 长按时长 |
-
+`path` 的 `seq` 是规划序号：同 `seq` 的新消息只把新路点接在队尾，插件不重置已走过的路点；
+`face` 同时给了 `target` 与 `target_object` 时以 `target_object` 为准（桥只下发其中一个）。
 `stop`、`pickup`、`dash` 都是**只有名字**的动作（不带任何附加字段）：`stop` 是空转，
 某个厨师的输入槽缺失或超时时 Bridge 就对他下发
 `{"type":"action","chef_id":N,"action":"stop"}`；`pickup`（取/放厨师脚下的东西）与 `dash`
@@ -211,6 +220,9 @@ C 侧构造样例（前两条与 §5.2 的两条控制指令一致）：
 - `{"type":"action","chef_id":1,"action":"interact","target_object":"cutting_board_0"}`
 - `{"type":"action","chef_id":0,"action":"pickup"}`
 - `{"type":"action","chef_id":1,"action":"dash"}`
+- `{"type":"action","chef_id":0,"action":"path","seq":1,"waypoints":[{"x":12,"y":6},{"x":12,"y":7}]}`
+- `{"type":"action","chef_id":0,"action":"face","target":{"x":13,"y":6}}`
+- `{"type":"action","chef_id":1,"action":"work","target_object":"cutting_board_0"}`
 
 ### 3.7 `config`（Bridge → 插件）
 
@@ -259,7 +271,7 @@ C 侧错误码：`bridge/include/kitchenos/json.h` 的 `JSON_ERR_*`、
 
 ## 6. 版本与兼容
 
-- 当前版本 `0.1.0`（`bridge/include/kitchenos/protocol.h` 的 `PROTO_VERSION`，
+- 当前版本 `0.2.0`（`bridge/include/kitchenos/protocol.h` 的 `PROTO_VERSION`，
   同时是插件 `WellCooked.Plugin` 的版本基准）。
 - 加法兼容：新增可选字段、新增 `resources` 键、新增消息类型 —— 老实现忽略即可，不必改版本。
 - 破坏兼容：改字段名、改字段类型、改动作名、改分帧 —— 必须同时改两端并提升版本号。

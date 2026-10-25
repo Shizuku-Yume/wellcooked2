@@ -42,8 +42,8 @@ static void usage(FILE *out, const char *argv0)
 {
     fprintf(out,
             "usage: %s --state-name NAME --sem-name NAME --chefs N --slot K\n"
-            "          --hz H --duration S [--kind move|stop|interact|pickup|dash]\n"
-            "          [--target X,Y]\n"
+            "          --hz H --duration S [--kind move|stop|interact|pickup|dash|path|face|work]\n"
+            "          [--target X,Y] [--waypoints N]\n"
             "\n"
             "Publishes one Chef Worker's worth of input into slot K of an existing\n"
             "KitchenOS shared segment. The segment must already exist (start the\n"
@@ -51,7 +51,9 @@ static void usage(FILE *out, const char *argv0)
             "\n"
             "move sends a triangular wave between STUB_X0 and STUB_X1 by default;\n"
             "--target X,Y sends one constant target instead (what a real Worker\n"
-            "does when it decides 'chef 0 goes to the cutting board').\n",
+            "does when it decides 'chef 0 goes to the cutting board').\n"
+            "path fills --waypoints (default 8) adjacent points and a fixed seq;\n"
+            "face/work target 'cutting_board_<slot>' unless --target is given.\n",
             argv0);
 }
 
@@ -157,6 +159,9 @@ static int parse_kind(const char *text, kos_action_kind *out)
         {"interact", KOS_ACTION_INTERACT},
         {"pickup", KOS_ACTION_PICKUP},
         {"dash", KOS_ACTION_DASH},
+        {"path", KOS_ACTION_PATH},
+        {"face", KOS_ACTION_FACE},
+        {"work", KOS_ACTION_WORK},
     };
     size_t i;
 
@@ -181,6 +186,7 @@ int main(int argc, char **argv)
     int fixed_target = 0;
     double target_x = 0.0;
     double target_y = 0.0;
+    long waypoint_count = KOS_MAX_WAYPOINTS;
 
     kos_shm_opts opts;
     kos_shm *shm = NULL;
@@ -242,9 +248,17 @@ int main(int argc, char **argv)
                 return 2;
             }
             fixed_target = 1;
+        } else if (strcmp(a, "--waypoints") == 0) {
+            if (parse_int(value, &waypoint_count) != 0
+                || waypoint_count < 1 || waypoint_count > KOS_MAX_WAYPOINTS) {
+                fprintf(stderr, "%s: --waypoints wants an integer within 1..%d\n",
+                        argv[0], KOS_MAX_WAYPOINTS);
+                return 2;
+            }
         } else if (strcmp(a, "--kind") == 0) {
             if (parse_kind(value, &kind) != 0) {
-                fprintf(stderr, "%s: --kind must be move, stop, interact, pickup or dash\n",
+                fprintf(stderr, "%s: --kind must be move, stop, interact, pickup, dash, "
+                                "path, face or work\n",
                         argv[0]);
                 return 2;
             }
@@ -335,10 +349,23 @@ int main(int argc, char **argv)
             action.target_x = fixed_target ? (float)target_x : STUB_X0 + t * (STUB_X1 - STUB_X0);
             action.target_y = fixed_target ? (float)target_y : (float)slot;
             action.target_object[0] = '\0';
-            if (kind == KOS_ACTION_INTERACT) {
-                /* interact 必须带一个非空目标，否则 Bridge 只能把它降级成 idle */
+            if (kind == KOS_ACTION_INTERACT || kind == KOS_ACTION_WORK
+                || (kind == KOS_ACTION_FACE && !fixed_target)) {
+                /* 这些动作必须带一个非空目标，否则 Bridge 只能把它降级成 idle。
+                 * face 的具名目标优先于坐标（见 bridge.c build_action_from_slot）。 */
                 snprintf(action.target_object, sizeof action.target_object,
                          "cutting_board_%ld", slot);
+            }
+            if (kind == KOS_ACTION_PATH) {
+                /* 相邻格中心式的一串点；seq 固定，方便场景断言原样到达。 */
+                size_t w;
+
+                action.seq = 1000;
+                action.waypoint_count = (uint32_t)waypoint_count;
+                for (w = 0; w < (size_t)waypoint_count; w++) {
+                    action.waypoints[w].x = (float)(slot + 0.5 * (double)w);
+                    action.waypoints[w].y = (float)((double)slot + 0.25 * (double)w);
+                }
             }
         }
 
