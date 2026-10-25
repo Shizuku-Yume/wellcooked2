@@ -4,6 +4,7 @@
 **Task type:** feature
 **Base commit:** dacd788388158ac06b3123ef742a1dfb18495b62
 **Base branch:** kitchen-control/04-navd-pibt
+**Status:** blocked
 **Started:** 2026-10-25T16:08:48+08:00
 
 **Delivers:** Worker 把一道工序按映射表展开成宏动作（goto/pickup/drop/chop/start_cook/
@@ -31,7 +32,6 @@ tools/run-bridge-scenarios.sh --only macro,os-loop` → fake_plugin 延迟 2 s �
 
 ## Progress
 
-**Finished:** 2026-10-25T16:50:00+08:00
 
 Dirty at start: none。从 `origin/kitchen-control/04-navd-pibt`（dacd788）开
 `kitchen-control/06-macro-actions`；前置 04 的归档文件已确认存在，任务为完成态。
@@ -79,3 +79,40 @@ mq→Worker 任务/事件、navtab 目标/计划槽、shm 世界状态只读、f
   重复坐标 face 不会重置命令。原有 plate 工位 mismatch 仍保留为 blocking（任务 07/09 的接口
   统一，不在 06 文件范围）。
 - 复跑：`make test-san` 14/14、`make test` 14/14、`--only macro,os-loop` 2/2。
+
+## Blocked
+
+**假设：** Worker 按 mq 的 `station_id` 展开宏动作，`plate` 的 `goto(锅) + pickup 进盘` 就能从
+锅取到熟菜；或者 Scheduler 会把 plate 工序派到锅的工位。
+
+**实际（本分支 HEAD 上可复现）：**
+- `scripts/export-kitchen.py:211` 把 `plate` 映射到 `plate_stack`；`config/recipes.example.json`
+  与 `config/maps/s_wellcooked_demo_*/recipes.json` 的 plate 节点全部是
+  `{"id":"plate:...","op":"plate","resource":"plate_stack"}`。
+- `bridge/src/scheduler.c:1228` 按 `node->resource` 调 `kos_kitchen_pick_station`，所以 plate
+  工序下发的 `station_id` 是 `plate_stack-*`，不是锅。
+- `bridge/include/kitchenos/mq.h` 的任务消息只有 `station_id/resource/dish/node_id`，没有锅 id
+  或"订单→锅"的映射；Worker 无法知道哪口锅装着这单的菜。
+- 结果：`macro.c` 的 plate 会在盘子堆上 `wait_ready`（无锅状态，直接通过）然后 `pickup` 菜品，
+  实机只会拿到干净盘或失败；review brief B 的 blocking finding 即此。
+- 任务 06 的 Files 只有 macro/worker/test/fake，改 Scheduler 派工或导出映射属于任务 07/09 的
+  锅/盘子规则，不能用 Worker 猜锅来糊过去（多锅/同菜订单无法区分，且没有干净盘步骤）。
+
+**需要决定的：**
+1. 把导出/派工映射改成 `plate` 使用锅工位，并在 Scheduler 生成"先取干净盘"的工序（任务 07
+   的锅/盘子规则）；
+2. 或在 `kos_mq_msg` 增加锅/目标工位字段（或订单→锅映射），让 Worker 能按订单取熟菜；
+3. 或把 plate 拆成 `fetch_plate` + `pickup_dish` 两道工序。
+选定后由 `flow-break` amend 更新本任务或把它并入 07/09；本分支上的宏动作实现、测试与 PR
+保留，blocking finding 不隐瞒、不 merge。
+
+### Review escalation（2026-10-25）
+
+- 用户要求不能把 Brief B 的 blocking 留给后续任务；按当前 PR diff、spec、recipes 与 mq 契约
+  重新核对后确认：plate 的工位来自 `resource=plate_stack`，任务消息没有锅 id，Worker 无法稳定
+  地从锅取熟菜。这不是可在 06 文件内修的代码缺陷，而是 spec 的 `goto(锅)` 与导出/派工映射的
+  计划矛盾。
+- 依 flow-implement“When the plan is wrong”把任务标 `blocked`；`## Blocked` 写证据与三个可选
+  决策。分支上的宏动作实现、测试、fake 场景与 PR 保留；不要 merge，等 flow-break amend。
+- 本任务的 Check 仍全绿（`make test` 14/14、`make test-san` 14/14、`macro,os-loop` 2/2），
+  但 blocking finding 未解除，所以不按完成交付。
