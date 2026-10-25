@@ -138,7 +138,7 @@ python3 scripts/export-kitchen.py --out /tmp/k.json --out-recipes /tmp/r.json   
 `edges[]` 是"子 → 父"的前置依赖，`dishes[]` 每道菜的工序顺序（拓扑序）；节点 id 是 `工序:游戏里的节点名`，
 两道菜共用同一中间产物时只有一个节点。工时目前是方案 §6.5 的默认值，文件里写了来源。
 仓库里的 `config/kitchen.example.json` 与 `config/recipes.example.json` 是 `s_city_h5` 的实测导出
-（20 个工位 / 546 格 / 4 道菜 / 20 个工序节点），Scheduler 与模拟器可以直接拿它们离线开发。
+（20 个工位 / 546 格 / 4 道菜 / 20 个工序节点），Scheduler 与离线上界脚本可以直接拿它们离线开发。
 
 注意两点：`load` 只换场景，**菜谱要新进程才刷新**；`load` 前要等虚拟手柄被游戏自己加入，否则没有厨师，
 地形采样会退化成兜底半径（连通性数字不可信）。
@@ -183,7 +183,7 @@ Workflow files live where CONVENTIONS §2 says.
 - **不用线程替代进程**。Worker 必须是独立进程，否则展示不了进程控制和进程间通信。
 - **不让 Bridge 解释调度策略**。策略属于 Scheduler；Bridge 只搬状态、汇总输入、下发动作。
 - **不在插件里做调度**。插件是执行器，收到什么动作就做什么动作。
-- 不把离散事件模拟器当演示主平台：它只用于策略预筛，可随时裁剪。
+- 不写离散事件模拟器：批量实验多开真游戏实例（decisions.md: 2026-10-25 - 批量实验用多开游戏实例，不写模拟器）。
 - Windows 侧不放监督进程；守护进程必须是完整 Linux daemon（fork/setsid/umask/chdir/dup2）。
 - 不提交游戏 DLL 和二进制文件（§11.6）。
 

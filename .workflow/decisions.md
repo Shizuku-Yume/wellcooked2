@@ -621,6 +621,7 @@ user may overturn on sight. `Revisit when` of "never" is allowed but suspicious;
 - **Revisit when:** 多个 Worker 之间的避让需要全局协调（窄道相遇），那时 Scheduler 需要
   参与路径预约。
 - **Effort:** os-core
+- **Superseded by:** 2026-10-25 - 走位改由中央 navd 进程用 PIBT 规划
 
 ## 2026-10-24 - 重启退避用 §6.1 的三档（0 / 2 s / 10 s），不是几何翻倍
 
@@ -665,3 +666,68 @@ user may overturn on sight. `Revisit when` of "never" is allowed but suspicious;
 - **Revisit when:** 插件侧开始按配置文件生成带到达时刻的订单，或模拟器需要可复现的
   精确到达序列。
 - **Effort:** os-core
+
+## 2026-10-25 - 多厨师避让用时空 A* + 共享预约表
+
+- **Decided:** 每个 Worker 在 4 邻域网格上做时空 A*（等待也是一步），按优先级依次把自己
+  的路径写进共享预约表 `/kitchenos_resv`（64 时隙环，`/kitchenos_resv_lock` 保护），后来者
+  避开已预约的格与对换；互等成环时按 `nav_deadlock` 规则让环上优先级最低、并列时 chef_id
+  最大的那个退让。避让与寻路全部在 Worker（Linux 侧）。
+- **Instead of:** 插件 `Navigation.cs` 做局部避让；或 CBS 全局最优多智能体寻路；或 Scheduler
+  集中算所有路径。
+- **Because:** 用户决定寻路放 Worker：调度与寻路是课程要展示的 Linux 侧机制，放进插件就会
+  有两份路径（game-bridge/13 的卡住即由此而来）。共享内存 + 信号量的预约表给了全局协调，
+  又不违反"路径规划放 Worker、Scheduler 只派高层目标"；CBS 最坏指数级且每次重规划要全体
+  重算，4 个厨师下优先级规划加退让已够用、日志也好解释。
+- **Mine:** no
+- **Revisit when:** 厨师数超过 4 或 `_3` 上 `nav_deadlock` 频繁到影响得分，那时考虑 CBS
+  或窗口化 CBS；或实测插件执行 `step` 的延迟让 Linux 侧跟随误差超过 0.15 m。
+- **Effort:** kitchen-control
+- **Superseded by:** 2026-10-25 - 走位改由中央 navd 进程用 PIBT 规划
+
+## 2026-10-25 - Linux 侧计时统一用游戏时钟
+
+- **Decided:** 插件在 `state_update` 里带 `game_time_ms`（游戏内毫秒，暂停不走），Worker 的
+  预约时隙、卡住判定、宏动作超时与 Scheduler 的截止期、LLF/HRRN 全部用它；墙钟只用于
+  链路心跳与进程重启退避。
+- **Instead of:** 继续用 `CLOCK_MONOTONIC` 墙钟。
+- **Because:** 游戏暂停或掉帧时墙钟照走，预约会过期、厨师会被误判卡住、订单截止期被提前
+  判超时；模拟器要 `--speed` 快进，只有用同一个逻辑时钟，实机和模拟器跑的才是同一份代码。
+- **Mine:** yes
+- **Revisit when:** 插件拿不到稳定的游戏时钟（例如关卡切换时回退），那时在 Bridge 里做单调
+  化处理而不是退回墙钟。
+- **Effort:** kitchen-control
+
+## 2026-10-25 - 走位改由中央 navd 进程用 PIBT 规划
+
+- **Supersedes:** 2026-10-24 - 路径规划放 Worker，Scheduler 只派高层目标；2026-10-25 - 多厨师
+  避让用时空 A* + 共享预约表
+- **Decided:** Supervisor 下新增 `navd` 子进程，统一为所有厨师规划：每一步跑 PIBT（优先级继承 +
+  回溯），按执行依赖图把路点放行给各厨师，插件用新动作 `path` 沿路点连续走。Worker 只写目标槽、
+  读计划槽（共享内存 `/kitchenos_nav`，各槽单写者）。优先级时空 A* 保留为 `navd --nav pa` 对照
+  基线。规划仍全部在 Linux 侧，Scheduler 仍只派高层目标。
+- **Instead of:** 每个 Worker 各自做时空 A* + 共享预约表；Worker 内 WHCA*；中央 RHCR。
+- **Because:** 用户要求走位"不要太初级"、要能当后续调度策略展示的地基，并选了这一档。PIBT 在
+  每对相邻格都在长度 ≥ 3 的环上的图（`_3` 环形过道）上保证每个厨师都能到达，不靠死锁检测兜底；
+  依赖图放行让厨师快慢不一时也不会同格，又不用一格一停。各自规划做不到全体同步推进，所以要
+  一个看全局的进程；不放 Scheduler，免得走位节奏拖住派工、Scheduler 崩溃时厨师全停。
+- **Mine:** no
+- **Revisit when:** 厨师数超过 4 或 `nav_metrics.json` 里 PIBT 的等待步数明显高于 `pa`，那时
+  考虑窗口化的 PBS；或 `navd` 单步规划 p99 超过一帧。
+- **Effort:** kitchen-control
+
+## 2026-10-25 - 批量实验用多开游戏实例，不写模拟器
+
+- **Decided:** 不写 `tools/sim` 离散事件模拟器。批量实验在本机同时开 N 个（目标 3 个）
+  640×360 的 Overcooked2 实例：不经 Steam applaunch，直接 `proton run`；每个实例一个独立目录
+  （复制 exe/doorstop/`BepInEx/`，`Overcooked2_Data` 符号链接），插件端口 `14455 + k`，Linux 侧
+  每个实例一棵 `--instance k` 的进程树，IPC 名字加 `_<k>` 后缀。离线上界改成不开游戏的纯计算脚本。
+- **Instead of:** 自写模拟器无头快进；或多个实例共用游戏目录只改端口。
+- **Because:** 用户认为模拟器成本太高，要求多开小窗口直接接管。2026-10-25 实测两个实例能同时
+  跑、各自加载插件（各约 1 GB 内存、2 核、1.3 GB 显存），从独立目录启动也能加载插件；共用目录时
+  第二个实例把第一个的 `LogOutput.log` 轮转掉，状态/指令文件也会互相覆盖，所以必须分目录。
+  真游戏批跑省掉了模型重建和精度校准，实验和演示是同一份代码。
+- **Mine:** no
+- **Revisit when:** 实验量大到 N 个实例跑不完（例如权重网格超过一晚），或 Proton/Steam 更新后
+  不再允许第二个实例启动。
+- **Effort:** kitchen-control
