@@ -177,6 +177,12 @@ goto(出菜口) + deliver，`wash` = goto(水槽) + drop + wash。导出配置�
 重排队逻辑接手。每个宏动作的开始与结束写进 Worker 日志（`macro_start` / `macro_done` /
 `macro_failed`），`macro_done` 带游戏时钟的 `waited_ms`。
 
+**已知接口缺口（review #36 保留的 blocking finding）：** 导出的 `recipes.json` 把 `plate`
+节点的 `resource` 写成 `plate_stack`，Scheduler 因此派的是盘子堆工位，而上面的映射要求
+goto(锅) 取熟菜。Worker 按 mq 下发的工位执行，无法自行知道是哪口锅；任务 06 的 fake 场景
+改用 cooker 工位验证 wait_ready/pickup。实机配置需要任务 07/09 把派工工位改成锅，或把
+"取干净盘 + 到锅取菜"拆成两步。
+
 game-bridge 插件里 `WorkOrder.cs` 那套在插件内选厨师、走工序的替身逻辑，在系统控制下不再
 启用；它的 `_looseApproach` 1.4 m 兜底和"按住 X + 超时"切菜由上面的站位格与 `chop` 完成条件
 取代。

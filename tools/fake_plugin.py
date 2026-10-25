@@ -3137,14 +3137,23 @@ class WorldSim(NavSim):
             if chef is None:
                 continue
             kind = action.get("action")
+            if kind == "face":
+                target = action.get("target") or {}
+                station = self.stations.get(action.get("target_object") or "")
+                if isinstance(target.get("x"), (int, float)) and isinstance(target.get("y"), (int, float)):
+                    tx, ty = float(target["x"]), float(target["y"])
+                elif station is not None:
+                    pos = station.get("pos") or [0.0, 0.0]
+                    tx, ty = float(pos[0]), float(pos[1])
+                else:
+                    continue
+                x, y = self.positions[chef]
+                self.facings[chef] = math.atan2(tx - x, ty - y)
+                continue
             station = self.stations.get(action.get("target_object") or "")
             if station is None:
                 continue
-            if kind == "face":
-                pos = station.get("pos") or [0.0, 0.0]
-                x, y = self.positions[chef]
-                self.facings[chef] = math.atan2(float(pos[0]) - x, float(pos[1]) - y)
-            elif kind == "interact":
+            if kind == "interact":
                 self._interact(chef, station, game_ms)
             elif kind == "work":
                 self._work(chef, station, game_ms)
@@ -3202,11 +3211,16 @@ class WorldSim(NavSim):
                     resource["state"] = "cooking"
                     resource["progress"] = 0.1
                     self._finish(chef)
+                    # 锅继续烧，2 s 墙钟后变 cooked；这不占用厨师，也不冻结时钟，
+                    # 让盘工序的 wait_ready 真的等一次状态变化。
+                    self.pending.append((time.monotonic() * 1000.0 + self.delay_ms,
+                                         chef, lambda: resource.__setitem__("state", "cooked")))
 
                 self._schedule(game_ms, chef, put_in_pot)
             elif resource.get("state") == "cooked" and resource.get("content"):
                 def take_cooked():
-                    self.holdings[chef] = resource["content"]
+                    self.holdings[chef] = self.products.get(station["id"],
+                                                            resource["content"])
                     resource["content"] = ""
                     resource["state"] = "free"
                     resource["progress"] = 0.0
@@ -3560,7 +3574,7 @@ def macro_configs(directory):
         {"id": "cook:CookedTomato", "op": "cook", "label": "CookedTomato",
          "resource": "cooker", "duration": 5.0},
         {"id": "plate:TomatoDish", "op": "plate", "label": "TomatoDish",
-         "resource": "plate_stack", "duration": 5.0},
+         "resource": "cooker", "duration": 5.0},
         {"id": "deliver:TomatoDish", "op": "deliver", "label": "TomatoDish",
          "resource": "serving", "duration": 5.0},
         {"id": "wash:CleanPlate", "op": "wash", "label": "CleanPlate",
@@ -3590,11 +3604,8 @@ def macro_configs(directory):
         path = directory / name
         path.write_text(json.dumps(payload, ensure_ascii=False))
         paths[name] = str(path)
-    products = {"container-0": "ChoppedTomato", "plate_stack-0": "TomatoDish"}
+    products = {"container-0": "ChoppedTomato", "cooker-0": "TomatoDish"}
     return paths, cells, stations, products
-
-
-MACRO_LOG = re.compile(r"macro_(\w+)\b.*?(?:macro=(\w+))?.*?(?:waited_ms=(\d+))?")
 
 
 def _macro_log_rows(path):
