@@ -128,6 +128,7 @@ bash scripts/eval-levels.sh s_wellcooked_demo_1                  # 主连通块�
 ```sh
 printf 'menu=1\n' > "$GAME_DIR/BepInEx/wellcooked-command.txt"   # 进关卡后发一次：导出这一关的菜谱表
 python3 scripts/export-kitchen.py                      # 读 state/terrain/menu → config/kitchen.json + config/recipes.json
+python3 scripts/export-kitchen.py --map-dir config/maps  # 按场景写 config/maps/<scene>/{kitchen,recipes}.json（四张演示地图）
 python3 scripts/export-kitchen.py --out /tmp/k.json --out-recipes /tmp/r.json   # 换输出位置（同一份输入两次输出字节相同）
 ```
 
@@ -139,6 +140,8 @@ python3 scripts/export-kitchen.py --out /tmp/k.json --out-recipes /tmp/r.json   
 两道菜共用同一中间产物时只有一个节点。工时目前是方案 §6.5 的默认值，文件里写了来源。
 仓库里的 `config/kitchen.example.json` 与 `config/recipes.example.json` 是 `s_city_h5` 的实测导出
 （20 个工位 / 546 格 / 4 道菜 / 20 个工序节点），Scheduler 与离线上界脚本可以直接拿它们离线开发。
+四张演示地图的导出在 `config/maps/s_wellcooked_demo_<N>/`，`--kitchen` / `--recipes` 指过去即可加载；
+`bridge/tests/test_map_configs.c` 在 `make test` 里逐个读这四个目录。
 
 注意两点：`load` 只换场景，**菜谱要新进程才刷新**；`load` 前要等虚拟手柄被游戏自己加入，否则没有厨师，
 地形采样会退化成兜底半径（连通性数字不可信）。

@@ -32,7 +32,8 @@
 
 - `BepInEx/wellcooked-state.json`：给人看与给 OS 侧导出用（`scripts/export-kitchen.py` 读它生成
   `config/kitchen.json` + `config/recipes.json`）。取不到的字段进 `missing` 数组，**不假装拿到了**。
-  同目录还有 `wellcooked-terrain.json`（可走格）与 `wellcooked-menu.json`（菜谱表，`menu=1` 导出）。
+  同目录还有 `wellcooked-terrain.json`（可走格，保留所有含厨师/工位的连通块）与
+  `wellcooked-menu.json`（菜谱表，`menu=1` 导出）。
 - `state_update`（TCP，**默认每帧**；`wellcooked-takeover.txt` 里写 `state_ms=<毫秒>` 就按间隔限流）：
   字段名以 `protocol/protocol.md` 为准，构造在 `plugin/Link/StateFrame.cs`。协议的分帧硬上限是单行 1 MiB；
   4 KB 是状态帧的**预算**（超过只在日志里警告一次，不截断也不丢弃 —— 见 `LinkRunner.MaxStateBytes`）。

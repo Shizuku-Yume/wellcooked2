@@ -8,6 +8,10 @@
 输出：一个文件说清"这个厨房有什么资源、地面怎么走"——Scheduler 和模拟器只读它，不再解析插件的原始 JSON。
 方案 §6.6 把 `config/kitchen.json` 定为 OS 侧的输入；为什么不用外部数据集见 `.workflow/maps/prior-art.md`。
 
+`--map-dir DIR` 按场景名写到 `DIR/<scene>/kitchen.json` 与 `recipes.json`（四张自制地图的
+固定位置，Scheduler / Worker 的 `--kitchen` / `--recipes` 直接指过去）；不给时仍写
+`config/kitchen.json` + `config/recipes.json`。
+
 工位去重与分类：
   - 同一个物体上常挂多个组件（`equipment_plate_01` 同时是 `ClientIngredientContainer` 与 `ClientPlate`），
     按**物体名**归一个工位，`types` 保留全部组件类型；
@@ -359,10 +363,17 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--state", default=DEFAULT_STATE)
     parser.add_argument("--terrain", default=DEFAULT_TERRAIN)
-    parser.add_argument("--out", default=DEFAULT_OUT)
+    parser.add_argument("--out", default=None,
+                        help="kitchen.json 输出路径（默认 %s）" % DEFAULT_OUT)
     parser.add_argument("--menu", default=DEFAULT_MENU)
-    parser.add_argument("--out-recipes", default=DEFAULT_OUT_RECIPES)
+    parser.add_argument("--out-recipes", default=None,
+                        help="recipes.json 输出路径（默认 %s）" % DEFAULT_OUT_RECIPES)
+    parser.add_argument("--map-dir", default=None,
+                        help="按场景名写到 <DIR>/<scene>/{kitchen,recipes}.json；"
+                             "与 --out/--out-recipes 互斥")
     args = parser.parse_args()
+    if args.map_dir and (args.out or args.out_recipes):
+        parser.error("--map-dir 不能和 --out/--out-recipes 一起用")
 
     for path in (args.state, args.terrain):
         if not os.path.exists(path):
@@ -371,6 +382,16 @@ def main():
 
     state = load(args.state)
     terrain = load(args.terrain)
+    scene = terrain.get("scene") or state.get("scene")
+    if args.map_dir:
+        if not scene:
+            print("导出文件里没有场景名，没法按地图目录写出", file=sys.stderr)
+            return 1
+        args.out = os.path.join(args.map_dir, scene, "kitchen.json")
+        args.out_recipes = os.path.join(args.map_dir, scene, "recipes.json")
+    else:
+        args.out = args.out or DEFAULT_OUT
+        args.out_recipes = args.out_recipes or DEFAULT_OUT_RECIPES
 
     stations, unknown = build_stations(state.get("stations") or [])
     step, indices, lookup, cells = grid_index(terrain)
@@ -378,7 +399,7 @@ def main():
     sizes = areas_of(indices, mask, lookup)
 
     kitchen = {
-        "scene": terrain.get("scene") or state.get("scene"),
+        "scene": scene,
         "generated": {
             "at": time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(os.path.getmtime(args.state))),
             "state_t": state.get("t"),

@@ -62,9 +62,10 @@ os-core 已经把 Supervisor / Scheduler / Worker 进程树、消息队列、FCF
 ### 每张地图的配置
 
 `config/maps/<scene>/` 放 `kitchen.json`、`recipes.json`、`zones.json`，四张地图各一份。
-前两个用 `scripts/export-kitchen.py` 从实机导出，导出结果为准（README §6 的工位表与
-`layout_*.tsv` 有出入，不手抄）。`zones.json` 手写，只给分区流水线用。Scheduler 与 Worker
-沿用现有的 kitchen/recipes 路径开关。
+前两个用 `scripts/export-kitchen.py --map-dir config/maps` 从实机导出，导出结果为准（README §6
+的工位表与 `layout_*.tsv` 有出入，不手抄）。`zones.json` 手写，只给分区流水线用。Scheduler 与
+Worker 沿用现有的 kitchen/recipes 路径开关。`grid.areas.count` 可以大于 1（`_2` 是两条互不
+相通的厨房条带），导航和距离场按连通块处理，不要把多个区域当成一块。
 
 ### L1 走位
 
@@ -319,8 +320,12 @@ C 部分是 `cd bridge && make test` 的单元检查；多进程行为用 `tools
 
 ## Open questions
 
-- **每格实际移动时间。** 决定 `path` 的转角容差和卡住阈值是否要按地图调。由实机测：任务 01
-  在 `_2` 上让一个厨师走直线 10 格，取均值。
+- **每格实际移动时间。** 已测（任务 01，2026-10-25）：`_2` 上让 1 号厨师沿 z=-7.2 的直线用
+  轴向输入走 3 段约 10 格（5.88 / 6.00 / 6.12 m），游戏时钟用时 1.071 / 1.080 / 1.052 s，
+  平均 **0.107 s/格**（约 5.5–5.8 m/s）；连续 10 格往返（20 格）实测 2.092–2.151 s。
+  `path` 的 0.15 m 转角容差与 2 s 卡住阈值不用按地图调——2 s 约 18 格，远大于相邻路点间距。
+  方法：插件的临时调试指令 `walk=slot,dx,dz,秒` 直接按轴喂输入（不走 Navigation），起止时刻取
+  游戏时钟、坐标取日志；测完该指令已删除，原始日志留在任务 01 的 Progress。
 - **砧板进度、脏盘数、厨师朝向能否从游戏读到。** `StateReader` 现在没有读；`WorkableItem`、
   脏盘台类型的字段要在插件里确认。由插件任务实测，读不到时 `chop`/`wash` 退回"工时 + 余量"
   计时完成，并在本文件里改写对应行。
@@ -340,12 +345,38 @@ C 部分是 `cd bridge && make test` 的单元检查；多进程行为用 `tools
 |---|---|---|
 | `_1` | 没有干净盘堆 | 盘子全靠洗，`wash` 是关键路径的一环 |
 | `_2` | 料箱在左（x=-7）、锅在右（x=21）、砧板在下（z=-16） | 天然左右分区，用来比较灵活与分区流水线 |
-| `_3` | 环形过道，菜谱 4 道 | 多厨师避让与死锁的主要测试图 |
+| `_3` | 环形过道，实机菜谱 3 道 | 多厨师避让与死锁的主要测试图 |
 | `_4` | 跨度最大（炸台 x=-11、砧板 x=29） | 路程权重 `w_d` 影响最大 |
 
-`levels/wellcooked_demo/README.md` §6 的工位数与 `layout_*.tsv` 不一致（`_1` 表写 4 料箱/3
-砧板，layout 是 6/2；`_4` 表写 4 砧板/2 出菜口/3 出生点，layout 是 2/1/4），没有核实哪份对，
-所以本 effort 只认导出。
+四张图的实测导出（2026-10-25，各在实机进关一次，`scripts/export-kitchen.py --map-dir config/maps`）：
+
+| 地图 | 可走格（连通区） | 逻辑工位 | 导出 kinds | `layout_*.tsv` 资源类物件 | 实机菜单 |
+|---|---|---|---|---|---|
+| `_1` | 288（1） | 20 | serving 1 / dispenser 6 / cooker 6 / sink 1 / container 6 | 17 | 2 道 |
+| `_2` | 350（**2**） | 17 | serving 1 / dispenser 5 / cooker 4 / sink 1 / clean_plate_stack 1 / plate_stack 1 / container 4 | 15 | 3 道 |
+| `_3` | 98（1） | 23 | serving 1 / dispenser 7 / cooker 6 / sink 1 / clean_plate_stack 1 / plate_stack 1 / container 6 | 19 | 3 道 |
+| `_4` | 223（1） | 23 | serving 1 / dispenser 7 / cooker 6 / sink 1 / clean_plate_stack 1 / plate_stack 1 / container 6 | 19 | 3 道 |
+
+`layout_*.tsv` 的资源类物件 = 料箱 + 砧板 + Cooker + FryingStation + 水槽 + 出菜口 +
+PlateReturn + CleanPlateStack（不含 art、spawn、counter、utensil）。差异（以导出为准）：
+
+- **砧板没有导出。** 每张 layout 有 2 个 `ChoppingCounter`，但插件 `AppendMap` 的组件表没有
+  `ClientWorkstation`，raw state 里也没有它们，所以导出 `chopping=0`。四张图的菜谱没有 cut
+  节点，本任务的加载检查不受影响；L2 的 `cut` 宏动作需要后续任务补这个导出字段。
+- **PlateReturn 没有导出。** layout 每张 1 个，raw state 没有对应组件；不参与当前资源模型。
+- `_1` 没有干净盘堆，`plate` 工序的 `resource=plate_stack` 找不到工位，Scheduler 启动会为
+  `plate:*` 节点报 `recipe_no_station`；这是 spec Notes 已记的缺口，由 wash 任务补，不是
+  kitchen/recipes 解析失败。
+- `_2/_3/_4` 的 `CleanPlateStack` 物体同时带 `ClientPlate`，按物体名拆成同坐标的
+  `clean_plate_stack` 与 `plate_stack` 两个工位；Scheduler 的 `plate` 工序用后者。
+- `Cooker` 与 `FryingStation` 都带 `ClientCookingStation`，导出合并成 `cooker`；锅/炸篮等
+  utensil 另算 `container`，所以导出工位数比 layout 的资源类物件多。
+- `_2` 的两条厨房条带（各 175 格）互不相通，`grid.areas.count=2`；其余三张图各 1 个可走区。
+- `layout_3.tsv`/`layout_4.tsv` 的 `# menu` 写 4 道（含 `Burrito_Beef_SO`），实机菜谱表是
+  3 道（无 Beef）；以后者为准。
+
+`levels/wellcooked_demo/README.md` §6 的工位数也与上表不一致（例如 `_1` 表写 4 料箱/3 砧板，
+layout 是 6/2），两份都不如导出可靠；本 effort 只认 `config/maps/` 里的导出。
 
 相关：`.workflow/specs/os-core.md`（进程树、mq、租约、FCFS/EDF）；game-bridge/05（两个厨师
 完成订单）与 game-bridge/13（自制关卡、导航卡住的记录）；方案 `overcooked_os_course_project.md`
