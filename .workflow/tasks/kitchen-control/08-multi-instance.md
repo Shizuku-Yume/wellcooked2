@@ -2,8 +2,10 @@
 
 **Effort:** kitchen-control
 **Task type:** feature
-**Base commit:** <commit-sha>
-**Base branch:** small/os-core-acceptance-fixes
+**Base commit:** dacd788388158ac06b3123ef742a1dfb18495b62
+**Base branch:** kitchen-control/04-navd-pibt
+**Started:** 2026-10-25T16:02:00+08:00
+**Status:** active
 
 **Delivers:** `python3 tools/instances.py up 3` 起 3 个 640×360 的 Overcooked2 实例，各有独立
 目录、端口 `14455 + k` 和一棵 `--instance k` 的进程树；`python3 tools/batch.py <清单>` 把实验
@@ -29,3 +31,13 @@
       结论写回 spec
 - [ ] 不给 `--instance` 时 IPC 名字与现在相同，`make test` 和现有场景不退化
 - [ ] 连跑结果定下默认 N，写回 spec Open questions
+
+## Progress
+
+Dirty at start: none
+
+- 从 `origin/kitchen-control/04-navd-pibt` 开分支，Base commit `dacd788`。前置 04 已在该分支
+  归档（`.workflow/done/kitchen-control/04-navd-pibt.md`，`Finished: 2026-10-25T15:58:00+08:00`），
+  02、03、01 的归档也在同一分支上。
+- Check before: 尚不能运行——`tools/instances.py`、`tools/batch.py` 还不存在。
+
