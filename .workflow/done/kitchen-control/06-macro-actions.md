@@ -106,3 +106,9 @@ mq→Worker 任务/事件、navtab 目标/计划槽、shm 世界状态只读、f
 - Branch: `kitchen-control/06-macro-actions-repair-A`，从 `origin/kitchen-control/06-macro-actions` (50624da) 建立；原本地分支由 kc-B worktree 占用，未切换或写入。
 - kc-A task09 未提交的五个路径已具名 stash 保护：`stash@{0}` / `2fc37466d6a7c084386d07741270178132d15f59`，`kc-A task09 dirty paths backup before 06 repair 2026-10-26`。恢复命令：先在 kc-A `git switch kitchen-control/09-real-game-two-chefs`，再 `git stash apply 2fc37466d6a7c084386d07741270178132d15f59`；核对五个路径后可另行 drop，当前不要 pop。
  - Final implementation and proof complete; the earlier blocked wording above is superseded by the DAG mapping and checks recorded in this task. `make test` and `macro,os-loop` are green; known workflow baseline validation errors remain unrelated.
+
+### PR #38 review fixes（2026-10-26）
+
+- Scheduler timeout and no-station terminal paths now release order cooker reservations exactly once; temporary `KOS_ERR_EMPTY` cooker exhaustion records a resource wait and keeps the order pending.
+- Plate source lookup walks recipe DAG predecessor edges to a reserved cook ancestor, so indirect assemble/intermediate nodes map to the correct physical cooker. Cold plates without a cook ancestor use a valid clean-plate-only macro; plate-stack capacity remains independent.
+- `test_macro` covers the cold clean-plate path; `macro,os-loop` proves delayed state transitions, all seven macro kinds, five completed tasks, order completion, and worker restart/requeue.

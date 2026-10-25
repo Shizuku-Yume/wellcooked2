@@ -188,6 +188,11 @@ static void test_expansions(const kos_kitchen *kitchen)
                plan.steps[3].kind == KOS_MACRO_WAIT_READY &&
                plan.steps[4].kind == KOS_MACRO_PICKUP,
            "plate = clean plate pickup + reserved pot wait/pickup");
+    expect(kos_macro_plan_build_with_source(kitchen, "plate", "plate:Sushi", plate, "",
+                                            "o2", 1000, &plan, &err) == KOS_OK &&
+               plan.step_count == 2 && plan.steps[1].kind == KOS_MACRO_PICKUP &&
+               strcmp(plan.steps[1].item, "Plate") == 0,
+           "cold plate = clean plate pickup only");
     expect(kos_macro_plan_build(kitchen, "deliver", "deliver:Dish", serving, "o1", 1000,
                                 &plan, &err) == KOS_OK &&
                plan.step_count == 2 && plan.steps[1].kind == KOS_MACRO_DELIVER,

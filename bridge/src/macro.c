@@ -167,15 +167,20 @@ int kos_macro_plan_build_with_source(const kos_kitchen *kitchen, const char *op,
         (void)add_step(out, KOS_MACRO_DROP, station_id, "", duration_ms);
         (void)add_step(out, KOS_MACRO_START_COOK, station_id, "", duration_ms);
     } else if (strcmp(op, "plate") == 0) {
-        if (item[0] == '\0' || source_station_id == NULL || source_station_id[0] == '\0' ||
-            kos_kitchen_station_index(kitchen, source_station_id) < 0) {
+        if (item[0] == '\0') {
             rc = KOS_ERR_INVAL;
         } else {
             (void)add_step(out, KOS_MACRO_GOTO, station_id, "", duration_ms);
             (void)add_step(out, KOS_MACRO_PICKUP, station_id, "Plate", duration_ms);
-            (void)add_step(out, KOS_MACRO_GOTO, source_station_id, "", duration_ms);
-            (void)add_step(out, KOS_MACRO_WAIT_READY, source_station_id, "", duration_ms);
-            (void)add_step(out, KOS_MACRO_PICKUP, source_station_id, item, duration_ms);
+            if (source_station_id != NULL && source_station_id[0] != '\0') {
+                if (kos_kitchen_station_index(kitchen, source_station_id) < 0) {
+                    rc = KOS_ERR_MISSING;
+                } else {
+                    (void)add_step(out, KOS_MACRO_GOTO, source_station_id, "", duration_ms);
+                    (void)add_step(out, KOS_MACRO_WAIT_READY, source_station_id, "", duration_ms);
+                    (void)add_step(out, KOS_MACRO_PICKUP, source_station_id, item, duration_ms);
+                }
+            }
         }
     } else if (strcmp(op, "deliver") == 0) {
         (void)add_step(out, KOS_MACRO_GOTO, station_id, "", duration_ms);
