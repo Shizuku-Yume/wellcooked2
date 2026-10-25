@@ -33,6 +33,30 @@ BEPINEX_LOG="${BEPINEX_LOG:-${GAME_DIR}/BepInEx/LogOutput.log}"
 # 的第二个独立证据，与日志行互不依赖 —— 只看日志会把"没启动"和"日志没写出来"混为一谈。
 PLUGIN_CFG="${GAME_DIR}/BepInEx/config/com.wellcooked.plugin.cfg"
 
+# 完整实机验收由调用方提供 supervisor 运行目录；默认仍保留 W8 的 Bridge 轻量检查。
+# REAL_GAME=1 时对整棵进程树的产物做严格断言，不把 fake_plugin 当作证据。
+REAL_GAME="${REAL_GAME:-0}"
+RUNTIME_DIR="${RUNTIME_DIR:-}"
+SCENE="${SCENE:-s_wellcooked_demo_2}"
+CHEFS="${CHEFS:-2}"
+
+assert_real_game() {
+    local run_dir decisions events scheduler navd worker0 worker1
+    [ "$REAL_GAME" = "1" ] || return 0
+    [ -n "$RUNTIME_DIR" ] || { say "REAL_GAME=1 需要 RUNTIME_DIR"; return 2; }
+    run_dir="$(find "$RUNTIME_DIR/runs" -mindepth 1 -maxdepth 1 -type d | sort | tail -n 1)"
+    decisions="$run_dir/decisions.jsonl"; events="$run_dir/events.jsonl"
+    scheduler="$RUNTIME_DIR/logs/scheduler.log"; navd="$RUNTIME_DIR/logs/navd.log"
+    worker0="$RUNTIME_DIR/logs/worker-0.log"; worker1="$RUNTIME_DIR/logs/worker-1.log"
+    [ -s "$decisions" ] && grep -q '"kind":"dispatch"' "$decisions" || { say "FAIL real-game: 无 dispatch"; return 1; }
+    grep -q '"kind":"order_completed"' "$events" || { say "FAIL real-game: 无 order_completed"; return 1; }
+    grep -q 'macro_start' "$worker0" && grep -q 'macro_done' "$worker0" || { say "FAIL real-game: worker-0 宏链不完整"; return 1; }
+    [ "$CHEFS" -lt 2 ] || { grep -q 'macro_start' "$worker1" || { say "FAIL real-game: worker-1 未执行宏动作"; return 1; }; }
+    grep -q 'nav_plan' "$navd" || { say "FAIL real-game: navd 无 path 放行"; return 1; }
+    ! grep -Eiq 'gamepad|joystick|manual input|手柄输入' "$scheduler" "$worker0" "$worker1" || { say "FAIL real-game: 发现手动输入"; return 1; }
+    say "PASS real-game: scene=$SCENE chefs=$CHEFS score/order/macro/navd assertions"
+}
+
 BRIDGE_PID=""
 
 cleanup() {
@@ -128,7 +152,8 @@ while :; do
             fi
         fi
         say "------------------------------------------------------------------"
-        exit 0
+        assert_real_game
+        exit $?
     fi
 
     if [ "$(date +%s)" -ge "$deadline" ]; then

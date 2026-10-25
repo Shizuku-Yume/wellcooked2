@@ -1630,6 +1630,11 @@ static int build_candidates(scheduler *s, int64_t now, const int *chef_cells,
                 break;
             }
             if (!station_reachable(s, station, chef_cells, chef_count)) {
+                kos_log_debug(s->rt.log, "task_station_unreachable",
+                              "order=%s node=%s station=%d idle=%d chef_cells=%d,%d",
+                              order->id, s->recipes.nodes[task->node_index].id, station,
+                              chef_count, chef_count > 0 ? chef_cells[0] : -1,
+                              chef_count > 1 ? chef_cells[1] : -1);
                 continue;
             }
             out[n].order_index = i;

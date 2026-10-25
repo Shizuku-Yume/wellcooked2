@@ -85,3 +85,5 @@ DEBUG/探针查 `task_dispatch_ready`、`task_station_index`、`station_reachabl
 
 实机结束已还原 `BepInEx/wellcooked-takeover.txt` 与 `wellcooked-orders.json`、删除 command 文件，
 并删除 `/tmp/wellcooked-game.lock`；游戏与 supervisor 已停止。
+
+**2026-10-25T18:00 继续联调：** `build_candidates()` 现在对因当前空闲厨师所在连通区不可达而跳过的工序写 `task_station_unreachable`（带 station 与 compact idle chef cell），用于区分工序依赖未就绪和 `_2` 两条厨房带的站位不可达；`run-real-game.sh` 增加 `REAL_GAME=1 RUNTIME_DIR=... SCENE=... CHEFS=...` 的 supervisor 全树断言入口（order_completed、双 worker 宏链、navd 放行、无手动输入）。实机重跑前仍需锁定共享游戏资源；未将轻量 W8 证据冒充 W9/W11。
