@@ -643,9 +643,11 @@ namespace WellCooked
 
             float minX = float.MaxValue, maxX = float.MinValue, minZ = float.MaxValue, maxZ = float.MinValue;
             var anchors = new List<Vector3>();
+            var chefAnchors = new List<Vector3>();
             foreach (var chef in UnityEngine.Object.FindObjectsOfType<PlayerControls>())
             {
                 anchors.Add(chef.transform.position);
+                chefAnchors.Add(chef.transform.position);
             }
 
             foreach (var station in FindAll("ClientIngredientContainer"))
@@ -759,8 +761,10 @@ namespace WellCooked
 
             // 建完边再筛连通块：放在建边之前的话，边表还是全 false，
             // 每个格子都成了独立块，最大块只剩 1 格（实测 可走格 1/308）。
+            // 选块不能只看大小：自制地图的外围装饰地面可能比厨房大（_2 实测外围
+            // 281 格 > 每个厨房条带 175 格），按最大块会把厨师和工位都留在网格外。
             int blocks;
-            int dropped = KeepLargestComponent(out blocks);
+            int dropped = KeepPlayableComponents(chefAnchors, anchors, out blocks);
 
             // 只写保留下来的格子：过滤前那份列表会把丢掉的格子也写进文件，
             // 而导航用的是过滤后的 `_walkable`——两边对不上，OS 侧读到的地图就多出孤岛。
@@ -868,18 +872,49 @@ namespace WellCooked
             return 0.35f;
         }
 
+        /// <summary>锚点（厨师/工位）最近的已采样格属于哪个连通块；都没有返回 0。</summary>
+        private static int NearestComponent(int[,] component, Vector3 anchor)
+        {
+            int best = 0;
+            float bestDistance = float.MaxValue;
+            for (int i = 0; i < _cellsX; i++)
+            {
+                for (int j = 0; j < _cellsZ; j++)
+                {
+                    if (!_walkable[i, j] || component[i, j] == 0)
+                    {
+                        continue;
+                    }
+                    Vector2 center = CellCenter(i, j);
+                    float dx = center.x - anchor.x;
+                    float dz = center.y - anchor.z;
+                    float distance = dx * dx + dz * dz;
+                    if (distance < bestDistance)
+                    {
+                        bestDistance = distance;
+                        best = component[i, j];
+                    }
+                }
+            }
+            return best;
+        }
+
         /// <summary>
-        /// 只保留最大的连通块。物理采样难免留下"口袋"（一小片孤立可走格），
-        /// 厨师走进去就再也出不来：起点格在口袋里，A* 到哪都报不可达（实测卡死在 20.56,-3.13）。
-        /// 把口袋从可走表里去掉，起点就会就近跳到主区。
+        /// 保留所有含厨师（没有厨师时含工位）的连通块，丢掉其余"口袋"。
+        ///
+        /// 物理采样难免留下孤立可走格，必须从可走表里去掉，否则厨师走进去就再也出不来。
+        /// 但"最大块"不等于"可玩区"：自制地图的外围装饰地面可能比厨房还大（`_2` 实测
+        /// 外围 281 格 > 每个厨房条带 175 格），按最大块会把所有厨师和工位留在网格外；
+        /// `_2` 又按设计分成两条互不相通的厨房条带，所以也不能只挑一块——凡是有厨师的
+        /// 块都要保留，没有厨师的块才是口袋。没有厨师时（关卡评估）按工位锚点保留。
         /// </summary>
-        private static int KeepLargestComponent(out int blocks)
+        private static int KeepPlayableComponents(List<Vector3> chefs, List<Vector3> anchors,
+                                                  out int blocks)
         {
             var component = new int[_cellsX, _cellsZ];
             var queue = new Queue<int>();
+            var sizes = new List<int> { 0 }; // 下标 = label，sizes[0] 不用
             // label 数就是连通块数：>1 说明厨房被隔断（有走不到的区域），挑关卡时要看这个
-            int best = 0;
-            int bestSize = 0;
             int label = 0;
 
             for (int i = 0; i < _cellsX; i++)
@@ -925,21 +960,70 @@ namespace WellCooked
                         }
                     }
 
-                    if (size > bestSize)
-                    {
-                        bestSize = size;
-                        best = label;
-                    }
+                    sizes.Add(size);
                 }
             }
 
             blocks = label;
+            var keep = new bool[label + 1];
+            int kept = 0;
+            if (chefs != null && chefs.Count > 0)
+            {
+                foreach (var chef in chefs)
+                {
+                    int l = NearestComponent(component, chef);
+                    if (l > 0 && !keep[l])
+                    {
+                        keep[l] = true;
+                        kept++;
+                    }
+                }
+            }
+            if (kept == 0 && anchors != null && anchors.Count > 0)
+            {
+                foreach (var anchor in anchors)
+                {
+                    int l = NearestComponent(component, anchor);
+                    if (l > 0 && !keep[l])
+                    {
+                        keep[l] = true;
+                        kept++;
+                    }
+                }
+            }
+            if (kept == 0)
+            {
+                int best = 0;
+                int bestSize = 0;
+                for (int l = 1; l <= label; l++)
+                {
+                    if (sizes[l] > bestSize)
+                    {
+                        bestSize = sizes[l];
+                        best = l;
+                    }
+                }
+                if (best > 0)
+                {
+                    keep[best] = true;
+                    kept = 1;
+                }
+            }
+
+            var debug = new StringBuilder("state: 连通块 " + label + " 个");
+            for (int l = 1; l <= label; l++)
+            {
+                debug.Append(' ').Append(l).Append('=').Append(sizes[l])
+                     .Append(keep[l] ? "保留" : "丢掉");
+            }
+            _log.LogInfo(debug.ToString());
+
             int dropped = 0;
             for (int i = 0; i < _cellsX; i++)
             {
                 for (int j = 0; j < _cellsZ; j++)
                 {
-                    if (_walkable[i, j] && component[i, j] != best)
+                    if (_walkable[i, j] && !keep[component[i, j]])
                     {
                         _walkable[i, j] = false;
                         dropped++;
