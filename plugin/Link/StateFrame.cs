@@ -61,10 +61,9 @@ namespace WellCooked
 
             var timer = WorldState.Get(flow, "RoundTimer");
             var elapsed = timer == null ? null : WorldState.Get(timer, "TimeElapsed");
-            if (elapsed != null)
-            {
-                b.FieldNum("game_time", ToDouble(elapsed));
-            }
+            double sec = elapsed == null ? 0.0 : ToDouble(elapsed);
+            b.FieldNum("game_time", sec);
+            b.FieldInt("game_time_ms", (long)Math.Round(sec * 1000.0));
 
             var points = flow == null || team == null ? null : WorldState.Invoke(flow, "GetPoints", team);
             if (points != null)
@@ -103,6 +102,8 @@ namespace WellCooked
                 // （实测 'One' → 0、'Two' → 1），与 `Takeover` 的槽号、Bridge 的 slot 一致。
                 b.FieldInt("id", (int)provider.GetID());
                 b.Key("position").Obj().FieldNum("x", p.x).FieldNum("y", p.z).EndObj();
+                var forward = chef.transform.forward;
+                b.FieldNum("facing", Math.Atan2(forward.x, forward.z));
                 if (held == null)
                 {
                     b.FieldNull("holding");
@@ -205,6 +206,8 @@ namespace WellCooked
             AppendPots(b);
             AppendCuttingBoards(b);
             AppendPlateStack(b);
+            AppendDirtyPlates(b);
+            AppendSinks(b);
             b.EndObj();
             _resources = b.ToString();
             return _resources;
@@ -213,38 +216,9 @@ namespace WellCooked
         /// <summary>锅：`pot_&lt;N&gt;` 按位置排序编号，键名与 C 侧的前缀分类一致。</summary>
         private static void AppendPots(JsonBuilder b)
         {
-            var getHandlers = WorldState.StaticMethod("ServerCookingHandler", "GetCookingHandlers");
-            var handlers = getHandlers == null ? null : AsEnumerable(getHandlers.Invoke(null, null));
-            if (handlers == null)
-            {
-                return;
-            }
-
-            var sorted = new List<KeyValuePair<Vector2, object>>();
-            foreach (var handler in handlers)
-            {
-                if (handler == null)
-                {
-                    continue;
-                }
-
-                // ServerCookingHandler 不是 Component：位置从它交出的 CookingHandler 上取
-                var component = handler as Component ?? WorldState.Get(handler, "GetCookingHandler") as Component;
-                if (component == null)
-                {
-                    continue;
-                }
-
-                var p = component.transform.position;
-                sorted.Add(new KeyValuePair<Vector2, object>(new Vector2(p.x, p.z), handler));
-            }
-
-            sorted.Sort(delegate(KeyValuePair<Vector2, object> a, KeyValuePair<Vector2, object> c)
-            {
-                int byX = a.Key.x.CompareTo(c.Key.x);
-                return byX != 0 ? byX : a.Key.y.CompareTo(c.Key.y);
-            });
-
+            // 编号顺序与 `face.target_object` 的解析共用 `Kitchen` 里的同一份排序，
+            // 否则 pot_3 在两处可能指不同的锅。
+            var sorted = Kitchen.SortedCookingHandlers();
             for (int i = 0; i < sorted.Count; i++)
             {
                 var handler = sorted[i].Value;
@@ -325,14 +299,9 @@ namespace WellCooked
         private static void AppendCuttingBoards(JsonBuilder b)
         {
             int index = 0;
-            foreach (var found in WorldState.FindAll("ClientWorkstation"))
+            foreach (var board in Kitchen.ChoppingBoards())
             {
-                var unity = found as Component;
-                if (unity == null || !IsChoppingBoard(unity.gameObject.name))
-                {
-                    continue;
-                }
-
+                var unity = board.Component;
                 var attach = unity.gameObject.GetComponent("ClientAttachStation");
                 b.Key("cutting_board_" + index).Obj();
                 if (attach == null)
@@ -342,9 +311,25 @@ namespace WellCooked
                 }
                 else
                 {
-                    b.Field("state", WorldState.Get(attach, "m_item") != null ? "occupied" : "free");
+                    var item = WorldState.Get(attach, "m_item") as Component;
+                    b.Field("state", item != null ? "occupied" : "free");
+                    if (item != null)
+                    {
+                        b.Field("content", item.gameObject.name);
+                        var workableItem = item.gameObject.GetComponent("ClientWorkableItem");
+                        if (workableItem != null)
+                        {
+                            // 游戏自己的 `GetProgress()` 就是 `m_progress / (m_stages - 1)`
+                            // （ClientWorkableItem.GetProgress），不必再猜字段类型。
+                            var progressValue = WorldState.Invoke(workableItem, "GetProgress");
+                            if (progressValue != null)
+                            {
+                                double progress = ToDouble(progressValue);
+                                b.FieldNum("progress", Math.Min(1.0, Math.Max(0.0, progress)));
+                            }
+                        }
+                    }
                 }
-
                 b.EndObj();
                 index++;
             }
@@ -375,13 +360,57 @@ namespace WellCooked
             b.Key("plate_stack").Obj().FieldInt("count", count).EndObj();
         }
 
-        // ---------------- 小工具 ----------------
-
-        private static bool IsChoppingBoard(string name)
+        /// <summary>脏盘台：`dirty_plates` 上的盘子数。</summary>
+        private static void AppendDirtyPlates(JsonBuilder b)
         {
-            return name.IndexOf("Chop", StringComparison.OrdinalIgnoreCase) >= 0
-                   || name.IndexOf("Cut", StringComparison.OrdinalIgnoreCase) >= 0;
+            long count = 0;
+            foreach (var stack in WorldState.FindAll("ClientDirtyPlateStack"))
+            {
+                var cVal = WorldState.Invoke(stack, "GetCount");
+                if (cVal == null)
+                {
+                    cVal = WorldState.Get(stack, "m_plateCount");
+                }
+                if (cVal != null)
+                {
+                    count += (long)ToDouble(cVal);
+                }
+            }
+            b.Key("dirty_plates").Obj().Field("state", count > 0 ? "occupied" : "free").FieldInt("count", count).EndObj();
         }
+
+        /// <summary>水槽：`sink_&lt;N&gt;` 的进度与盘数。</summary>
+        private static void AppendSinks(JsonBuilder b)
+        {
+            int index = 0;
+            foreach (var found in WorldState.FindAll("ClientWashingStation"))
+            {
+                var unity = found as Component;
+                if (unity == null) continue;
+                var isWashingVal = WorldState.Get(unity, "m_isWashing");
+                bool isWashing = isWashingVal is bool bw && bw;
+                var plateCountVal = WorldState.Get(unity, "m_plateCount");
+                int plateCount = plateCountVal is int pc ? pc : 0;
+                var timerVal = WorldState.Get(unity, "m_cleaningTimer");
+                float timer = timerVal is float tf ? tf : 0f;
+                float total = 3f;
+                var ws = WorldState.Get(unity, "m_washingStation");
+                if (ws != null)
+                {
+                    var totVal = WorldState.Get(ws, "m_cleanPlateTime");
+                    if (totVal is float tff && tff > 0f) total = tff;
+                }
+                double prog = total > 0f ? Math.Min(1.0, Math.Max(0.0, (double)timer / total)) : 0.0;
+                b.Key("sink_" + index).Obj()
+                    .Field("state", isWashing ? "washing" : (plateCount > 0 ? "occupied" : "free"))
+                    .FieldInt("count", plateCount)
+                    .FieldNum("progress", prog)
+                    .EndObj();
+                index++;
+            }
+        }
+
+        // ---------------- 小工具 ----------------
 
         private static bool IsTrue(object value)
         {

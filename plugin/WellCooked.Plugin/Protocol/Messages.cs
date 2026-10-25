@@ -32,6 +32,8 @@ namespace WellCooked.Protocol
         public int state_interval_ms;
         public string input_mode;
         public string strategy;
+        public int seq;
+        public Vec2[] waypoints;
     }
 
     /// <summary>

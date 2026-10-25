@@ -559,6 +559,7 @@ static void world_from_state_update(const proto_state_update *up, kos_world_stat
     kos_world_state_reset(world);
     world->score = double_to_ll(up->score);
     world->game_time = double_to_ll(up->game_time);
+    world->game_time_ms = up->game_time_ms;
 
     chefs = up->chef_count;
     if (chefs > KOS_SHM_MAX_CHEFS) {
@@ -572,6 +573,7 @@ static void world_from_state_update(const proto_state_update *up, kos_world_stat
         dst->id = (int32_t)src->id;
         dst->x = double_to_float(src->x);
         dst->y = double_to_float(src->y);
+        dst->facing = double_to_float(src->facing);
         copy_str(dst->holding, sizeof dst->holding, src->holding);
         copy_str(dst->state, sizeof dst->state, src->state);
     }
@@ -617,6 +619,7 @@ static void world_from_state_update(const proto_state_update *up, kos_world_stat
         dst->time_left = src->has_time_left ? double_to_float(src->time_left) : 0.0f;
         dst->chef_id = src->has_chef_id ? (int32_t)src->chef_id : -1;
         dst->count = src->has_count ? (int32_t)src->count : 0;
+        dst->progress = src->has_progress ? double_to_float(src->progress) : 0.0f;
     }
 }
 
@@ -730,6 +733,42 @@ static int build_action_from_slot(int chef, const kos_input_action *action,
         return protocol_build_action_pickup(chef, out, cap, len);
     case KOS_ACTION_DASH:
         return protocol_build_action_dash(chef, out, cap, len);
+    case KOS_ACTION_PATH: {
+        proto_waypoint wps[PROTO_MAX_WAYPOINTS];
+        size_t count = action->waypoint_count;
+        if (count == 0 || count > PROTO_MAX_WAYPOINTS) {
+            return PROTO_ERR_RANGE;
+        }
+        for (size_t w = 0; w < count; w++) {
+            if (!double_is_finite(action->waypoints[w].x)
+                || !double_is_finite(action->waypoints[w].y)) {
+                return PROTO_ERR_RANGE;
+            }
+            wps[w].x = action->waypoints[w].x;
+            wps[w].y = action->waypoints[w].y;
+        }
+        return protocol_build_action_path(chef, (long long)action->seq, wps, count, out, cap, len);
+    }
+    case KOS_ACTION_FACE: {
+        /* target_object 优先：Worker 只能用一个空串表示"没有具名目标"，
+         * 坐标 0,0 是个合法位置，不能拿它当"没给坐标"。 */
+        int has_target = 0;
+        if (action->target_object[0] == '\0'
+            && double_is_finite(action->target_x) && double_is_finite(action->target_y)) {
+            has_target = 1;
+        }
+        if (!has_target && action->target_object[0] == '\0') {
+            return PROTO_ERR_MISSING;
+        }
+        return protocol_build_action_face(chef, has_target, action->target_x, action->target_y,
+                                          action->target_object, out, cap, len);
+    }
+    case KOS_ACTION_WORK: {
+        if (action->target_object[0] == '\0') {
+            return PROTO_ERR_MISSING;
+        }
+        return protocol_build_action_work(chef, action->target_object, out, cap, len);
+    }
     case KOS_ACTION_STOP:
     case KOS_ACTION_NONE:
         return PROTO_ERR_TYPE; /* the idle path: the caller sends `stop` itself */
@@ -753,6 +792,9 @@ static void dispatch_pending(bridge *b, uint64_t missing, int timed_out)
     int interacted = 0;
     int picked_up = 0;
     int dashed = 0;
+    int pathed = 0;
+    int faced = 0;
+    int worked = 0;
     int idle = 0;
     int sent = 0;
     int k;
@@ -805,6 +847,12 @@ static void dispatch_pending(bridge *b, uint64_t missing, int timed_out)
                 picked_up++;
             } else if (action.kind == KOS_ACTION_DASH) {
                 dashed++;
+            } else if (action.kind == KOS_ACTION_PATH) {
+                pathed++;
+            } else if (action.kind == KOS_ACTION_FACE) {
+                faced++;
+            } else if (action.kind == KOS_ACTION_WORK) {
+                worked++;
             }
         }
         if (built != PROTO_OK) {
@@ -831,9 +879,9 @@ static void dispatch_pending(bridge *b, uint64_t missing, int timed_out)
     }
     kos_log_info(b->log, "actions_sent",
                  "frame=%" PRIu64 " chefs=%d sent=%d idle=%d move=%d interact=%d "
-                 "pickup=%d dash=%d timed_out=%d",
+                 "pickup=%d dash=%d path=%d face=%d work=%d timed_out=%d",
                  b->pending_frame, b->chefs, sent, idle, moved, interacted, picked_up, dashed,
-                 timed_out);
+                 pathed, faced, worked, timed_out);
 
     b->pending = 0;
     b->frames_dispatched++;
@@ -929,9 +977,11 @@ static void on_state_update(bridge *b, const proto_state_update *up, const proto
 
     kos_log_debug(b->log, "state_update",
                   "frame=%" PRId64 " chefs=%zu orders=%zu resources=%zu score=%" PRId64
-                  " game_time=%" PRId64 " dropped=%zu truncated=%zu pending=%d",
+                  " game_time=%" PRId64 " game_time_ms=%" PRId64
+                  " dropped=%zu truncated=%zu pending=%d",
                   b->frames, up->chef_count, up->order_count, up->resource_count,
                   double_to_ll(up->score), double_to_ll(up->game_time),
+                  (int64_t)up->game_time_ms,
                   diag != NULL ? diag->dropped_items : 0,
                   diag != NULL ? diag->truncated_strings : 0, b->pending);
 
@@ -1010,8 +1060,19 @@ static void handle_message(bridge *b, const char *buf, size_t len)
     case PROTO_MSG_STATE_UPDATE:
         rc = protocol_parse_state_update(root, &state_update, &diag);
         if (rc != PROTO_OK) {
-            kos_log_warn(b->log, "parse_error", "type=state_update reason=%s",
-                         protocol_strerror(rc));
+            /* The one missing field the whole Linux side times on deserves a
+             * message a person can act on: the generic "required field is
+             * missing" does not say which field, and its usual cause is an
+             * old plugin build. */
+            if (rc == PROTO_ERR_MISSING && json_object_get(root, "game_time_ms") == NULL) {
+                kos_log_warn(b->log, "parse_error",
+                             "type=state_update reason=missing game_time_ms (required since "
+                             "shm version %u) dropped=1",
+                             (unsigned)KOS_SHM_VERSION);
+            } else {
+                kos_log_warn(b->log, "parse_error", "type=state_update reason=%s",
+                             protocol_strerror(rc));
+            }
             break;
         }
         on_state_update(b, &state_update, &diag);
@@ -1086,9 +1147,15 @@ static void handle_message(bridge *b, const char *buf, size_t len)
         }
         /* The plugin acks every action; a nack is its business, not an error
          * for us, so this never escalates past DEBUG. */
-        kos_log_debug(b->log, "plugin_ack",
-                      "chef=%" PRId64 " action=%s ok=%d detail=%s",
-                      (int64_t)ack.chef_id, ack.action, ack.ok, ack.detail);
+        if (ack.has_seq) {
+            kos_log_debug(b->log, "plugin_ack",
+                          "chef=%" PRId64 " action=%s ok=%d seq=%" PRId64 " detail=%s",
+                          (int64_t)ack.chef_id, ack.action, ack.ok, (int64_t)ack.seq, ack.detail);
+        } else {
+            kos_log_debug(b->log, "plugin_ack",
+                          "chef=%" PRId64 " action=%s ok=%d detail=%s",
+                          (int64_t)ack.chef_id, ack.action, ack.ok, ack.detail);
+        }
         break;
     }
 

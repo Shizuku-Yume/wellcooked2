@@ -226,7 +226,8 @@ namespace WellCooked.Conformance
         private const string PluginVersion = "0.1.0";
         private static readonly string[] HostActions =
         {
-            "move", "stop", "press", "release", "tap", "pickup", "dash", "interact"
+            "move", "stop", "press", "release", "tap", "pickup", "dash", "interact",
+            "path", "face", "work"
         };
 
         private readonly Options _opt;

@@ -46,11 +46,13 @@ DEFAULT_LISTEN_PORT = 14455     # Bridge 作服务端时的默认端口（两端
 DEFAULT_CONNECT_PORT = 14455    # 插件作服务端时的默认端口，Bridge --link connect 去连它
 HELLO_INSTANCE = "windows-host"
 HELLO_VERSION = "0.1.0"
-HELLO_ACTIONS = ("move", "stop", "press", "release", "tap", "pickup", "dash", "interact")
+HELLO_ACTIONS = ("move", "stop", "press", "release", "tap", "pickup", "dash", "interact",
+                 "path", "face", "work")
 IDLE_ACTION = "stop"            # 输入槽缺失时 Bridge 下发的空闲动作
 # 线上 action 枚举（protocol/protocol.md §3.6 + schema/action.schema.json）：插件会做八个，
-# 但能调度到的只有这五个。收到别的名字说明 Bridge 与契约不一致，要当硬错误。
-WIRE_ACTIONS = ("move", "stop", "interact", "pickup", "dash")
+# 桥能下发的也是这八个（path/face/work 在 kitchen-control 任务 02 上线）。
+# 收到别的名字说明 Bridge 与契约不一致，要当硬错误。
+WIRE_ACTIONS = ("move", "stop", "interact", "pickup", "dash", "path", "face", "work")
 
 EXIT_OK = 0
 EXIT_FAIL = 1
@@ -59,7 +61,7 @@ EXIT_SKIP = 77
 
 SCENARIOS = ("happy", "one-slot", "no-heartbeat", "bad-frames", "connect-mode",
              "reconnect-storm", "silent-connect", "data-shapes", "second-peer",
-             "pickup-dash", "input-grace", "os-loop", "os-resources")
+             "pickup-dash", "path-face-work", "input-grace", "os-loop", "os-resources")
 
 # 日志行 = "ISO8601(毫秒) 级别 事件名 key=value ..."（bridge/src/log.c）。
 # 只认行首这个位置上的事件名：key=value 里出现同名词不算一次事件。
@@ -185,9 +187,12 @@ def msg_heartbeat(now=None):
                   "timestamp": int(time.time() if now is None else now)})
 
 
-def msg_ack(action, chef_id, ok=True, detail=""):
-    return jdump({"type": "ack", "action": action or "", "chef_id": int(chef_id),
-                  "ok": bool(ok), "detail": detail or ""})
+def msg_ack(action, chef_id, ok=True, detail="", seq=None):
+    out = {"type": "ack", "action": action or "", "chef_id": int(chef_id),
+           "ok": bool(ok), "detail": detail or ""}
+    if seq is not None:
+        out["seq"] = int(seq)
+    return jdump(out)
 
 
 def msg_echo(token):
@@ -207,7 +212,7 @@ def msg_state_update(n_chefs, frame_index, flat_xy=False, edge_fields=False):
     for i in range(n_chefs):
         x = round(10.5 + 1.25 * i, 3)
         y = round(5.2 + 0.75 * i, 3)
-        chef = {"id": i, "position": {"x": x, "y": y},
+        chef = {"id": i, "position": {"x": x, "y": y}, "facing": 0.0,
                 "holding": "tomato" if i % 2 == 0 else None,
                 "state": "moving" if i % 2 == 0 else "idle"}
         if flat_xy:
@@ -226,6 +231,7 @@ def msg_state_update(n_chefs, frame_index, flat_xy=False, edge_fields=False):
         "type": "state_update",
         "timestamp": int(time.time()),
         "game_time": frame_index // 60,
+        "game_time_ms": int((frame_index / 60.0) * 1000),
         "score": 450,
         "chefs": chefs,
         "orders": [{"id": "order_001", "recipe": "salad", "time_remaining": 45,
@@ -250,12 +256,13 @@ def msg_state_update_os(chefs, frame_index, cells):
     out = []
     for i in range(chefs):
         cell = picks[i % len(picks)]
-        out.append({"id": i, "position": {"x": cell[0], "y": cell[1]},
+        out.append({"id": i, "position": {"x": cell[0], "y": cell[1]}, "facing": 0.0,
                     "holding": None, "state": "idle"})
     msg = {
         "type": "state_update",
         "timestamp": int(time.time()),
         "game_time": frame_index // 30,
+        "game_time_ms": int((frame_index / 30.0) * 1000),
         "score": 0,
         "chefs": out,
         "orders": [
@@ -293,6 +300,28 @@ def validate_action(msg):
         target_object = msg.get("target_object")
         if not isinstance(target_object, str) or not target_object:
             errs.append("interact without a target_object")
+    elif action == "path":
+        seq = msg.get("seq")
+        if not isinstance(seq, int) or isinstance(seq, bool) or seq < 0:
+            errs.append("path without non-negative seq")
+        waypoints = msg.get("waypoints")
+        if not isinstance(waypoints, list) or len(waypoints) < 1 or len(waypoints) > 8:
+            errs.append("path waypoints must be list of 1..8 items")
+        else:
+            for idx, wp in enumerate(waypoints):
+                if not isinstance(wp, dict) or not isinstance(wp.get("x"), (int, float)) or not isinstance(wp.get("y"), (int, float)):
+                    errs.append("path waypoint %d invalid" % idx)
+    elif action == "face":
+        target = msg.get("target")
+        target_obj = msg.get("target_object")
+        has_target = isinstance(target, dict) and isinstance(target.get("x"), (int, float)) and isinstance(target.get("y"), (int, float))
+        has_obj = isinstance(target_obj, str) and bool(target_obj)
+        if not has_target and not has_obj:
+            errs.append("face requires target or target_object")
+    elif action == "work":
+        target_obj = msg.get("target_object")
+        if not isinstance(target_obj, str) or not target_obj:
+            errs.append("work without a target_object")
     elif action not in WIRE_ACTIONS:
         errs.append("action %r is not on the wire (allowed: %s)"
                     % (action, "/".join(WIRE_ACTIONS)))
@@ -695,9 +724,12 @@ def _absorb(msg, stats, link, ack_actions, chefs):
         if ack_actions and link is not None:
             chef_id = msg.get("chef_id")
             ok = not errs
-            if _safe_send(link, stats, msg_ack(msg.get("action", ""),
+            action = msg.get("action", "")
+            seq = msg.get("seq") if action == "path" else None
+            if _safe_send(link, stats, msg_ack(action,
                                                chef_id if isinstance(chef_id, int) else -1,
-                                               ok, "fake_plugin executed" if ok else "rejected"),
+                                               ok, "fake_plugin executed" if ok else "rejected",
+                                               seq),
                           "ack"):
                 stats.tx_acks += 1
     elif mtype == "echo_reply":
@@ -988,6 +1020,7 @@ class SupervisorProc:
 
 class _Chef(ctypes.Structure):
     _fields_ = [("id", ctypes.c_int32), ("x", ctypes.c_float), ("y", ctypes.c_float),
+                ("facing", ctypes.c_float),
                 ("holding", ctypes.c_char * 32), ("state", ctypes.c_char * 24)]
 
 
@@ -1000,11 +1033,13 @@ class _Order(ctypes.Structure):
 class _Resource(ctypes.Structure):
     _fields_ = [("name", ctypes.c_char * 32), ("state", ctypes.c_char * 24),
                 ("content", ctypes.c_char * 32), ("time_left", ctypes.c_float),
+                ("progress", ctypes.c_float),
                 ("chef_id", ctypes.c_int32), ("count", ctypes.c_int32)]
 
 
 class _World(ctypes.Structure):
     _fields_ = [("score", ctypes.c_int64), ("game_time", ctypes.c_int64),
+                ("game_time_ms", ctypes.c_int64),
                 ("chef_count", ctypes.c_uint32), ("reserved0", ctypes.c_uint32),
                 ("chefs", _Chef * 8),
                 ("order_count", ctypes.c_uint32), ("reserved1", ctypes.c_uint32),
@@ -1370,11 +1405,13 @@ class Ctx:
         runs = sorted((self.runtime_dir / "runs").glob("*"))
         return runs[-1] if runs else None
 
-    def start_stub(self, *, slot, chefs, hz, duration, kind="move"):
+    def start_stub(self, *, slot, chefs, hz, duration, kind="move", waypoints=None):
         binary = Path(self.args.worker_stub)
         argv = ["--state-name", self.state_name, "--sem-name", self.sem_name,
                 "--chefs", str(chefs), "--slot", str(slot),
                 "--hz", str(hz), "--duration", str(duration), "--kind", kind]
+        if waypoints is not None:
+            argv.extend(["--waypoints", str(waypoints)])
         console = Path(str(self.log_path) + ".slot%d.console" % slot)
         stub = WorkerStub(binary, argv, console)
         stub.start()
@@ -1684,6 +1721,131 @@ def scenario_pickup_dash(ctx, checks):
                 "exit=%s" % ctx.bridge.exit_code())
     return ("%s in %.1fs; chef 0 -> %s; chef 1 -> %s"
             % (stats.describe(), window, Counter(seen0) or "none", Counter(seen1) or "none"))
+
+
+def scenario_path_face_work(ctx, checks):
+    """path/face/work：槽里的新动作必须按契约到插件，而不是被降级成 idle。
+
+    2026-10-25（kitchen-control 任务 02）加。判据同时看三个槽：
+    path 的 seq 与路点数（1 与 8）、face/work 的 target_object；再加桥自己的
+    actions_sent 计数与"没有 slot-action-rejected"两条日志断言，免得只看线格式
+    时把"其实每个动作都被降级、只是凑巧发过 stop"当成通过。
+    """
+    args = ctx.args
+    chefs = 4
+    stub_binary = Path(args.worker_stub)
+    if not stub_binary.exists():
+        raise Skipped("worker-stub not built (%s); this scenario needs a live slot writer "
+                      "— build with: cd bridge && make" % stub_binary)
+
+    ctx.clear_stale_shm()
+    port = ctx.start_bridge_and_wait(link="listen", host=args.host, chefs=chefs,
+                                     frame_timeout_ms=args.frame_timeout_ms,
+                                     heartbeat_timeout_ms=args.heartbeat_timeout_ms,
+                                     port=args.listen_port)
+    link = Link(connect(args.host, port, args.ready_timeout))
+    link.send_json(msg_hello())
+    priming = Stats("priming")
+    run_exchange(link, priming, 1.0, chefs=chefs, hz=args.hz,
+                 heartbeat_ms=args.heartbeat_ms, ack_actions=not args.no_ack,
+                 flat_xy=args.flat_xy)
+    checks.hard("bridge_writes_state_shm", ctx.wait_shm(3.0), "%s" % ctx.shm_paths()[0])
+
+    checks.note("worker_stubs",
+                "slot 0 -> path(1), slot 1 -> path(8), slot 2 -> face, slot 3 -> work")
+    ctx.start_stub(slot=0, chefs=chefs, hz=args.stub_hz, duration=args.duration + 6,
+                   kind="path", waypoints=1)
+    ctx.start_stub(slot=1, chefs=chefs, hz=args.stub_hz, duration=args.duration + 6,
+                   kind="path", waypoints=8)
+    ctx.start_stub(slot=2, chefs=chefs, hz=args.stub_hz, duration=args.duration + 6,
+                   kind="face")
+    ctx.start_stub(slot=3, chefs=chefs, hz=args.stub_hz, duration=args.duration + 6,
+                   kind="work")
+
+    warm = Stats("warmup")
+    run_exchange(link, warm, 1.5, chefs=chefs, hz=args.hz, heartbeat_ms=args.heartbeat_ms,
+                 ack_actions=not args.no_ack, flat_xy=args.flat_xy)
+    checks.note("warmup", warm.describe())
+
+    window = max(1.5, args.duration)
+    stats = Stats("measure")
+    run_exchange(link, stats, window, chefs=chefs, hz=args.hz, heartbeat_ms=args.heartbeat_ms,
+                 ack_actions=not args.no_ack, flat_xy=args.flat_xy)
+    link.close()
+
+    by_chef = {slot: [a for a in stats.actions if a.get("chef_id") == slot]
+               for slot in range(chefs)}
+    checks.note("measured_window", "%s; %s" % (
+        stats.describe(),
+        "; ".join("chef%d=%s" % (slot, Counter(a.get("action") for a in by_chef[slot]) or "none")
+                  for slot in range(chefs))))
+
+    paths1 = [a for a in by_chef[0] if a.get("action") == "path"]
+    paths8 = [a for a in by_chef[1] if a.get("action") == "path"]
+    faces = [a for a in by_chef[2] if a.get("action") == "face"]
+    works = [a for a in by_chef[3] if a.get("action") == "work"]
+
+    checks.hard("one_waypoint_path_reaches_the_peer", len(paths1) >= 3,
+                "chef 0: %d path of %d actions (%s)"
+                % (len(paths1), len(by_chef[0]),
+                   Counter(a.get("action") for a in by_chef[0]) or "none"))
+    checks.hard("eight_waypoint_path_reaches_the_peer", len(paths8) >= 3,
+                "chef 1: %d path of %d actions (%s)"
+                % (len(paths8), len(by_chef[1]),
+                   Counter(a.get("action") for a in by_chef[1]) or "none"))
+    if paths1:
+        checks.hard("path_carries_seq", all(a.get("seq") == 1000 for a in paths1),
+                    "seqs=%s" % sorted({a.get("seq") for a in paths1}))
+        checks.hard("one_waypoint_count", all(len(a.get("waypoints") or []) == 1
+                                              for a in paths1),
+                    "counts=%s" % sorted({len(a.get("waypoints") or []) for a in paths1}))
+    if paths8:
+        checks.hard("eight_waypoints_count", all(len(a.get("waypoints") or []) == 8
+                                                 for a in paths8),
+                    "counts=%s" % sorted({len(a.get("waypoints") or []) for a in paths8}))
+        checks.hard("path_waypoints_are_numbers",
+                    all(isinstance(w.get("x"), (int, float)) and
+                        isinstance(w.get("y"), (int, float))
+                        for a in paths8 for w in (a.get("waypoints") or [])),
+                    "first=%s" % ((paths8[0].get("waypoints") or [None])[0],))
+    checks.hard("face_reaches_the_peer", len(faces) >= 3,
+                "chef 2: %d face of %d actions (%s)"
+                % (len(faces), len(by_chef[2]),
+                   Counter(a.get("action") for a in by_chef[2]) or "none"))
+    if faces:
+        checks.hard("face_carries_target_object",
+                    all(a.get("target_object") == "cutting_board_2" for a in faces)
+                    and all(a.get("target") is None for a in faces),
+                    "objects=%s targets=%s"
+                    % (sorted({a.get("target_object") for a in faces}),
+                       [a.get("target") for a in faces[:2]]))
+    checks.hard("work_reaches_the_peer", len(works) >= 3,
+                "chef 3: %d work of %d actions (%s)"
+                % (len(works), len(by_chef[3]),
+                   Counter(a.get("action") for a in by_chef[3]) or "none"))
+    if works:
+        checks.hard("work_carries_target_object",
+                    all(a.get("target_object") == "cutting_board_3" for a in works),
+                    "objects=%s" % sorted({a.get("target_object") for a in works}))
+
+    log = ctx.log_text()
+    sent_lines = [line for line in log.splitlines() if "actions_sent" in line]
+    checks.hard("bridge_counted_new_actions",
+                bool(re.search(r"actions_sent .*path=[1-9]\d*", log))
+                and bool(re.search(r"actions_sent .*face=[1-9]\d*", log))
+                and bool(re.search(r"actions_sent .*work=[1-9]\d*", log)),
+                "actions_sent lines: %s" % (sent_lines[-1:] or "none"))
+    checks.hard("no_new_action_rejected",
+                "slot-action-rejected" not in log,
+                "rejected: %s" % ([line for line in log.splitlines()
+                                   if "slot-action-rejected" in line][:3] or "none"))
+    checks.hard("no_unknown_action_names", not stats.bad_actions,
+                "%d actions the peer rejected: %s"
+                % (len(stats.bad_actions), stats.bad_actions[:2]))
+    checks.hard("bridge_alive_after_new_actions", ctx.bridge.alive(),
+                "exit=%s" % ctx.bridge.exit_code())
+    return ("%s in %.1fs; path1/path8/face/work reached %d/%d/%d/%d times"
+            % (stats.describe(), window, len(paths1), len(paths8), len(faces), len(works)))
 
 
 def scenario_input_grace(ctx, checks):
@@ -2044,7 +2206,7 @@ def scenario_connect_mode(ctx, checks):
 def _shape_state_update(chefs=None, orders=None, resources=None, frame_index=0):
     """按 §5.2 拼一帧，但三个集合都由调用方给：数据形状边界要能单独摆出来。"""
     if chefs is None:
-        chefs = [{"id": 0, "position": {"x": 1.0, "y": 2.0},
+        chefs = [{"id": 0, "position": {"x": 1.0, "y": 2.0}, "facing": 0.0,
                   "holding": None, "state": "idle"}]
     if orders is None:
         orders = [{"id": "order_001", "recipe": "salad", "time_remaining": 30,
@@ -2052,7 +2214,7 @@ def _shape_state_update(chefs=None, orders=None, resources=None, frame_index=0):
     if resources is None:
         resources = {"pot_0": {"state": "free"}, "plate_stack": {"count": 3}}
     return jdump({"type": "state_update", "timestamp": int(time.time()),
-                  "game_time": frame_index // 60, "score": 100,
+                  "game_time": frame_index // 60, "game_time_ms": int((frame_index / 60.0) * 1000), "score": 100,
                   "chefs": chefs, "orders": orders, "resources": resources})
 
 
@@ -3067,6 +3229,7 @@ SCENARIO_IMPL = {
     "data-shapes": scenario_data_shapes,
     "second-peer": scenario_second_peer,
     "pickup-dash": scenario_pickup_dash,
+    "path-face-work": scenario_path_face_work,
     "input-grace": scenario_input_grace,
     "os-loop": scenario_os_loop,
     "os-resources": scenario_os_resources,
@@ -3277,11 +3440,11 @@ def selftest():
     state = json.loads(msg_state_update(2, 7))
     chefs_keys = set(state["chefs"][0]) if state.get("chefs") else set()
     checks.hard("state_update_top_level_keys",
-                set(state) == {"type", "timestamp", "game_time", "score", "chefs",
+                set(state) == {"type", "timestamp", "game_time", "game_time_ms", "score", "chefs",
                                "orders", "resources"},
                 "keys=%s" % sorted(state))
     checks.hard("state_update_chef_shape",
-                chefs_keys == {"id", "position", "holding", "state"}
+                chefs_keys == {"id", "position", "facing", "holding", "state"}
                 and set(state["chefs"][0]["position"]) == {"x", "y"},
                 "chef keys=%s" % sorted(chefs_keys))
     checks.hard("state_update_order_shape",
@@ -3308,7 +3471,7 @@ def selftest():
     checks.hard("hello_matches_frozen_protocol",
                 hello == {"type": "hello", "instance": "windows-host", "version": "0.1.0",
                           "actions": ["move", "stop", "press", "release", "tap",
-                                      "pickup", "dash", "interact"]},
+                                      "pickup", "dash", "interact", "path", "face", "work"]},
                 msg_hello())
     ack = json.loads(msg_ack("move", 3, True, "ok"))
     checks.hard("ack_matches_messages_cs",

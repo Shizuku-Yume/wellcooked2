@@ -43,6 +43,9 @@
 #define PROTO_ACTION_INTERACT "interact"
 #define PROTO_ACTION_PICKUP "pickup" /* take/drop what the chef stands on; no payload */
 #define PROTO_ACTION_DASH "dash"     /* sprint in the facing direction; no payload */
+#define PROTO_ACTION_PATH "path"
+#define PROTO_ACTION_FACE "face"
+#define PROTO_ACTION_WORK "work"
 
 /* Identity this side announces in `hello`; the version string is what the plugin
  * sees in its log, so bump it when the wire format changes. */
@@ -54,6 +57,7 @@
 #define PROTO_MAX_INGREDIENTS 8
 #define PROTO_MAX_RESOURCES 48
 #define PROTO_MAX_ACTIONS 32
+#define PROTO_MAX_WAYPOINTS 8
 
 #define PROTO_STR_MAX 64 /* recipes, states, details, tokens */
 #define PROTO_KEY_MAX 32 /* resource keys and ingredient names */
@@ -86,6 +90,11 @@ typedef struct {
     size_t dropped_items;     /* array entries beyond the PROTO_MAX_* cap */
     size_t truncated_strings; /* strings longer than the destination field */
 } proto_diag;
+typedef struct {
+    double x;
+    double y;
+} proto_waypoint;
+
 
 /* ---- parsed messages ---- */
 
@@ -94,6 +103,7 @@ typedef struct {
     double x;
     double y;
     char holding[PROTO_STR_MAX]; /* "" when the chef carries nothing (JSON null) */
+    double facing;
     char state[PROTO_STR_MAX];
 } proto_chef;
 
@@ -127,11 +137,14 @@ typedef struct {
     int has_chef_id;
     long long count;
     int has_count;
+    double progress;
+    int has_progress;
 } proto_resource;
 
 typedef struct {
     long long timestamp;
     double game_time;
+    long long game_time_ms;
     double score;
     size_t chef_count;
     proto_chef chefs[PROTO_MAX_CHEFS];
@@ -156,6 +169,8 @@ typedef struct {
     char action[PROTO_STR_MAX];
     long long chef_id;
     int ok;
+    long long seq; /* path 的规划序号；插件的 ack 带，其它动作缺省 */
+    int has_seq;
     char detail[PROTO_STR_MAX]; /* "" when the plugin omits it */
 } proto_ack;
 
@@ -186,6 +201,9 @@ typedef struct {
     char target_object[PROTO_STR_MAX];
     char button[PROTO_STR_MAX];
     double hold_ms;
+    long long seq;
+    size_t waypoint_count;
+    proto_waypoint waypoints[PROTO_MAX_WAYPOINTS];
 } proto_action;
 
 /* ---- parsing ----
@@ -236,6 +254,13 @@ int protocol_build_action_pickup(long long chef_id, char *out, size_t cap,
                                  size_t *out_len);
 int protocol_build_action_dash(long long chef_id, char *out, size_t cap,
                                size_t *out_len);
+int protocol_build_action_path(long long chef_id, long long seq,
+                               const proto_waypoint *waypoints, size_t waypoint_count,
+                               char *out, size_t cap, size_t *out_len);
+int protocol_build_action_face(long long chef_id, int has_target, double x, double y,
+                               const char *target_object, char *out, size_t cap, size_t *out_len);
+int protocol_build_action_work(long long chef_id, const char *target_object,
+                               char *out, size_t cap, size_t *out_len);
 
 const char *protocol_strerror(int code);
 

@@ -263,6 +263,9 @@ static int parse_chefs(const json_value *root, proto_state_update *out, proto_di
             if (rc != PROTO_OK)
                 return rc;
         }
+        rc = get_num(entry, "facing", &chef->facing);
+        if (rc != PROTO_OK)
+            return rc;
 
         /* `holding` is a string when the chef carries something and JSON null
          * otherwise; both describe a usable chef, so null stays as "". */
@@ -417,6 +420,12 @@ static int parse_resources(const json_value *root, proto_state_update *out,
             res->count = count;
             res->has_count = 1;
         }
+        if (json_object_get(entry, "progress") != NULL) {
+            rc = get_num(entry, "progress", &res->progress);
+            if (rc != PROTO_OK)
+                return rc;
+            res->has_progress = 1;
+        }
 
         out->resource_count++;
     }
@@ -440,6 +449,9 @@ int protocol_parse_state_update(const json_value *root, proto_state_update *out,
     if (rc != PROTO_OK)
         return rc;
     rc = get_num(root, "game_time", &out->game_time);
+    if (rc != PROTO_OK)
+        return rc;
+    rc = get_req_int(root, "game_time_ms", &out->game_time_ms);
     if (rc != PROTO_OK)
         return rc;
     rc = get_num(root, "score", &out->score);
@@ -540,6 +552,12 @@ int protocol_parse_ack(const json_value *root, proto_ack *out, proto_diag *diag)
     rc = get_req_bool(root, "ok", &out->ok);
     if (rc != PROTO_OK)
         return rc;
+    if (json_object_get(root, "seq") != NULL) {
+        rc = get_int(root, "seq", &out->seq);
+        if (rc != PROTO_OK)
+            return rc;
+        out->has_seq = 1;
+    }
     return get_str(root, "detail", out->detail, sizeof out->detail, diag);
 }
 
@@ -663,7 +681,48 @@ int protocol_parse_action(const json_value *root, proto_action *out, proto_diag 
     rc = get_str(root, "button", out->button, sizeof out->button, diag);
     if (rc != PROTO_OK)
         return rc;
-    return get_num(root, "hold_ms", &out->hold_ms);
+    rc = get_num(root, "hold_ms", &out->hold_ms);
+    if (rc != PROTO_OK)
+        return rc;
+
+    if (strcmp(out->action, PROTO_ACTION_PATH) == 0) {
+        const json_value *waypoints = NULL;
+        size_t total, i;
+        rc = get_req_int(root, "seq", &out->seq);
+        if (rc != PROTO_OK)
+            return rc;
+        if (out->seq < 0)
+            return PROTO_ERR_RANGE;
+        rc = json_object_get_array(root, "waypoints", &waypoints);
+        if (rc != JSON_OK)
+            return PROTO_ERR_MISSING;
+        total = json_array_size(waypoints);
+        if (total < 1 || total > PROTO_MAX_WAYPOINTS)
+            return PROTO_ERR_RANGE;
+        for (i = 0; i < total; i++) {
+            const json_value *wp = json_array_get(waypoints, i);
+            if (json_typeof(wp) != JSON_OBJECT)
+                return PROTO_ERR_RANGE;
+            rc = get_num(wp, "x", &out->waypoints[i].x);
+            if (rc != PROTO_OK)
+                return rc;
+            rc = get_num(wp, "y", &out->waypoints[i].y);
+            if (rc != PROTO_OK)
+                return rc;
+        }
+        out->waypoint_count = total;
+    } else if (strcmp(out->action, PROTO_ACTION_MOVE) == 0) {
+        if (!out->has_target)
+            return PROTO_ERR_MISSING;
+    } else if (strcmp(out->action, PROTO_ACTION_INTERACT) == 0 ||
+               strcmp(out->action, PROTO_ACTION_WORK) == 0) {
+        if (out->target_object[0] == '\0')
+            return PROTO_ERR_MISSING;
+    } else if (strcmp(out->action, PROTO_ACTION_FACE) == 0) {
+        if (!out->has_target && out->target_object[0] == '\0')
+            return PROTO_ERR_MISSING;
+    }
+    return PROTO_OK;
 }
 
 /* ------------------------------------------------------------------ */
@@ -833,6 +892,96 @@ int protocol_build_action_interact(long long chef_id, const char *target_object,
     json_writer_string(&w, PROTO_ACTION_INTERACT);
     json_writer_key(&w, "target_object");
     json_writer_string(&w, target_object == NULL ? "" : target_object);
+    json_writer_object_end(&w);
+    return w_done(&w, out_len);
+}
+
+int protocol_build_action_path(long long chef_id, long long seq,
+                               const proto_waypoint *waypoints, size_t waypoint_count,
+                               char *out, size_t cap, size_t *out_len)
+{
+    json_writer w;
+    size_t i;
+
+    if (waypoints == NULL || waypoint_count == 0 || waypoint_count > PROTO_MAX_WAYPOINTS)
+        return PROTO_ERR_RANGE;
+
+    json_writer_init(&w, out, cap);
+    json_writer_object_begin(&w);
+    json_writer_key(&w, "type");
+    json_writer_string(&w, PROTO_TYPE_ACTION);
+    json_writer_key(&w, "chef_id");
+    json_writer_int(&w, chef_id);
+    json_writer_key(&w, "action");
+    json_writer_string(&w, PROTO_ACTION_PATH);
+    json_writer_key(&w, "seq");
+    json_writer_int(&w, seq);
+    json_writer_key(&w, "waypoints");
+    json_writer_array_begin(&w);
+    for (i = 0; i < waypoint_count; i++) {
+        json_writer_object_begin(&w);
+        json_writer_key(&w, "x");
+        json_writer_double(&w, waypoints[i].x);
+        json_writer_key(&w, "y");
+        json_writer_double(&w, waypoints[i].y);
+        json_writer_object_end(&w);
+    }
+    json_writer_array_end(&w);
+    json_writer_object_end(&w);
+    return w_done(&w, out_len);
+}
+
+int protocol_build_action_face(long long chef_id, int has_target, double x, double y,
+                               const char *target_object, char *out, size_t cap, size_t *out_len)
+{
+    json_writer w;
+
+    if (!has_target && (target_object == NULL || target_object[0] == '\0'))
+        return PROTO_ERR_MISSING;
+
+    json_writer_init(&w, out, cap);
+    json_writer_object_begin(&w);
+    json_writer_key(&w, "type");
+    json_writer_string(&w, PROTO_TYPE_ACTION);
+    json_writer_key(&w, "chef_id");
+    json_writer_int(&w, chef_id);
+    json_writer_key(&w, "action");
+    json_writer_string(&w, PROTO_ACTION_FACE);
+    if (has_target) {
+        json_writer_key(&w, "target");
+        json_writer_object_begin(&w);
+        json_writer_key(&w, "x");
+        json_writer_double(&w, x);
+        json_writer_key(&w, "y");
+        json_writer_double(&w, y);
+        json_writer_object_end(&w);
+    }
+    if (target_object != NULL && target_object[0] != '\0') {
+        json_writer_key(&w, "target_object");
+        json_writer_string(&w, target_object);
+    }
+    json_writer_object_end(&w);
+    return w_done(&w, out_len);
+}
+
+int protocol_build_action_work(long long chef_id, const char *target_object,
+                               char *out, size_t cap, size_t *out_len)
+{
+    json_writer w;
+
+    if (target_object == NULL || target_object[0] == '\0')
+        return PROTO_ERR_MISSING;
+
+    json_writer_init(&w, out, cap);
+    json_writer_object_begin(&w);
+    json_writer_key(&w, "type");
+    json_writer_string(&w, PROTO_TYPE_ACTION);
+    json_writer_key(&w, "chef_id");
+    json_writer_int(&w, chef_id);
+    json_writer_key(&w, "action");
+    json_writer_string(&w, PROTO_ACTION_WORK);
+    json_writer_key(&w, "target_object");
+    json_writer_string(&w, target_object);
     json_writer_object_end(&w);
     return w_done(&w, out_len);
 }
