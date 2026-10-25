@@ -5,9 +5,14 @@
  * shm 布局、没有文件路径。策略可以在单元测试里用几个整数证明，也可以被未来的
  * 离散事件模拟器直接复用。
  *
- * 当前实现两种：
+ * 当前实现四种：
  *   FCFS  按到达时间；相同时按下标。
  *   EDF   按截止时间；相同时先按到达时间（所以截止期全相同就退化成 FCFS），再按下标。
+ *   LLF   按松弛（截止期 − 现在 − 估计剩余工时）升序；松弛相同退化为 FCFS。
+ *   HRRN  按响应比（(等待 + 估计工时) / 估计工时）降序；比值相同退化为 FCFS。
+ *
+ * est_cost_ms 由调用方填"从该订单现在这道工序到做完还要多久"的估计：未开工订单是
+ * 菜谱关键路径，已开工订单是未完成节点的最长剩余路径。策略不自己估工时。
  */
 #ifndef KITCHENOS_POLICY_H
 #define KITCHENOS_POLICY_H
@@ -47,7 +52,9 @@ typedef struct {
 
 typedef enum {
     KOS_POLICY_FCFS = 0,
-    KOS_POLICY_EDF = 1
+    KOS_POLICY_EDF = 1,
+    KOS_POLICY_LLF = 2,
+    KOS_POLICY_HRRN = 3
 } kos_policy_kind;
 
 typedef struct kos_policy kos_policy; /* opaque */
@@ -56,8 +63,11 @@ kos_policy *kos_policy_create(kos_policy_kind kind, kos_error *err);
 void kos_policy_destroy(kos_policy *policy);
 
 kos_policy_kind kos_policy_kind_of(const kos_policy *policy);
-const char *kos_policy_name(const kos_policy *policy); /* "FCFS" / "EDF" */
+/* "FCFS" / "EDF" / "LLF" / "HRRN"；未知 kind 返回 "FCFS"。 */
+const char *kos_policy_name(const kos_policy *policy);
+const char *kos_policy_kind_name(kos_policy_kind kind);
 void kos_policy_set_kind(kos_policy *policy, kos_policy_kind kind);
+/* SIGHUP 的轮换顺序：FCFS → EDF → LLF → HRRN → FCFS。 */
 kos_policy_kind kos_policy_other(kos_policy_kind kind);
 int kos_policy_kind_from_name(const char *name, kos_policy_kind *out); /* 0 = ok */
 

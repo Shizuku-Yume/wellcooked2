@@ -1,5 +1,5 @@
 /*
- * policy.c -- FCFS / EDF。见 policy.h 的接口约束。
+ * policy.c -- FCFS / EDF / LLF / HRRN。见 policy.h 的接口约束。
  *
  * 所有比较都用 (主键, 次键, 下标) 的三段式，保证同一份输入永远挑出同一个订单；
  * 调度实验的可重复性依赖这一点，不能交给"数组刚好是有序的"这种巧合。
@@ -25,7 +25,8 @@ kos_policy *kos_policy_create(kos_policy_kind kind, kos_error *err)
     if (err != NULL) {
         kos_error_clear(err);
     }
-    if (kind != KOS_POLICY_FCFS && kind != KOS_POLICY_EDF) {
+    if (kind != KOS_POLICY_FCFS && kind != KOS_POLICY_EDF &&
+        kind != KOS_POLICY_LLF && kind != KOS_POLICY_HRRN) {
         if (err != NULL) {
             err->code = KOS_ERR_INVAL;
             snprintf(err->context, sizeof err->context, "未知策略 %d", (int)kind);
@@ -54,21 +55,48 @@ kos_policy_kind kos_policy_kind_of(const kos_policy *policy)
     return policy != NULL ? policy->kind : KOS_POLICY_FCFS;
 }
 
+const char *kos_policy_kind_name(kos_policy_kind kind)
+{
+    switch (kind) {
+    case KOS_POLICY_EDF:
+        return "EDF";
+    case KOS_POLICY_LLF:
+        return "LLF";
+    case KOS_POLICY_HRRN:
+        return "HRRN";
+    case KOS_POLICY_FCFS:
+    default:
+        return "FCFS";
+    }
+}
+
 const char *kos_policy_name(const kos_policy *policy)
 {
-    return kos_policy_kind_of(policy) == KOS_POLICY_EDF ? "EDF" : "FCFS";
+    return kos_policy_kind_name(kos_policy_kind_of(policy));
 }
 
 void kos_policy_set_kind(kos_policy *policy, kos_policy_kind kind)
 {
-    if (policy != NULL && (kind == KOS_POLICY_FCFS || kind == KOS_POLICY_EDF)) {
+    if (policy != NULL &&
+        (kind == KOS_POLICY_FCFS || kind == KOS_POLICY_EDF ||
+         kind == KOS_POLICY_LLF || kind == KOS_POLICY_HRRN)) {
         policy->kind = kind;
     }
 }
 
 kos_policy_kind kos_policy_other(kos_policy_kind kind)
 {
-    return kind == KOS_POLICY_FCFS ? KOS_POLICY_EDF : KOS_POLICY_FCFS;
+    switch (kind) {
+    case KOS_POLICY_FCFS:
+        return KOS_POLICY_EDF;
+    case KOS_POLICY_EDF:
+        return KOS_POLICY_LLF;
+    case KOS_POLICY_LLF:
+        return KOS_POLICY_HRRN;
+    case KOS_POLICY_HRRN:
+    default:
+        return KOS_POLICY_FCFS;
+    }
 }
 
 int kos_policy_kind_from_name(const char *name, kos_policy_kind *out)
@@ -84,30 +112,75 @@ int kos_policy_kind_from_name(const char *name, kos_policy_kind *out)
         *out = KOS_POLICY_EDF;
         return KOS_OK;
     }
+    if (strcmp(name, "llf") == 0 || strcmp(name, "LLF") == 0) {
+        *out = KOS_POLICY_LLF;
+        return KOS_OK;
+    }
+    if (strcmp(name, "hrrn") == 0 || strcmp(name, "HRRN") == 0) {
+        *out = KOS_POLICY_HRRN;
+        return KOS_OK;
+    }
     return KOS_ERR_INVAL;
 }
 
-/* 返回 <0 / 0 / >0，语义与 qsort 比较器一致。 */
-static int compare_orders(kos_policy_kind kind, const kos_order_view *a,
-                          const kos_order_view *b, int a_index, int b_index)
+/*
+ * FCFS 是四种策略共同的次级键：主键并列时都退化为"先到先做"，再按数组下标定序。
+ * 这样同一份输入永远挑出同一个订单，调度实验可重复。
+ */
+static int compare_fcfs(const kos_order_view *a, const kos_order_view *b, int a_index,
+                        int b_index)
 {
-    if (kind == KOS_POLICY_EDF) {
-        if (a->deadline_ms != b->deadline_ms) {
-            return a->deadline_ms < b->deadline_ms ? -1 : 1;
-        }
-        /* 截止期相同：EDF 退化为 FCFS，这样"时限一致时两者顺序相同"是可证明的。 */
-        if (a->arrival_ms != b->arrival_ms) {
-            return a->arrival_ms < b->arrival_ms ? -1 : 1;
-        }
-    } else {
-        if (a->arrival_ms != b->arrival_ms) {
-            return a->arrival_ms < b->arrival_ms ? -1 : 1;
-        }
+    if (a->arrival_ms != b->arrival_ms) {
+        return a->arrival_ms < b->arrival_ms ? -1 : 1;
     }
     if (a_index == b_index) {
         return 0;
     }
     return a_index < b_index ? -1 : 1;
+}
+
+/* 返回 <0 / 0 / >0，语义与 qsort 比较器一致。 */
+static int compare_orders(kos_policy_kind kind, const kos_order_view *a,
+                          const kos_order_view *b, int a_index, int b_index,
+                          int64_t now_ms)
+{
+    switch (kind) {
+    case KOS_POLICY_EDF:
+        if (a->deadline_ms != b->deadline_ms) {
+            return a->deadline_ms < b->deadline_ms ? -1 : 1;
+        }
+        break;
+    case KOS_POLICY_LLF: {
+        /* 松弛 = 截止期 − 现在 − 剩余关键路径工时；越小越紧急。
+         * __int128 只是比较用的宽中间量，接口仍是 int64 毫秒。 */
+        __int128 slack_a = (__int128)a->deadline_ms - now_ms - a->est_cost_ms;
+        __int128 slack_b = (__int128)b->deadline_ms - now_ms - b->est_cost_ms;
+
+        if (slack_a != slack_b) {
+            return slack_a < slack_b ? -1 : 1;
+        }
+        break;
+    }
+    case KOS_POLICY_HRRN: {
+        /* 响应比 = (等待 + 估计工时) / 估计工时，用交叉相乘比较，避免浮点并列；
+         * 乘积用 __int128，极端等待时间也不会回绕。 */
+        int64_t est_a = a->est_cost_ms > 0 ? a->est_cost_ms : 1;
+        int64_t est_b = b->est_cost_ms > 0 ? b->est_cost_ms : 1;
+        int64_t wait_a = now_ms > a->arrival_ms ? now_ms - a->arrival_ms : 0;
+        int64_t wait_b = now_ms > b->arrival_ms ? now_ms - b->arrival_ms : 0;
+        __int128 left = ((__int128)wait_a + est_a) * est_b;
+        __int128 right = ((__int128)wait_b + est_b) * est_a;
+
+        if (left != right) {
+            return left > right ? -1 : 1;
+        }
+        break;
+    }
+    case KOS_POLICY_FCFS:
+    default:
+        break;
+    }
+    return compare_fcfs(a, b, a_index, b_index);
 }
 
 int kos_policy_pick(const kos_policy *policy, const kos_order_view *orders, int order_count,
@@ -120,7 +193,6 @@ int kos_policy_pick(const kos_policy *policy, const kos_order_view *orders, int 
 
     (void)resources;
     (void)resource_count;
-    (void)now_ms;
     if (policy == NULL || orders == NULL || chosen == NULL || order_count <= 0) {
         return order_count == 0 ? KOS_ERR_EMPTY : KOS_ERR_INVAL;
     }
@@ -129,7 +201,8 @@ int kos_policy_pick(const kos_policy *policy, const kos_order_view *orders, int 
         if (orders[i].status != KOS_ORDER_ACTIVE) {
             continue;
         }
-        if (best < 0 || compare_orders(kind, &orders[i], &orders[best], i, best) < 0) {
+        if (best < 0 ||
+            compare_orders(kind, &orders[i], &orders[best], i, best, now_ms) < 0) {
             best = i;
         }
     }

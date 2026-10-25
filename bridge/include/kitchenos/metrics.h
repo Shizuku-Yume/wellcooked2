@@ -45,6 +45,8 @@ typedef struct {
     kos_metrics_resource resources[KOS_RES_MAX];
     int64_t dispatch_fcfs;
     int64_t dispatch_edf;
+    int64_t dispatch_llf;
+    int64_t dispatch_hrrn;
     int64_t worker_restarts;
 } kos_metrics_snapshot;
 

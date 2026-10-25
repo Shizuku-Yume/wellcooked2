@@ -26,6 +26,7 @@
 #include <kitchenos/log.h>
 #include <kitchenos/mq.h>
 #include <kitchenos/navtab.h>
+#include <kitchenos/policy.h>
 #include <kitchenos/resource.h>
 #include <kitchenos/shm.h>
 #include <kitchenos/supervise.h>
@@ -1160,7 +1161,7 @@ static void print_help(void)
            "  --recipes FILE           recipes.json passed to Scheduler\n"
            "  --orders FILE            orders.json menu passed to Scheduler\n"
            "  --runs-dir DIR           Scheduler run logs (default <runtime>/runs)\n"
-           "  --strategy fcfs|edf      initial order policy (default fcfs; SIGHUP flips)\n"
+           "  --strategy fcfs|edf|llf|hrrn  initial order policy (default fcfs; SIGHUP cycles)\n"
            "  --lease-ttl-ms M         resource lease lifetime (default 30000)\n"
            "  --bridge-host H          Bridge bind address (default %s)\n"
            "  --bridge-port P          Bridge TCP port (default %d)\n"
@@ -1415,8 +1416,9 @@ static int parse_args(int argc, char **argv, supervisor *s)
             s->lease_ttl_ms = (int)number;
         } else if (strcmp(name, "--strategy") == 0) {
             const char *v = take_value(value, argc, argv, &i);
+            kos_policy_kind kind;
 
-            if (v == NULL || (strcmp(v, "fcfs") != 0 && strcmp(v, "edf") != 0)) {
+            if (v == NULL || kos_policy_kind_from_name(v, &kind) != KOS_OK) {
                 return ARG_ERR;
             }
             s->strategy = v;
