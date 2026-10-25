@@ -21,6 +21,7 @@
 #include <string.h>
 
 #include <kitchenos/json.h>
+#include <kitchenos/stand.h>
 
 static void copy_str(char *dst, size_t cap, const char *src)
 {
@@ -243,6 +244,12 @@ int kos_kitchen_load(const char *path, kos_kitchen *out, kos_error *err)
         rc = set_error(err, KOS_ERR_INVAL, "'%s' stations 为空", path);
         goto out;
     }
+    /* 站位格是加载契约的一部分：没有站位格的工位在这里就失败，别留到运行时
+     * 才表现成"厨师走到工位旁边却永远到不了"。 */
+    rc = kos_stand_build(out, err);
+    if (rc != KOS_OK) {
+        goto out;
+    }
     rc = KOS_OK;
 
 out:
@@ -320,6 +327,21 @@ const kos_station *kos_kitchen_station_by_id(const kos_kitchen *kitchen, const c
         }
     }
     return NULL;
+}
+
+int kos_kitchen_station_index(const kos_kitchen *kitchen, const char *id)
+{
+    int i;
+
+    if (kitchen == NULL || id == NULL) {
+        return -1;
+    }
+    for (i = 0; i < kitchen->station_count; i++) {
+        if (strcmp(kitchen->stations[i].id, id) == 0) {
+            return i;
+        }
+    }
+    return -1;
 }
 
 static int lowered_contains(const char *haystack, const char *needle)

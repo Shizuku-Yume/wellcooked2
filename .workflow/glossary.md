@@ -53,11 +53,12 @@ competing names, omit the line rather than inventing fake synonyms.
 - **Scheduler**: 调度决策进程，维护订单队列和资源锁表，用 POSIX 消息队列派发任务。
 - **Chef Worker**: 每个厨师一个进程，做动作分解（宏动作），把结果写进输入槽；路径由 `navd` 规划。
 - **策略（Strategy）**: 订单级（FCFS/SJF/EDF/HRRN）或工序级（列表调度、关键路径优先）的调度算法。
-- **站位格（stand cell）**: 厨师操作某个工位时必须站的可走格（相邻、朝向工位），加载
-  `config/maps/<scene>/kitchen.json` 时算出，见 `.workflow/specs/kitchen-control.md`。
-  _Avoid_: 工位坐标（那是工位本身所在的格，不可走）。
-- **距离场（distance field）**: 从某个工位全部站位格出发的 BFS 步数表，`navd` 用它给候选格排序，
-  Scheduler 用它估路程代价；不含避让等待。
+- **站位格（stand cell）**: 厨师操作某个工位时必须站的可走格，取工位每个方向（+x/-x/+z/-z）
+  最近的一个，加载 `config/maps/<scene>/kitchen.json` 时算出，见
+  `.workflow/specs/kitchen-control.md`。工位本身在台面里，没有自己的可走格。
+  _Avoid_: 工位坐标（那是工位本身的位置，不可走）。
+- **距离场（distance field）**: 从某个工位全部站位格出发的 BFS 步数表（`uint16`，不可达为
+  `UINT16_MAX`），`navd` 用它给候选格排序，Scheduler 用它估路程代价；不含避让等待。
 - **navd**: Supervisor 下的走位进程，统一为所有厨师规划路径（PIBT，或对照基线 `pa`），
   通过共享内存导航表 `/kitchenos_nav` 与 Worker 交换目标和计划。
 - **PIBT**: Priority Inheritance with Backtracking。每一步按优先级给每个厨师挑下一格，挡路的人

@@ -69,11 +69,16 @@ Worker 沿用现有的 kitchen/recipes 路径开关。`grid.areas.count` 可以�
 
 ### L1 走位
 
-**站位格表与距离场（`stand`）。** 加载 `kitchen.json` 时为每个工位算出站位格：离工位一个
-step、可走、且朝工位方向的边在 `grid.mask` 里没被挡的格子，每个工位最多 4 个，按到工位的
-距离排序；每个站位格带朝向（+x/-x/+z/-z）。没有站位格的工位在加载时报错，不留到运行时。
+**站位格表与距离场（`stand`）。** 加载 `kitchen.json` 时为每个工位算出站位格：在 +x/-x/+z/-z
+四个方向上各取离工位最近、且垂直偏移不超过半格的可走格（工位在台面/墙的几何中心，不在
+`grid.cells` 里；四张地图实测都是 1.2 m，即两格，正好是游戏 1.2 m 交互格的一步）。每个工位
+最多 4 个，按到工位的距离排序；每个站位格带朝向（+x/-x/+z/-z）。工位那一格不可走，所以
+"朝向工位的 mask 位"必为 0；若它其实可走，那个格会被选成更近的站位格——测试按这条双向
+检查站位格与网格一致。没有站位格的工位在加载时报错并带工位 id，不留到运行时。
 同一模块算距离场：以一个工位的全部站位格为多源做 BFS（`uint16`，64 工位 × 2048 格 ≈
-256 KB）。Scheduler 用它估路程；`navd` 用它给候选格排序，厨师走到该工位任一站位格都算到达。
+256 KB，不可达记 `UINT16_MAX`）。本任务只提供接口；`navd` 在任务 04 用它给候选格排序，
+Scheduler 在任务 07 用它估路程。厨师走到该工位任一站位格都算到达。
+见 decisions.md: 2026-10-25 - 站位格取工位每个方向最近的可走格。
 
 **导航表（`/kitchenos_nav`）。** 一块独立共享内存（不挤进 16 KB 的世界状态段），由 Supervisor
 创建与 unlink，命名信号量 `/kitchenos_nav_lock` 做互斥。每个厨师两个槽，各只有一个写者：
@@ -274,7 +279,9 @@ C 部分是 `cd bridge && make test` 的单元检查；多进程行为用 `tools
 （无游戏，能在 CI 跑）；标"需要游戏"的在实机或多实例上跑。
 
 - **W1. 站位格表。** 对 `config/maps/` 下四张地图的 `kitchen.json`，每个工位至少 1 个站位格，
-  每个站位格可走且朝向工位的边未被 `mask` 挡；没有站位格的工位让加载失败并报出工位 id。
+  最多 4 个、按距离排序；每个站位格可走，朝向是工位实际所在的一侧；朝工位方向的相邻格可走时
+  它的 `mask` 位必须为 1、不可走时必须为 0；距离场在站位格上为 0、每个非 0 格有 `dist-1` 的
+  父格、相邻可达格差 ≤ 1，跨连通区为不可达。没有站位格的工位让加载失败并报出工位 id。
 - **W2. 规划无冲突且能到达。** 单元检查：四张地图各 100 组随机起终点、2–4 个厨师，PIBT 与
   `pa` 各跑：任一步没有两人同格、没有两人对换，每步满足 `mask`；`_3` 上 PIBT 每组都在 200 步内
   全部到达。同一输入两次结果相同。依赖图单元检查：随机打乱各厨师的执行快慢，放行序列下任何
@@ -348,14 +355,16 @@ C 部分是 `cd bridge && make test` 的单元检查；多进程行为用 `tools
 | `_3` | 环形过道，实机菜谱 3 道 | 多厨师避让与死锁的主要测试图 |
 | `_4` | 跨度最大（炸台 x=-11、砧板 x=29） | 路程权重 `w_d` 影响最大 |
 
-四张图的实测导出（2026-10-25，各在实机进关一次，`scripts/export-kitchen.py --map-dir config/maps`）：
+四张图的实测导出（2026-10-25，各在实机进关一次，`scripts/export-kitchen.py --map-dir config/maps`；
+`_3`/`_4` 在任务 03 修掉采样时机后重导出过一次，`_1`/`_2` 沿用任务 01 的导出——两张图的工位
+都已在 1.2 m 内有正对的格，见 decisions.md: 2026-10-25 - 地形采样等工位生成后再做）：
 
 | 地图 | 可走格（连通区） | 逻辑工位 | 导出 kinds | `layout_*.tsv` 资源类物件 | 实机菜单 |
 |---|---|---|---|---|---|
 | `_1` | 288（1） | 20 | serving 1 / dispenser 6 / cooker 6 / sink 1 / container 6 | 17 | 2 道 |
 | `_2` | 350（**2**） | 17 | serving 1 / dispenser 5 / cooker 4 / sink 1 / clean_plate_stack 1 / plate_stack 1 / container 4 | 15 | 3 道 |
-| `_3` | 98（1） | 23 | serving 1 / dispenser 7 / cooker 6 / sink 1 / clean_plate_stack 1 / plate_stack 1 / container 6 | 19 | 3 道 |
-| `_4` | 223（1） | 23 | serving 1 / dispenser 7 / cooker 6 / sink 1 / clean_plate_stack 1 / plate_stack 1 / container 6 | 19 | 3 道 |
+| `_3` | 167（1） | 23 | serving 1 / dispenser 7 / cooker 6 / sink 1 / clean_plate_stack 1 / plate_stack 1 / container 6 | 19 | 3 道 |
+| `_4` | 381（1） | 23 | serving 1 / dispenser 7 / cooker 6 / sink 1 / clean_plate_stack 1 / plate_stack 1 / container 6 | 19 | 3 道 |
 
 `layout_*.tsv` 的资源类物件 = 料箱 + 砧板 + Cooker + FryingStation + 水槽 + 出菜口 +
 PlateReturn + CleanPlateStack（不含 art、spawn、counter、utensil）。差异（以导出为准）：

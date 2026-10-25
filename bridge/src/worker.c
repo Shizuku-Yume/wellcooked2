@@ -217,9 +217,8 @@ static int start_task(worker *w, const kos_mq_msg *msg)
     w->current = *msg;
     chef_start_position(w, &start_x, &start_z);
     kos_error_clear(&err);
-    rc = kos_worker_task_init(&w->task, &w->kitchen, msg->station_id, msg->target_x,
-                              msg->target_y, start_x, start_z, msg->duration_ms, now_ms(),
-                              &err);
+    rc = kos_worker_task_init(&w->task, &w->kitchen, msg->station_id, start_x, start_z,
+                              msg->duration_ms, now_ms(), &err);
     if (rc != KOS_OK) {
         error_text(&err, text, sizeof text);
         kos_log_warn(w->rt.log, "task_path_failed", "task=%llu node=%s error=%s",
