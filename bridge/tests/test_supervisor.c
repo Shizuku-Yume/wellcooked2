@@ -460,7 +460,7 @@ static void unlink_resource_sems(void)
     }
     kos_error_clear(&err);
     if (kos_kitchen_load(path, &kitchen, &err) == KOS_OK) {
-        (void)kos_resources_unlink(&kitchen, &err);
+        (void)kos_resources_unlink(&kitchen, KOS_INSTANCE_NONE, &err);
     }
 }
 

@@ -219,6 +219,12 @@ BepInEx 和插件，每个约 1 GB 内存、2 核 CPU、1.3 GB 显存。把 exe�
 下。没解决的一点：`-screen-width 640 -screen-height 360 -screen-fullscreen 0` 被前缀注册表
 `Software\Team17\Overcooked2` 里的全屏与分辨率记录盖掉，窗口仍是 4096×2304。
 
+2026-10-25 任务 08 实测：上面那条“没解决的一点”在任务 08 已解决——插件在进关前按
+`window=640x360` 调 `Screen.SetResolution(w,h,false)`，3 个实例的日志都出现
+`takeover: 窗口 = 640x360（全屏=False）`，不需要改前缀注册表。同时 3 个 640×360 实例
+可同时运行（GPU 7.5/8.2 GB、可用内存约 2 GB，余量很小）；批跑的动作链尚未打通，
+默认 N 与得分对照等任务 08 恢复后定。
+
 据此 `tools/instances.py` 管理 N 个实例（默认 3，按本机内存定）：
 
 - **目录。** `~/.cache/wellcooked/inst/<k>/`，按上面的方式从游戏目录生成，插件与配置从仓库
@@ -345,8 +351,9 @@ C 部分是 `cd bridge && make test` 的单元检查；多进程行为用 `tools
   `state_update`；砧板 `progress` 走 `ClientWorkableItem.GetProgress()`，字段与方法已用
   ilspy 对照 `Assembly-CSharp.dll` 确认存在，但本轮实机没有把料放上砧板，数值读取仍待一次
   "放料后切一刀"的实机确认。本轮没有发现需要退回"工时 + 余量"的字段。
-- **`Screen.SetResolution` 能否盖过注册表里的全屏记录。** 由任务 08 实测；不行就在实例启动前
-  改前缀注册表的 `Screenmanager` 键，并在本文件里改写"分辨率"一条。
+- **`Screen.SetResolution` 能否盖过注册表里的全屏记录。** 已测（任务 08，2026-10-25）：能。
+  插件 `window=640x360` 后日志为 `takeover: 窗口 = 640x360（全屏=False）`，不用改前缀注册表。
+  窗口位置 `window_pos` 在同一次实测里也生效（日志 `窗口位置 = 0,0`）。
 - **本机能稳定跑几个实例。** 实测 2 个同时跑时可用内存还剩约 5 GB，3 个没跑过。由任务 08 用
   3 个实例连跑 10 局定下默认 N。
 - **`_2` 分区的交接台面放哪块。** 由用户（地图作者）在 `zones.json` 里定；没定之前分区模式

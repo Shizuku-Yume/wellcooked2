@@ -834,11 +834,16 @@ static int prepare_run_dir(scheduler *s)
 static int open_queues(scheduler *s)
 {
     kos_error err;
+    char events_name[KOS_MQ_NAME_MAX];
     int i;
     int rc;
 
+    if (kos_mq_events_name(s->rt.opts.instance, events_name, sizeof events_name) != KOS_OK) {
+        kos_log_error(s->rt.log, "mq_name_failed", "instance=%d", s->rt.opts.instance);
+        return -1;
+    }
     kos_error_clear(&err);
-    rc = kos_mq_unlink_all(s->rt.opts.chefs, &err);
+    rc = kos_mq_unlink_all(s->rt.opts.chefs, s->rt.opts.instance, &err);
     if (rc != KOS_OK) {
         char text[256];
 
@@ -846,18 +851,17 @@ static int open_queues(scheduler *s)
         kos_log_warn(s->rt.log, "mq_stale_cleanup_failed", "error=%s", text);
     }
     kos_error_clear(&err);
-    if (kos_mq_create(KOS_MQ_EVENTS_NAME, KOS_MQ_MAX_MESSAGES, &err) != KOS_OK) {
+    if (kos_mq_create(events_name, KOS_MQ_MAX_MESSAGES, &err) != KOS_OK) {
         char text[256];
 
         error_text(&err, text, sizeof text);
-        kos_log_error(s->rt.log, "mq_create_failed", "name=%s error=%s",
-                      KOS_MQ_EVENTS_NAME, text);
+        kos_log_error(s->rt.log, "mq_create_failed", "name=%s error=%s", events_name, text);
         return -1;
     }
     for (i = 0; i < s->rt.opts.chefs; i++) {
         char name[KOS_MQ_NAME_MAX];
 
-        if (kos_mq_task_name(i, name, sizeof name) != KOS_OK) {
+        if (kos_mq_task_name(i, s->rt.opts.instance, name, sizeof name) != KOS_OK) {
             return -1;
         }
         kos_error_clear(&err);
@@ -870,18 +874,17 @@ static int open_queues(scheduler *s)
         }
     }
     kos_error_clear(&err);
-    if (kos_mq_open(KOS_MQ_EVENTS_NAME, O_RDONLY, &s->events, &err) != KOS_OK) {
+    if (kos_mq_open(events_name, O_RDONLY, &s->events, &err) != KOS_OK) {
         char text[256];
 
         error_text(&err, text, sizeof text);
-        kos_log_error(s->rt.log, "mq_open_failed", "name=%s error=%s", KOS_MQ_EVENTS_NAME,
-                      text);
+        kos_log_error(s->rt.log, "mq_open_failed", "name=%s error=%s", events_name, text);
         return -1;
     }
     for (i = 0; i < s->rt.opts.chefs; i++) {
         char name[KOS_MQ_NAME_MAX];
 
-        if (kos_mq_task_name(i, name, sizeof name) != KOS_OK) {
+        if (kos_mq_task_name(i, s->rt.opts.instance, name, sizeof name) != KOS_OK) {
             return -1;
         }
         kos_error_clear(&err);
@@ -894,7 +897,7 @@ static int open_queues(scheduler *s)
         }
     }
     s->queues_ready = 1;
-    kos_log_info(s->rt.log, "mq_ready", "events=%s task_queues=%d", KOS_MQ_EVENTS_NAME,
+    kos_log_info(s->rt.log, "mq_ready", "events=%s task_queues=%d", events_name,
                  s->rt.opts.chefs);
     return 0;
 }
@@ -917,7 +920,7 @@ static void close_queues(scheduler *s)
         kos_error err;
 
         kos_error_clear(&err);
-        (void)kos_mq_unlink_all(s->rt.opts.chefs, &err);
+        (void)kos_mq_unlink_all(s->rt.opts.chefs, s->rt.opts.instance, &err);
         s->queues_ready = 0;
     }
 }
@@ -1755,7 +1758,7 @@ static int scheduler_main(scheduler *s, const kos_child_opts *opts)
         return 1;
     }
     kos_error_clear(&err);
-    if (kos_resources_attach(&s->kitchen, &s->resources, &err) != KOS_OK) {
+    if (kos_resources_attach(&s->kitchen, &s->resources, s->rt.opts.instance, &err) != KOS_OK) {
         char text[256];
 
         error_text(&err, text, sizeof text);

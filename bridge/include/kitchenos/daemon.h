@@ -44,6 +44,14 @@ typedef struct {
  */
 int kos_runtime_dir(const char *override, char *buf, size_t len, kos_error *err);
 
+/*
+ * 多实例运行目录：instance < 0 或给了明确的 override 时与 kos_runtime_dir 相同；
+ * 否则在默认根目录下再建 `instance-<k>/`（logs/ 与 runs/ 各一份），两台 Supervisor
+ * 缺省就不会争同一个 pid 文件与日志。Supervisor 的 `--instance k` 用它。
+ */
+int kos_runtime_dir_instance(const char *override, int instance, char *buf, size_t len,
+                             kos_error *err);
+
 /* runtime/logs/<name>；名字不能含 '/'，否则返回 KOS_ERR_INVAL。 */
 int kos_runtime_log_path(const char *runtime_dir, const char *name, char *buf, size_t len,
                          kos_error *err);

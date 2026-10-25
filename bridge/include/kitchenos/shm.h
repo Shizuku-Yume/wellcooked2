@@ -408,6 +408,15 @@ int kos_shm_wait_frame_after(kos_shm *shm, uint64_t *last_frame, uint32_t chef_c
 
 /* ================================================================ 杂项 */
 
+/*
+ * 多实例后缀。`--instance k` 的多开实例给所有 IPC 名字加 `_k`；不给（KOS_INSTANCE_NONE）
+ * 时后缀为空，名字与单实例时代完全一致。导航表另有自己的派生规则，但同样以这份
+ * 后缀为基础。名字太长返回 KOS_ERR_RANGE。
+ */
+#define KOS_INSTANCE_NONE (-1)
+int kos_instance_suffix(int instance, char *buf, size_t len);
+int kos_name_instance(const char *base, int instance, char *buf, size_t len);
+
 /* 动作种类 ←→ 协议里的动作名（"move"/"stop"/...）。未知名字返回 -1。 */
 const char *kos_action_kind_name(int kind);
 int kos_action_kind_from_name(const char *name);

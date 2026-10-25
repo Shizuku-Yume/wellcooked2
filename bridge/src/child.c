@@ -121,6 +121,7 @@ void kos_child_opts_init(kos_child_opts *o, kos_child_kind kind)
     memset(o, 0, sizeof *o);
     o->kind = kind;
     o->chef_id = (kind == KOS_CHILD_WORKER) ? 0 : -1;
+    o->instance = KOS_INSTANCE_NONE;
     o->supervisor_fd = -1;
     o->heartbeat_interval_ms = CHILD_DEFAULT_HEARTBEAT_MS;
     o->attach_retry_ms = CHILD_DEFAULT_ATTACH_RETRY_MS;
@@ -169,7 +170,7 @@ void kos_child_print_usage(FILE *out, kos_child_kind kind)
             "                      [--supervisor-heartbeat-ms M] [--attach-retry-ms M]\n"
             "                      [--kitchen FILE] [--recipes FILE] [--orders FILE]\n"
             "                      [--runs-dir DIR] [--strategy fcfs|edf] [--chefs N]\n"
-            "                      [--tick-ms M] [--slot-interval-ms M]\n"
+            "                      [--tick-ms M] [--slot-interval-ms M] [--instance N]\n"
             "                      [--verbose] [--help] [--version]\n",
             kind_name(kind));
     if (kind == KOS_CHILD_WORKER) {
@@ -331,6 +332,13 @@ int kos_child_parse_args(kos_child_opts *o, int argc, char **argv)
                 return KOS_CHILD_ARG_ERR;
             }
             o->chefs = (int)number;
+        } else if (strcmp(name, "--instance") == 0) {
+            const char *v = take_value(value, argc, argv, &i);
+
+            if (parse_long(v, 0, 255, &number) != 0) {
+                return KOS_CHILD_ARG_ERR;
+            }
+            o->instance = (int)number;
         } else if (strcmp(name, "--lease-ttl-ms") == 0) {
             const char *v = take_value(value, argc, argv, &i);
 

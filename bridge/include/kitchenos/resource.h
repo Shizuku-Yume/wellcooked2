@@ -43,14 +43,15 @@ typedef struct {
 
 /* 从 kitchen 的 stations 统计每个 kind 的工位数并创建信号量；同名旧对象先 unlink。
  * 成功只留下命名对象（句柄立即关闭），Scheduler 之后再 attach。 */
-int kos_resources_create(const kos_kitchen *kitchen, kos_error *err);
+int kos_resources_create(const kos_kitchen *kitchen, int instance, kos_error *err);
 
 /* 打开所有 kind 的信号量。缺任何一个都返回 KOS_ERR_MISSING（Supervisor 应先 create）。 */
-int kos_resources_attach(const kos_kitchen *kitchen, kos_resource_set *set, kos_error *err);
+int kos_resources_attach(const kos_kitchen *kitchen, kos_resource_set *set, int instance,
+                         kos_error *err);
 void kos_resources_close(kos_resource_set *set);
 
 /* 删除 kitchen 里出现的所有 kind 的名字；已不存在算成功（幂等）。 */
-int kos_resources_unlink(const kos_kitchen *kitchen, kos_error *err);
+int kos_resources_unlink(const kos_kitchen *kitchen, int instance, kos_error *err);
 
 int kos_resources_index(const kos_resource_set *set, const char *kind);
 int kos_resource_capacity(const kos_resource_set *set, const char *kind);
@@ -105,6 +106,7 @@ int kos_deadlock_find(const int *held, const int *wanted, int chef_count,
 /* victim 规则：环上编号最大的厨师（最近被调度的那个），丢掉它的租约代价最小。 */
 int kos_deadlock_victim(const int *cycle, int cycle_len);
 
-const char *kos_resource_name(const char *kind, char *buf, size_t len);
+/* instance >= 0 时名字加 `_<instance>`；KOS_INSTANCE_NONE 保持旧名字。 */
+const char *kos_resource_name(const char *kind, int instance, char *buf, size_t len);
 
 #endif /* KITCHENOS_RESOURCE_H */

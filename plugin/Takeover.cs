@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Text;
 using BepInEx.Logging;
 using HarmonyLib;
@@ -38,6 +39,25 @@ namespace WellCooked
         private static float _nextConfigCheck;
         private static float _nextFrontendPress;
         private static bool _frontendHeld;
+
+        // 多实例小窗口：配置 `window=640x360` 与 `window_pos=x,y`。注册表里存着全屏，
+        // 命令行参数又盖不过它，所以分辨率必须在游戏进程内用 Screen.SetResolution 改。
+        private static int _windowWidth;
+        private static int _windowHeight;
+        private static int _windowX = int.MinValue;
+        private static int _windowY;
+        private static bool _windowAppliedLogged;
+        private static bool _windowMismatchLogged;
+        private static bool _windowPositionFailed;
+        private static float _windowWarnAt;
+        private static float _nextWindowAttempt;
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetActiveWindow();
+
+        [DllImport("user32.dll")]
+        private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int x,
+                                                int y, int cx, int cy, uint flags);
 
         /// <summary>`work=auto` 时不再随便挑工位，改由工序状态机（`WorkOrder`）决定去哪、按不按交互。</summary>
         private static bool _workMode;
@@ -138,7 +158,17 @@ namespace WellCooked
                             _log.LogInfo("takeover: 前端按键 " + (press ? "开" : "关"));
                         }
                     }
+                    else if (key == "window")
+                    {
+                        ParseWindow(value);
+                    }
+                    else if (key == "window_pos")
+                    {
+                        ParseWindowPosition(value);
+                    }
                 }
+
+                ApplyWindow();
             }
             catch (Exception e)
             {
@@ -146,9 +176,147 @@ namespace WellCooked
             }
         }
 
+        /// <summary>`window=640x360`；`window=full`/`off` 表示不改分辨率。</summary>
+        private static void ParseWindow(string value)
+        {
+            if (value == "full" || value == "off" || value == "0")
+            {
+                _windowWidth = 0;
+                _windowHeight = 0;
+                _windowAppliedLogged = false;
+                _windowMismatchLogged = false;
+                _windowWarnAt = 0f;
+                return;
+            }
+
+            int at = value.IndexOf('x');
+            int width;
+            int height;
+            if (at > 0
+                && int.TryParse(value.Substring(0, at), out width)
+                && int.TryParse(value.Substring(at + 1), out height)
+                && width >= 320 && height >= 180)
+            {
+                _windowWidth = width;
+                _windowHeight = height;
+                _windowAppliedLogged = false;
+                _windowMismatchLogged = false;
+                _windowWarnAt = 0f;
+            }
+        }
+
+        private static void ParseWindowPosition(string value)
+        {
+            int comma = value.IndexOf(',');
+            int x;
+            int y;
+            if (comma > 0
+                && int.TryParse(value.Substring(0, comma), out x)
+                && int.TryParse(value.Substring(comma + 1), out y))
+            {
+                _windowX = x;
+                _windowY = y;
+                _windowPositionFailed = false;
+            }
+        }
+
+        /// <summary>
+        /// 每 5 秒的配置读取之后调一次。游戏切场景或恢复全屏时可能把窗口改回去，
+        /// 所以尺寸不符就再设一次；位置只试一次，失败也不刷屏。
+        /// </summary>
+        private static void ApplyWindow()
+        {
+            if (_windowWidth <= 0 || _windowHeight <= 0)
+            {
+                return;
+            }
+
+            float now = Time.realtimeSinceStartup;
+            float positionDueAt = _nextWindowAttempt;
+            if (Screen.width != _windowWidth || Screen.height != _windowHeight || Screen.fullScreen)
+            {
+                try
+                {
+                    Screen.SetResolution(_windowWidth, _windowHeight, false);
+                }
+                catch (Exception e)
+                {
+                    if (!_windowMismatchLogged)
+                    {
+                        _windowMismatchLogged = true;
+                        _log.LogWarning("takeover: Screen.SetResolution(" + _windowWidth + "x"
+                                        + _windowHeight + ") 失败: " + e.Message);
+                    }
+                    return;
+                }
+            }
+
+            if (Screen.width == _windowWidth && Screen.height == _windowHeight)
+            {
+                _windowWarnAt = 0f;
+                if (!_windowAppliedLogged)
+                {
+                    _windowAppliedLogged = true;
+                    _log.LogInfo("takeover: 窗口 = " + Screen.width + "x" + Screen.height
+                                 + "（全屏=" + Screen.fullScreen + "）");
+                }
+            }
+            else if (!_windowMismatchLogged)
+            {
+                // 第一次请求后给游戏 10 秒；一直没生效才留一条证据，方便回到
+                // "改前缀注册表"的兜底方案，也不让每 5 秒刷一行。
+                if (_windowWarnAt <= 0f)
+                {
+                    _windowWarnAt = now + 10f;
+                }
+                else if (now >= _windowWarnAt)
+                {
+                    _windowMismatchLogged = true;
+                    _log.LogWarning("takeover: 请求窗口 " + _windowWidth + "x" + _windowHeight
+                                    + "，当前仍为 " + Screen.width + "x" + Screen.height
+                                    + "（可能被注册表的全屏记录盖住）");
+                }
+            }
+            _nextWindowAttempt = now + 5f;
+
+            if (_windowX == int.MinValue || _windowPositionFailed || now < positionDueAt)
+            {
+                return;
+            }
+            try
+            {
+                IntPtr hwnd = GetActiveWindow();
+                if (hwnd == IntPtr.Zero)
+                {
+                    _windowPositionFailed = true;
+                    _log.LogWarning("takeover: 拿不到游戏窗口句柄，window_pos 忽略");
+                    return;
+                }
+                const uint SWP_NOSIZE = 0x0001;
+                const uint SWP_NOZORDER = 0x0004;
+                const uint SWP_NOACTIVATE = 0x0010;
+                if (!SetWindowPos(hwnd, IntPtr.Zero, _windowX, _windowY, 0, 0,
+                                  SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE))
+                {
+                    _windowPositionFailed = true;
+                    _log.LogWarning("takeover: SetWindowPos(" + _windowX + "," + _windowY + ") 失败");
+                }
+                else
+                {
+                    _log.LogInfo("takeover: 窗口位置 = " + _windowX + "," + _windowY);
+                }
+            }
+            catch (Exception e)
+            {
+                _windowPositionFailed = true;
+                _log.LogWarning("takeover: window_pos 失败: " + e.Message);
+            }
+        }
+
         public static void Install(ManualLogSource log)
         {
             _log = log;
+            ReadConfig();
 
             var update = AccessTools.Method(typeof(PlayerInputLookup), "Update", Type.EmptyTypes);
             if (update == null)
