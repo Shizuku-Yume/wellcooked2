@@ -147,6 +147,10 @@ int kos_metrics_write(const char *path, const kos_metrics_snapshot *snapshot, ch
     json_writer_int(&writer, snapshot->dispatch_fcfs);
     json_writer_key(&writer, "edf");
     json_writer_int(&writer, snapshot->dispatch_edf);
+    json_writer_key(&writer, "llf");
+    json_writer_int(&writer, snapshot->dispatch_llf);
+    json_writer_key(&writer, "hrrn");
+    json_writer_int(&writer, snapshot->dispatch_hrrn);
     json_writer_object_end(&writer);
     json_writer_key(&writer, "worker_restarts");
     json_writer_int(&writer, snapshot->worker_restarts);

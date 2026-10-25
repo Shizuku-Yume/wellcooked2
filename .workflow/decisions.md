@@ -777,3 +777,63 @@ user may overturn on sight. `Revisit when` of "never" is allowed but suspicious;
 - **Revisit when:** 导出里带上工位占用的格子或游戏 1.2 m 网格原点，能直接算交互邻居而不必按
   坐标取最近格。
 - **Effort:** kitchen-control
+
+## 2026-10-25 - decisions.jsonl 的 w_* 写带符号分量，每条决策都有
+
+- **Decided:** 派工决策把代价公式的五项分别写成 `w_d/w_t/w_c/w_u/w_z`，符号与公式一致
+  （`w_c`、`w_u` 为负），`cost` 等于五项之和；`order_open`、`strategy` 等非派工决策也写
+  这五个键，值为 0。派工行另写原始输入 `travel_cells/travel_s/work_s/critical_s/urgency/
+  zone/weight_*`，日志里能逐项复算。
+- **Instead of:** 只写权重（`w_d` 是 1.0 这类常数）或只写原始量；非派工决策不带这五个键。
+- **Because:** 分析脚本要按同一组键汇总策略对比，不必按 `kind` 分支；权重与分量同名会让
+  人分不清日志里的数乘过没有。任务 11 的网格搜索直接读这些分量解释差异，公式改了也能对账。
+- **Mine:** yes
+- **Revisit when:** 决策日志出现第三种需要同样五个分量的记录类型，或日志行逼近 2048 字节
+  上限（现在派工行约 700 字节）。
+- **Effort:** kitchen-control
+
+## 2026-10-25 - 订单按开工顺序交付，策略只决定下一单
+
+- **Decided:** 订单有 `opened/open_seq`：未开工订单的工序不参与派工；已开工订单的就绪工序
+  不够填满空闲厨师时，才按策略再开一单；开工更早的订单没做完时，后面订单的 `deliver` 不
+  进就绪队列。策略（FCFS/EDF/LLF/HRRN）只决定开工顺序，不中途改派已开工订单。
+- **Instead of:** 每次派工都让策略在所有活跃订单里挑一个（os-core 原行为），或固定一个
+  并发订单数/先到先做。
+- **Because:** 小费倍率要求按顺序上菜，晚开的单先交付会打乱倍率；把策略限制在"开下一单"
+  才能让 LLF/HRRN 的差别只体现在订单顺序上，比较实验可解释。按空闲厨师数补开订单，避免
+  策略挑中的单一时没有就绪工序就让厨师空转，也不会把全部订单一次铺开。
+- **Mine:** yes
+- **Revisit when:** 实机发现交付顺序门控导致某单长期缺盘/缺锅而其它单已完成却不能交付；
+  那时让 `deliver` 只在"上一单已交付"而不是"上一单全部工序完成"时放行。
+- **Effort:** kitchen-control
+
+## 2026-10-25 - wash 是 Scheduler 合成工序，不走订单模型
+
+- **Decided:** 干净盘 ≤ 1 且有脏盘时，Scheduler 合成一道 `wash`（`op=wash`、`resource`
+  取水槽工位 kind、`duration_ms=wash_ms`）放进与订单工序相同的候选列表、匈牙利配对和资源
+  租约；同一时刻最多一道，干净盘恢复、Worker 崩溃或租约回收时丢弃重生成。它不出现在订单
+  列表与订单 metrics 里。
+- **Instead of:** 伪造一张 wash 订单（复用订单 DAG 与派发路径），或给 wash 单开一个队列。
+- **Because:** 伪造订单会把维护工序算进 `orders_total/completed`，污染策略对比的得分与
+  超时统计；另起队列又要复制一份派工、资源与日志逻辑。做成候选里的一种合成工序，复用现有
+  的配对与租约，日志用 `node=wash` 区分。
+- **Mine:** yes
+- **Revisit when:** 出现多种维护工序（补货、清理台面），那时抽一个 maintenance 任务类型，
+  而不是继续往 `sched_candidate` 里加特例。
+- **Effort:** kitchen-control
+
+## 2026-10-25 - 游戏时钟落地前，Scheduler 的时间参数沿用单调时钟
+
+- **Decided:** 任务 07 的 LLF/HRRN 与租约截止期继续用 Scheduler 现有的单调时钟 `now_ms`；
+  策略接口只收一个 `now_ms`，任务 02 的 `game_time_ms` 合并进来后只改 Scheduler 取时的一处，
+  策略与测试不用动。
+- **Instead of:** 在任务 07 的分支上复制一份 `game_time_ms`（改 shm 布局、版本号与 Bridge），
+  或从 `world.game_time`（整秒）另造一套时间轴。
+- **Because:** 任务 02 不是任务 07 的前置，它的分支还没归档；任务 07 的基分支（03）里没有
+  `game_time_ms` 字段。订单到达/截止期目前全是单调时钟坐标，只把策略换成游戏时间会让两套
+  时间轴混用，暂停时反而更错。真正接入时（任务 04/09 合并 02 之后）要连同租约、超时一起换，
+  这正是 "2026-10-25 - Linux 侧计时统一用游戏时钟" 的执行点。
+- **Mine:** yes
+- **Revisit when:** 任务 02 的 `game_time_ms` 合并进本通道的任务（04/06/09），或实机出现暂停
+  期间租约过期/LLF 选择漂移。
+- **Effort:** kitchen-control

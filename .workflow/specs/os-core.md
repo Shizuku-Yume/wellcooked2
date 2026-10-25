@@ -76,7 +76,7 @@ Supervisor 自己所在目录）。Scheduler 与 Worker 是同一个源码树里
 ### Scheduler
 
 > **状态：**已实现（任务 02，W6/W7/W11）。订单来自 config/orders.json 的 menu 与 shm
-> 世界状态；FCFS/EDF 在 `policy.h` 的接口后面；任务走 mq；SIGHUP 切换策略。
+> 世界状态；FCFS/EDF/LLF/HRRN 在 `policy.h` 的接口后面；任务走 mq；SIGHUP 轮换策略。
 
 - 事件驱动主循环：订单到达、工序完成、资源释放、Worker 事件。
 - 维护业务层订单模型（不能直接拿游戏订单池当任务队列）：
@@ -102,7 +102,8 @@ Supervisor 自己所在目录）。Scheduler 与 Worker 是同一个源码树里
                       int64_t now_ms, int *chosen_index);
   ```
 
-  第一批实现 FCFS 与 EDF；SJF/HRRN/LLF 只要满足同一接口即可加（§4.3）。
+  第一批实现 FCFS 与 EDF；LLF 与 HRRN 由 kitchen-control/07 按同一接口补齐，SIGHUP 按
+  FCFS → EDF → LLF → HRRN 轮换（SJF 仍未实现）。
 - 工序级用列表调度：就绪队列 = 前置全部完成且所需资源可预约的工序；每个空闲 Worker 取
   优先级最高的就绪工序（关键路径优先，短工序与等待时间做加权），通过消息队列下发。
 - 每次决策写 `runs/<ts>/decisions.jsonl`：策略名、参与比较的键值、选中项、理由。
@@ -199,7 +200,7 @@ resource_wait_ms/decisions/restarts`，供对比脚本读。
 | `child` | Scheduler/Worker 共用的启动骨架：参数、日志、挂接 shm 重试、心跳、SIGTERM/SIGHUP | 调度、路径规划 |
 | `supervisor`（可执行） | 上述模块 + fork/exec、SIGCHLD/SIGALRM、状态文件、关闭顺序、IPC 清理 | 任何业务策略 |
 | `kitchen` / `recipes` | 解析配置、网格索引、工序 DAG、关键路径与就绪判定 | 调度决策、路径 |
-| `policy` | FCFS / EDF 的订单选择 | 工序图、资源分配、IPC |
+| `policy` | FCFS / EDF / LLF / HRRN 的订单选择 | 工序图、资源分配、IPC |
 | `nav` | A* 与邻接判定 | 工位语义、动作发布 |
 | `worker_task` | 单个工序的移动/交互/工作状态机 | 选任务、写共享内存 |
 | `mq` | 创建/打开/定时收发定长消息 | 调度策略 |
@@ -212,7 +213,7 @@ resource_wait_ms/decisions/restarts`，供对比脚本读。
 | 头文件 | 职责 |
 |---|---|
 | `kitchen.h` / `recipes.h` | 读 kitchen.json 的网格/工位与 recipes.json 的 DAG、关键路径 |
-| `policy.h` | 只吃订单/资源视图的 FCFS/EDF 接口 |
+| `policy.h` | 只吃订单/资源视图的 FCFS/EDF/LLF/HRRN 接口 |
 | `nav.h` | 网格 A* |
 | `worker_task.h` | move → interact → work → done 状态机 |
 | `mq.h` | 每厨师任务队列 / events 的名字与定长消息布局 |
@@ -285,7 +286,8 @@ Supervisor 清掉，证明清理不是 Bridge 顺手做的）。
 锁住它的是 `sighup_forwarded`、`status_dump_on_sigusr1`。
 
 **W6. Scheduler 订单级策略（已实现，有检查）。** 同一组订单分别跑 FCFS 与 EDF，
-选择与手算一致；EDF 在截止期相同时退化为 FCFS。锁住它的是
+选择与手算一致；EDF 在截止期相同时退化为 FCFS。LLF/HRRN 的顺序与并列退化在
+kitchen-control 的 W8 里检查。锁住它的是
 `bridge/tests/test_policy.c` 的 `fcfs_orders_by_arrival`、`edf_orders_by_deadline`、
 `edf_ties_match_fcfs`、`policy_empty_rejected`、`policy_kind_from_name_rejects`。
 
