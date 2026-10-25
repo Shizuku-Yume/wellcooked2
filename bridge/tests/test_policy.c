@@ -10,9 +10,12 @@
 #endif
 
 #include "kitchenos/child.h"
+#include "kitchenos/json.h"
 #include "kitchenos/mq.h"
 #include "kitchenos/policy.h"
 #include "kitchenos/recipes.h"
+
+#include "scheduler_fixture.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -105,7 +108,11 @@ static void test_policy_order(void)
     expect(strcmp(kos_policy_name(edf), "FCFS") == 0, "policy_name_after_switch");
     kos_policy_set_kind(edf, KOS_POLICY_EDF);
     expect(strcmp(kos_policy_name(edf), "EDF") == 0, "policy_name_edf");
-    expect(kos_policy_other(KOS_POLICY_EDF) == KOS_POLICY_FCFS, "policy_other_flips");
+    expect(kos_policy_other(KOS_POLICY_FCFS) == KOS_POLICY_EDF &&
+               kos_policy_other(KOS_POLICY_EDF) == KOS_POLICY_LLF &&
+               kos_policy_other(KOS_POLICY_LLF) == KOS_POLICY_HRRN &&
+               kos_policy_other(KOS_POLICY_HRRN) == KOS_POLICY_FCFS,
+           "policy_other_cycles_four");
     {
         kos_policy_kind kind = KOS_POLICY_FCFS;
 
@@ -117,6 +124,138 @@ static void test_policy_order(void)
     }
     kos_policy_destroy(fcfs);
     kos_policy_destroy(edf);
+}
+
+/*
+ * LLF / HRRN 用手算顺序证明，且每个用例里 EDF、FCFS 的选择与它不同：
+ *   LLF  a: deadline 3000, est 100  → slack 1900 @now=1000（EDF 选 a）
+ *        b: deadline 4000, est 3500 → slack -500（LLF 选 b）
+ *        c: deadline 9000, est 1000 → slack 7000
+ *   HRRN a: arrival 100, est 8000 → (900+8000)/8000 ≈ 1.11（EDF 选 a，deadline 2000）
+ *        b: arrival 900, est 100  → (100+100)/100 = 2.0（HRRN 选 b）
+ *        c: arrival 100, est 1000 → 1.9（FCFS 选 c）
+ */
+static void test_llf_hrrn(void)
+{
+    kos_order_view orders[3];
+    kos_policy *llf;
+    kos_policy *hrrn;
+    kos_policy *edf;
+    kos_policy *fcfs;
+    int chosen = -1;
+
+    printf("[test_policy] 2. LLF / HRRN\n");
+    memset(orders, 0, sizeof orders);
+    snprintf(orders[0].id, sizeof orders[0].id, "a");
+    orders[0].arrival_ms = 100;
+    orders[0].deadline_ms = 3000;
+    orders[0].est_cost_ms = 100;
+    orders[0].status = KOS_ORDER_ACTIVE;
+    snprintf(orders[1].id, sizeof orders[1].id, "b");
+    orders[1].arrival_ms = 200;
+    orders[1].deadline_ms = 4000;
+    orders[1].est_cost_ms = 3500;
+    orders[1].status = KOS_ORDER_ACTIVE;
+    snprintf(orders[2].id, sizeof orders[2].id, "c");
+    orders[2].arrival_ms = 50;
+    orders[2].deadline_ms = 9000;
+    orders[2].est_cost_ms = 1000;
+    orders[2].status = KOS_ORDER_ACTIVE;
+
+    llf = make_policy(KOS_POLICY_LLF);
+    hrrn = make_policy(KOS_POLICY_HRRN);
+    edf = make_policy(KOS_POLICY_EDF);
+    fcfs = make_policy(KOS_POLICY_FCFS);
+    expect(llf != NULL && hrrn != NULL && edf != NULL && fcfs != NULL,
+           "policy_create_llf_hrrn");
+    if (llf == NULL || hrrn == NULL || edf == NULL || fcfs == NULL) {
+        kos_policy_destroy(llf);
+        kos_policy_destroy(hrrn);
+        kos_policy_destroy(edf);
+        kos_policy_destroy(fcfs);
+        return;
+    }
+    expect(kos_policy_pick(llf, orders, 3, NULL, 0, 1000, &chosen) == KOS_OK &&
+               chosen == 1,
+           "llf_least_slack_first");
+    expect(kos_policy_pick(edf, orders, 3, NULL, 0, 1000, &chosen) == KOS_OK &&
+               chosen == 0,
+           "llf_case_edf_differs");
+    expect(strcmp(kos_policy_name(llf), "LLF") == 0, "policy_name_llf");
+
+    memset(orders, 0, sizeof orders);
+    snprintf(orders[0].id, sizeof orders[0].id, "a");
+    orders[0].arrival_ms = 100;
+    orders[0].deadline_ms = 2000;
+    orders[0].est_cost_ms = 8000;
+    orders[0].status = KOS_ORDER_ACTIVE;
+    snprintf(orders[1].id, sizeof orders[1].id, "b");
+    orders[1].arrival_ms = 900;
+    orders[1].deadline_ms = 5000;
+    orders[1].est_cost_ms = 100;
+    orders[1].status = KOS_ORDER_ACTIVE;
+    snprintf(orders[2].id, sizeof orders[2].id, "c");
+    orders[2].arrival_ms = 50;
+    orders[2].deadline_ms = 3000;
+    orders[2].est_cost_ms = 1000;
+    orders[2].status = KOS_ORDER_ACTIVE;
+
+    expect(kos_policy_pick(hrrn, orders, 3, NULL, 0, 1000, &chosen) == KOS_OK &&
+               chosen == 1,
+           "hrrn_highest_response_ratio");
+    expect(kos_policy_pick(edf, orders, 3, NULL, 0, 1000, &chosen) == KOS_OK &&
+               chosen == 0,
+           "hrrn_case_edf_differs");
+    expect(kos_policy_pick(fcfs, orders, 3, NULL, 0, 1000, &chosen) == KOS_OK &&
+               chosen == 2,
+           "hrrn_case_fcfs_differs");
+    expect(strcmp(kos_policy_name(hrrn), "HRRN") == 0, "policy_name_hrrn");
+
+    /* 主键并列时必须退化成 FCFS：LLF 的松弛相同、HRRN 的响应比相同。 */
+    memset(orders, 0, sizeof orders);
+    snprintf(orders[0].id, sizeof orders[0].id, "late");
+    orders[0].arrival_ms = 200;
+    orders[0].deadline_ms = 5000;
+    orders[0].est_cost_ms = 2000;
+    orders[0].status = KOS_ORDER_ACTIVE;
+    snprintf(orders[1].id, sizeof orders[1].id, "early");
+    orders[1].arrival_ms = 100;
+    orders[1].deadline_ms = 4000;
+    orders[1].est_cost_ms = 1000;
+    orders[1].status = KOS_ORDER_ACTIVE;
+    expect(kos_policy_pick(llf, orders, 2, NULL, 0, 1000, &chosen) == KOS_OK &&
+               chosen == 1,
+           "llf_tie_falls_back_to_fcfs");
+
+    memset(orders, 0, sizeof orders);
+    snprintf(orders[0].id, sizeof orders[0].id, "late");
+    orders[0].arrival_ms = 500;
+    orders[0].deadline_ms = 9000;
+    orders[0].est_cost_ms = 500;
+    orders[0].status = KOS_ORDER_ACTIVE;
+    snprintf(orders[1].id, sizeof orders[1].id, "early");
+    orders[1].arrival_ms = 0;
+    orders[1].deadline_ms = 9000;
+    orders[1].est_cost_ms = 1000;
+    orders[1].status = KOS_ORDER_ACTIVE;
+    expect(kos_policy_pick(hrrn, orders, 2, NULL, 0, 1000, &chosen) == KOS_OK &&
+               chosen == 1,
+           "hrrn_tie_falls_back_to_fcfs");
+
+    {
+        kos_policy_kind kind = KOS_POLICY_FCFS;
+
+        expect(kos_policy_kind_from_name("llf", &kind) == KOS_OK &&
+                   kind == KOS_POLICY_LLF,
+               "policy_kind_from_name_llf");
+        expect(kos_policy_kind_from_name("HRRN", &kind) == KOS_OK &&
+                   kind == KOS_POLICY_HRRN,
+               "policy_kind_from_name_hrrn");
+    }
+    kos_policy_destroy(llf);
+    kos_policy_destroy(hrrn);
+    kos_policy_destroy(edf);
+    kos_policy_destroy(fcfs);
 }
 
 static int load_recipes(kos_recipes *recipes)
@@ -331,13 +470,96 @@ static void test_mq(void)
     expect(mq_unlink(name) == 0, "mq_unlink");
 }
 
+
+/*
+ * SIGHUP 的轮换在真实 Scheduler 上验证：以 llf 启动，一次 HUP 必须切到 hrrn，
+ * 之后派工决策里的 policy 字段跟着变。订单/工序来自临时地图副本，资源信号量名
+ * 带 pid 后缀，不会碰到别的测试。
+ */
+static void test_sighup_switches_policy(void)
+{
+    ksfx_run run;
+    char decisions[KSFX_PATH_MAX];
+    int saw_llf_dispatch = 0;
+    int saw_hrrn_switch = 0;
+    FILE *file;
+    char *line = NULL;
+    size_t cap = 0;
+
+    printf("[test_policy] 5. SIGHUP 切到 LLF / HRRN\n");
+    if (ksfx_init(&run) != 0) {
+        expect(0, "sighup_fixture_init");
+        ksfx_cleanup(&run);
+        return;
+    }
+    if (ksfx_spawn(&run, "llf") <= 0) {
+        expect(0, "sighup_scheduler_spawned");
+        ksfx_cleanup(&run);
+        return;
+    }
+    if (ksfx_wait_decisions(&run, "\"dispatch\"", 3000, decisions,
+                            sizeof decisions) != 0) {
+        ksfx_dump_logs(&run);
+        expect(0, "sighup_dispatch_written");
+        (void)ksfx_stop(&run);
+        ksfx_cleanup(&run);
+        return;
+    }
+    expect(1, "sighup_dispatch_written");
+    (void)kill(run.pid, SIGHUP);
+    expect(ksfx_wait_decisions(&run, "HRRN", 2000, decisions, sizeof decisions) == 0,
+           "sighup_switches_to_hrrn");
+    expect(ksfx_stop(&run) == 0, "sighup_scheduler_stopped");
+
+    file = fopen(decisions, "r");
+    if (file == NULL) {
+        expect(0, "sighup_decisions_readable");
+        ksfx_cleanup(&run);
+        return;
+    }
+    while (getline(&line, &cap, file) >= 0) {
+        json_value *root = NULL;
+        json_error jerr;
+        const char *kind = NULL;
+        const char *policy = NULL;
+        const char *to = NULL;
+
+        json_error_init(&jerr);
+        if (line[0] == '\n' ||
+            json_parse_ex(line, strlen(line), &root, &jerr) != JSON_OK ||
+            json_typeof(root) != JSON_OBJECT) {
+            json_free(root);
+            continue;
+        }
+        (void)json_object_get_string(root, "kind", &kind, NULL);
+        (void)json_object_get_string(root, "policy", &policy, NULL);
+        (void)json_object_get_string(root, "to", &to, NULL);
+        if (kind != NULL && strcmp(kind, "dispatch") == 0 && policy != NULL &&
+            strcmp(policy, "LLF") == 0) {
+            saw_llf_dispatch = 1;
+        }
+        if (kind != NULL && strcmp(kind, "strategy") == 0 && to != NULL &&
+            strcmp(to, "HRRN") == 0) {
+            saw_hrrn_switch = 1;
+        }
+        json_free(root);
+    }
+    free(line);
+    fclose(file);
+    expect(saw_llf_dispatch, "sighup_started_on_llf");
+    expect(saw_hrrn_switch, "sighup_decision_records_hrrn");
+    ksfx_cleanup(&run);
+}
+
 int main(void)
 {
     printf("[test_policy] 开始：订单策略、工序 DAG、mq\n");
     test_policy_order();
+    test_llf_hrrn();
     test_recipes();
     test_list_schedule();
     test_mq();
+    test_sighup_switches_policy();
     printf("[test_policy] 检查 %d 项，失败 %d 项\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;
 }

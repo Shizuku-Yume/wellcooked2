@@ -14,6 +14,7 @@
 #endif
 
 #include <kitchenos/child.h>
+#include <kitchenos/policy.h>
 
 #include <errno.h>
 #include <signal.h>
@@ -162,7 +163,7 @@ void kos_child_print_usage(FILE *out, kos_child_kind kind)
             "                      [--log FILE] [--supervisor-fd N]\n"
             "                      [--supervisor-heartbeat-ms M] [--attach-retry-ms M]\n"
             "                      [--kitchen FILE] [--recipes FILE] [--orders FILE]\n"
-            "                      [--runs-dir DIR] [--strategy fcfs|edf] [--chefs N]\n"
+            "                      [--runs-dir DIR] [--strategy fcfs|edf|llf|hrrn] [--chefs N]\n"
             "                      [--tick-ms M] [--slot-interval-ms M]\n"
             "                      [--verbose] [--help] [--version]\n",
             kind_name(kind));
@@ -174,7 +175,7 @@ void kos_child_print_usage(FILE *out, kos_child_kind kind)
             "\n"
             "Scheduler: builds orders/tasks from config/{kitchen,recipes,orders}.example.json\n"
             "and the Bridge's shm world state, dispatches ready tasks over POSIX mq, and\n"
-            "writes runs/<ts>/{events.jsonl,decisions.jsonl}. SIGHUP switches FCFS/EDF.\n"
+            "writes runs/<ts>/{events.jsonl,decisions.jsonl}. SIGHUP cycles FCFS/EDF/LLF/HRRN.\n"
             "Worker: receives its mq task, A* over the kitchen grid, and publishes per-frame\n"
             "move/interact into its input slot; task results go back on /kitchenos_events.\n"
             "\n"
@@ -306,9 +307,9 @@ int kos_child_parse_args(kos_child_opts *o, int argc, char **argv)
             copy_str(o->runs_dir, sizeof o->runs_dir, v);
         } else if (strcmp(name, "--strategy") == 0) {
             const char *v = take_value(value, argc, argv, &i);
+            kos_policy_kind kind;
 
-            if (v == NULL ||
-                (strcmp(v, "fcfs") != 0 && strcmp(v, "edf") != 0)) {
+            if (v == NULL || kos_policy_kind_from_name(v, &kind) != KOS_OK) {
                 return KOS_CHILD_ARG_ERR;
             }
             copy_str(o->strategy, sizeof o->strategy, v);
