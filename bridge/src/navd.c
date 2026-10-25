@@ -14,13 +14,17 @@
 
 #include <kitchenos/adg.h>
 #include <kitchenos/child.h>
+#include <kitchenos/json.h>
 #include <kitchenos/kitchen.h>
 #include <kitchenos/log.h>
 #include <kitchenos/navtab.h>
+#include <kitchenos/pa.h>
 #include <kitchenos/pibt.h>
 #include <kitchenos/shm.h>
 #include <kitchenos/stand.h>
 
+#include <errno.h>
+#include <fcntl.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -35,6 +39,13 @@
 #define NAVD_MOVE_EPS 0.02f
 #define NAVD_PLAN_H KOS_NAV_MAX_PLAN
 #define NAVD_ATTACH_LOG_MS 2000
+#define NAVD_METRICS_SAMPLES 2048
+#define NAVD_METRICS_INTERVAL_MS 1000
+
+enum {
+    NAVD_ALGO_PIBT = 0,
+    NAVD_ALGO_PA = 1
+};
 
 typedef struct {
     int chef_id;
@@ -53,12 +64,16 @@ typedef struct {
 
     int origin_cell;
     int plan[NAVD_PLAN_H];
+    uint8_t plan_wait[NAVD_PLAN_H];
     int plan_len;
     int executed;
     int released;
 
     int stuck_count;
     uint32_t replans;
+    uint32_t stuck_events;
+    uint32_t moves; /* 已执行的前进步 */
+    uint32_t waits; /* 已执行的原地等待步 */
     int64_t last_progress_ms;
     int64_t target_step;
     float last_x;
@@ -76,11 +91,21 @@ typedef struct {
     kos_kitchen kitchen;
     char kitchen_path[KOS_DAEMON_PATH_MAX];
     kos_pibt pibt;
+    kos_pa pa;
     kos_navtab *tab;
     uint64_t last_world_seq;
     int have_world;
+    int algo;
     int64_t next_attach_log_ms;
     int64_t step_counter;
+    int64_t game_ms;
+    uint64_t planning_cycles;
+    uint32_t planning_us[NAVD_METRICS_SAMPLES];
+    int planning_us_count;
+    int planning_us_next;
+    int64_t last_metrics_write_ms;
+    int metrics_errors;
+    int last_pa_rc;
     nav_agent agents[KOS_SHM_MAX_CHEFS];
     int chef_count;
 } navd;
@@ -95,6 +120,189 @@ static int64_t now_ms(void)
         return 0;
     }
     return (int64_t)ts.tv_sec * 1000 + (int64_t)(ts.tv_nsec / 1000000L);
+}
+
+static int64_t now_us(void)
+{
+    struct timespec ts;
+
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) {
+        return 0;
+    }
+    return (int64_t)ts.tv_sec * 1000000 + (int64_t)(ts.tv_nsec / 1000L);
+}
+
+static int compare_u32(const void *a, const void *b)
+{
+    uint32_t left = *(const uint32_t *)a;
+    uint32_t right = *(const uint32_t *)b;
+
+    return left < right ? -1 : (left > right ? 1 : 0);
+}
+
+/* 最近秩百分位：p=99 取第 ceil(0.99*n) 个（1 基），与报告里"p99"的读法一致。 */
+static uint32_t percentile(const uint32_t *sorted, int count, int percent)
+{
+    int rank;
+
+    if (count <= 0) {
+        return 0;
+    }
+    rank = (percent * count + 99) / 100;
+    if (rank < 1) {
+        rank = 1;
+    }
+    if (rank > count) {
+        rank = count;
+    }
+    return sorted[rank - 1];
+}
+
+static void record_planning_us(navd *n, int64_t elapsed_us)
+{
+    uint32_t value = elapsed_us <= 0
+                         ? 0u
+                         : (elapsed_us > (int64_t)UINT32_MAX ? UINT32_MAX
+                                                             : (uint32_t)elapsed_us);
+
+    n->planning_us[n->planning_us_next] = value;
+    n->planning_us_next = (n->planning_us_next + 1) % NAVD_METRICS_SAMPLES;
+    if (n->planning_us_count < NAVD_METRICS_SAMPLES) {
+        n->planning_us_count++;
+    }
+    n->planning_cycles++;
+}
+
+static int write_all_fd(int fd, const char *data, size_t len)
+{
+    while (len > 0) {
+        ssize_t written = write(fd, data, len);
+
+        if (written < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            return -1;
+        }
+        data += (size_t)written;
+        len -= (size_t)written;
+    }
+    return 0;
+}
+
+/*
+ * 每局一份，写在进程树的运行目录（--runtime-dir）下：一局一棵进程树，没有
+ * 共享内存里的计数器，重启后的 navd 从零开始，和 Worker/调度指标分开收集。
+ */
+static void write_nav_metrics(navd *n)
+{
+    char body[16384];
+    char path[KOS_DAEMON_PATH_MAX + 32];
+    char tmp[KOS_DAEMON_PATH_MAX + 32];
+    uint32_t sorted[NAVD_METRICS_SAMPLES];
+    json_writer writer;
+    int samples = n->planning_us_count;
+    int i;
+    int64_t total_steps = 0;
+    int64_t total_waits = 0;
+    int64_t total_replans = 0;
+    int64_t total_stuck = 0;
+    int fd;
+
+    if (n->rt.runtime_dir[0] == '\0') {
+        return;
+    }
+    if (samples > 0) {
+        for (i = 0; i < samples; i++) {
+            sorted[i] = n->planning_us[i];
+        }
+        qsort(sorted, (size_t)samples, sizeof sorted[0], compare_u32);
+    }
+    json_writer_init(&writer, body, sizeof body);
+    json_writer_object_begin(&writer);
+    json_writer_key(&writer, "schema");
+    json_writer_string(&writer, "kitchenos.nav_metrics.v1");
+    json_writer_key(&writer, "algorithm");
+    json_writer_string(&writer, n->algo == NAVD_ALGO_PA ? "pa" : "pibt");
+    json_writer_key(&writer, "planning_cycles");
+    json_writer_int(&writer, (long long)n->planning_cycles);
+    json_writer_key(&writer, "game_ms");
+    json_writer_int(&writer, (long long)n->game_ms);
+    json_writer_key(&writer, "chefs");
+    json_writer_array_begin(&writer);
+    for (i = 0; i < n->chef_count; i++) {
+        const nav_agent *agent = &n->agents[i];
+
+        json_writer_object_begin(&writer);
+        json_writer_key(&writer, "chef_id");
+        json_writer_int(&writer, agent->chef_id);
+        json_writer_key(&writer, "steps");
+        json_writer_int(&writer, (long long)agent->moves);
+        json_writer_key(&writer, "waits");
+        json_writer_int(&writer, (long long)agent->waits);
+        json_writer_key(&writer, "replans");
+        json_writer_int(&writer, (long long)agent->replans);
+        json_writer_key(&writer, "stuck");
+        json_writer_int(&writer, (long long)agent->stuck_events);
+        json_writer_object_end(&writer);
+        total_steps += agent->moves;
+        total_waits += agent->waits;
+        total_replans += agent->replans;
+        total_stuck += agent->stuck_events;
+    }
+    json_writer_array_end(&writer);
+    json_writer_key(&writer, "totals");
+    json_writer_object_begin(&writer);
+    json_writer_key(&writer, "steps");
+    json_writer_int(&writer, total_steps);
+    json_writer_key(&writer, "waits");
+    json_writer_int(&writer, total_waits);
+    json_writer_key(&writer, "replans");
+    json_writer_int(&writer, total_replans);
+    json_writer_key(&writer, "stuck");
+    json_writer_int(&writer, total_stuck);
+    json_writer_object_end(&writer);
+    json_writer_key(&writer, "planning_us");
+    json_writer_object_begin(&writer);
+    json_writer_key(&writer, "samples");
+    json_writer_int(&writer, samples);
+    json_writer_key(&writer, "p50");
+    json_writer_int(&writer, (long long)(samples > 0 ? percentile(sorted, samples, 50) : 0));
+    json_writer_key(&writer, "p99");
+    json_writer_int(&writer, (long long)(samples > 0 ? percentile(sorted, samples, 99) : 0));
+    json_writer_key(&writer, "max");
+    json_writer_int(&writer, (long long)(samples > 0 ? sorted[samples - 1] : 0));
+    json_writer_object_end(&writer);
+    json_writer_object_end(&writer);
+    if (snprintf(path, sizeof path, "%s/nav_metrics.json", n->rt.runtime_dir) >=
+            (int)sizeof path ||
+        snprintf(tmp, sizeof tmp, "%s.tmp", path) >= (int)sizeof tmp) {
+        return;
+    }
+    fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) {
+        n->metrics_errors++;
+        kos_log_warn(n->rt.log, "nav_metrics_failed", "path=%s error=%s", tmp,
+                     strerror(errno));
+        return;
+    }
+    if (write_all_fd(fd, json_writer_text(&writer), json_writer_length(&writer)) != 0 ||
+        close(fd) != 0) {
+        int saved = errno;
+
+        (void)close(fd);
+        n->metrics_errors++;
+        kos_log_warn(n->rt.log, "nav_metrics_failed", "path=%s error=%s", tmp,
+                     strerror(saved));
+        return;
+    }
+    if (rename(tmp, path) != 0) {
+        n->metrics_errors++;
+        kos_log_warn(n->rt.log, "nav_metrics_failed", "path=%s error=%s", path,
+                     strerror(errno));
+        return;
+    }
+    n->last_metrics_write_ms = now_ms();
 }
 
 static void copy_str(char *dst, size_t cap, const char *src)
@@ -144,6 +352,7 @@ static void reset_plans(navd *n)
         agent->plan_len = 0;
         agent->executed = 0;
         agent->released = 0;
+        memset(agent->plan_wait, 0, sizeof agent->plan_wait);
     }
 }
 
@@ -234,6 +443,11 @@ static void update_executed(navd *n, nav_agent *agent)
         if (dx * dx + dz * dz > NAVD_ARRIVE_EPS * NAVD_ARRIVE_EPS) {
             break;
         }
+        if (agent->plan_wait[agent->executed]) {
+            agent->waits++;
+        } else {
+            agent->moves++;
+        }
         agent->executed++;
     }
 }
@@ -251,6 +465,8 @@ static void compact_plan(navd *n, nav_agent *agent)
     if (shift < agent->plan_len) {
         memmove(agent->plan, agent->plan + shift,
                 sizeof agent->plan[0] * (size_t)(agent->plan_len - shift));
+        memmove(agent->plan_wait, agent->plan_wait + shift,
+                sizeof agent->plan_wait[0] * (size_t)(agent->plan_len - shift));
         agent->plan_len -= shift;
     } else {
         agent->plan_len = 0;
@@ -304,17 +520,76 @@ static int plan_extension_round(navd *n)
     }
     for (i = 0; i < count; i++) {
         nav_agent *agent = &n->agents[active[i]];
+        int waiting;
 
-        if (next_cells[i] == tails[i]) {
-            continue;
+        waiting = next_cells[i] == tails[i];
+        if (waiting) {
+            /* 原地也算一个逻辑步：nav_metrics 的等待步数按"已执行的计划步"数，
+             * 不按每个世界状态重算一次，否则 60 Hz 下会多记几十倍。 */
+            if (!agent->has_target || agent->blocked_latched || agent->pinned ||
+                player_at_goal(n, agent)) {
+                continue;
+            }
         }
-        agent->plan[agent->plan_len++] = next_cells[i];
+        agent->plan[agent->plan_len] = next_cells[i];
+        agent->plan_wait[agent->plan_len] = (uint8_t)(waiting ? 1 : 0);
+        agent->plan_len++;
         appended = 1;
     }
     if (appended) {
         n->step_counter++;
     }
     return appended;
+}
+
+/* pa 对照基线：一次算出 H 步的整条计划，预约表只在这个进程的内存里。 */
+static void plan_with_pa(navd *n, const uint8_t *blocked)
+{
+    kos_pa_agent agents[KOS_PA_MAX_AGENTS];
+    int paths[KOS_PA_MAX_AGENTS][KOS_PA_MAX_HORIZON];
+    int lengths[KOS_PA_MAX_AGENTS];
+    int i;
+    int t;
+    int rc;
+
+    memset(agents, 0, sizeof agents);
+    for (i = 0; i < n->chef_count; i++) {
+        nav_agent *agent = &n->agents[i];
+
+        agents[i].chef_id = agent->chef_id;
+        agents[i].cell = agent->actual_cell;
+        agents[i].goal = agent->goal_cell;
+        agents[i].priority =
+            agent->has_target ? (int)(n->step_counter - agent->target_step) +
+                                    (int)agent->target.urgency
+                              : 0;
+        /* blocked_latched 与站不上的目标都不再移动；它们当固定障碍，别的人绕开。 */
+        agents[i].pinned = agent->pinned || agent->blocked_latched || !agent->goal_ok;
+        agents[i].goal_static = agent->has_target;
+    }
+    rc = kos_pa_plan(&n->pa, agents, n->chef_count, NAVD_PLAN_H, blocked, lengths,
+                     paths);
+    if (rc != KOS_OK) {
+        if (rc != n->last_pa_rc) {
+            kos_log_warn(n->rt.log, "nav_pa_failed", "rc=%d chefs=%d", rc,
+                         n->chef_count);
+            n->last_pa_rc = rc;
+        }
+        return;
+    }
+    n->last_pa_rc = KOS_OK;
+    for (i = 0; i < n->chef_count; i++) {
+        nav_agent *agent = &n->agents[i];
+
+        agent->plan_len = lengths[i] > NAVD_PLAN_H ? NAVD_PLAN_H : lengths[i];
+        for (t = 0; t < agent->plan_len; t++) {
+            int previous = t == 0 ? agent->actual_cell : paths[i][t - 1];
+
+            agent->plan[t] = paths[i][t];
+            agent->plan_wait[t] = (uint8_t)(paths[i][t] == previous ? 1 : 0);
+        }
+    }
+    n->step_counter++;
 }
 
 static void build_plans(navd *n)
@@ -340,6 +615,7 @@ static void build_plans(navd *n)
         agent->plan_len = 0;
         agent->executed = 0;
         agent->released = 0;
+        memset(agent->plan_wait, 0, sizeof agent->plan_wait);
         if (agent->blocked_latched || (agent->has_target && agent->pinned)) {
             continue;
         }
@@ -352,7 +628,13 @@ static void build_plans(navd *n)
             /* 到站优先清零；它同时是上面的固定障碍。 */
             agent->target_step = n->step_counter;
         }
-        prepare_distance(n, agent, blocked);
+        if (n->algo == NAVD_ALGO_PIBT) {
+            prepare_distance(n, agent, blocked);
+        }
+    }
+    if (n->algo == NAVD_ALGO_PA) {
+        plan_with_pa(n, blocked);
+        return;
     }
     for (round = 0; round < NAVD_PLAN_H; round++) {
         if (!plan_extension_round(n)) {
@@ -612,6 +894,7 @@ static void detect_stuck(navd *n)
         if (agent->stuck_count >= NAVD_STUCK_LIMIT) {
             agent->blocked_latched = 1;
             agent->blocked_seq = agent->target.target_seq;
+            agent->stuck_events++;
             kos_log_warn(n->rt.log, "nav_stuck",
                          "chef=%d replans=%u stuck=%d target=%s",
                          agent->chef_id, agent->replans, agent->stuck_count,
@@ -668,6 +951,7 @@ static void tick_planning(navd *n, const kos_world_state *world)
     if (n->chef_count <= 0) {
         return;
     }
+    n->game_ms = world->game_time_ms;
     for (i = 0; i < n->chef_count; i++) {
         kos_nav_target target;
 
@@ -691,10 +975,13 @@ static void tick_planning(navd *n, const kos_world_state *world)
     if (duplicate) {
         kos_log_warn(n->rt.log, "nav_state_conflict", "reason=two-chefs-same-cell");
     } else {
+        int64_t started_us = now_us();
+
         detect_stuck(n);
         build_plans(n);
         release_plans(n);
         plan_and_publish(n);
+        record_planning_us(n, now_us() - started_us);
     }
 }
 
@@ -704,6 +991,8 @@ static int navd_main(navd *n, const kos_child_opts *opts)
 
     memset(n, 0, sizeof *n);
     n->rt.opts = *opts;
+    n->algo = strcmp(opts->nav, "pa") == 0 ? NAVD_ALGO_PA : NAVD_ALGO_PIBT;
+    n->last_pa_rc = KOS_OK;
     n->chef_count = opts->chefs > 0 ? opts->chefs : 1;
     if (n->chef_count > KOS_SHM_MAX_CHEFS) {
         n->chef_count = KOS_SHM_MAX_CHEFS;
@@ -732,6 +1021,11 @@ static int navd_main(navd *n, const kos_child_opts *opts)
             kos_child_teardown(&n->rt);
             return 1;
         }
+        if (n->algo == NAVD_ALGO_PA && kos_pa_init(&n->pa, &n->kitchen) != KOS_OK) {
+            kos_log_error(n->rt.log, "pa_init_failed", "path=%s", n->kitchen_path);
+            kos_child_teardown(&n->rt);
+            return 1;
+        }
     }
     for (i = 0; i < n->chef_count; i++) {
         nav_agent *agent = &n->agents[i];
@@ -742,9 +1036,11 @@ static int navd_main(navd *n, const kos_child_opts *opts)
         agent->actual_cell = 0;
         agent->plan_seq = 0;
     }
-    kos_log_info(n->rt.log, "nav_start", "kitchen=%s cells=%d stations=%d chefs=%d H=%d",
+    kos_log_info(n->rt.log, "nav_start",
+                 "kitchen=%s cells=%d stations=%d chefs=%d H=%d nav=%s",
                  n->kitchen_path, n->kitchen.cell_count, n->kitchen.station_count,
-                 n->chef_count, NAVD_PLAN_H);
+                 n->chef_count, NAVD_PLAN_H,
+                 n->algo == NAVD_ALGO_PA ? "pa" : "pibt");
 
     while (!kos_child_poll(&n->rt)) {
         kos_navtab_opts tab_opts;
@@ -789,8 +1085,13 @@ static int navd_main(navd *n, const kos_child_opts *opts)
                 tick_planning(n, &world);
             }
         }
+        if (n->planning_cycles > 0 &&
+            now - n->last_metrics_write_ms >= NAVD_METRICS_INTERVAL_MS) {
+            write_nav_metrics(n);
+        }
         kos_child_sleep(&n->rt, NAVD_LOOP_MS);
     }
+    write_nav_metrics(n);
     if (n->tab != NULL) {
         kos_navtab_close(n->tab);
         n->tab = NULL;

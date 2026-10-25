@@ -96,6 +96,7 @@ typedef struct {
     const char *navd_bin_opt;
     const char *nav_name_opt;
     const char *nav_sem_name_opt;
+    const char *nav_opt; /* navd 的走位算法；NULL = 子进程默认 pibt */
     char nav_name[KOS_SHM_PATH_MAX];
     char nav_sem_name[KOS_SHM_PATH_MAX];
     kos_supervise_policy policy;
@@ -590,6 +591,11 @@ static int spawn_child(supervisor *s, int index)
                 argv[ac++] = (char *)"--lease-ttl-ms";
                 argv[ac++] = lease_buf;
             }
+        }
+        if (sc->kind == SPEC_NAVD && s->nav_opt != NULL) {
+            /* 只从启动参数选算法，运行期没有切换入口。 */
+            argv[ac++] = (char *)"--nav";
+            argv[ac++] = (char *)s->nav_opt;
         }
         if (sc->kind == SPEC_WORKER) {
             snprintf(chef_buf, sizeof chef_buf, "%d", sc->chef_id);
@@ -1128,7 +1134,8 @@ static void print_usage(FILE *out)
             "                            [--bin-dir DIR] [--bridge-bin FILE]\n"
             "                            [--scheduler-bin FILE] [--worker-bin FILE]\n"
             "                            [--navd-bin FILE] [--nav-name NAME]\n"
-            "                            [--nav-sem-name NAME] [--state-name NAME]\n"
+            "                            [--nav-sem-name NAME] [--nav pibt|pa]\n"
+            "                            [--state-name NAME]\n"
             "                            [--sem-name NAME]\n"
             "                            [--health-interval-ms M]\n"
             "                            [--supervisor-heartbeat-ms M]\n"
@@ -1166,6 +1173,7 @@ static void print_help(void)
            "  --navd-bin FILE          explicit navigation daemon binary\n"
            "  --nav-name NAME          /kitchenos_nav name (default: derived from --state-name)\n"
            "  --nav-sem-name NAME      nav table lock name (same derivation)\n"
+           "  --nav pibt|pa            navd planner (default pibt; pa = comparison baseline)\n"
            "  --health-interval-ms M   SIGALRM health tick period (default %d)\n"
            "  --supervisor-heartbeat-ms M  child heartbeat interval (default %d)\n"
            "  --heartbeat-timeout-ms M declare a child unresponsive after M ms without a\n"
@@ -1341,6 +1349,14 @@ static int parse_args(int argc, char **argv, supervisor *s)
                 return ARG_ERR;
             }
             s->nav_sem_name_opt = v;
+        } else if (strcmp(name, "--nav") == 0) {
+            const char *v = take_value(value, argc, argv, &i);
+
+            if (v == NULL ||
+                (strcmp(v, "pibt") != 0 && strcmp(v, "pa") != 0)) {
+                return ARG_ERR;
+            }
+            s->nav_opt = v;
         } else if (strcmp(name, "--bridge-host") == 0) {
             const char *v = take_value(value, argc, argv, &i);
 

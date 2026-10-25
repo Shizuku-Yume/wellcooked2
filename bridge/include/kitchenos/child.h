@@ -61,6 +61,7 @@ typedef struct {
     int lease_ttl_ms;    /* Scheduler: 资源租约时长 */
     char nav_name[KOS_SHM_PATH_MAX];     /* Worker/navd: 导航表对象名 */
     char nav_sem_name[KOS_SHM_PATH_MAX]; /* Worker/navd: 导航表锁名 */
+    char nav[8];                         /* navd: "pibt"（默认）或 "pa" 对照基线 */
 } kos_child_opts;
 
 typedef struct {
@@ -84,7 +85,7 @@ void kos_child_opts_init(kos_child_opts *o, kos_child_kind kind);
  *   --kitchen FILE  --recipes FILE  --orders FILE  --runs-dir DIR
  *   --strategy fcfs|edf  --chefs N  --generation N  --lease-ttl-ms M
  *   --tick-ms M  --slot-interval-ms M  --nav-name NAME  --nav-sem-name NAME
- *   --verbose  --help  --version
+ *   --nav pibt|pa  --verbose  --help  --version
  * Worker 另加 --chef-id N（缺省 0）。未知参数返回 KOS_CHILD_ARG_ERR。
  */
 int kos_child_parse_args(kos_child_opts *o, int argc, char **argv);

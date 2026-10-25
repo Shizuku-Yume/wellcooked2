@@ -824,3 +824,37 @@ user may overturn on sight. `Revisit when` of "never" is allowed but suspicious;
 - **Mine:** yes
 - **Revisit when:** 所有厨师都被同一工序 block 过一遍，需要超时后判失败或扩大站位格集合。
 - **Effort:** kitchen-control
+
+## 2026-10-25 - nav_metrics 的口径与落盘位置
+
+- **Decided:** `navd` 每局在进程树运行目录（`--runtime-dir`）写一份 `nav_metrics.json`：
+  algorithm、planning_cycles、game_ms、每个厨师的 steps/waits/replans/stuck、totals，
+  以及一次规划推进的 planning_us 的 samples/p50/p99/max。steps/waits 只统计已执行的计划步
+  （等待 = PIBT/pa 计划里原地停留的一步）；replans 是卡住触发的重规划次数，stuck 是
+  `nav_stuck` latch 次数；算法名由 `--nav` 固定，一局只写这一份。
+- **Instead of:** 写进 Scheduler 的 `runs/<ts>/`（navd 不知道 Scheduler 选的运行目录，要新增
+  共享内存字段或跨进程读时间戳）；或只在日志里按行输出，让报告脚本再聚合。
+- **Because:** 一台机器可同时有多棵进程树，runtime-dir 天然每棵树唯一；tmp+rename 的原子写
+  让批跑收集不会读到半份文件。W15 要的等待步数、卡住次数和规划 p99 都在同一份文件里，
+  `metrics.json` 仍归 Scheduler。
+- **Mine:** yes
+- **Revisit when:** 批跑工具要从 `runs/<ts>/` 一次收集全部指标，或要求跨 navd 重启累计计数；
+  那时把多份 nav_metrics 合并进运行目录。
+- **Effort:** kitchen-control
+
+## 2026-10-25 - pa 对照基线用保守优先级时空规划
+
+- **Decided:** `navd --nav pa` 在时间展开图上按 PIBT 同样的优先级依次做 A*（等待也算一步），
+  预约表只放在 navd 内存；后来者避开已预约的 (时间, 格) 与对换。计划终点必须在此后所有时刻
+  都没人预约（计划走完就停在终点），高优先级的人可以穿过尚未规划者当前的格，后者再改道；
+  找不到任何安全终点时本次规划报错（`nav_pa_failed`），不产出冲突路径。
+- **Instead of:** 把未规划者当前格当永久障碍（`_3` 上会两人隔着一格互等：高优先级者离目标
+  一格却被挡住，低优先级者要穿过的正是高优先级者停住的格）；或允许路径终点冲突、靠 ADG
+  兜底（单元检查抓到了同格）。
+- **Because:** `_3` 的 `nav-ring` 上 4 个厨师对向穿越，前一种做法会永久停住；后一种会产出
+  时间上冲突的计划。保守终点 + 安全改道后，四张图各 100 组随机用例无冲突、同输入一致，
+  `nav-ring` 上 PIBT 与 pa 多次运行全部在 10 s 内到达。
+- **Mine:** yes
+- **Revisit when:** W15 的实机批跑显示 pa 的等待步数明显更高但仍能完成、需要更公平的对照；
+  或厨师数超过 4，需要窗口化 PBS。
+- **Effort:** kitchen-control

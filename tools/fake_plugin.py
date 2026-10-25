@@ -21,6 +21,7 @@ Protocol/Messages.cs）。
 import argparse
 import ctypes
 import json
+import mmap
 import os
 import re
 import select
@@ -62,7 +63,7 @@ EXIT_SKIP = 77
 SCENARIOS = ("happy", "one-slot", "no-heartbeat", "bad-frames", "connect-mode",
              "reconnect-storm", "silent-connect", "data-shapes", "second-peer",
              "pickup-dash", "path-face-work", "input-grace", "os-loop", "os-resources",
-             "nav-corridor", "nav-stuck", "nav-crash")
+             "nav-corridor", "nav-stuck", "nav-crash", "nav-ring")
 
 # 日志行 = "ISO8601(毫秒) 级别 事件名 key=value ..."（bridge/src/log.c）。
 # 只认行首这个位置上的事件名：key=value 里出现同名词不算一次事件。
@@ -247,7 +248,7 @@ def msg_state_update(n_chefs, frame_index, flat_xy=False, edge_fields=False):
 
 
 def msg_state_update_os(chefs, frame_index, cells, positions=None, game_ms=None,
-                        resources=None):
+                        resources=None, orders=None):
     """os-loop 用：厨师站在 kitchen 网格里，订单用真实菜名。
 
     positions 给出时用它（NavSim 模拟的实时坐标）；否则按 picks 放进网格。
@@ -262,6 +263,13 @@ def msg_state_update_os(chefs, frame_index, cells, positions=None, game_ms=None,
             cell = picks[i % len(picks)]
         out.append({"id": i, "position": {"x": cell[0], "y": cell[1]}, "facing": 0.0,
                     "holding": None, "state": "idle"})
+    if orders is None:
+        orders = [
+            {"id": "world-001", "recipe": "SteamedSpecial_Fish",
+             "time_remaining": 90, "ingredients": ["fish"]},
+            {"id": "world-002", "recipe": "SteamedSpecial_Meat",
+             "time_remaining": 90, "ingredients": ["meat"]},
+        ]
     msg = {
         "type": "state_update",
         "timestamp": int(time.time()),
@@ -269,12 +277,7 @@ def msg_state_update_os(chefs, frame_index, cells, positions=None, game_ms=None,
         "game_time_ms": int(game_ms or 0),
         "score": 0,
         "chefs": out,
-        "orders": [
-            {"id": "world-001", "recipe": "SteamedSpecial_Fish",
-             "time_remaining": 90, "ingredients": ["fish"]},
-            {"id": "world-002", "recipe": "SteamedSpecial_Meat",
-             "time_remaining": 90, "ingredients": ["meat"]},
-        ],
+        "orders": orders,
         "resources": resources if resources is not None else
                      {"plate_stack": {"count": 5}},
     }
@@ -1357,7 +1360,8 @@ class Ctx:
                 "--stop-timeout-ms", "2000",
                 "--kitchen", str(kitchen),
                 "--recipes", str(recipes),
-                "--orders", str(orders)]
+                "--orders", str(orders),
+                "--nav", self.args.nav]
         if lease_ttl_ms is not None:
             argv += ["--lease-ttl-ms", str(lease_ttl_ms)]
         if backoff_ms is not None:
@@ -2869,6 +2873,36 @@ def nav_corridor_configs(directory, *, stations, cells, masks):
     return paths
 
 
+def nav_ring_fixture_configs(directory, *, kitchen_path, dishes):
+    """nav-ring 用真实 _3 kitchen.json + 只为导航写的最小 recipes/orders。
+
+    订单不走 config 菜单（Scheduler 给 config 订单按 700 ms 间隔插入，四个厨师
+    就不会同时出发），由 state_update 的 world orders 一次送来；这里只把四个
+    取料工序映射到四张料箱站位。
+    """
+    directory = Path(directory)
+    nodes = []
+    dish_entries = []
+    for item in dishes:
+        ingredient = item["ingredient"]
+        node_id = "fetch:" + ingredient
+        nodes.append({"id": node_id, "op": "fetch", "label": ingredient,
+                      "resource": "dispenser", "ingredient": ingredient,
+                      "duration": 0.2})
+        dish_entries.append({"dish": item["dish"], "score": 1, "root": node_id,
+                             "nodes": [node_id]})
+    recipes = {"scene": "nav_ring", "nodes": nodes, "edges": [],
+               "dishes": dish_entries, "durations": {"fetch": 0.2}}
+    # menu 为空：config 订单不参与，world orders 才是这四个厨师的任务来源。
+    orders = {"seed": 7, "level": "nav_ring", "menu": []}
+    paths = {"kitchen.json": str(kitchen_path)}
+    for name, payload in (("recipes.json", recipes), ("orders.json", orders)):
+        path = directory / name
+        path.write_text(json.dumps(payload, ensure_ascii=False))
+        paths[name] = str(path)
+    return paths
+
+
 def nav_line_map(*, length, bay, station_sides):
     """一格宽走廊；bay 为 True 时在中间加一个错身凹槽。"""
     cells = [[round(i * NAV_STEP, 3), 0.0] for i in range(length)]
@@ -2952,10 +2986,15 @@ class NavSim:
     stop 清掉当前命令（navd 崩溃时 Worker 发的 stop 必须真的让厨师停下）。
     """
 
-    def __init__(self, positions, cells, *, speed=NAV_SPEED_MPS, frozen=()):
+    def __init__(self, positions, cells, *, speed=NAV_SPEED_MPS, speeds=None,
+                 frozen=()):
         self.positions = [[float(x), float(y)] for x, y in positions]
         self.cells = cells
         self.speed = speed
+        # 每人的速度倍率，nav-ring 用它模拟 0.5×–1.5× 的快慢差；缺省全 1×。
+        self.speeds = [float(v) for v in (speeds or [1.0] * len(positions))]
+        if len(self.speeds) != len(positions):
+            raise ValueError("speeds must have one multiplier per chef")
         self.frozen = {int(c) for c in frozen}
         self.commands = [None] * len(positions)
         self.seen_actions = 0
@@ -3008,7 +3047,7 @@ class NavSim:
         for chef, command in enumerate(self.commands):
             if command is None or chef in self.frozen:
                 continue
-            budget = self.speed * dt / 1000.0
+            budget = self.speed * self.speeds[chef] * dt / 1000.0
             while budget > 0 and command["index"] < len(command["waypoints"]):
                 waypoint = command["waypoints"][command["index"]]
                 tx = float(waypoint["x"])
@@ -3060,21 +3099,150 @@ def read_log_events(path):
     return counts
 
 
-def _nav_scenario(ctx, checks, *, name, length, bay, station_sides, starts,
-                  goal_xy, duration, freeze=(), backoff_ms=None, kill_after=None,
-                  require_blocked=False, ring=False):
-    """nav-corridor / nav-stuck / nav-crash 共用的编排。"""
+class NavTargetReader:
+    """只读 /dev/shm/<state>_nav 的目标槽，用来知道 Scheduler 把哪个工位派给了谁。
+
+    字段布局来自 navtab.h：头 6 个 uint32，然后每个厨师一个 target 槽
+    （uint64 seqlock + has_target/pinned/target_seq/urgency + station_id[32]）。
+    槽大小从段头读，不在这里硬编码；读到奇数 seq 或前后不一致就重试。
+    """
+
+    def __init__(self, state_name):
+        self.path = Path("/dev/shm") / (state_name.lstrip("/") + "_nav")
+
+    def targets(self, chefs):
+        try:
+            fd = os.open(self.path, os.O_RDONLY)
+        except OSError:
+            return {}
+        try:
+            size = os.fstat(fd).st_size
+            if size < 24:  # 连 6 个 uint32 的段头都放不下
+                return {}
+            mem = mmap.mmap(fd, size, access=mmap.ACCESS_READ)
+            try:
+                try:
+                    magic, _version, header, slot_size, plan_size, max_chefs = \
+                        struct.unpack_from("<6I", mem, 0)
+                except struct.error:
+                    return {}
+                # header_size 在 C 里是 sizeof(kos_nav_segment)（整段大小），
+                # 不是 targets 的偏移；段布局是 [header][targets][plans]。
+                if (magic != 0x4B4F5332 or header <= 0 or slot_size < 56 or
+                        plan_size <= 0 or max_chefs <= 0):
+                    return {}
+                targets_off = header - max_chefs * (slot_size + plan_size)
+                if targets_off <= 0 or header > size:
+                    return {}
+                found = {}
+                for chef in range(min(chefs, max_chefs)):
+                    off = targets_off + chef * slot_size
+                    if off + slot_size > size:
+                        break
+                    for _attempt in range(3):
+                        try:
+                            seq = struct.unpack_from("<Q", mem, off)[0]
+                            if seq & 1:
+                                continue
+                            has_target, pinned, target_seq, urgency = \
+                                struct.unpack_from("<iiII", mem, off + 8)
+                            station = bytes(mem[off + 24:off + 24 + 32])
+                        except struct.error:
+                            return found
+                        station = station.split(b"\0", 1)[0].decode("utf-8", "replace")
+                        if struct.unpack_from("<Q", mem, off)[0] != seq:
+                            continue
+                        found[chef] = {"has_target": bool(has_target),
+                                       "pinned": bool(pinned),
+                                       "target_seq": target_seq,
+                                       "urgency": urgency,
+                                       "station": station}
+                        break
+                return found
+            finally:
+                mem.close()
+        finally:
+            os.close(fd)
+
+
+NAV_METRICS_TOP = {"schema", "algorithm", "planning_cycles", "game_ms", "chefs",
+                   "totals", "planning_us"}
+NAV_METRICS_TOTALS = {"steps", "waits", "replans", "stuck"}
+NAV_METRICS_PLANNING = {"samples", "p50", "p99", "max"}
+NAV_METRICS_CHEF = {"chef_id", "steps", "waits", "replans", "stuck"}
+
+
+def check_nav_metrics(ctx, checks, algorithm, chefs):
+    """nav_metrics.json 的字段是报告表格的契约；两种算法必须一字不差。"""
+    path = (ctx.runtime_dir / "nav_metrics.json") if ctx.runtime_dir else None
+    deadline = time.monotonic() + 2.0
+    while path is not None and not path.exists() and time.monotonic() < deadline:
+        time.sleep(0.05)  # supervisor 先给 navd SIGTERM，navd 在退出前落盘
+    exists = bool(path is not None and path.exists())
+    checks.hard("nav_metrics_written", exists, str(path))
+    if not exists:
+        return None
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError) as exc:
+        checks.hard("nav_metrics_parses", False, "%s: %s" % (path, exc))
+        return None
+    checks.hard("nav_metrics_parses", True, str(path))
+    if not isinstance(data, dict):
+        checks.hard("nav_metrics_schema", False,
+                    "top-level is %s, not an object" % type(data).__name__)
+        return None
+    ok = set(data) == NAV_METRICS_TOP and data.get("schema") == "kitchenos.nav_metrics.v1"
+    checks.hard("nav_metrics_schema", ok, "top-level=%s" % sorted(data))
+    checks.hard("nav_metrics_algorithm", data.get("algorithm") == algorithm,
+                "algorithm=%s expected=%s" % (data.get("algorithm"), algorithm))
+    chef_rows = data.get("chefs")
+    chef_ok = (isinstance(chef_rows, list) and len(chef_rows) == chefs and
+               all(isinstance(row, dict) and set(row) == NAV_METRICS_CHEF and
+                   row.get("chef_id") == i for i, row in enumerate(chef_rows)))
+    checks.hard("nav_metrics_chefs", chef_ok,
+                "chefs=%s" % (chef_rows if not chef_ok else len(chef_rows)))
+    checks.hard("nav_metrics_totals", isinstance(data.get("totals"), dict) and
+                set(data["totals"]) == NAV_METRICS_TOTALS,
+                "totals=%s" % (data.get("totals"),))
+    planning = data.get("planning_us")
+    checks.hard("nav_metrics_planning_us", isinstance(planning, dict) and
+                set(planning) == NAV_METRICS_PLANNING,
+                "planning_us=%s" % (planning,))
+    checks.note("nav_metrics", json.dumps(data, ensure_ascii=False, sort_keys=True))
+    return data
+
+
+def _nav_scenario(ctx, checks, *, name, length=0, bay=False, station_sides=(),
+                  starts, goal_xy, duration, freeze=(), backoff_ms=None,
+                  kill_after=None, require_blocked=False, ring=False,
+                  kitchen_path=None, dishes=None, world_orders=None, speeds=None,
+                  require_metrics=False, arrival_limit_ms=10000,
+                  station_goals=None):
+    """nav-corridor / nav-stuck / nav-crash / nav-ring 共用的编排。"""
     args = ctx.args
     chefs = len(starts)
     workdir = Path(tempfile.mkdtemp(prefix="kitchenos-%s-" % name))
-    if ring:
+    if kitchen_path is not None:
+        kitchen_data = json.loads(Path(kitchen_path).read_text())
+        cells = [tuple(cell) for cell in kitchen_data["grid"]["cells"]]
+        paths = nav_ring_fixture_configs(workdir, kitchen_path=kitchen_path,
+                                         dishes=dishes or [])
+    elif ring:
         cells, masks, stations, _left, _right = nav_ring_map(length=11)
+        paths = nav_corridor_configs(workdir, stations=stations, cells=cells,
+                                     masks=masks)
     else:
         cells, masks, stations = nav_line_map(length=length, bay=bay,
                                               station_sides=station_sides)
-    paths = nav_corridor_configs(workdir, stations=stations, cells=cells, masks=masks)
+        paths = nav_corridor_configs(workdir, stations=stations, cells=cells,
+                                     masks=masks)
     period_ms = 1000.0 / args.hz
-    sim = NavSim(starts, cells, frozen=freeze)
+    sim = NavSim(starts, cells, speeds=speeds, frozen=freeze)
+    # nav-ring 的工位被 Scheduler 按轮转顺序派给厨师，不能假定 chef i 拿第 i 张单；
+    # 从导航表读目标工位，再把站位坐标当作这人的验收目标。
+    nav_reader = NavTargetReader(ctx.state_name) if station_goals else None
+    goals = dict(goal_xy)
 
     ctx.clear_stale_shm()
     port = args.listen_port or pick_free_port(args.host)
@@ -3099,11 +3267,17 @@ def _nav_scenario(ctx, checks, *, name, length, bay, station_sides, starts,
         sim.process_actions(stats.actions, game_ms)
         sim.advance(game_ms)
         sim.frame(game_ms)
-        for chef, (gx, gy) in goal_xy.items():
+        if nav_reader is not None:
+            for chef, target in nav_reader.targets(chefs).items():
+                station = target["station"]
+                if target["has_target"] and station in station_goals:
+                    goals[chef] = station_goals[station]
+        for chef, (gx, gy) in goals.items():
             sim.note_arrival(chef, gx, gy, game_ms)
         return msg_state_update_os(n, frame_index, cells,
                                    positions=[tuple(p) for p in sim.positions],
-                                   game_ms=game_ms, resources={})
+                                   game_ms=game_ms, resources={},
+                                   orders=world_orders)
 
     link = Link(connect(args.host, port, args.ready_timeout))
     link.send_json(msg_hello())
@@ -3171,6 +3345,14 @@ def _nav_scenario(ctx, checks, *, name, length, bay, station_sides, starts,
 
     checks.note("sim_final_positions", sim.positions)
     checks.note("sim_arrivals", sim.arrivals)
+    if nav_reader is not None:
+        checks.note("station_goals_seen", {chef: station_goals_cell
+                                           for chef, station_goals_cell in goals.items()})
+        checks.hard("all_chefs_assigned", set(goals) == set(range(chefs)),
+                    "assigned chefs=%s" % sorted(goals))
+        checks.hard("assigned_goals_distinct",
+                    len({(round(x, 2), round(y, 2)) for x, y in goals.values()}) == chefs,
+                    "goals=%s" % (goals,))
     first_paths = {}
     for chef in range(chefs):
         seen = [a for a in stats.actions
@@ -3193,6 +3375,14 @@ def _nav_scenario(ctx, checks, *, name, length, bay, station_sides, starts,
     nav_log = (ctx.runtime_dir / "logs" / "navd.log") if ctx.runtime_dir else None
     nav_events = read_log_events(nav_log) if nav_log is not None else Counter()
     checks.note("navd_events", dict(nav_events))
+    if name == "nav-ring":
+        if args.nav == "pibt":
+            checks.hard("nav_stuck_zero", nav_events.get("nav_stuck", 0) == 0,
+                        "nav_stuck=%d" % nav_events.get("nav_stuck", 0))
+        else:
+            checks.note("nav_stuck", nav_events.get("nav_stuck", 0))
+    if require_metrics:
+        check_nav_metrics(ctx, checks, args.nav, chefs)
 
     run_dir = ctx.run_dir()
     events, bad = _read_jsonl(run_dir / "events.jsonl") if run_dir else ([], [])
@@ -3221,11 +3411,13 @@ def _nav_scenario(ctx, checks, *, name, length, bay, station_sides, starts,
                     "same node dispatched to another chef after blocked: %s" %
                     (reassign[:2] or "none"))
     else:
-        for chef, (gx, gy) in goal_xy.items():
+        for chef in range(chefs):
+            if chef not in goals:
+                continue
             at = sim.arrivals.get(chef)
             checks.hard("chef%d_arrived_within_10s" % chef,
-                        at is not None and at <= 10000,
-                        "arrival game_ms=%s" % at)
+                        at is not None and at <= arrival_limit_ms,
+                        "arrival game_ms=%s (limit %d)" % (at, arrival_limit_ms))
 
     if kill_after is not None:
         first_stop = None
@@ -3274,6 +3466,41 @@ def scenario_nav_crash(ctx, checks):
                          station_sides=("right",), starts=[(0.0, 0.0)],
                          goal_xy={0: (6.6, 0.0)}, duration=5.0,
                          kill_after=0.6, backoff_ms="2000")
+
+
+def scenario_nav_ring(ctx, checks):
+    """W4：_3 环形过道，4 个厨师（0.5×–1.5× 速度）同时去对面的料箱。
+
+    四个 world order 在一次 state_update 里到达，Scheduler 一次把四张单派给
+    四个厨师；四个起点在环上排开、目标在对面的下排站位，形成对向交叉流。
+    navd 的算法由 --nav 选（pibt 默认，pa 是对照基线），两者都写 nav_metrics。
+    """
+    kitchen_path = (REPO_ROOT / "config" / "maps" / "s_wellcooked_demo_3" /
+                    "kitchen.json")
+    if not kitchen_path.exists():
+        raise Skipped("map config missing: %s" % kitchen_path)
+    dishes = [
+        {"dish": "SushiFish_Dish", "ingredient": "SushiFish"},
+        {"dish": "BurritoMeat_Dish", "ingredient": "BurritoMeat"},
+        {"dish": "Rice_Dish", "ingredient": "Rice"},
+        {"dish": "SushiPrawn_Dish", "ingredient": "SushiPrawn"},
+    ]
+    world_orders = [
+        {"id": "ring-%d" % i, "recipe": item["dish"], "time_remaining": 90,
+         "ingredients": []}
+        for i, item in enumerate(dishes)
+    ]
+    return _nav_scenario(
+        ctx, checks, name="nav-ring", kitchen_path=kitchen_path, dishes=dishes,
+        world_orders=world_orders,
+        starts=[(0.6, 0.0), (3.0, 0.0), (5.4, 0.0), (7.8, 0.0)],
+        goal_xy={},  # 实际目标由 Scheduler 派单决定，从导航表读
+        station_goals={"dispenser-0": (0.6, -7.2),
+                       "dispenser-2": (3.0, -7.2),
+                       "dispenser-4": (5.4, -7.2),
+                       "dispenser-6": (7.8, -7.2)},
+        speeds=[0.5, 0.75, 1.25, 1.5],
+        duration=11.0, require_metrics=True)
 
 
 def scenario_os_loop(ctx, checks):
@@ -3700,6 +3927,7 @@ SCENARIO_IMPL = {
     "nav-corridor": scenario_nav_corridor,
     "nav-stuck": scenario_nav_stuck,
     "nav-crash": scenario_nav_crash,
+    "nav-ring": scenario_nav_ring,
 }
 
 
@@ -4058,6 +4286,8 @@ def parse_args(argv):
     parser.add_argument("--frame-timeout-ms", type=int, default=200, help="传给 Bridge 的帧屏障超时")
     parser.add_argument("--min-actions", type=int, default=20,
                         help="happy 场景要求的最少 action 数（idle 降级路径下每帧只有 N 条）")
+    parser.add_argument("--nav", choices=("pibt", "pa"), default="pibt",
+                        help="navd 的走位算法：pibt（默认，W4 保证）或 pa 对照基线")
     parser.add_argument("--ready-timeout", type=float, default=10.0, help="等 Bridge 就绪的上限")
     parser.add_argument("--stub-hz", type=int, default=30, help="worker stub 的写槽频率")
     parser.add_argument("--no-stubs", action="store_true", help="不启动 worker stub，只测 idle 路径")
