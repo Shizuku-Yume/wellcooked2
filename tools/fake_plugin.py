@@ -21,6 +21,7 @@ Protocol/Messages.cs）。
 import argparse
 import ctypes
 import json
+import math
 import os
 import re
 import select
@@ -62,7 +63,7 @@ EXIT_SKIP = 77
 SCENARIOS = ("happy", "one-slot", "no-heartbeat", "bad-frames", "connect-mode",
              "reconnect-storm", "silent-connect", "data-shapes", "second-peer",
              "pickup-dash", "path-face-work", "input-grace", "os-loop", "os-resources",
-             "nav-corridor", "nav-stuck", "nav-crash")
+             "nav-corridor", "nav-stuck", "nav-crash", "macro")
 
 # 日志行 = "ISO8601(毫秒) 级别 事件名 key=value ..."（bridge/src/log.c）。
 # 只认行首这个位置上的事件名：key=value 里出现同名词不算一次事件。
@@ -247,10 +248,12 @@ def msg_state_update(n_chefs, frame_index, flat_xy=False, edge_fields=False):
 
 
 def msg_state_update_os(chefs, frame_index, cells, positions=None, game_ms=None,
-                        resources=None):
-    """os-loop 用：厨师站在 kitchen 网格里，订单用真实菜名。
+                        resources=None, holdings=None, facings=None, orders=None):
+    """os-loop / macro 用：厨师站在 kitchen 网格里，订单用真实菜名。
 
     positions 给出时用它（NavSim 模拟的实时坐标）；否则按 picks 放进网格。
+    holdings/facings/orders 由 WorldSim 提供：宏动作的完成条件读的就是这些字段，
+    场景不模拟它们的话 pickup/chop 只能等超时。resources 直接覆盖默认的盘子堆。
     game_ms 由调用方按状态帧率给，确保 Worker/navd 与插件看到同一个游戏时钟。
     """
     picks = [cells[0], cells[-1], cells[len(cells) // 2], cells[len(cells) // 4]]
@@ -260,8 +263,17 @@ def msg_state_update_os(chefs, frame_index, cells, positions=None, game_ms=None,
             cell = positions[i]
         else:
             cell = picks[i % len(picks)]
-        out.append({"id": i, "position": {"x": cell[0], "y": cell[1]}, "facing": 0.0,
-                    "holding": None, "state": "idle"})
+        holding = holdings[i] if holdings is not None and i < len(holdings) else None
+        facing = facings[i] if facings is not None and i < len(facings) else 0.0
+        out.append({"id": i, "position": {"x": cell[0], "y": cell[1]},
+                    "facing": facing, "holding": holding, "state": "idle"})
+    if orders is None:
+        orders = [
+            {"id": "world-001", "recipe": "SteamedSpecial_Fish",
+             "time_remaining": 90, "ingredients": ["fish"]},
+            {"id": "world-002", "recipe": "SteamedSpecial_Meat",
+             "time_remaining": 90, "ingredients": ["meat"]},
+        ]
     msg = {
         "type": "state_update",
         "timestamp": int(time.time()),
@@ -269,12 +281,7 @@ def msg_state_update_os(chefs, frame_index, cells, positions=None, game_ms=None,
         "game_time_ms": int(game_ms or 0),
         "score": 0,
         "chefs": out,
-        "orders": [
-            {"id": "world-001", "recipe": "SteamedSpecial_Fish",
-             "time_remaining": 90, "ingredients": ["fish"]},
-            {"id": "world-002", "recipe": "SteamedSpecial_Meat",
-             "time_remaining": 90, "ingredients": ["meat"]},
-        ],
+        "orders": orders,
         "resources": resources if resources is not None else
                      {"plate_stack": {"count": 5}},
     }
@@ -3047,6 +3054,258 @@ class NavSim:
             self.arrivals[chef] = game_ms
 
 
+class WorldSim(NavSim):
+    """NavSim + 宏动作完成条件要读的那部分世界状态。
+
+    只模拟 fake_plugin 自己能看到的事实：interact 改 holding/工位内容，work 推进
+    progress，serving 上的 interact 移除一单。效果在 delay_ms 之后才生效，`macro`
+    场景用它验证"世界状态变了才 macro_done"；效果按厨师去重（Worker 在 250 ms 窗口
+    内会重复发同一条 interact，不能变成连点）。
+    """
+
+    def __init__(self, positions, cells, stations, *, delay_ms=0, products=None,
+                 resources=None, orders=None, frozen=(), wall_delay=False):
+        super().__init__(positions, cells, frozen=frozen)
+        self.stations = {s.get("id"): s for s in stations if s.get("id")}
+        self.delay_ms = int(delay_ms)
+        self.wall_delay = bool(wall_delay)
+        self.frozen_clock = 0
+        self.products = dict(products or {})
+        self.resources = {name: dict(payload)
+                          for name, payload in (resources or {}).items()}
+        self.resources.setdefault("plate_stack", {"count": 0})
+        for station in self.stations.values():
+            kind = station.get("kind", "")
+            sid = station["id"]
+            if kind in ("cooker", "container", "mixer"):
+                self.resources.setdefault(sid, {"state": "free"})
+            elif kind == "sink":
+                self.resources.setdefault(sid, {"state": "free", "count": 0,
+                                                "progress": 0.0})
+        self.orders = [dict(order) for order in (orders or [])]
+        self.holdings = [None] * len(positions)
+        self.facings = [0.0] * len(positions)
+        self.seen_world_actions = 0
+        self.pending = []
+        self.busy = set()
+        self.cooldown = {}
+        self.delivered = []
+        self.stalled = set()
+
+    # -- 世界状态访问 --
+    def resource(self, name, default=None):
+        if name not in self.resources:
+            self.resources[name] = dict(default) if default is not None else {"state": "free"}
+        return self.resources[name]
+
+    def resources_message(self):
+        return {name: dict(payload) for name, payload in self.resources.items()}
+
+    def message(self, n_chefs, frame_index, cells, game_ms):
+        return msg_state_update_os(
+            n_chefs, frame_index, cells,
+            positions=[tuple(p) for p in self.positions], game_ms=game_ms,
+            resources=self.resources_message(), holdings=self.holdings,
+            facings=self.facings, orders=self.orders)
+
+    # -- 动作 → 延迟生效的世界变化 --
+    def _schedule(self, game_ms, chef, effect, station_id=None, cooldown=False):
+        self.busy.add(chef)
+        if self.wall_delay:
+            due = time.monotonic() * 1000.0 + self.delay_ms
+        else:
+            due = game_ms + self.delay_ms
+
+        def run():
+            effect()
+            if cooldown and station_id is not None:
+                # "拿到东西"之后 Worker 还要一两个状态帧才看到；这期间它可能仍在发
+                # interact（游戏时钟被冻结时尤其明显）。同一工位短暂去重，避免
+                # "刚拿起的料又被同一串旧 interact 放回去"。放下/工作不设冷却，
+                # 否则 chop 完成后的 pickup 会被自己的冷却挡掉。
+                self.cooldown[(chef, station_id)] = time.monotonic() * 1000.0 + 750.0
+
+        self.pending.append((due, chef, run))
+
+    def _finish(self, chef):
+        self.busy.discard(chef)
+
+    def process_actions(self, actions, game_ms):
+        super().process_actions(actions, game_ms)
+        for action in actions[self.seen_world_actions:]:
+            chef = self._chef(action)
+            if chef is None:
+                continue
+            kind = action.get("action")
+            if kind == "face":
+                target = action.get("target") or {}
+                station = self.stations.get(action.get("target_object") or "")
+                if isinstance(target.get("x"), (int, float)) and isinstance(target.get("y"), (int, float)):
+                    tx, ty = float(target["x"]), float(target["y"])
+                elif station is not None:
+                    pos = station.get("pos") or [0.0, 0.0]
+                    tx, ty = float(pos[0]), float(pos[1])
+                else:
+                    continue
+                x, y = self.positions[chef]
+                self.facings[chef] = math.atan2(tx - x, ty - y)
+                continue
+            station = self.stations.get(action.get("target_object") or "")
+            if station is None:
+                continue
+            if kind == "interact":
+                self._interact(chef, station, game_ms)
+            elif kind == "work":
+                self._work(chef, station, game_ms)
+        self.seen_world_actions = len(actions)
+
+    def _interact(self, chef, station, game_ms):
+        if station["id"] in self.stalled or chef in self.busy:
+            return
+        if self.cooldown.get((chef, station["id"]), 0.0) > time.monotonic() * 1000.0:
+            return
+        kind = station.get("kind", "")
+        holding = self.holdings[chef]
+
+        if kind == "dispenser":
+            gives = station.get("gives") or ""
+            if holding is not None or not gives:
+                return
+
+            def take():
+                self.holdings[chef] = gives
+                self._finish(chef)
+
+            self._schedule(game_ms, chef, take, station["id"], cooldown=True)
+            return
+
+        resource = self.resource(station["id"])
+        if kind in ("container", "mixer"):
+            if holding is not None:
+                def put():
+                    resource["content"] = holding
+                    resource["state"] = "occupied"
+                    resource["progress"] = 0.0
+                    self.holdings[chef] = None
+                    self._finish(chef)
+
+                self._schedule(game_ms, chef, put)
+            elif float(resource.get("progress") or 0.0) >= 0.999 and resource.get("content"):
+                product = self.products.get(station["id"], resource["content"])
+
+                def take_product():
+                    self.holdings[chef] = product
+                    resource["content"] = ""
+                    resource["state"] = "free"
+                    resource["progress"] = 0.0
+                    self._finish(chef)
+
+                self._schedule(game_ms, chef, take_product, station["id"], cooldown=True)
+            return
+
+        if kind == "cooker":
+            if holding is not None:
+                def put_in_pot():
+                    self.holdings[chef] = None
+                    resource["content"] = holding
+                    resource["state"] = "cooking"
+                    resource["progress"] = 0.1
+                    self._finish(chef)
+                    # 锅继续烧，2 s 墙钟后变 cooked；这不占用厨师，也不冻结时钟，
+                    # 让盘工序的 wait_ready 真的等一次状态变化。
+                    self.pending.append((time.monotonic() * 1000.0 + self.delay_ms,
+                                         chef, lambda: resource.__setitem__("state", "cooked")))
+
+                self._schedule(game_ms, chef, put_in_pot)
+            elif resource.get("state") == "cooked" and resource.get("content"):
+                def take_cooked():
+                    self.holdings[chef] = self.products.get(station["id"],
+                                                            resource["content"])
+                    resource["content"] = ""
+                    resource["state"] = "free"
+                    resource["progress"] = 0.0
+                    self._finish(chef)
+
+                self._schedule(game_ms, chef, take_cooked, station["id"], cooldown=True)
+            return
+
+        if kind == "sink":
+            if holding is not None:
+                def drop_dirty():
+                    self.holdings[chef] = None
+                    self._finish(chef)
+
+                self._schedule(game_ms, chef, drop_dirty)
+            return
+
+        if kind == "serving":
+            if holding is not None:
+                def deliver():
+                    self.holdings[chef] = None
+                    if self.orders:
+                        self.delivered.append(self.orders.pop(0).get("id"))
+                    self._finish(chef)
+
+                self._schedule(game_ms, chef, deliver)
+            return
+
+        if kind in ("plate_stack", "clean_plate_stack"):
+            if holding is not None:
+                return
+            product = self.products.get(station["id"], "Plate")
+
+            def take_plate():
+                self.holdings[chef] = product
+                self._finish(chef)
+
+            self._schedule(game_ms, chef, take_plate, station["id"], cooldown=True)
+
+    def _work(self, chef, station, game_ms):
+        if chef in self.busy:
+            return
+        resource = self.resource(station["id"])
+        if float(resource.get("progress") or 0.0) >= 0.999:
+            return
+        kind = station.get("kind", "")
+
+        def finish_work():
+            resource["progress"] = 1.0
+            if kind == "sink":
+                resource["count"] = int(resource.get("count") or 0) + 1
+                plates = self.resource("plate_stack", {"count": 0})
+                plates["count"] = int(plates.get("count") or 0) + 1
+            self._finish(chef)
+
+        self._schedule(game_ms, chef, finish_work)
+
+    def _apply_due(self, now_ms):
+        due = [entry for entry in self.pending if entry[0] <= now_ms]
+        self.pending = [entry for entry in self.pending if entry[0] > now_ms]
+        for _, _, effect in sorted(due, key=lambda entry: entry[0]):
+            effect()
+
+    def _clock(self, real_game_ms):
+        """wall_delay 时，有未生效的效果就把游戏时钟冻结，效果生效的下一帧再跳回去。
+
+        这是 fake 的约定：状态变化按墙钟延迟 2 s，但 Linux 侧看到的游戏时钟在这段
+        时间里不走，所以宏动作按表里的 1.5 s 超时不会误杀"世界还没变"的等待；
+        一直不回料（没有待生效效果）时时钟照常走，pickup 才会 1.5 s 超时。
+        """
+        if self.wall_delay and self.busy:
+            return self.frozen_clock
+        self.frozen_clock = real_game_ms
+        return real_game_ms
+
+    def tick(self, real_game_ms):
+        if self.wall_delay:
+            self._apply_due(time.monotonic() * 1000.0)
+        game_ms = self._clock(real_game_ms)
+        if not self.wall_delay:
+            self._apply_due(game_ms)
+        super().advance(game_ms)
+        return game_ms
+
+
 def read_log_events(path):
     counts = Counter()
     try:
@@ -3276,6 +3535,252 @@ def scenario_nav_crash(ctx, checks):
                          kill_after=0.6, backoff_ms="2000")
 
 
+def macro_configs(directory):
+    """宏动作场景的最小厨房：一条 12 格走廊，六类工位各一个，一单用五道工序走完。
+
+    配置订单的 menu 故意留空，让 fake 的世界订单成为唯一来源，这样一局里只有一条
+    工序链，断言不会被 Scheduler 同时开的五单搅乱。
+    """
+    directory = Path(directory)
+    cells, masks, _ = nav_line_map(length=12, bay=False, station_sides=())
+    stations = []
+    for sid, kind, gives, x in (
+            ("dispenser-0", "dispenser", "Tomato", 0.0),
+            ("container-0", "container", "", 1.2),
+            ("cooker-0", "cooker", "", 2.4),
+            ("plate_stack-0", "plate_stack", "", 3.6),
+            ("serving-0", "serving", "", 4.8),
+            ("sink-0", "sink", "", 6.0)):
+        stations.append({"id": sid, "kind": kind, "name": sid.replace("-", "_"),
+                         "types": [], "pos": [x, 1.2], "height": 0.0,
+                         "gives": gives, "contents": []})
+    kitchen = {
+        "scene": "macro",
+        "grid": {
+            "step": NAV_STEP,
+            "map": [1, 1],
+            "edge_bits": "1:+x 2:-x 4:+z 8:-z",
+            "cells": cells,
+            "mask": masks,
+            "areas": {"count": 1, "largest": len(cells), "sizes": [len(cells)]},
+        },
+        "stations": stations,
+    }
+    nodes = [
+        {"id": "fetch:Tomato", "op": "fetch", "label": "Tomato",
+         "resource": "dispenser", "ingredient": "Tomato", "duration": 5.0},
+        {"id": "cut:ChoppedTomato", "op": "cut", "label": "ChoppedTomato",
+         "resource": "container", "duration": 5.0},
+        {"id": "cook:CookedTomato", "op": "cook", "label": "CookedTomato",
+         "resource": "cooker", "duration": 5.0},
+        {"id": "plate:TomatoDish", "op": "plate", "label": "TomatoDish",
+         "resource": "cooker", "duration": 5.0},
+        {"id": "deliver:TomatoDish", "op": "deliver", "label": "TomatoDish",
+         "resource": "serving", "duration": 5.0},
+        {"id": "wash:CleanPlate", "op": "wash", "label": "CleanPlate",
+         "resource": "sink", "duration": 5.0},
+    ]
+    recipes = {
+        "scene": "macro",
+        "nodes": nodes,
+        "edges": [["fetch:Tomato", "cut:ChoppedTomato"],
+                  ["cut:ChoppedTomato", "cook:CookedTomato"],
+                  ["cook:CookedTomato", "plate:TomatoDish"],
+                  ["plate:TomatoDish", "deliver:TomatoDish"]],
+        "dishes": [
+            {"dish": "TomatoSoup", "score": 80, "root": "deliver:TomatoDish",
+             "nodes": ["fetch:Tomato", "cut:ChoppedTomato", "cook:CookedTomato",
+                       "plate:TomatoDish", "deliver:TomatoDish"]},
+            {"dish": "CleanPlate", "score": 1, "root": "wash:CleanPlate",
+             "nodes": ["wash:CleanPlate"]},
+        ],
+        "durations": {"fetch": 5.0, "cut": 5.0, "cook": 5.0, "plate": 5.0,
+                      "deliver": 5.0, "wash": 5.0},
+    }
+    orders = {"seed": 7, "level": "macro", "menu": []}
+    paths = {}
+    for name, payload in (("kitchen.json", kitchen), ("recipes.json", recipes),
+                          ("orders.json", orders)):
+        path = directory / name
+        path.write_text(json.dumps(payload, ensure_ascii=False))
+        paths[name] = str(path)
+    products = {"container-0": "ChoppedTomato", "cooker-0": "TomatoDish"}
+    return paths, cells, stations, products
+
+
+def _macro_log_rows(path):
+    rows = []
+    try:
+        text = Path(path).read_text(errors="replace")
+    except OSError:
+        return rows
+    for line in text.splitlines():
+        match = LOG_LINE.match(line)
+        if not match or not match.group(1).startswith("macro_"):
+            continue
+        event = match.group(1)[len("macro_"):]
+        kind = re.search(r"\bmacro=(\w+)", line)
+        waited = re.search(r"\bwaited_ms=(\d+)", line)
+        detail = re.search(r"\bdetail=(.+)$", line)
+        rows.append({"event": event,
+                     "macro": kind.group(1) if kind else None,
+                     "waited_ms": int(waited.group(1)) if waited else None,
+                     "detail": detail.group(1).strip() if detail else ""})
+    return rows
+
+
+def _macro_run(ctx, checks, name, paths, cells, stations, products, *, recipe,
+               duration, delay_ms=2000, stalled=()):
+    """起一棵 1 厨师的 Supervisor，让 WorldSim 按动作改世界，跑一局宏动作。"""
+    args = ctx.args
+    ctx.clear_stale_shm()
+    port = args.listen_port or pick_free_port(args.host)
+    ctx.start_supervisor(port=port, chefs=1, kitchen=paths["kitchen.json"],
+                         recipes=paths["recipes.json"], orders=paths["orders.json"])
+    if not ctx.wait_supervisor_ready(port, 1, args.ready_timeout):
+        raise InfraError("Supervisor tree never reached running state on %s:%d\n%s" %
+                         (args.host, port, ctx.diagnostics()))
+    checks.note("supervisor_tree_%s" % name,
+                "bridge+scheduler+navd+1 worker running")
+
+    sim = WorldSim([(0.0, 0.0)], cells, stations, delay_ms=delay_ms,
+                   products=products, resources={"plate_stack": {"count": 0}},
+                   orders=[{"id": "macro-1", "recipe": recipe, "time_remaining": 300,
+                            "ingredients": []}], wall_delay=True)
+    sim.stalled = set(stalled)
+    period_ms = 1000.0 / args.hz
+    stats = Stats(name)
+
+    def builder(n, frame_index):
+        game_ms = int(round(frame_index * period_ms))
+        sim.process_actions(stats.actions, game_ms)
+        game_ms = sim.tick(game_ms)
+        sim.frame(game_ms)
+        return sim.message(n, frame_index, cells, game_ms)
+
+    link = Link(connect(args.host, port, args.ready_timeout))
+    link.send_json(msg_hello())
+    try:
+        run_exchange(link, stats, duration, chefs=1, hz=args.hz,
+                     heartbeat_ms=args.heartbeat_ms, ack_actions=True,
+                     state_builder=builder)
+    finally:
+        link.close()
+        time.sleep(0.4)
+
+    worker_log = (ctx.runtime_dir / "logs" / "worker-0.log") if ctx.runtime_dir else None
+    rows = _macro_log_rows(worker_log) if worker_log is not None else []
+    run_dir = ctx.run_dir()
+    events, bad = _read_jsonl(run_dir / "events.jsonl") if run_dir else ([], [])
+    code, seconds = ctx.stop_supervisor()
+    checks.hard("%s_supervisor_clean" % name, code == 0,
+                "exit=%s in %.2fs" % (code, seconds or 0.0))
+    checks.hard("%s_events_parse" % name, not bad, "%d bad line(s)" % len(bad))
+    return {"stats": stats, "rows": rows, "events": events, "sim": sim,
+            "actions": stats.actions}
+
+
+def scenario_macro(ctx, checks):
+    """宏动作按世界状态完成：fake 延迟 2 s 才改 holding/progress/锅 state。
+
+    三局：
+      1. 完整一单（fetch→cut→cook→plate→deliver）：每步都要等世界状态变化才
+         macro_done，cook 放下即走；
+      2. wash：水槽 progress 与干净盘数在 2 s 后才变化；
+      3. 料箱不回料：pickup 按 1.5 s 超时 macro_failed，工序 FAILED，detail 带
+         宏动作与所等条件。
+    """
+    workdir = Path(tempfile.mkdtemp(prefix="kitchenos-macro-"))
+    checks.note("workdir", str(workdir))
+    try:
+        paths, cells, stations, products = macro_configs(workdir)
+
+        print("  -- macro: 完整一单")
+        soup = _macro_run(ctx, checks, "macro-soup", paths, cells, stations, products,
+                          recipe="TomatoSoup", duration=20.0)
+        soup_rows = soup["rows"]
+        started = {row["macro"] for row in soup_rows
+                   if row["event"] == "start" and row["macro"]}
+        checks.hard("macro_all_kinds_started",
+                    {"goto", "pickup", "drop", "chop", "start_cook", "wait_ready",
+                     "deliver"} <= started,
+                    "started=%s" % sorted(started))
+        done = [row for row in soup_rows if row["event"] == "done"]
+        by_kind = {}
+        for row in done:
+            by_kind.setdefault(row["macro"], []).append(row["waited_ms"] or 0)
+        checks.hard("macro_waits_for_holding",
+                    max(by_kind.get("pickup", [0])) >= 1800,
+                    "pickup waited_ms=%s (fake 延迟 2000 ms)" % by_kind.get("pickup"))
+        checks.hard("macro_waits_for_progress",
+                    max(by_kind.get("chop", [0])) >= 1800,
+                    "chop waited_ms=%s" % by_kind.get("chop"))
+        checks.hard("macro_waits_for_pot_state",
+                    max(by_kind.get("drop", [0])) >= 1800,
+                    "drop waited_ms=%s（锅 state 与 holding 同一次上报才变）"
+                    % by_kind.get("drop"))
+        checks.hard("macro_cook_leaves_pot",
+                    "start_cook" in started and "wait_ready" in started,
+                    "cook 只到 start_cook；wait_ready 属于盘工序")
+        failed = [row for row in soup_rows if row["event"] == "failed"]
+        checks.hard("macro_no_failures_in_success_run", not failed,
+                    "macro_failed=%s" % failed[:2])
+        soup_events = soup["events"]
+        task_done = [e for e in soup_events if e.get("event") == "task_done"]
+        completed = [e for e in soup_events if e.get("event") == "order_completed"]
+        checks.hard("macro_full_order_done", len(task_done) >= 5 and bool(completed),
+                    "task_done=%d order_completed=%s" %
+                    (len(task_done), completed[:1] or "none"))
+        checks.hard("macro_interacts_sent",
+                    sum(1 for a in soup["actions"] if a.get("action") == "interact") >= 3,
+                    "interacts=%d" % sum(1 for a in soup["actions"]
+                                        if a.get("action") == "interact"))
+        checks.hard("macro_no_move_action",
+                    not any(a.get("action") == "move" for a in soup["actions"]),
+                    "system path must only send path/face/work/interact")
+
+        print("  -- macro: wash 等水槽进度")
+        wash = _macro_run(ctx, checks, "macro-wash", paths, cells, stations, products,
+                          recipe="CleanPlate", duration=8.0)
+        wash_rows = wash["rows"]
+        wash_started = {row["macro"] for row in wash_rows if row["event"] == "start"}
+        wash_done = [row for row in wash_rows
+                     if row["event"] == "done" and row["macro"] == "wash"]
+        checks.hard("macro_wash_started", "wash" in wash_started,
+                    "started=%s" % sorted(wash_started))
+        checks.hard("macro_wash_waits_for_progress",
+                    bool(wash_done) and wash_done[0]["waited_ms"] >= 1800,
+                    "wash done=%s" % wash_done[:1])
+        checks.hard("macro_wash_no_failures",
+                    not any(row["event"] == "failed" for row in wash_rows),
+                    "macro_failed=%s" % [r for r in wash_rows if r["event"] == "failed"][:2])
+
+        print("  -- macro: 料箱不回料 → pickup 超时")
+        stalled = _macro_run(ctx, checks, "macro-fail", paths, cells, stations,
+                             products, recipe="TomatoSoup", duration=5.0,
+                             stalled=("dispenser-0",))
+        fail_rows = stalled["rows"]
+        failures = [row for row in fail_rows if row["event"] == "failed"]
+        task_failed = [e for e in stalled["events"] if e.get("event") == "task_failed"]
+        detail = task_failed[0].get("detail", "") if task_failed else ""
+        checks.hard("macro_pickup_times_out", bool(failures),
+                    "macro_failed=%s" % failures[:2])
+        checks.hard("macro_failed_detail_names_macro_and_condition",
+                    "macro=pickup" in detail and "wait=holding" in detail,
+                    "task_failed detail=%r" % detail)
+        failed_t = task_failed[0].get("t_ms") if task_failed else None
+        checks.hard("macro_failure_before_scheduler_timeout",
+                    failed_t is not None and failed_t < 10000,
+                    "task_failed t_ms=%s (1.5 s 超时，不是 30 s)" % failed_t)
+        checks.hard("macro_fail_run_no_done_pickup",
+                    not any(row["event"] == "done" and row["macro"] == "pickup"
+                            for row in fail_rows),
+                    "done=%s" % [r for r in fail_rows if r["event"] == "done"][:3])
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
+    return "soup/wash 两局世界状态延迟 2 s 后宏动作完成；不回料一局 pickup 超时 FAILED"
+
+
 def scenario_os_loop(ctx, checks):
     """整棵 Supervisor 树的闭环：plugin → Bridge → shm → Scheduler → mq → Worker → 槽 → plugin。
 
@@ -3302,17 +3807,20 @@ def scenario_os_loop(ctx, checks):
         raise InfraError("cannot read kitchen grid from %s: %s" % (args.kitchen, exc))
     picks = [cells[0], cells[-1], cells[len(cells) // 2], cells[len(cells) // 4]]
     starts = [tuple(picks[i % len(picks)]) for i in range(chefs)]
-    sim = NavSim(starts, cells)
+    sim = WorldSim(starts, cells, kitchen.get("stations", []),
+                   resources={"plate_stack": {"count": 5}},
+                   orders=[{"id": "world-001", "recipe": "SteamedSpecial_Fish",
+                            "time_remaining": 90, "ingredients": ["fish"]},
+                           {"id": "world-002", "recipe": "SteamedSpecial_Meat",
+                            "time_remaining": 90, "ingredients": ["meat"]}])
     period_ms = 1000.0 / args.hz
 
     def builder(n, frame_index):
         game_ms = int(round(frame_index * period_ms))
         sim.process_actions(stats.actions, game_ms)
-        sim.advance(game_ms)
+        game_ms = sim.tick(game_ms)
         sim.frame(game_ms)
-        return msg_state_update_os(n, frame_index, cells,
-                                   positions=[tuple(p) for p in sim.positions],
-                                   game_ms=game_ms)
+        return sim.message(n, frame_index, cells, game_ms)
 
     link = Link(connect(args.host, port, args.ready_timeout))
     link.send_json(msg_hello())
@@ -3700,6 +4208,7 @@ SCENARIO_IMPL = {
     "nav-corridor": scenario_nav_corridor,
     "nav-stuck": scenario_nav_stuck,
     "nav-crash": scenario_nav_crash,
+    "macro": scenario_macro,
 }
 
 

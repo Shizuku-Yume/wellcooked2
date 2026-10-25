@@ -12,7 +12,8 @@ OBJ_DIR  := $(BUILD)/obj
 
 CFLAGS   := -std=c99 -Wall -Wextra -Werror -O2 -g -Iinclude -pthread -D_POSIX_C_SOURCE=200809L
 # -lrt carries mq_unlink on glibc older than 2.34; on newer ones it is an empty stub.
-LDFLAGS  := -pthread -lrt
+# -lm carries atan2f in macro.c (面向判定), not inlined under -std=c99.
+LDFLAGS  := -pthread -lrt -lm
 
 SRCS     := $(wildcard src/*.c)
 TESTS    := $(wildcard tests/test_*.c)
