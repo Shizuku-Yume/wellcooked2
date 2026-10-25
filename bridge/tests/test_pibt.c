@@ -1,5 +1,5 @@
 /*
- * test_pibt.c -- 四张地图上的 PIBT 无冲突、可达性与确定性。
+ * test_pibt.c -- 四张地图上的 PIBT 可达性与 pa 对照基线的无冲突、确定性。
  *
  * 每个随机用例用同一张图的真实网格：起点与终点都取同一连通区内的可走格，
  * 距离场按终点 BFS。逐步检查 mask、顶点冲突与对换，再检查 _3 上 200 步内
@@ -12,6 +12,7 @@
 #include "kitchenos/child.h"
 #include "kitchenos/kitchen.h"
 #include "kitchenos/nav.h"
+#include "kitchenos/pa.h"
 #include "kitchenos/pibt.h"
 
 #include <stdint.h>
@@ -207,6 +208,122 @@ static int run_trial(kos_kitchen *kitchen, kos_pibt *pibt, const trial_result *i
     return 0;
 }
 
+static int run_pa_trial(kos_pa *pa, const trial_result *input, int max_steps,
+                        trial_result *out)
+{
+    uint8_t blocked[KOS_KITCHEN_MAX_CELLS];
+    kos_pa_agent agents[KOS_PA_MAX_AGENTS];
+    int cells[KOS_PA_MAX_AGENTS];
+    int goal[KOS_PA_MAX_AGENTS];
+    int paths[KOS_PA_MAX_AGENTS][KOS_PA_MAX_HORIZON];
+    int lengths[KOS_PA_MAX_AGENTS];
+    int anchor[KOS_PA_MAX_AGENTS];
+    int step = 0;
+    int i;
+    uint64_t hash = 1469598103934665603ull;
+
+    *out = *input;
+    out->arrived = 0;
+    out->steps = 0;
+    out->hash = 0;
+    for (i = 0; i < input->count; i++) {
+        cells[i] = input->start[i];
+        goal[i] = input->goal[i];
+        anchor[i] = 0;
+    }
+    for (;;) {
+        int all_at_goal = 1;
+        int longest = 0;
+        int t;
+
+        for (i = 0; i < input->count; i++) {
+            if (cells[i] != goal[i]) {
+                all_at_goal = 0;
+            }
+        }
+        if (all_at_goal) {
+            out->arrived = 1;
+            break;
+        }
+        if (step >= max_steps) {
+            break;
+        }
+        memset(blocked, 0, sizeof blocked);
+        for (i = 0; i < input->count; i++) {
+            if (cells[i] == goal[i]) {
+                blocked[cells[i]] = 1;
+                anchor[i] = step;
+            }
+            memset(&agents[i], 0, sizeof agents[i]);
+            agents[i].chef_id = i;
+            agents[i].cell = cells[i];
+            agents[i].goal = goal[i];
+            agents[i].priority = (step - anchor[i]) + 1;
+            agents[i].pinned = 0;
+            agents[i].goal_static = 1;
+        }
+        if (kos_pa_plan(pa, agents, input->count, KOS_PA_MAX_HORIZON, blocked,
+                        lengths, paths) != KOS_OK) {
+            return -1;
+        }
+        for (i = 0; i < input->count; i++) {
+            if (lengths[i] > longest) {
+                longest = lengths[i];
+            }
+        }
+        if (longest == 0) {
+            break; /* 谁都动不了：不是冲突，只是这组输入走不动了 */
+        }
+        for (t = 0; t < longest && step < max_steps; t++) {
+            int next[KOS_PA_MAX_AGENTS];
+
+            for (i = 0; i < input->count; i++) {
+                int j;
+
+                next[i] = t < lengths[i] ? paths[i][t] : cells[i];
+                if (next[i] < 0 || next[i] >= pa->cell_count) {
+                    return -1;
+                }
+                if (next[i] != cells[i] &&
+                    !kos_nav_adjacent(pa->kitchen, cells[i], next[i])) {
+                    return -1;
+                }
+                for (j = 0; j < i; j++) {
+                    if (next[i] == next[j]) {
+                        return -1; /* 顶点冲突 */
+                    }
+                    if (next[i] == cells[j] && next[j] == cells[i]) {
+                        return -1; /* 对换 */
+                    }
+                }
+                hash = (hash ^ (uint64_t)(uint32_t)next[i]) * 1099511628211ull;
+            }
+            for (i = 0; i < input->count; i++) {
+                cells[i] = next[i];
+            }
+            step++;
+            for (i = 0; i < input->count; i++) {
+                if (cells[i] != goal[i]) {
+                    break;
+                }
+            }
+            if (i == input->count) {
+                out->arrived = 1;
+                break;
+            }
+        }
+        if (out->arrived) {
+            break;
+        }
+    }
+    out->steps = step;
+    out->hash = hash;
+    for (i = 0; i < input->count; i++) {
+        out->final_cell[i] = cells[i];
+    }
+    return 0;
+}
+
 static void test_random_maps(void)
 {
     static const char *const scenes[] = {
@@ -221,6 +338,7 @@ static void test_random_maps(void)
          scene_index++) {
         static kos_kitchen kitchen;
         static kos_pibt pibt;
+        static kos_pa pa;
         int component_cells[KOS_KITCHEN_MAX_CELLS];
         int component_ids[KOS_KITCHEN_MAX_CELLS];
         int component_sizes[KOS_KITCHEN_MAX_CELLS];
@@ -229,6 +347,8 @@ static void test_random_maps(void)
         int failed_mask = 0;
         int failed_conflict = 0;
         int failed_arrival = 0;
+        int failed_pa = 0;
+        int pa_arrived = 0;
         char label[192];
 
         printf("[test_pibt] %s\n", scenes[scene_index]);
@@ -237,6 +357,8 @@ static void test_random_maps(void)
         if (g_failures > 0 && kitchen.cell_count == 0) {
             continue;
         }
+        snprintf(label, sizeof label, "%s: pa 初始化", scenes[scene_index]);
+        expect(kos_pa_init(&pa, &kitchen) == KOS_OK, label);
         memset(component_sizes, 0, sizeof component_sizes);
         for (trial = 0; trial < kitchen.cell_count; trial++) {
             int comp = kitchen.stand.component[trial];
@@ -315,6 +437,19 @@ static void test_random_maps(void)
                 second.steps != first.steps) {
                 failed_conflict++;
             }
+            /* pa 是同优先级顺序的时空 A*：用同样的输入跑两遍，锁住无冲突与确定性。
+             * 它不承诺 _3 上一定到达（那是 PIBT 的保证），只统计到达数。 */
+            rc = run_pa_trial(&pa, &input, 200, &first);
+            if (rc != 0) {
+                failed_pa++;
+                continue;
+            }
+            pa_arrived += first.arrived ? 1 : 0;
+            rc = run_pa_trial(&pa, &input, 200, &second);
+            if (rc != 0 || second.hash != first.hash ||
+                second.steps != first.steps) {
+                failed_pa++;
+            }
         }
         snprintf(label, sizeof label, "%s: 100 组随机起终点每步满足 mask 且无冲突",
                  scenes[scene_index]);
@@ -322,6 +457,13 @@ static void test_random_maps(void)
                failed_mask == 0 && failed_conflict == 0
                    ? label
                    : "随机用例失败：mask/冲突或同输入不一致");
+        snprintf(label, sizeof label, "%s: pa 100 组随机起终点每步无冲突且同输入一致",
+                 scenes[scene_index]);
+        expect(failed_pa == 0,
+               failed_pa == 0 ? label
+                              : "pa 随机用例失败：越界/冲突或同输入不一致");
+        printf("[test_pibt] %s: pa 到达 %d/100 组（200 步内）\n",
+               scenes[scene_index], pa_arrived);
         if (strcmp(scenes[scene_index], "s_wellcooked_demo_3") == 0) {
             snprintf(label, sizeof label, "%s: _3 每组 200 步内全部到达", scenes[scene_index]);
             expect(failed_arrival == 0,

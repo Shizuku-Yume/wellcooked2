@@ -177,7 +177,8 @@ void kos_child_print_usage(FILE *out, kos_child_kind kind)
                 KOS_SHM_MAX_CHEFS - 1);
     }
     if (kind == KOS_CHILD_NAVD) {
-        fprintf(out, "       kitchenos-navd also takes --nav-name NAME --nav-sem-name NAME.\n");
+        fprintf(out, "       kitchenos-navd also takes --nav-name NAME --nav-sem-name NAME\n"
+                     "       and --nav pibt|pa (default pibt; pa is the comparison baseline).\n");
     }
     fprintf(out,
             "\n"
@@ -373,6 +374,15 @@ int kos_child_parse_args(kos_child_opts *o, int argc, char **argv)
                 return KOS_CHILD_ARG_ERR;
             }
             copy_str(o->nav_sem_name, sizeof o->nav_sem_name, v);
+        } else if (strcmp(name, "--nav") == 0) {
+            const char *v = take_value(value, argc, argv, &i);
+
+            /* 一局内不切换：只认启动参数，SIGHUP 不碰它。 */
+            if (o->kind != KOS_CHILD_NAVD || v == NULL ||
+                (strcmp(v, "pibt") != 0 && strcmp(v, "pa") != 0)) {
+                return KOS_CHILD_ARG_ERR;
+            }
+            copy_str(o->nav, sizeof o->nav, v);
         } else {
             return KOS_CHILD_ARG_ERR;
         }

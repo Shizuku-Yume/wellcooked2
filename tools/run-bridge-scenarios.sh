@@ -25,11 +25,13 @@ PREFIX=kitchenos_c04
 RUN_ID=${KITCHENOS_RUN_ID:-$$}
 SCENARIOS=(happy one-slot no-heartbeat bad-frames connect-mode reconnect-storm
            silent-connect data-shapes second-peer pickup-dash path-face-work
-           input-grace os-loop os-resources nav-corridor nav-stuck nav-crash)
+           input-grace os-loop os-resources nav-corridor nav-stuck nav-crash
+           nav-ring)
 SCEN_TIMEOUT=90
 STRICT=0
 ALLOW_SKIP=0
 RETRY_KILLED=1
+NAV=pibt
 ONLY=()
 LISTEN_PORT=""
 CONNECT_PORT=""
@@ -51,6 +53,7 @@ usage() {
   --connect-port P   固定 connect 模式端口（默认优先 14455，被占则换空闲端口）
   --run-id ID        shm/sem/日志名的运行标识（默认本脚本 pid；同机并发跑要各不相同）
   --retry-killed N   场景被外部信号杀掉（不是超时、不是断言失败）时自动重跑几次（默认 1）
+  --nav pibt|pa      走位算法，透传给 fake_plugin/navd（默认 pibt；pa 是对照基线）
   --list             只列出场景名
   -h, --help         显示本帮助
 EOF
@@ -76,6 +79,8 @@ while [ $# -gt 0 ]; do
         --run-id=*) RUN_ID=${1#*=}; shift ;;
         --retry-killed) RETRY_KILLED=${2:-1}; shift 2 ;;
         --retry-killed=*) RETRY_KILLED=${1#*=}; shift ;;
+        --nav) NAV=${2:-}; shift 2 ;;
+        --nav=*) NAV=${1#*=}; shift ;;
         --strict) STRICT=1; shift ;;
         --allow-skip) ALLOW_SKIP=1; shift ;;
         --list) printf '%s\n' "${SCENARIOS[@]}"; exit 0 ;;
@@ -97,6 +102,11 @@ if [ ${#ONLY[@]} -gt 0 ]; then
 else
     SELECTED=("${SCENARIOS[@]}")
 fi
+
+case "$NAV" in
+    pibt|pa) ;;
+    *) echo "未知走位算法: $NAV（可选: pibt pa）" >&2; exit 2 ;;
+esac
 
 for name in "${SELECTED[@]}"; do
     found=0
@@ -138,6 +148,7 @@ echo "bridge:      $BRIDGE"
 echo "logs:        $LOGDIR"
 echo "run-id:      $RUN_ID (shm/sem/日志名都带它，多实例并行互不干扰)"
 echo "scenarios:   ${SELECTED[*]}"
+echo "nav:         $NAV"
 echo
 
 declare -a RESULTS=()
@@ -189,7 +200,7 @@ run_one() {
     local sem="${state}_ready"
     local log="$LOGDIR/bridge-${RUN_ID}-${name}.log"
     local out="$LOGDIR/scenario-${RUN_ID}-${name}.out"
-    local extra=()
+    local extra=(--nav "$NAV")
     [ "$STRICT" -eq 1 ] && extra+=(--strict)
     [ -n "$LISTEN_PORT" ] && extra+=(--listen-port "$LISTEN_PORT")
     [ -n "$CONNECT_PORT" ] && extra+=(--connect-port "$CONNECT_PORT")
