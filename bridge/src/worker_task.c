@@ -14,6 +14,8 @@
 #include <stdio.h>
 #include <string.h>
 
+#include <kitchenos/stand.h>
+
 #define WORKER_SPEED_MM_S 3000
 #define WORKER_INTERACT_MS 200
 #define WORKER_ARRIVE_EPS 0.02f
@@ -74,11 +76,11 @@ static void fill_stop(kos_input_action *action)
 }
 
 int kos_worker_task_init(kos_worker_task *task, const kos_kitchen *kitchen,
-                         const char *station_id, float target_x, float target_z,
-                         float start_x, float start_z, int duration_ms, int64_t now_ms,
-                         kos_error *err)
+                         const char *station_id, float start_x, float start_z,
+                         int duration_ms, int64_t now_ms, kos_error *err)
 {
     int start_cell;
+    int station_index;
     int goal_cell;
     int rc;
 
@@ -98,12 +100,30 @@ int kos_worker_task_init(kos_worker_task *task, const kos_kitchen *kitchen,
     task->x = start_x;
     task->z = start_z;
 
+    station_index = kos_kitchen_station_index(kitchen, station_id);
+    if (station_index < 0) {
+        if (err != NULL) {
+            err->code = KOS_ERR_MISSING;
+            snprintf(err->context, sizeof err->context, "未知工位 %s", station_id);
+        }
+        task->phase = KOS_WORKER_FAILED;
+        return KOS_ERR_MISSING;
+    }
     start_cell = kos_kitchen_nearest_cell(kitchen, start_x, start_z);
-    goal_cell = kos_kitchen_nearest_cell(kitchen, target_x, target_z);
-    if (start_cell < 0 || goal_cell < 0) {
+    if (start_cell < 0) {
         if (err != NULL) {
             err->code = KOS_ERR_EMPTY;
             snprintf(err->context, sizeof err->context, "厨房网格为空");
+        }
+        task->phase = KOS_WORKER_FAILED;
+        return KOS_ERR_EMPTY;
+    }
+    goal_cell = kos_stand_best_cell(kitchen, station_index, start_cell);
+    if (goal_cell < 0) {
+        if (err != NULL) {
+            err->code = KOS_ERR_EMPTY;
+            snprintf(err->context, sizeof err->context,
+                     "工位 %s 没有与厨师同一连通区的站位格", station_id);
         }
         task->phase = KOS_WORKER_FAILED;
         return KOS_ERR_EMPTY;

@@ -16,6 +16,7 @@
 #include "kitchenos/kitchen.h"
 #include "kitchenos/nav.h"
 #include "kitchenos/shm.h"
+#include "kitchenos/stand.h"
 #include "kitchenos/worker_task.h"
 
 #include <stdio.h>
@@ -73,8 +74,22 @@ static void test_geometry(void)
     if (station == NULL) {
         return;
     }
-    goal = kos_kitchen_nearest_cell(&kitchen, station->x, station->z);
-    expect(goal >= 0, "nearest_cell_for_station");
+    {
+        int station_index = kos_kitchen_station_index(&kitchen, station->id);
+        const kos_station_stands *stands =
+            station_index >= 0 ? kos_stand_cells(&kitchen, station_index) : NULL;
+
+        expect(stands != NULL && stands->count >= 1, "station_has_stand_cells");
+        if (stands == NULL || stands->count == 0) {
+            return;
+        }
+        goal = stands->cells[0].cell;
+        expect(goal >= 0 && goal < kitchen.cell_count, "stand_cell_in_grid");
+        expect(kos_stand_distance(&kitchen, station_index, goal) == 0,
+               "stand_cell_distance_zero");
+        expect(kos_stand_best_cell(&kitchen, station_index, goal) == goal,
+               "stand_cell_is_its_own_nearest");
+    }
 
     kos_error_clear(&err);
     expect(kos_nav_find_path(&kitchen, 0, goal, path, KOS_NAV_MAX_PATH, &path_len, &err) ==
@@ -160,9 +175,8 @@ static void test_worker_task(void)
 
     memset(&task, 0, sizeof task);
     kos_error_clear(&err);
-    expect(kos_worker_task_init(&task, &kitchen, station->id, station->x, station->z,
-                                kitchen.cells[0].x, kitchen.cells[0].z, 500, 0,
-                                &err) == KOS_OK,
+    expect(kos_worker_task_init(&task, &kitchen, station->id, kitchen.cells[0].x,
+                                kitchen.cells[0].z, 500, 0, &err) == KOS_OK,
            "worker_task_init");
 
     for (step = 0; step < 2000 && !done; step++) {

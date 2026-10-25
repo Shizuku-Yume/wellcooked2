@@ -81,7 +81,7 @@ namespace WellCooked
             AppendKitchen(json, missing);
             AppendCooking(json, missing);
             int stationCount = AppendMap(json, missing);
-            DumpTerrainOnce();
+            DumpTerrainOnce(stationCount);
 
             json.Append(",\"missing\":[");
             for (int i = 0; i < missing.Count; i++)
@@ -292,29 +292,34 @@ namespace WellCooked
         }
 
         /// <summary>
+        /// 地图上的工位组件类型。导出与地形采样的锚点、连通块筛选共用同一张表：
+        /// 只拿料箱当锚点会漏掉出菜口/水槽/盘堆，采样范围就把它们切在网格外
+        /// （`_3`/`_4` 实测：水槽在 x=12.6，采样只到 x=10.2，站位格根本不存在）。
+        /// </summary>
+        private static readonly string[] StationTypes =
+        {
+            "ClientIngredientContainer", "ClientPlateStation", "ClientWashingStation",
+            "ClientHeatedStation", "ClientMixingStation", "ClientCleanPlateStack",
+            "ClientDirtyPlateStack", "ClientConveyorStation", "ClientSwitchStation",
+            "ClientCookingStation", "ClientPlate", "ClientCookableContainer",
+            "ClientCookablePreparationContainer", "ClientTrayIngredientContainer",
+            // 料箱：DispenserCrate 上的这个组件给出它发的是哪种料
+            "ClientPickupItemSpawner",
+            // 垃圾桶：挑工位时必须排除（实测把鱼扔进去过），导出给 OS 侧的厨房模型用
+            "ClientRubbishBin"
+        };
+
+        /// <summary>
         /// 地图上的工位与物品：砧板/锅/盘子/水槽/加热台/传送带各自的位置和内容物。
         /// 内容是 `ClientIngredientContainer.GetContents()` 给出的物品节点，位置取组件自己的 transform。
         /// 调度要用它做资源预订（谁占了哪口锅、哪块砧板上有东西）。
         /// </summary>
         private static int AppendMap(StringBuilder json, List<string> missing)
         {
-            var stationTypes = new[]
-            {
-                "ClientIngredientContainer", "ClientPlateStation", "ClientWashingStation",
-                "ClientHeatedStation", "ClientMixingStation", "ClientCleanPlateStack",
-                "ClientDirtyPlateStack", "ClientConveyorStation", "ClientSwitchStation",
-                "ClientCookingStation", "ClientPlate", "ClientCookableContainer",
-                "ClientCookablePreparationContainer", "ClientTrayIngredientContainer",
-                // 料箱：DispenserCrate 上的这个组件给出它发的是哪种料
-                "ClientPickupItemSpawner",
-                // 垃圾桶：挑工位时必须排除（实测把鱼扔进去过），导出给 OS 侧的厨房模型用
-                "ClientRubbishBin"
-            };
-
             json.Append(",\"stations\":[");
             bool first = true;
             int count = 0;
-            foreach (var typeName in stationTypes)
+            foreach (var typeName in StationTypes)
             {
                 var found = FindAll(typeName);
                 if (found.Count == 0)
@@ -431,6 +436,19 @@ namespace WellCooked
         /// 只看名字会复用上一关的旧网格（Unity 2017 的 Scene 没有 handle）。
         /// </summary>
         private static int _terrainChefId;
+
+        /// <summary>
+        /// 采样时场景里的工位组件数。工位是场景加载后才逐个出现的，0 个工位时采样
+        /// 只能拿厨师当锚点，范围会把远处的出菜口/水槽切掉；所以 0 时先不采，等它变大。
+        /// </summary>
+        private static int _terrainStationCount;
+
+        /// <summary>
+        /// 采样时的厨师数。虚拟手柄是逐个加入的：采样时只有 2 名厨师，第 3/4 名可能
+        /// 落在另一条互不相通的厨房条带里（`_2` 实测），后加入的人所在连通块会被当成
+        /// 口袋丢掉。人数变多就重采一次，直到稳定。
+        /// </summary>
+        private static int _terrainChefCount;
 
         // 可走格：直接来自游戏的 GridManager（occupant 为空的格子），不是自己打射线猜的
         private static bool[,] _walkable;
@@ -587,7 +605,7 @@ namespace WellCooked
             }
         }
 
-        private static void DumpTerrainOnce()
+        private static void DumpTerrainOnce(int stationCount)
         {
             var scene = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
             if (scene == "StartScreen" || scene == "Loading")
@@ -596,12 +614,19 @@ namespace WellCooked
             }
 
             var found = UnityEngine.Object.FindObjectsOfType<PlayerControls>();
-            if (found.Length == 0 && FindAll("ClientIngredientContainer").Count == 0)
+            if (scene == _terrainScene && _terrainStationCount > 0 &&
+                found.Length <= _terrainChefCount && stationCount <= _terrainStationCount &&
+                (found.Length == 0 ? _terrainChefId == 0
+                                   : found[0].GetInstanceID() == _terrainChefId))
             {
-                return; // 既没厨师也没工位，还没进关卡
+                return;
             }
 
-            if (scene == _terrainScene && found.Length > 0 && found[0].GetInstanceID() == _terrainChefId)
+            // 实测加载顺序：先有厨师，工位还是 0（日志 `厨师=4 工位=0 缺=地图工位`）。
+            // 这时采样只有厨师锚点，范围会把远处的出菜口/水槽切在网格外（`_3`/`_4`
+            // 的可走格因此少了一大块）。等工位出现再采；0 个工位时什么都别写。
+            // 工位和厨师都是陆续出现的，任何一个变多就重采，直到两个数都稳定。
+            if (stationCount <= 0)
             {
                 return;
             }
@@ -610,6 +635,8 @@ namespace WellCooked
             // 但工位已经在了）。锚点会退化成"工位位置"，厨师半径用最近一次量到的值。
             _terrainScene = scene;
             _terrainChefId = found.Length > 0 ? found[0].GetInstanceID() : 0;
+            _terrainStationCount = stationCount;
+            _terrainChefCount = found.Length;
             try
             {
                 if (!SampleGameGrid())
@@ -650,12 +677,15 @@ namespace WellCooked
                 chefAnchors.Add(chef.transform.position);
             }
 
-            foreach (var station in FindAll("ClientIngredientContainer"))
+            foreach (var typeName in StationTypes)
             {
-                var component = station as Component;
-                if (component != null)
+                foreach (var station in FindAll(typeName))
                 {
-                    anchors.Add(component.transform.position);
+                    var component = station as Component;
+                    if (component != null)
+                    {
+                        anchors.Add(component.transform.position);
+                    }
                 }
             }
 
@@ -900,13 +930,18 @@ namespace WellCooked
         }
 
         /// <summary>
-        /// 保留所有含厨师（没有厨师时含工位）的连通块，丢掉其余"口袋"。
+        /// 保留所有含厨师的连通块，丢掉其余"口袋"；没有厨师时（关卡评估）按工位锚点保留。
         ///
         /// 物理采样难免留下孤立可走格，必须从可走表里去掉，否则厨师走进去就再也出不来。
         /// 但"最大块"不等于"可玩区"：自制地图的外围装饰地面可能比厨房还大（`_2` 实测
         /// 外围 281 格 > 每个厨房条带 175 格），按最大块会把所有厨师和工位留在网格外；
         /// `_2` 又按设计分成两条互不相通的厨房条带，所以也不能只挑一块——凡是有厨师的
-        /// 块都要保留，没有厨师的块才是口袋。没有厨师时（关卡评估）按工位锚点保留。
+        /// 块都要保留。
+        ///
+        /// 别把"含工位"的块也一起保留：工位摆在台面上，台面顶、外围装饰地面也会被
+        /// 采样成可走格（`_3` 实测 380 格外围 + 45 格台面顶，全都没有厨师）。真正
+        /// 要修的是采样范围：范围够大时厨师的连通块会覆盖整间厨房（`_3` 167 格），
+        /// 所有工位都在它的边界上。见 `DumpTerrainOnce` 的加载顺序说明。
         /// </summary>
         private static int KeepPlayableComponents(List<Vector3> chefs, List<Vector3> anchors,
                                                   out int blocks)

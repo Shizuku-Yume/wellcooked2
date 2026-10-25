@@ -44,13 +44,13 @@ typedef struct {
 } kos_worker_task;
 
 /*
- * 从 (start_x,start_z) 到工位 station 的相邻格规划路径。station_id 只用于 interact
- * 的目标名；target_x/target_z 是工位坐标。路径不可达时返回 KOS_ERR_EMPTY。
+ * 从 (start_x,start_z) 到工位 station 的站位格规划路径。station 必须存在；目标格由
+ * kitchen->stand 的站位格表选出（同一工位有多个时取同一连通区里最近的），不再用
+ * "离工位坐标最近的可走格"猜。路径不可达或工位没有站位格时返回错误。
  */
 int kos_worker_task_init(kos_worker_task *task, const kos_kitchen *kitchen,
-                         const char *station_id, float target_x, float target_z,
-                         float start_x, float start_z, int duration_ms, int64_t now_ms,
-                         kos_error *err);
+                         const char *station_id, float start_x, float start_z,
+                         int duration_ms, int64_t now_ms, kos_error *err);
 
 /*
  * 推进到 now_ms，填充下一步要发布的动作。返回 0 = 还在执行，1 = 完成，-1 = 失败。
