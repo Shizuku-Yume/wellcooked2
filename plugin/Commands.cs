@@ -30,6 +30,7 @@ namespace WellCooked
     ///   action_test=1    在已占的玩家位上自测"同 seq 追加"与"work 按到下一条动作"，
     ///                    结果写 `action_selftest PASS/FAIL ...`；不需要 Bridge
     ///   state=1          把当前 `state_update` 的完整 JSON 打进日志（核对 facing/progress 等字段）
+    ///   pause_game=1/0   走游戏的 TimeManager.SetPaused(Main)，真正冻结游戏时钟
     /// </summary>
     public static class Commands
     {
@@ -87,7 +88,14 @@ namespace WellCooked
 
                 if (line[0] == '{')
                 {
-                    RunActionJson(line);
+                    try
+                    {
+                        RunActionJson(line);
+                    }
+                    catch (Exception e)
+                    {
+                        _log.LogError("指令 JSON 失败: " + e);
+                    }
                     continue;
                 }
 
@@ -180,6 +188,9 @@ namespace WellCooked
                 case "state":
                     _log.LogInfo("state_frame: " + StateFrame.Build(Time.realtimeSinceStartup));
                     break;
+                case "pause_game":
+                    SetGamePaused(value == "1" || value == "true");
+                    break;
                 default:
                     _log.LogWarning("指令: 不认识 " + key);
                     break;
@@ -214,7 +225,7 @@ namespace WellCooked
                     wps.Add(new Vec2 { x = float.Parse(xy[0], CultureInfo.InvariantCulture), y = float.Parse(xy[1], CultureInfo.InvariantCulture) });
                 }
             }
-            int seq = parts.Length > 2 ? int.Parse(parts[2]) : 1;
+            long seq = parts.Length > 2 ? long.Parse(parts[2]) : 1L;
             var m = new InboundMessage
             {
                 type = MsgType.Action,
@@ -310,7 +321,7 @@ namespace WellCooked
                 type = MsgType.Action,
                 chef_id = slot,
                 action = MsgType.Path,
-                seq = 90210,
+                seq = 90210L,
                 waypoints = new[] { at(0) }
             });
             string state = ActionDriver.DebugState(slot);
@@ -325,7 +336,7 @@ namespace WellCooked
                 type = MsgType.Action,
                 chef_id = slot,
                 action = MsgType.Path,
-                seq = 90210,
+                seq = 90210L,
                 waypoints = new[] { at(0), at(1) }
             });
             state = ActionDriver.DebugState(slot);
@@ -340,7 +351,7 @@ namespace WellCooked
                 type = MsgType.Action,
                 chef_id = slot,
                 action = MsgType.Path,
-                seq = 90210,
+                seq = 90210L,
                 waypoints = new[] { at(0), at(1) }
             });
             state = ActionDriver.DebugState(slot);
@@ -355,7 +366,7 @@ namespace WellCooked
                 type = MsgType.Action,
                 chef_id = slot,
                 action = MsgType.Path,
-                seq = 90211,
+                seq = 90211L,
                 waypoints = new[] { at(0) }
             });
             state = ActionDriver.DebugState(slot);
@@ -370,7 +381,7 @@ namespace WellCooked
                 type = MsgType.Action,
                 chef_id = slot,
                 action = MsgType.Path,
-                seq = -1,
+                seq = -1L,
                 waypoints = new[] { at(0) }
             }) == null)
             {
@@ -386,7 +397,7 @@ namespace WellCooked
                 type = MsgType.Action,
                 chef_id = slot,
                 action = MsgType.Path,
-                seq = 90212,
+                seq = 90212L,
                 waypoints = tooMany
             }) == null)
             {
@@ -1064,6 +1075,42 @@ namespace WellCooked
             {
                 _log.LogInfo("     " + method.Name + "(" + Describe(method.GetParameters()) + ") → "
                              + (method.ReturnType == null ? "?" : method.ReturnType.Name));
+            }
+        }
+
+        /// <summary>
+        /// 走游戏自己的暂停机制（`TimeManager.SetPaused(PauseLayer.Main, …)`），
+        /// 用于验证 `game_time_ms` 在暂停时不走。`Time.timeScale` 会被 TimeManager
+        /// 每帧覆盖，所以不能靠它。
+        /// </summary>
+        private static void SetGamePaused(bool paused)
+        {
+            var type = AccessTools.TypeByName("TimeManager");
+            if (type == null)
+            {
+                _log.LogWarning("指令: 找不到 TimeManager");
+                return;
+            }
+
+            var field = type.GetField("s_timeManager", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+            object manager = field != null ? field.GetValue(null) : null;
+            var layerType = AccessTools.TypeByName("TimeManager+PauseLayer");
+            var setPaused = type.GetMethod("SetPaused", BindingFlags.Public | BindingFlags.Instance);
+            if (manager == null || layerType == null || setPaused == null)
+            {
+                _log.LogWarning("指令: TimeManager 暂停接口不可用");
+                return;
+            }
+
+            object layer = Enum.Parse(layerType, "Main");
+            try
+            {
+                setPaused.Invoke(manager, new[] { layer, (object)paused, (object)"WellCooked.Verify" });
+                _log.LogInfo("指令: pause_game=" + (paused ? "1" : "0") + " 已调用 TimeManager.SetPaused(Main)");
+            }
+            catch (Exception e)
+            {
+                _log.LogWarning("指令: pause_game 调用失败 " + e.Message);
             }
         }
 

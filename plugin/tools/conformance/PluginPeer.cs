@@ -223,7 +223,7 @@ namespace WellCooked.Conformance
 
         /* 插件自己的握手取值，抄自 Plugin.cs：桥必须
          * 看到和真游戏一模一样的 hello。 */
-        private const string PluginVersion = "0.1.0";
+        private const string PluginVersion = "0.2.0";
         private static readonly string[] HostActions =
         {
             "move", "stop", "press", "release", "tap", "pickup", "dash", "interact",

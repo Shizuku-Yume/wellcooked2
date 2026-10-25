@@ -424,6 +424,10 @@ static int parse_resources(const json_value *root, proto_state_update *out,
             rc = get_num(entry, "progress", &res->progress);
             if (rc != PROTO_OK)
                 return rc;
+            /* 0..1 是契约（schema minimum/maximum）；越界值来自对端 bug，
+             * 不能写进 shm 让调度侧当成“已完成”或负进度。 */
+            if (res->progress < 0.0 || res->progress > 1.0)
+                return PROTO_ERR_RANGE;
             res->has_progress = 1;
         }
 
@@ -454,6 +458,8 @@ int protocol_parse_state_update(const json_value *root, proto_state_update *out,
     rc = get_req_int(root, "game_time_ms", &out->game_time_ms);
     if (rc != PROTO_OK)
         return rc;
+    if (out->game_time_ms < 0)
+        return PROTO_ERR_RANGE;
     rc = get_num(root, "score", &out->score);
     if (rc != PROTO_OK)
         return rc;
@@ -903,7 +909,8 @@ int protocol_build_action_path(long long chef_id, long long seq,
     json_writer w;
     size_t i;
 
-    if (waypoints == NULL || waypoint_count == 0 || waypoint_count > PROTO_MAX_WAYPOINTS)
+    if (waypoints == NULL || waypoint_count == 0 || waypoint_count > PROTO_MAX_WAYPOINTS
+        || seq < 0)
         return PROTO_ERR_RANGE;
 
     json_writer_init(&w, out, cap);

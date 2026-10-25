@@ -21,7 +21,7 @@ namespace WellCooked
     {
         public const string PluginGuid = "com.wellcooked.plugin";
         public const string PluginName = "WellCooked";
-        public const string PluginVersion = "0.1.0";
+        public const string PluginVersion = "0.2.0";
 
         private static readonly string[] HostActions =
         {

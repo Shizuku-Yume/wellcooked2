@@ -427,6 +427,13 @@ int kos_shm_slot_publish(kos_shm *shm, uint32_t slot, const kos_input_action *ac
         return (action == NULL) ? KOS_ERR_INVAL : KOS_ERR_RANGE;
     if (action->kind < (int32_t)KOS_ACTION_NONE || action->kind > (int32_t)KOS_ACTION_WORK)
         return KOS_ERR_INVAL;
+    /* The payload crosses a process boundary. A target name without a NUL can
+     * make the Bridge's strlen read past kos_input_action, so reject it here
+     * (and check it once more on the read side). */
+    if (memchr(action->target_object, '\0', sizeof action->target_object) == NULL)
+        return KOS_ERR_INVAL;
+    if (action->waypoint_count > KOS_MAX_WAYPOINTS)
+        return KOS_ERR_INVAL;
 
     publish = seqlock_begin(&s->seq);
     memcpy(&s->action, action, sizeof s->action);

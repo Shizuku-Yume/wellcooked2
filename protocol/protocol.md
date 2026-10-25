@@ -155,7 +155,7 @@ Bridge 判为失联（断链、清空注入、3 秒后重连）。要改这个�
 | `actions` | string[] | 否 | 本端支持的动作名，最多 32 个 |
 
 C 侧构造样例：
-`{"type":"hello","instance":"linux-bridge","version":"0.1.0","actions":["move","stop","interact"]}`
+`{"type":"hello","instance":"linux-bridge","version":"0.2.0","actions":["move","stop","interact"]}`
 
 ### 3.4 `echo` / `echo_reply`
 
@@ -271,7 +271,7 @@ C 侧错误码：`bridge/include/kitchenos/json.h` 的 `JSON_ERR_*`、
 
 ## 6. 版本与兼容
 
-- 当前版本 `0.1.0`（`bridge/include/kitchenos/protocol.h` 的 `PROTO_VERSION`，
+- 当前版本 `0.2.0`（`bridge/include/kitchenos/protocol.h` 的 `PROTO_VERSION`，
   同时是插件 `WellCooked.Plugin` 的版本基准）。
 - 加法兼容：新增可选字段、新增 `resources` 键、新增消息类型 —— 老实现忽略即可，不必改版本。
 - 破坏兼容：改字段名、改字段类型、改动作名、改分帧 —— 必须同时改两端并提升版本号。

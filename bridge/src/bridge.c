@@ -717,6 +717,11 @@ static void format_chef_list(uint64_t mask, int chefs, char *out, size_t cap)
 static int build_action_from_slot(int chef, const kos_input_action *action,
                                   char *out, size_t cap, size_t *len)
 {
+    /* A corrupt slot may omit the terminator; `strlen` on it would read past the
+     * payload and leak/crash. Treat that like an unusable action. */
+    if (memchr(action->target_object, '\0', sizeof action->target_object) == NULL)
+        return PROTO_ERR_RANGE;
+
     switch (action->kind) {
     case KOS_ACTION_MOVE:
         if (!double_is_finite(action->target_x) || !double_is_finite(action->target_y)) {

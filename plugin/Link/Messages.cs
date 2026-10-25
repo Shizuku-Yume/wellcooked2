@@ -36,7 +36,7 @@ namespace WellCooked
         public int state_interval_ms;
         public string input_mode;
         public string strategy;
-        public int seq;
+        public long seq;
         public Vec2[] waypoints;
     }
 
@@ -234,7 +234,7 @@ namespace WellCooked
             return b.ToString();
         }
 
-        public static string Ack(string action, int chefId, bool ok, string detail, int seq = -1)
+        public static string Ack(string action, int chefId, bool ok, string detail, long seq = -1)
         {
             var b = new JsonBuilder(256)
                 .Obj()

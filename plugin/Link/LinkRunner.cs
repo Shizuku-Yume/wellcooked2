@@ -103,7 +103,7 @@ namespace WellCooked
             bool connected = _link.Connected;
             if (connected && !_wasConnected)
             {
-                _link.Send(Msg.Hello(Instance, "0.1.0", HostActions));
+                _link.Send(Msg.Hello(Instance, "0.2.0", HostActions));
                 _nextStateAt = 0f; // 连上先立刻报一帧，别等下一个间隔
                 _log.LogInfo("link: 已连上 Bridge，" + _host + ":" + _port + "，hello 已发");
             }
@@ -353,7 +353,7 @@ namespace WellCooked
 
             if (m.action == "path" && !string.IsNullOrEmpty(json))
             {
-                int seq;
+                long seq;
                 if (TryReadSeq(json, out seq))
                 {
                     m.seq = seq;
@@ -402,7 +402,7 @@ namespace WellCooked
         }
 
         /// <summary>`seq` 只对 path 有意义；其它动作的 ack 保持旧形状（不带 seq）。</summary>
-        private static int ActionSeq(string action, int seq)
+        private static long ActionSeq(string action, long seq)
         {
             return action == "path" ? seq : -1;
         }
@@ -483,7 +483,7 @@ namespace WellCooked
 
             var list = new List<Vec2>();
             int cur = open;
-            while (cur < close)
+            while (cur < close && list.Count < 8)
             {
                 int objStart = json.IndexOf('{', cur);
                 if (objStart < 0 || objStart >= close) break;
@@ -506,16 +506,40 @@ namespace WellCooked
             return true;
         }
 
-        private static bool TryReadSeq(string json, out int seq)
+        private static bool TryReadSeq(string json, out long seq)
         {
-            seq = 0;
-            float val;
-            if (TryReadNumber(json, "\"seq\"", 0, out val))
+            seq = 0L;
+            int at = json.IndexOf("\"seq\"", StringComparison.Ordinal);
+            if (at < 0)
             {
-                seq = (int)val;
-                return true;
+                return false;
             }
-            return false;
+            int colon = json.IndexOf(':', at + 5);
+            if (colon < 0)
+            {
+                return false;
+            }
+            int start = colon + 1;
+            while (start < json.Length && (json[start] == ' ' || json[start] == '\t'))
+            {
+                start++;
+            }
+            int end = start;
+            if (end < json.Length && json[end] == '-')
+            {
+                end++;
+            }
+            while (end < json.Length && char.IsDigit(json[end]))
+            {
+                end++;
+            }
+            if (end == start || (end == start + 1 && json[start] == '-'))
+            {
+                return false;
+            }
+            return long.TryParse(json.Substring(start, end - start),
+                                 System.Globalization.NumberStyles.Integer,
+                                 System.Globalization.CultureInfo.InvariantCulture, out seq);
         }
 
         /// <summary>
@@ -523,7 +547,7 @@ namespace WellCooked
         /// 这一次是"结局"—— 上层据此不必靠猜（见 `ActionDriver` 的说明）。
         /// </summary>
         public static void ReportAction(string action, int chefId, bool ok, string detail,
-                                        int seq = -1)
+                                        long seq = -1)
         {
             if (_link != null)
             {

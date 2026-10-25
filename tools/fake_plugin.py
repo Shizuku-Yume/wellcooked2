@@ -45,7 +45,7 @@ MAX_FRAME_BYTES = 1024 * 1024   # TcpLink.cs 的 MaxFrameBytes：一行的上限
 DEFAULT_LISTEN_PORT = 14455     # Bridge 作服务端时的默认端口（两端同一个号，谁在听由模式决定）
 DEFAULT_CONNECT_PORT = 14455    # 插件作服务端时的默认端口，Bridge --link connect 去连它
 HELLO_INSTANCE = "windows-host"
-HELLO_VERSION = "0.1.0"
+HELLO_VERSION = "0.2.0"
 HELLO_ACTIONS = ("move", "stop", "press", "release", "tap", "pickup", "dash", "interact",
                  "path", "face", "work")
 IDLE_ACTION = "stop"            # 输入槽缺失时 Bridge 下发的空闲动作
@@ -3469,7 +3469,7 @@ def selftest():
     # 8) hello 必须与冻结的那条一致
     hello = json.loads(msg_hello())
     checks.hard("hello_matches_frozen_protocol",
-                hello == {"type": "hello", "instance": "windows-host", "version": "0.1.0",
+                hello == {"type": "hello", "instance": "windows-host", "version": "0.2.0",
                           "actions": ["move", "stop", "press", "release", "tap",
                                       "pickup", "dash", "interact", "path", "face", "work"]},
                 msg_hello())

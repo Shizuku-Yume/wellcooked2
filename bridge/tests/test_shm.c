@@ -1053,6 +1053,19 @@ static void test_new_action_slots(void)
     expect(kos_shm_slot_publish(shm, 2, &action) == KOS_ERR_INVAL,
            "work 之后的下一个编号仍被当作未知动作拒绝");
 
+    memset(&action, 0, sizeof action);
+    memset(action.target_object, 'A', sizeof action.target_object);
+    action.kind = KOS_ACTION_WORK;
+    action.frame_id = 5;
+    expect(kos_shm_slot_publish(shm, 2, &action) == KOS_ERR_INVAL,
+           "没有 NUL 结尾的 target_object 被拒绝");
+    memset(&action, 0, sizeof action);
+    action.kind = KOS_ACTION_PATH;
+    action.frame_id = 6;
+    action.waypoint_count = KOS_MAX_WAYPOINTS + 1;
+    expect(kos_shm_slot_publish(shm, 2, &action) == KOS_ERR_INVAL,
+           "超过 8 个路点的输入动作被拒绝");
+
     kos_shm_close(shm, NULL);
     shm = NULL;
 done:

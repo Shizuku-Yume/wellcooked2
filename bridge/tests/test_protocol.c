@@ -361,8 +361,8 @@ static void test_hello(void)
                                    3, buf, sizeof buf, &len),
               PROTO_OK);
     CHECK_STR(buf,
-              "{\"type\":\"hello\",\"instance\":\"linux-bridge\",\"version\":\"0.1.0\","
-              "\"actions\":[\"move\",\"stop\",\"interact\"]}");
+              "{\"type\":\"hello\",\"instance\":\"linux-bridge\",\"version\":\""
+              PROTO_VERSION "\",\"actions\":[\"move\",\"stop\",\"interact\"]}");
 
     root = parse_ok(buf, len);
     CHECK(root != NULL);
@@ -374,7 +374,7 @@ static void test_hello(void)
         CHECK_INT(protocol_message_type(root), PROTO_MSG_HELLO);
         CHECK_INT(protocol_parse_hello(root, &hello, &diag), PROTO_OK);
         CHECK_STR(hello.instance, "linux-bridge");
-        CHECK_STR(hello.version, "0.1.0");
+        CHECK_STR(hello.version, PROTO_VERSION);
         CHECK_INT(hello.action_count, 3);
         CHECK_STR(hello.actions[0], "move");
         CHECK_STR(hello.actions[2], "interact");
@@ -639,8 +639,13 @@ static void test_actions(void)
             json_free(root);
         }
     }
-    /* Invalid waypoint count fails */
+    /* Invalid waypoint count or negative seq fails before emitting a schema-invalid message. */
     CHECK_INT(protocol_build_action_path(0, 1, NULL, 0, buf, sizeof buf, &len), PROTO_ERR_RANGE);
+    {
+        proto_waypoint one = { 1.0, 2.0 };
+        CHECK_INT(protocol_build_action_path(0, -1, &one, 1, buf, sizeof buf, &len),
+                  PROTO_ERR_RANGE);
+    }
 
     /* Path semantic errors are rejected, not silently defaulted. */
     root = PARSE_OK("{\"type\":\"action\",\"chef_id\":0,\"action\":\"path\",\"waypoints\":[{\"x\":1,\"y\":2}],\"seq\":-1}");
@@ -835,6 +840,32 @@ static void test_parse_errors(void)
     CHECK(root != NULL);
     if (root != NULL) {
         CHECK_INT(protocol_parse_heartbeat(root, &beat), PROTO_ERR_RANGE);
+        json_free(root);
+    }
+
+    /* game_time_ms is game-internal elapsed time; negative is not usable. */
+    root = PARSE_OK("{\"type\":\"state_update\",\"game_time_ms\":-1}");
+    CHECK(root != NULL);
+    if (root != NULL) {
+        CHECK_INT(protocol_parse_state_update(root, &state, NULL), PROTO_ERR_RANGE);
+        json_free(root);
+    }
+
+    /* progress outside 0..1 is a sender bug, rejected at the trust boundary. */
+    root = PARSE_OK("{\"type\":\"state_update\",\"game_time_ms\":1000,"
+                    "\"resources\":{\"cutting_board_0\":{\"state\":\"occupied\","
+                    "\"progress\":1.5}}}");
+    CHECK(root != NULL);
+    if (root != NULL) {
+        CHECK_INT(protocol_parse_state_update(root, &state, NULL), PROTO_ERR_RANGE);
+        json_free(root);
+    }
+    root = PARSE_OK("{\"type\":\"state_update\",\"game_time_ms\":1000,"
+                    "\"resources\":{\"sink_0\":{\"state\":\"washing\","
+                    "\"progress\":-0.1}}}");
+    CHECK(root != NULL);
+    if (root != NULL) {
+        CHECK_INT(protocol_parse_state_update(root, &state, NULL), PROTO_ERR_RANGE);
         json_free(root);
     }
 

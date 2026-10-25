@@ -50,7 +50,7 @@
 /* Identity this side announces in `hello`; the version string is what the plugin
  * sees in its log, so bump it when the wire format changes. */
 #define PROTO_BRIDGE_INSTANCE "linux-bridge"
-#define PROTO_VERSION "0.1.0"
+#define PROTO_VERSION "0.2.0"
 
 #define PROTO_MAX_CHEFS 16
 #define PROTO_MAX_ORDERS 32

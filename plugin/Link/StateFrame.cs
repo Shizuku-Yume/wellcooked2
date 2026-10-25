@@ -59,9 +59,7 @@ namespace WellCooked
             b.Field("type", MsgType.StateUpdate);
             b.FieldInt("timestamp", TcpLink.UnixSeconds());
 
-            var timer = WorldState.Get(flow, "RoundTimer");
-            var elapsed = timer == null ? null : WorldState.Get(timer, "TimeElapsed");
-            double sec = elapsed == null ? 0.0 : ToDouble(elapsed);
+            double sec = GameTime();
             b.FieldNum("game_time", sec);
             b.FieldInt("game_time_ms", (long)Math.Round(sec * 1000.0));
 
@@ -78,6 +76,19 @@ namespace WellCooked
 
             b.EndObj();
             return b.ToString();
+        }
+
+        /// <summary>
+        /// 本局游戏时钟（秒）。与 `game_time_ms` 同源：`RoundTimer.TimeElapsed`，
+        /// 暂停时 `TimeManager` 把该层的 delta 乘成 0，所以它不会走。
+        /// 插件的动作超时也用它，暂停时不会把正在执行的动作判超时。
+        /// </summary>
+        public static float GameTime()
+        {
+            object flow = WorldState.Flow();
+            object timer = flow == null ? null : WorldState.Get(flow, "RoundTimer");
+            object elapsed = timer == null ? null : WorldState.Get(timer, "TimeElapsed");
+            return elapsed == null ? 0f : (float)ToDouble(elapsed);
         }
 
         // ---------------- 厨师 ----------------
@@ -364,6 +375,7 @@ namespace WellCooked
         private static void AppendDirtyPlates(JsonBuilder b)
         {
             long count = 0;
+            bool found = false;
             foreach (var stack in WorldState.FindAll("ClientDirtyPlateStack"))
             {
                 var cVal = WorldState.Invoke(stack, "GetCount");
@@ -373,8 +385,15 @@ namespace WellCooked
                 }
                 if (cVal != null)
                 {
+                    found = true;
                     count += (long)ToDouble(cVal);
                 }
+            }
+            if (!found)
+            {
+                // 读不到脏盘台就不写：写 free/0 会让调度侧以为"没有脏盘要洗"。
+                WorldState.WarnOnce("上报: 读不到脏盘台数量，这一帧不写 dirty_plates");
+                return;
             }
             b.Key("dirty_plates").Obj().Field("state", count > 0 ? "occupied" : "free").FieldInt("count", count).EndObj();
         }
