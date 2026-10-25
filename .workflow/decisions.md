@@ -824,3 +824,30 @@ user may overturn on sight. `Revisit when` of "never" is allowed but suspicious;
 - **Mine:** yes
 - **Revisit when:** 所有厨师都被同一工序 block 过一遍，需要超时后判失败或扩大站位格集合。
 - **Effort:** kitchen-control
+
+## 2026-10-25 - 宏动作的 face 完成看世界朝向，不接插件 ack
+
+- **Decided:** `goto` 在计划槽 `arrived` 后发 `face`，完成判据取世界状态的 `chef.facing` 与工位方向误差 < 15°；`ack` 仍只到 Bridge 日志。
+- **Instead of:** 把插件的 ack 经 Bridge 或 shm 回传给 Worker 再判完成。
+- **Because:** 现有链路里 ack 不下发 Worker，而插件只在同一个 15° 误差内才回成功 ack，读世界状态是同一个事实且不用改协议/shm 布局；macros 的其它步骤本来也以状态为准。
+- **Mine:** yes
+- **Revisit when:** Worker 需要按插件拒绝原因（找不到目标、位置不对）做不同重试策略。
+- **Effort:** kitchen-control
+
+## 2026-10-25 - plate 拆成 goto + wait_ready + pickup
+
+- **Decided:** `plate` 工序在 pickup 前加 `wait_ready`，读该工位的锅 `state` 到 `cooked`；工位没有锅状态（例如只是盘子堆）时 `wait_ready` 直接通过，pickup 的 `holding` 仍是成功判据。
+- **Instead of:** 只发 `pickup`，靠 1.5 s 超时后由 Scheduler 重排队等熟。
+- **Because:** `cook` 明确放下即走、不等熟，锅没熟时盘工序的 pickup 必失败；把"等熟"放进同一道工序，失败原因和宏动作链能对上，也不增加 Scheduler 的工序类型。
+- **Mine:** yes
+- **Revisit when:** Scheduler 能按锅状态单独生成"等熟"工序，或能按订单精确匹配到某一口锅。
+- **Effort:** kitchen-control
+
+## 2026-10-25 - 工位 id 与 shm 资源键按精确名/归一化/同类序号匹配
+
+- **Decided:** Worker 找工位对应的 shm 资源时，先认精确名，再做 `-`/`_` 归一化比较，最后按工位 kind + 序号找 `pot_N`/`cutting_board_N`/`sink_N` 等插件键。
+- **Instead of:** 让 Scheduler 改发插件资源键，或改 kitchen 导出改用 GameObject 名。
+- **Because:** kitchen.json 用 `cooker-0`/`container-0`，插件上报 `pot_0`/`cutting_board_0`；任务 06 只做执行器，接口统一留给任务 09 的实机接入，先有一层可解释的匹配比在 Scheduler 里另造一套 id 污染更小。
+- **Mine:** yes
+- **Revisit when:** 任务 09 把导出的工位 id 与插件键统一，删掉后两级匹配。
+- **Effort:** kitchen-control

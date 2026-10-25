@@ -158,21 +158,24 @@ Worker 把它展开成宏动作序列，逐个执行；完成以世界状态为�
 
 | 宏动作 | 动作 | 完成条件（读 shm） | 超时 |
 |---|---|---|---|
-| `goto(station)` | 写目标槽，等计划槽 `arrived` + `face` | 坐标在站位格 0.15 m 内且 face ack | 按路程 ×2 + 3 s |
+| `goto(station)` | 写目标槽，等计划槽 `arrived` + `face` | 计划槽 arrived 且世界状态 `facing` 与工位方向误差 < 15°（插件只在这个误差内回 ack；ack 不下发 Worker） | 按路程 ×2 + 3 s |
 | `pickup` | `interact` | `holding` 变成目标物品 | 1.5 s |
 | `drop` | `interact` | `holding` 变空 | 1.5 s |
 | `chop` | `work` | 砧板 `progress` 到 1 | 工时 + 3 s |
 | `start_cook` | `interact` | 锅的 `state` 变成 `cooking` | 1.5 s |
 | `wait_ready` | `stop`（原地或离开） | 锅的 `state` 变成 `cooked` | 工时 + 5 s |
-| `wash` | `work` | 水槽 `progress` 到 1 且干净盘数加一 | 工时 + 3 s |
+| `wash` | `work` | 水槽 `progress` 到 1 且干净盘数加一（没有 `plate_stack` 可读时只认 progress） | 工时 + 3 s |
 | `deliver` | `interact` | 该订单从世界状态订单表消失 | 1.5 s |
 
 工序到宏动作的映射是 Worker 里的一张表：`fetch` = goto(料箱) + pickup，`cut` = goto(砧板) +
 drop + chop + pickup，`cook` = goto(锅) + drop/start_cook（Worker 放下就走，不等熟），
-`plate` = goto(锅) + pickup 进盘，`deliver` = goto(出菜口) + deliver，`wash` =
-goto(水槽) + drop + wash。宏动作超时或完成条件被打破（比如手上东西没了），工序报
-`FAILED`，`detail` 写哪个宏动作、等的是什么；Scheduler 已有的重排队逻辑接手。每个宏动作的
-开始与结束写进 Worker 日志（`macro_start` / `macro_done` / `macro_failed`）。
+`plate` = goto(锅) + wait_ready + pickup 进盘（cook 不等熟，所以盘工序自己等），`deliver` =
+goto(出菜口) + deliver，`wash` = goto(水槽) + drop + wash。导出配置里还有 `mix`（与 `cut`
+同样是按住加工键到 progress=1）与 `assemble`（goto 容器 + drop，组合由游戏完成），Worker
+一并支持；未知工序直接报 `FAILED`，`detail` 写 `macro-map`。宏动作超时或完成条件被打破
+（比如手上东西没了），工序报 `FAILED`，`detail` 写哪个宏动作、等的是什么；Scheduler 已有的
+重排队逻辑接手。每个宏动作的开始与结束写进 Worker 日志（`macro_start` / `macro_done` /
+`macro_failed`），`macro_done` 带游戏时钟的 `waited_ms`。
 
 game-bridge 插件里 `WorkOrder.cs` 那套在插件内选厨师、走工序的替身逻辑，在系统控制下不再
 启用；它的 `_looseApproach` 1.4 m 兜底和"按住 X + 超时"切菜由上面的站位格与 `chop` 完成条件
