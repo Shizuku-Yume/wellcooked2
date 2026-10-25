@@ -1,8 +1,9 @@
 /*
- * nav.h -- 厨房网格上的 A*（模块契约）。
+ * nav.h -- 厨房网格的相邻判定（模块契约）。
  *
- * 输入只有 kitchen.h 的网格与两个下标，输出是格子下标序列。不读 shm、不认识
- * 厨师和工位——把"到哪个工位"翻译成目标格是 worker_task 的事。
+ * 单厨师 A* 已随 Worker 的旧执行路径删除：走位统一由 navd 的 PIBT 规划（pibt.h），
+ * 按执行依赖图放行（adg.h）。这里只剩 stand.c 建距离场和 pibt.c 建邻居表都要用的
+ * "mask 是否允许从 from 到 to"。
  */
 #ifndef KITCHENOS_NAV_H
 #define KITCHENOS_NAV_H
@@ -12,19 +13,8 @@
 #endif
 
 #include <kitchenos/kitchen.h>
-#include <kitchenos/shm.h>
-
-#define KOS_NAV_MAX_PATH KOS_KITCHEN_MAX_CELLS
 
 /* 两格是否由网格掩码直接相连（距离必须正好一个 step）。 */
 int kos_nav_adjacent(const kos_kitchen *kitchen, int from, int to);
-
-/*
- * A*：路径包含起点与终点。成功返回 0 并把长度写进 *path_len；无可达路径返回
- * KOS_ERR_EMPTY；参数/缓冲区错误返回 KOS_ERR_INVAL / KOS_ERR_RANGE。
- * 平局按格子下标走，所以同一张图永远给同一条路径（便于复现与测试）。
- */
-int kos_nav_find_path(const kos_kitchen *kitchen, int start, int goal, int *path,
-                      int path_cap, int *path_len, kos_error *err);
 
 #endif /* KITCHENOS_NAV_H */

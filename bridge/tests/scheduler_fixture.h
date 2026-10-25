@@ -346,7 +346,7 @@ __attribute__((unused)) static int ksfx_init_ex(ksfx_run *r, int with_orders)
         return -1;
     }
     kos_error_clear(&err);
-    if (kos_resources_create(&r->kitchen, &err) != KOS_OK) {
+    if (kos_resources_create(&r->kitchen, KOS_INSTANCE_NONE, &err) != KOS_OK) {
         return -1;
     }
     return 0;
@@ -594,7 +594,7 @@ __attribute__((unused)) static void ksfx_cleanup(ksfx_run *r)
         (void)ksfx_stop(r);
     }
     kos_error_clear(&err);
-    (void)kos_resources_unlink(&r->kitchen, &err);
+    (void)kos_resources_unlink(&r->kitchen, KOS_INSTANCE_NONE, &err);
     if (r->dir[0] != '\0') {
         (void)ksfx_remove_tree(r->dir);
     }

@@ -14,7 +14,7 @@ namespace WellCooked
     /// 阶段A1 的冒烟插件：证明 BepInEx 在 Proton 下加载了插件、Harmony 补丁真的执行。
     /// 顺带把游戏程序集的类型清单落盘，供后面读世界状态的任务使用。
     /// </summary>
-    [BepInPlugin(Guid, "WellCooked.Smoke", "0.1.0")]
+    [BepInPlugin(Guid, "WellCooked.Smoke", "0.2.0")]
     public class SmokePlugin : BaseUnityPlugin
     {
         public const string Guid = "wellcooked.smoke";

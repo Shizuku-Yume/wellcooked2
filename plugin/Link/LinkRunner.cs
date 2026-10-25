@@ -39,7 +39,6 @@ namespace WellCooked
         private static bool _wasConnected;
         private static bool _malformedLogged;
         private static bool _oversizeLogged;
-        private static bool _targetFallbackLogged;
 
         /// <summary>协议 §5 的单条消息上限。</summary>
         private const int MaxStateBytes = 4096;
@@ -62,7 +61,8 @@ namespace WellCooked
 
         private static readonly List<string> HostActions = new List<string>
         {
-            "move", "stop", "press", "release", "tap", "pickup", "dash", "interact"
+            "move", "stop", "press", "release", "tap", "pickup", "dash", "interact",
+            "path", "face", "work"
         };
 
         /// <summary>
@@ -103,7 +103,7 @@ namespace WellCooked
             bool connected = _link.Connected;
             if (connected && !_wasConnected)
             {
-                _link.Send(Msg.Hello(Instance, "0.1.0", HostActions));
+                _link.Send(Msg.Hello(Instance, "0.2.0", HostActions));
                 _nextStateAt = 0f; // 连上先立刻报一帧，别等下一个间隔
                 _log.LogInfo("link: 已连上 Bridge，" + _host + ":" + _port + "，hello 已发");
             }
@@ -337,22 +337,35 @@ namespace WellCooked
             }
         }
 
-        private static void HandleAction(InboundMessage m, string json)
+        public static void HandleAction(InboundMessage m, string json)
         {
             // Unity 的 JsonUtility 没把嵌套的 target 对象填进来（实测：move 到了这里 target 是 null，
             // 于是每一条 move 都被拒）。参考实现（net46 那份）同样用它，但那条路从来没被真机跑过
             // —— bridge/05 的实机只跑过 stop/idle。这里对 move 自己从原文里取一次，别再指望它。
-            if (m.target == null && !string.IsNullOrEmpty(json) && m.action == "move")
+            if (m.target == null && !string.IsNullOrEmpty(json) && (m.action == "move" || m.action == "face"))
             {
                 Vec2 parsed;
                 if (TryReadTarget(json, out parsed))
                 {
                     m.target = parsed;
-                    if (!_targetFallbackLogged)
-                    {
-                        _targetFallbackLogged = true;
-                        _log.LogWarning("link: JsonUtility 没解析出 target，改从原文里取（只报一次）");
-                    }
+                }
+            }
+
+            if (m.action == "path" && !string.IsNullOrEmpty(json))
+            {
+                long seq;
+                if (TryReadSeq(json, out seq))
+                {
+                    m.seq = seq;
+                }
+            }
+
+            if ((m.waypoints == null || m.waypoints.Length == 0) && !string.IsNullOrEmpty(json) && m.action == "path")
+            {
+                Vec2[] wps;
+                if (TryReadWaypoints(json, out wps))
+                {
+                    m.waypoints = wps;
                 }
             }
 
@@ -360,7 +373,11 @@ namespace WellCooked
             if (handler == null)
             {
                 _log.LogWarning("link: 收到 action " + m.action + "（厨师位 " + m.chef_id + "），但还没有动作执行器");
-                _link.Send(Msg.Ack(m.action, m.chef_id, false, "动作执行器未接入（任务 04）"));
+                if (_link != null)
+                {
+                    _link.Send(Msg.Ack(m.action, m.chef_id, false, "动作执行器未接入（任务 04）",
+                                       ActionSeq(m.action, m.seq)));
+                }
                 return;
             }
 
@@ -374,7 +391,20 @@ namespace WellCooked
                 error = "异常: " + e.Message;
             }
 
-            _link.Send(Msg.Ack(m.action, m.chef_id, error == null, error ?? "ok"));
+            if (_link != null)
+            {
+                _link.Send(Msg.Ack(m.action, m.chef_id, error == null, error ?? "ok",
+                                   ActionSeq(m.action, m.seq)));
+            }
+            _log.LogInfo("ack: action=" + m.action + " chef=" + m.chef_id
+                         + (m.action == "path" ? " seq=" + m.seq : "")
+                         + " ok=" + (error == null) + " detail=" + (error ?? "ok"));
+        }
+
+        /// <summary>`seq` 只对 path 有意义；其它动作的 ack 保持旧形状（不带 seq）。</summary>
+        private static long ActionSeq(string action, long seq)
+        {
+            return action == "path" ? seq : -1;
         }
 
         /// <summary>
@@ -441,18 +471,91 @@ namespace WellCooked
                                   System.Globalization.CultureInfo.InvariantCulture, out value);
         }
 
+        private static bool TryReadWaypoints(string json, out Vec2[] waypoints)
+        {
+            waypoints = null;
+            int at = json.IndexOf("\"waypoints\"", StringComparison.Ordinal);
+            if (at < 0) return false;
+            int open = json.IndexOf('[', at);
+            if (open < 0) return false;
+            int close = json.IndexOf(']', open);
+            if (close < 0) return false;
+
+            var list = new List<Vec2>();
+            int cur = open;
+            while (cur < close && list.Count < 8)
+            {
+                int objStart = json.IndexOf('{', cur);
+                if (objStart < 0 || objStart >= close) break;
+                int objEnd = json.IndexOf('}', objStart);
+                if (objEnd < 0 || objEnd > close) break;
+
+                float x, y;
+                if (TryReadNumber(json, "\"x\"", objStart, out x) && TryReadNumber(json, "\"y\"", objStart, out y))
+                {
+                    Vec2 v = new Vec2();
+                    v.x = x;
+                    v.y = y;
+                    list.Add(v);
+                }
+                cur = objEnd + 1;
+            }
+
+            if (list.Count == 0) return false;
+            waypoints = list.ToArray();
+            return true;
+        }
+
+        private static bool TryReadSeq(string json, out long seq)
+        {
+            seq = 0L;
+            int at = json.IndexOf("\"seq\"", StringComparison.Ordinal);
+            if (at < 0)
+            {
+                return false;
+            }
+            int colon = json.IndexOf(':', at + 5);
+            if (colon < 0)
+            {
+                return false;
+            }
+            int start = colon + 1;
+            while (start < json.Length && (json[start] == ' ' || json[start] == '\t'))
+            {
+                start++;
+            }
+            int end = start;
+            if (end < json.Length && json[end] == '-')
+            {
+                end++;
+            }
+            while (end < json.Length && char.IsDigit(json[end]))
+            {
+                end++;
+            }
+            if (end == start || (end == start + 1 && json[start] == '-'))
+            {
+                return false;
+            }
+            return long.TryParse(json.Substring(start, end - start),
+                                 System.Globalization.NumberStyles.Integer,
+                                 System.Globalization.CultureInfo.InvariantCulture, out seq);
+        }
+
         /// <summary>
         /// 回一条动作的结局（执行器在到达/超时/失败时调）。第一次 ack 是"已登记"，
         /// 这一次是"结局"—— 上层据此不必靠猜（见 `ActionDriver` 的说明）。
         /// </summary>
-        public static void ReportAction(string action, int chefId, bool ok, string detail)
+        public static void ReportAction(string action, int chefId, bool ok, string detail,
+                                        long seq = -1)
         {
-            if (_link == null)
+            if (_link != null)
             {
-                return;
+                _link.Send(Msg.Ack(action, chefId, ok, detail, seq));
             }
-
-            _link.Send(Msg.Ack(action, chefId, ok, detail));
+            _log.LogInfo("ack: action=" + action + " chef=" + chefId
+                         + (seq >= 0 ? " seq=" + seq : "")
+                         + " ok=" + ok + " detail=" + detail);
         }
 
         private static void LogLine(string message)

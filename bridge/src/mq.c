@@ -43,15 +43,26 @@ static void deadline_after(struct timespec *ts, int timeout_ms)
     }
 }
 
-int kos_mq_task_name(int chef, char *buf, size_t len)
+int kos_mq_events_name(int instance, char *buf, size_t len)
 {
+    if (buf == NULL || len == 0) {
+        return KOS_ERR_INVAL;
+    }
+    return kos_name_instance(KOS_MQ_EVENTS_NAME, instance, buf, len);
+}
+
+int kos_mq_task_name(int chef, int instance, char *buf, size_t len)
+{
+    char base[KOS_MQ_NAME_MAX];
+
     if (chef < 0 || buf == NULL || len == 0) {
         return KOS_ERR_INVAL;
     }
-    if (snprintf(buf, len, "%s%d", KOS_MQ_TASK_PREFIX, chef) >= (int)len) {
+    if (snprintf(base, sizeof base, "%s%d", KOS_MQ_TASK_PREFIX, chef) >=
+        (int)sizeof base) {
         return KOS_ERR_INVAL;
     }
-    return KOS_OK;
+    return kos_name_instance(base, instance, buf, len);
 }
 
 int kos_mq_create(const char *name, int max_messages, kos_error *err)
@@ -178,23 +189,24 @@ int kos_mq_receive(mqd_t queue, kos_mq_msg *msg, int timeout_ms, kos_error *err)
     return KOS_OK;
 }
 
-int kos_mq_unlink_all(int workers, kos_error *err)
+int kos_mq_unlink_all(int workers, int instance, kos_error *err)
 {
+    char events_name[KOS_MQ_NAME_MAX];
     int i;
 
     if (err != NULL) {
         kos_error_clear(err);
     }
-    if (workers < 0 || workers > KOS_SHM_MAX_CHEFS) {
+    if (workers < 0 || workers > KOS_SHM_MAX_CHEFS ||
+        kos_mq_events_name(instance, events_name, sizeof events_name) != KOS_OK) {
         return KOS_ERR_INVAL;
     }
 
-    if (mq_unlink(KOS_MQ_EVENTS_NAME) != 0 && errno != ENOENT) {
+    if (mq_unlink(events_name) != 0 && errno != ENOENT) {
         if (err != NULL) {
             err->code = KOS_ERR_IO;
             err->sys_errno = errno;
-            snprintf(err->context, sizeof err->context, "mq_unlink('%s')",
-                     KOS_MQ_EVENTS_NAME);
+            snprintf(err->context, sizeof err->context, "mq_unlink('%s')", events_name);
         }
         return KOS_ERR_IO;
     }
@@ -202,7 +214,7 @@ int kos_mq_unlink_all(int workers, kos_error *err)
     for (i = 0; i < workers; i++) {
         char name[KOS_MQ_NAME_MAX];
 
-        if (kos_mq_task_name(i, name, sizeof name) != KOS_OK) {
+        if (kos_mq_task_name(i, instance, name, sizeof name) != KOS_OK) {
             return KOS_ERR_INVAL;
         }
         if (mq_unlink(name) != 0 && errno != ENOENT) {

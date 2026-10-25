@@ -64,6 +64,7 @@ typedef struct {
     int node_index;
     int state;
     int chef_id;
+    int avoid_chef; /* 上一任报 BLOCKED 的厨师；改派时先避开他 */
     uint64_t task_id;
     int64_t started_ms;
     int64_t ready_since_ms; /* 第一次进入就绪队列 */
@@ -145,6 +146,8 @@ typedef struct {
     int64_t dispatch_llf;
     int64_t dispatch_hrrn;
     int64_t worker_restarts;
+    int blocked_hold[KOS_SHM_MAX_CHEFS]; /* 报过 BLOCKED 的厨师先不接新活 */
+
     char metrics_path[KOS_DAEMON_PATH_MAX + 48];
     uint64_t next_task_id;
     int64_t started_ms;
@@ -757,6 +760,7 @@ static int add_order(scheduler *s, const char *id, const char *dish, int64_t arr
         order->tasks[i].node_index = s->recipes.dishes[dish_index].nodes[i];
         order->tasks[i].state = TASK_PENDING;
         order->tasks[i].chef_id = -1;
+        order->tasks[i].avoid_chef = -1;
         order->tasks[i].task_id = 0;
     }
 
@@ -895,11 +899,16 @@ static int prepare_run_dir(scheduler *s)
 static int open_queues(scheduler *s)
 {
     kos_error err;
+    char events_name[KOS_MQ_NAME_MAX];
     int i;
     int rc;
 
+    if (kos_mq_events_name(s->rt.opts.instance, events_name, sizeof events_name) != KOS_OK) {
+        kos_log_error(s->rt.log, "mq_name_failed", "instance=%d", s->rt.opts.instance);
+        return -1;
+    }
     kos_error_clear(&err);
-    rc = kos_mq_unlink_all(s->rt.opts.chefs, &err);
+    rc = kos_mq_unlink_all(s->rt.opts.chefs, s->rt.opts.instance, &err);
     if (rc != KOS_OK) {
         char text[256];
 
@@ -907,18 +916,17 @@ static int open_queues(scheduler *s)
         kos_log_warn(s->rt.log, "mq_stale_cleanup_failed", "error=%s", text);
     }
     kos_error_clear(&err);
-    if (kos_mq_create(KOS_MQ_EVENTS_NAME, KOS_MQ_MAX_MESSAGES, &err) != KOS_OK) {
+    if (kos_mq_create(events_name, KOS_MQ_MAX_MESSAGES, &err) != KOS_OK) {
         char text[256];
 
         error_text(&err, text, sizeof text);
-        kos_log_error(s->rt.log, "mq_create_failed", "name=%s error=%s",
-                      KOS_MQ_EVENTS_NAME, text);
+        kos_log_error(s->rt.log, "mq_create_failed", "name=%s error=%s", events_name, text);
         return -1;
     }
     for (i = 0; i < s->rt.opts.chefs; i++) {
         char name[KOS_MQ_NAME_MAX];
 
-        if (kos_mq_task_name(i, name, sizeof name) != KOS_OK) {
+        if (kos_mq_task_name(i, s->rt.opts.instance, name, sizeof name) != KOS_OK) {
             return -1;
         }
         kos_error_clear(&err);
@@ -931,18 +939,17 @@ static int open_queues(scheduler *s)
         }
     }
     kos_error_clear(&err);
-    if (kos_mq_open(KOS_MQ_EVENTS_NAME, O_RDONLY, &s->events, &err) != KOS_OK) {
+    if (kos_mq_open(events_name, O_RDONLY, &s->events, &err) != KOS_OK) {
         char text[256];
 
         error_text(&err, text, sizeof text);
-        kos_log_error(s->rt.log, "mq_open_failed", "name=%s error=%s", KOS_MQ_EVENTS_NAME,
-                      text);
+        kos_log_error(s->rt.log, "mq_open_failed", "name=%s error=%s", events_name, text);
         return -1;
     }
     for (i = 0; i < s->rt.opts.chefs; i++) {
         char name[KOS_MQ_NAME_MAX];
 
-        if (kos_mq_task_name(i, name, sizeof name) != KOS_OK) {
+        if (kos_mq_task_name(i, s->rt.opts.instance, name, sizeof name) != KOS_OK) {
             return -1;
         }
         kos_error_clear(&err);
@@ -955,7 +962,7 @@ static int open_queues(scheduler *s)
         }
     }
     s->queues_ready = 1;
-    kos_log_info(s->rt.log, "mq_ready", "events=%s task_queues=%d", KOS_MQ_EVENTS_NAME,
+    kos_log_info(s->rt.log, "mq_ready", "events=%s task_queues=%d", events_name,
                  s->rt.opts.chefs);
     return 0;
 }
@@ -978,7 +985,7 @@ static void close_queues(scheduler *s)
         kos_error err;
 
         kos_error_clear(&err);
-        (void)kos_mq_unlink_all(s->rt.opts.chefs, &err);
+        (void)kos_mq_unlink_all(s->rt.opts.chefs, s->rt.opts.instance, &err);
         s->queues_ready = 0;
     }
 }
@@ -1183,6 +1190,21 @@ static void handle_worker_event(scheduler *s, const kos_mq_msg *msg)
                                          "task-done");
             task->state = TASK_DONE;
             finish_order_if_done(s, order_index);
+        } else if (msg->event == KOS_EVT_BLOCKED) {
+            /* 走位连续 3 次卡住：租约还给资源模型，工序回就绪队列，并记住
+             * 别立刻又派给同一个人（他那里仍然走不通）。 */
+            int blocked_chef = msg->chef_id;
+            int task_index = (int)(task - order->tasks);
+
+            if (blocked_chef >= 0 && blocked_chef < KOS_SHM_MAX_CHEFS) {
+                s->blocked_hold[blocked_chef] = 1;
+            }
+            (void)release_lease_for_task(s, msg->task_id, "resource_reclaimed",
+                                         "task-blocked");
+            task_requeue(s, order_index, task_index, "worker-blocked");
+            if (task_index >= 0 && task_index < order->task_count) {
+                order->tasks[task_index].avoid_chef = blocked_chef;
+            }
         } else {
             (void)release_lease_for_task(s, msg->task_id, "resource_reclaimed",
                                          "task-failed");
@@ -1214,6 +1236,7 @@ static void drain_events(scheduler *s)
 }
 
 /* ============================================================== 调度决策 */
+
 
 static unsigned task_priority(const sched_order *order, int64_t now)
 {
@@ -1760,6 +1783,27 @@ static void maybe_generate_wash(scheduler *s, int64_t now)
     }
 }
 
+static int has_avoid_task(const scheduler *s, int chef)
+{
+    int i;
+
+    for (i = 0; i < s->order_count; i++) {
+        const sched_order *order = &s->orders[i];
+        int j;
+
+        if (order->status != KOS_ORDER_ACTIVE) {
+            continue;
+        }
+        for (j = 0; j < order->task_count; j++) {
+            if (order->tasks[j].state == TASK_PENDING &&
+                order->tasks[j].avoid_chef == chef) {
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
 static void dispatch_ready(scheduler *s, int64_t now)
 {
     sched_candidate all[KOS_ASSIGN_MAX_TASKS];
@@ -1785,7 +1829,10 @@ static void dispatch_ready(scheduler *s, int64_t now)
         return;
     }
     for (i = 0; i < s->rt.opts.chefs && i < KOS_ASSIGN_MAX_CHEFS; i++) {
-        if (s->running_by_chef[i] == 0) {
+        if (s->blocked_hold[i] && !has_avoid_task(s, i)) {
+            s->blocked_hold[i] = 0;
+        }
+        if (s->running_by_chef[i] == 0 && !s->blocked_hold[i]) {
             idle[i] = i;
             idle_count++;
         }
@@ -1862,7 +1909,7 @@ static void dispatch_ready(scheduler *s, int64_t now)
     order_urgency_ranks(s, now, urgency);
     for (i = 0; i < idle_count; i++) {
         int cell = chef_cells[i];
-
+        int chef = idle[i];
         for (j = 0; j < pool_count; j++) {
             int index = i * pool_count + j;
             kos_assign_terms *term = &terms[index];
@@ -1895,6 +1942,9 @@ static void dispatch_ready(scheduler *s, int64_t now)
                     1000.0;
                 term->urgency = urgency[pool[j].order_index];
                 term->critical_x2 = s->pot_chain[pool[j].node_index] ? 1 : 0;
+                if (s->orders[pool[j].order_index].tasks[pool[j].task_index].avoid_chef == chef) {
+                    term->unreachable = 1;
+                }
             }
         }
     }
@@ -2032,6 +2082,11 @@ static void dispatch_ready(scheduler *s, int64_t now)
         s->running_by_chef[chef] = msg.task_id;
         if (order != NULL) {
             task->state = TASK_RUNNING;
+            if (task->avoid_chef >= 0 && task->avoid_chef != chef &&
+                task->avoid_chef < KOS_SHM_MAX_CHEFS) {
+                s->blocked_hold[task->avoid_chef] = 0;
+            }
+            task->avoid_chef = -1;
             task->chef_id = chef;
             task->task_id = msg.task_id;
             task->started_ms = now;
@@ -2493,7 +2548,7 @@ static int scheduler_main(scheduler *s, const kos_child_opts *opts)
         return 1;
     }
     kos_error_clear(&err);
-    if (kos_resources_attach(&s->kitchen, &s->resources, &err) != KOS_OK) {
+    if (kos_resources_attach(&s->kitchen, &s->resources, s->rt.opts.instance, &err) != KOS_OK) {
         char text[256];
 
         error_text(&err, text, sizeof text);

@@ -26,6 +26,7 @@
 #include <kitchenos/log.h>
 #include <kitchenos/mq.h>
 #include <kitchenos/policy.h>
+#include <kitchenos/navtab.h>
 #include <kitchenos/resource.h>
 #include <kitchenos/shm.h>
 #include <kitchenos/supervise.h>
@@ -57,7 +58,7 @@
 
 enum { EXIT_OK = 0, EXIT_STARTUP = 1, EXIT_USAGE = 2, EXIT_RUNNING = 3 };
 
-typedef enum { SPEC_BRIDGE = 0, SPEC_SCHEDULER = 1, SPEC_WORKER = 2 } spec_kind;
+typedef enum { SPEC_BRIDGE = 0, SPEC_SCHEDULER = 1, SPEC_NAVD = 2, SPEC_WORKER = 3 } spec_kind;
 
 typedef struct {
     kos_child rec;
@@ -82,8 +83,15 @@ typedef struct {
     int heartbeat_timeout_ms;
     int stop_timeout_ms;
     int verbose;
+    int instance;
+    int state_name_set;
+    int sem_name_set;
+    int nav_name_set;
+    int nav_sem_name_set;
     const char *state_name;
     const char *sem_name;
+    char state_name_buf[KOS_SHM_PATH_MAX];
+    char sem_name_buf[KOS_SHM_PATH_MAX];
     const char *kitchen_path;
     const char *recipes_path;
     const char *orders_path;
@@ -93,6 +101,11 @@ typedef struct {
     const char *bridge_bin_opt;
     const char *scheduler_bin_opt;
     const char *worker_bin_opt;
+    const char *navd_bin_opt;
+    const char *nav_name_opt;
+    const char *nav_sem_name_opt;
+    char nav_name[KOS_SHM_PATH_MAX];
+    char nav_sem_name[KOS_SHM_PATH_MAX];
     kos_supervise_policy policy;
 
     /* ---- 启动时解析的绝对路径 ---- */
@@ -100,6 +113,7 @@ typedef struct {
     char bin_dir[KOS_DAEMON_PATH_MAX];
     char bridge_bin[KOS_DAEMON_PATH_MAX];
     char scheduler_bin[KOS_DAEMON_PATH_MAX];
+    char navd_bin[KOS_DAEMON_PATH_MAX];
     char worker_bin[KOS_DAEMON_PATH_MAX];
     char kitchen_file[KOS_DAEMON_PATH_MAX];
     kos_kitchen kitchen;
@@ -405,6 +419,8 @@ static int child_log_path(const supervisor *s, const sup_child *sc, char *buf, s
         copy_str(name, sizeof name, "bridge.log");
     } else if (sc->kind == SPEC_SCHEDULER) {
         copy_str(name, sizeof name, "scheduler.log");
+    } else if (sc->kind == SPEC_NAVD) {
+        copy_str(name, sizeof name, "navd.log");
     } else {
         snprintf(name, sizeof name, "worker-%d.log", sc->chef_id);
     }
@@ -462,6 +478,7 @@ static int spawn_child(supervisor *s, int index)
     char hb_fd_buf[16];
     char hb_ms_buf[16];
     char generation_buf[32];
+    char instance_buf[16];
     char log_path[KOS_DAEMON_PATH_MAX];
     char bin[KOS_DAEMON_PATH_MAX];
     kos_error err;
@@ -486,6 +503,8 @@ static int spawn_child(supervisor *s, int index)
         copy_str(bin, sizeof bin, s->bridge_bin);
     } else if (sc->kind == SPEC_SCHEDULER) {
         copy_str(bin, sizeof bin, s->scheduler_bin);
+    } else if (sc->kind == SPEC_NAVD) {
+        copy_str(bin, sizeof bin, s->navd_bin);
     } else {
         copy_str(bin, sizeof bin, s->worker_bin);
     }
@@ -507,8 +526,10 @@ static int spawn_child(supervisor *s, int index)
 
     argv[ac++] = (char *)(sc->kind == SPEC_BRIDGE
                               ? "kitchenos-bridge"
-                              : (sc->kind == SPEC_SCHEDULER ? "kitchenos-scheduler"
-                                                            : "kitchenos-worker"));
+                              : (sc->kind == SPEC_SCHEDULER
+                                     ? "kitchenos-scheduler"
+                                     : (sc->kind == SPEC_NAVD ? "kitchenos-navd"
+                                                              : "kitchenos-worker")));
 
     if (sc->kind == SPEC_BRIDGE) {
         snprintf(port_buf, sizeof port_buf, "%d", s->bridge_port);
@@ -541,6 +562,15 @@ static int spawn_child(supervisor *s, int index)
         argv[ac++] = (char *)s->state_name;
         argv[ac++] = (char *)"--sem-name";
         argv[ac++] = (char *)s->sem_name;
+        argv[ac++] = (char *)"--nav-name";
+        argv[ac++] = s->nav_name;
+        argv[ac++] = (char *)"--nav-sem-name";
+        argv[ac++] = s->nav_sem_name;
+        if (s->instance >= 0) {
+            snprintf(instance_buf, sizeof instance_buf, "%d", s->instance);
+            argv[ac++] = (char *)"--instance";
+            argv[ac++] = instance_buf;
+        }
         argv[ac++] = (char *)"--log";
         argv[ac++] = log_path;
         snprintf(workers_buf, sizeof workers_buf, "%d", s->workers);
@@ -837,7 +867,7 @@ static void unlink_resources(supervisor *s)
         return;
     }
     kos_error_clear(&err);
-    if (kos_resources_attach(&s->kitchen, &set, &err) == KOS_OK) {
+    if (kos_resources_attach(&s->kitchen, &set, s->instance, &err) == KOS_OK) {
         for (i = 0; i < set.count; i++) {
             int value = -1;
             int rc_value = kos_resource_value(&set, set.items[i].kind, &value);
@@ -853,7 +883,7 @@ static void unlink_resources(supervisor *s)
         kos_log_warn(s->log, "resource_values_failed", "error=%s", text);
     }
     kos_error_clear(&err);
-    rc = kos_resources_unlink(&s->kitchen, &err);
+    rc = kos_resources_unlink(&s->kitchen, s->instance, &err);
     if (rc == KOS_OK) {
         kos_log_info(s->log, "resource_unlink", "prefix=/kitchenos_res_ result=ok");
     } else {
@@ -888,7 +918,7 @@ static void unlink_ipc(supervisor *s)
     }
 
     kos_error_clear(&err);
-    rc = kos_mq_unlink_all(s->workers, &err);
+    rc = kos_mq_unlink_all(s->workers, s->instance, &err);
     if (rc == KOS_OK) {
         kos_log_info(s->log, "mq_unlink", "workers=%d result=ok", s->workers);
     } else {
@@ -897,6 +927,25 @@ static void unlink_ipc(supervisor *s)
         error_text(&err, text, sizeof text);
         kos_log_warn(s->log, "mq_unlink", "workers=%d result=failed error=%s", s->workers,
                      text);
+    }
+    if (s->workers > 0) {
+        kos_navtab_opts nav_opts;
+
+        memset(&nav_opts, 0, sizeof nav_opts);
+        nav_opts.object_name = s->nav_name;
+        nav_opts.sem_name = s->nav_sem_name;
+        kos_error_clear(&err);
+        rc = kos_navtab_unlink(&nav_opts, &err);
+        if (rc == KOS_OK) {
+            kos_log_info(s->log, "nav_unlink", "object=%s lock=%s result=ok",
+                         s->nav_name, s->nav_sem_name);
+        } else {
+            char text[ERR_BUF];
+
+            error_text(&err, text, sizeof text);
+            kos_log_warn(s->log, "nav_unlink", "object=%s result=failed error=%s",
+                         s->nav_name, text);
+        }
     }
     unlink_resources(s);
 }
@@ -982,6 +1031,10 @@ static int shutdown_all(supervisor *s)
         }
     }
     i = find_child_role(s, "scheduler");
+    if (i >= 0) {
+        stop_one(s, &s->children[i]);
+    }
+    i = find_child_role(s, "navd");
     if (i >= 0) {
         stop_one(s, &s->children[i]);
     }
@@ -1088,7 +1141,9 @@ static void print_usage(FILE *out)
             "                            [--no-bridge] [--no-scheduler]\n"
             "                            [--bin-dir DIR] [--bridge-bin FILE]\n"
             "                            [--scheduler-bin FILE] [--worker-bin FILE]\n"
-            "                            [--state-name NAME] [--sem-name NAME]\n"
+            "                            [--navd-bin FILE] [--nav-name NAME]\n"
+            "                            [--nav-sem-name NAME] [--state-name NAME]\n"
+            "                            [--sem-name NAME] [--instance N]\n"
             "                            [--health-interval-ms M]\n"
             "                            [--supervisor-heartbeat-ms M]\n"
             "                            [--heartbeat-timeout-ms M]\n"
@@ -1107,6 +1162,8 @@ static void print_help(void)
            "  --foreground             stay in the foreground (tests, debugging)\n"
            "  --runtime-dir DIR        pid/logs/status directory (default: $XDG_RUNTIME_DIR/\n"
            "                           kitchenos, else /tmp/kitchenos-<uid>)\n"
+           "  --instance N             multi-instance suffix: IPC names get _N, runtime\n"
+           "                           dir becomes <base>/instance-N (default: none)\n"
            "  --workers N              number of Chef Worker processes (default %d, max %d)\n"
            "  --kitchen FILE           kitchen.json passed to Scheduler and Workers\n"
            "  --recipes FILE           recipes.json passed to Scheduler\n"
@@ -1122,6 +1179,9 @@ static void print_help(void)
            "  --bridge-bin FILE        explicit Bridge binary\n"
            "  --scheduler-bin FILE     explicit Scheduler binary\n"
            "  --worker-bin FILE        explicit Worker binary\n"
+           "  --navd-bin FILE          explicit navigation daemon binary\n"
+           "  --nav-name NAME          /kitchenos_nav name (default: derived from --state-name)\n"
+           "  --nav-sem-name NAME      nav table lock name (same derivation)\n"
            "  --health-interval-ms M   SIGALRM health tick period (default %d)\n"
            "  --supervisor-heartbeat-ms M  child heartbeat interval (default %d)\n"
            "  --heartbeat-timeout-ms M declare a child unresponsive after M ms without a\n"
@@ -1186,6 +1246,7 @@ static int parse_args(int argc, char **argv, supervisor *s)
     s->stop_timeout_ms = DEFAULT_STOP_TIMEOUT_MS;
     s->state_name = KOS_SHM_DEFAULT_NAME;
     s->sem_name = KOS_SHM_DEFAULT_SEM_NAME;
+    s->instance = KOS_INSTANCE_NONE;
     s->strategy = "fcfs";
     s->lease_ttl_ms = 30000;
     s->daemon.ready_fd = -1;
@@ -1276,6 +1337,29 @@ static int parse_args(int argc, char **argv, supervisor *s)
                 return ARG_ERR;
             }
             s->worker_bin_opt = v;
+        } else if (strcmp(name, "--navd-bin") == 0) {
+            const char *v = take_value(value, argc, argv, &i);
+
+            if (v == NULL) {
+                return ARG_ERR;
+            }
+            s->navd_bin_opt = v;
+        } else if (strcmp(name, "--nav-name") == 0) {
+            const char *v = take_value(value, argc, argv, &i);
+
+            if (v == NULL || v[0] == '\0') {
+                return ARG_ERR;
+            }
+            s->nav_name_opt = v;
+            s->nav_name_set = 1;
+        } else if (strcmp(name, "--nav-sem-name") == 0) {
+            const char *v = take_value(value, argc, argv, &i);
+
+            if (v == NULL || v[0] == '\0') {
+                return ARG_ERR;
+            }
+            s->nav_sem_name_opt = v;
+            s->nav_sem_name_set = 1;
         } else if (strcmp(name, "--bridge-host") == 0) {
             const char *v = take_value(value, argc, argv, &i);
 
@@ -1290,6 +1374,7 @@ static int parse_args(int argc, char **argv, supervisor *s)
                 return ARG_ERR;
             }
             s->state_name = v;
+            s->state_name_set = 1;
         } else if (strcmp(name, "--sem-name") == 0) {
             const char *v = take_value(value, argc, argv, &i);
 
@@ -1297,6 +1382,14 @@ static int parse_args(int argc, char **argv, supervisor *s)
                 return ARG_ERR;
             }
             s->sem_name = v;
+            s->sem_name_set = 1;
+        } else if (strcmp(name, "--instance") == 0) {
+            const char *v = take_value(value, argc, argv, &i);
+
+            if (parse_long(v, 0, 255, &number) != 0) {
+                return ARG_ERR;
+            }
+            s->instance = (int)number;
         } else if (strcmp(name, "--kitchen") == 0) {
             const char *v = take_value(value, argc, argv, &i);
 
@@ -1436,6 +1529,16 @@ static int build_children(supervisor *s)
         sc->heartbeat_expected = 1;
         s->child_count++;
     }
+    if (s->workers > 0) {
+        sup_child *sc = &s->children[s->child_count];
+
+        kos_child_init(&sc->rec, "navd", 0);
+        sc->kind = SPEC_NAVD;
+        sc->chef_id = -1;
+        sc->heartbeat_fd = -1;
+        sc->heartbeat_expected = 1;
+        s->child_count++;
+    }
     for (i = 0; i < s->workers; i++) {
         sup_child *sc = &s->children[s->child_count];
         char role[KOS_SUPERVISE_ROLE_MAX];
@@ -1459,9 +1562,22 @@ static int supervisor_main(supervisor *s)
     int i;
 
     /* daemon 之后 chdir("/")，所有路径必须现在就是绝对的。 */
+    if (s->instance >= 0) {
+        if (!s->state_name_set) {
+            (void)kos_name_instance(KOS_SHM_DEFAULT_NAME, s->instance, s->state_name_buf,
+                                    sizeof s->state_name_buf);
+            s->state_name = s->state_name_buf;
+        }
+        if (!s->sem_name_set) {
+            (void)kos_name_instance(KOS_SHM_DEFAULT_SEM_NAME, s->instance, s->sem_name_buf,
+                                    sizeof s->sem_name_buf);
+            s->sem_name = s->sem_name_buf;
+        }
+    }
     kos_error_clear(&err);
-    if (kos_runtime_dir(s->runtime_dir[0] != '\0' ? s->runtime_dir : NULL, s->runtime_dir,
-                        sizeof s->runtime_dir, &err) != KOS_OK) {
+    if (kos_runtime_dir_instance(s->runtime_dir[0] != '\0' ? s->runtime_dir : NULL,
+                                 s->instance, s->runtime_dir, sizeof s->runtime_dir,
+                                 &err) != KOS_OK) {
         error_text(&err, text, sizeof text);
         fprintf(stderr, "kitchenos-supervisor: 运行目录不可用: %s\n", text);
         return EXIT_STARTUP;
@@ -1509,6 +1625,38 @@ static int supervisor_main(supervisor *s)
         error_text(&err, text, sizeof text);
         fprintf(stderr, "kitchenos-supervisor: Worker 不可用: %s\n", text);
         return EXIT_STARTUP;
+    }
+    if (s->workers > 0 &&
+        resolve_bin(s->bin_dir, s->navd_bin_opt, "kitchenos-navd", s->navd_bin,
+                    sizeof s->navd_bin, &err) != KOS_OK) {
+        error_text(&err, text, sizeof text);
+        fprintf(stderr, "kitchenos-supervisor: navd 不可用: %s\n", text);
+        return EXIT_STARTUP;
+    }
+    if (kos_navtab_default_names(s->state_name, s->nav_name, sizeof s->nav_name,
+                                 s->nav_sem_name, sizeof s->nav_sem_name) != 0) {
+        fprintf(stderr, "kitchenos-supervisor: 导航表名字过长\n");
+        return EXIT_STARTUP;
+    }
+    if (s->nav_name_opt != NULL) {
+        copy_str(s->nav_name, sizeof s->nav_name, s->nav_name_opt);
+    }
+    if (s->nav_sem_name_opt != NULL) {
+        copy_str(s->nav_sem_name, sizeof s->nav_sem_name, s->nav_sem_name_opt);
+    }
+    if (s->instance >= 0) {
+        if (!s->nav_name_set &&
+            snprintf(s->nav_name, sizeof s->nav_name, "/kitchenos_nav_%d", s->instance) >=
+                (int)sizeof s->nav_name) {
+            fprintf(stderr, "kitchenos-supervisor: 导航表名字过长\n");
+            return EXIT_STARTUP;
+        }
+        if (!s->nav_sem_name_set &&
+            snprintf(s->nav_sem_name, sizeof s->nav_sem_name, "/kitchenos_nav_lock_%d",
+                     s->instance) >= (int)sizeof s->nav_sem_name) {
+            fprintf(stderr, "kitchenos-supervisor: 导航表锁名字过长\n");
+            return EXIT_STARTUP;
+        }
     }
 
     if (s->kitchen_path != NULL) {
@@ -1600,7 +1748,7 @@ static int supervisor_main(supervisor *s)
     }
     s->kitchen_loaded = 1;
     kos_error_clear(&err);
-    if (kos_resources_create(&s->kitchen, &err) != KOS_OK) {
+    if (kos_resources_create(&s->kitchen, s->instance, &err) != KOS_OK) {
         error_text(&err, text, sizeof text);
         kos_log_error(s->log, "resource_create_failed", "error=%s", text);
         kos_pidfile_release(&s->pidfile, 1);
@@ -1631,12 +1779,43 @@ static int supervisor_main(supervisor *s)
         }
     }
 
+    if (s->workers > 0) {
+        kos_navtab_opts nav_opts;
+        kos_navtab *nav_table = NULL;
+
+        memset(&nav_opts, 0, sizeof nav_opts);
+        nav_opts.object_name = s->nav_name;
+        nav_opts.sem_name = s->nav_sem_name;
+        kos_error_clear(&err);
+        if (kos_navtab_unlink(&nav_opts, &err) != KOS_OK) {
+            char nav_text[ERR_BUF];
+
+            error_text(&err, nav_text, sizeof nav_text);
+            kos_log_warn(s->log, "nav_unlink_stale_failed", "error=%s", nav_text);
+        }
+        kos_error_clear(&err);
+        if (kos_navtab_create(&nav_opts, &nav_table, &err) != KOS_OK) {
+            char nav_text[ERR_BUF];
+
+            error_text(&err, nav_text, sizeof nav_text);
+            kos_log_error(s->log, "nav_create_failed", "object=%s error=%s",
+                          s->nav_name, nav_text);
+            kos_pidfile_release(&s->pidfile, 1);
+            kos_log_close(s->log);
+            return EXIT_STARTUP;
+        }
+        kos_navtab_close(nav_table);
+        kos_log_info(s->log, "nav_create", "object=%s lock=%s", s->nav_name,
+                     s->nav_sem_name);
+    }
+
     s->started_ms = now_ms();
     kos_log_info(s->log, "supervisor_start",
-                 "pid=%ld mode=%s runtime=%s log=%s status=%s workers=%d bridge=%s "
-                 "scheduler=%s health_ms=%d heartbeat_ms=%d heartbeat_timeout_ms=%d "
-                 "stop_timeout_ms=%d crash_limit=%d crash_window_ms=%d version=%s",
-                 (long)getpid(), s->foreground ? "foreground" : "daemon",
+                 "pid=%ld mode=%s instance=%d runtime=%s log=%s status=%s workers=%d "
+                 "bridge=%s scheduler=%s health_ms=%d heartbeat_ms=%d "
+                 "heartbeat_timeout_ms=%d stop_timeout_ms=%d crash_limit=%d "
+                 "crash_window_ms=%d version=%s",
+                 (long)getpid(), s->foreground ? "foreground" : "daemon", s->instance,
                  s->runtime_dir, s->supervisor_log_path, s->status_path, s->workers,
                  s->no_bridge ? "off" : s->bridge_bin,
                  s->no_scheduler ? "off" : s->scheduler_bin, s->health_interval_ms,

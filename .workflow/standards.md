@@ -39,6 +39,20 @@ bash scripts/run-game.sh               # steam -applaunch 728880
 grep -E 'BepInEx 5|WellCooked\.Smoke|smoke patch alive' "$GAME_DIR/BepInEx/LogOutput.log"   # 验证
 ```
 
+多实例批跑（真实游戏；与其它通道共用游戏时先拿 `/tmp/wellcooked-game.lock`，多开期间一直持有）：
+
+```sh
+python3 tools/instances.py up 3          # 3 个 640x360 实例；目录 ~/.cache/wellcooked/inst/1..3
+python3 tools/instances.py status        # 游戏/Supervisor、场景、厨师数、得分
+python3 tools/batch.py experiments/policies.tsv --instances 3 --out results.csv
+python3 tools/instances.py down          # 关游戏与进程树；锁由上一步取锁的人放
+```
+
+每个实例有自己的 `Overcooked2_Data` 符号链接、`BepInEx/LogOutput.log`、端口 `14455+k` 和
+`Supervisor --instance k` 进程树；mq/shm/信号量/导航表名字带 `_k` 后缀。批跑清单是 CSV/TSV
+（`scene,strategy,nav,dispatch,orders,seed`），每局进关、等回合计时归零、从插件状态取分；
+实例掉线会重启并把那一局重排。`--window full` 用全尺寸窗口做同局对照。
+
 本机环境（bridge effort 那台）：WSL2 发行版 Ubuntu 26.04，已装 gcc / make / python3；
 **没有 cmake 和 gdb**。仓库在 Windows 盘，WSL 内是 `/mnt/d`（9p 文件系统），因此进程间共享
 内存与信号量走 `/dev/shm`（tmpfs），运行时目录（pid、日志）必须可配置，默认指向 Linux 原生路径。

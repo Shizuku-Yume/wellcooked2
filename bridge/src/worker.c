@@ -1,9 +1,14 @@
 /*
- * worker.c -- Chef Worker：mq 收工序 → A* → 每帧写自己的输入槽 → 回事件。
+ * worker.c -- Chef Worker：mq 收工序 → 写目标槽 → 读计划槽 → 每帧发 path。
  *
- * 它是执行器，不选单、不算优先级。输入槽是 Worker 独占写的唯一共享状态；世界状态
- * 只读（厨师位置从里面取）。没有任务时持续写 stop，所以 Bridge 的帧屏障永远能拿到
- * 一个有效槽，不会因为 Worker 空转而把厨师判成缺席。
+ * 它不再规划路径，也不发 move：走位由 navd 统一算，Worker 只把"要到哪个工位"
+ * 写进导航表，然后按计划槽里已放行的路点发 path。到站后 pinned=1（navd 不再
+ * 推它），交互、按工序工时等待，结果回 mq。
+ *
+ * 输入槽是 Worker 独占写的唯一共享状态；世界状态与导航表都只读。没有任务时也
+ * 持续写 stop（或被 navd 推着走时写 path），Bridge 的帧屏障永远能拿到一个有效槽。
+ * 时间一律用世界状态的 game_time_ms：暂停时交互/工时都不前进，navd 也不会误判
+ * 卡住。navd 崩溃后计划槽的写入时钟落后 500 ms，这里先发 stop 等它回来。
  */
 #ifndef _POSIX_C_SOURCE
 #define _POSIX_C_SOURCE 200809L
@@ -13,8 +18,8 @@
 #include <kitchenos/kitchen.h>
 #include <kitchenos/log.h>
 #include <kitchenos/mq.h>
+#include <kitchenos/navtab.h>
 #include <kitchenos/shm.h>
-#include <kitchenos/worker_task.h>
 
 #include <errno.h>
 #include <fcntl.h>
@@ -26,6 +31,16 @@
 #include <unistd.h>
 
 #define WORKER_LOOP_MS 5
+#define WORKER_INTERACT_MS 200
+#define WORKER_NAV_STALE_MS 500
+#define WORKER_NAV_ATTACH_LOG_MS 2000
+
+typedef enum {
+    WORKER_IDLE = 0,
+    WORKER_NAVIGATING = 1,
+    WORKER_INTERACTING = 2,
+    WORKER_WORKING = 3
+} worker_phase;
 
 typedef struct {
     kos_child_runtime rt;
@@ -36,9 +51,18 @@ typedef struct {
     int queues_ready;
     int mq_wait_logged;
     int recovery_sent;
+    int target_cleared;
     kos_mq_msg current;
-    kos_worker_task task;
     int have_task;
+    worker_phase phase;
+    uint32_t target_seq;
+    int pinned;
+    int stale_logged;
+    int64_t interact_end_game_ms;
+    int64_t work_end_game_ms;
+    kos_navtab *nav;
+    int64_t next_nav_attach_ms;
+    int nav_wait_logged;
     uint64_t frame_id;
     int64_t next_slot_ms;
     int slot_error_logged;
@@ -85,7 +109,8 @@ static int resolve_kitchen_path(worker *w)
     }
     if (kos_child_default_config_path("kitchen.example.json", w->kitchen_path,
                                       sizeof w->kitchen_path) != 0) {
-        kos_log_error(w->rt.log, "kitchen_missing", "no --kitchen and no config/kitchen.example.json");
+        kos_log_error(w->rt.log, "kitchen_missing",
+                      "no --kitchen and no config/kitchen.example.json");
         return -1;
     }
     return 0;
@@ -95,12 +120,17 @@ static int open_queues(worker *w)
 {
     kos_error err;
     char name[KOS_MQ_NAME_MAX];
+    char events_name[KOS_MQ_NAME_MAX];
     char text[256];
 
     if (w->rt.opts.chefs <= 0) {
         return -1;
     }
-    if (kos_mq_task_name(w->rt.opts.chef_id, name, sizeof name) != KOS_OK) {
+    if (kos_mq_task_name(w->rt.opts.chef_id, w->rt.opts.instance, name, sizeof name) !=
+        KOS_OK) {
+        return -1;
+    }
+    if (kos_mq_events_name(w->rt.opts.instance, events_name, sizeof events_name) != KOS_OK) {
         return -1;
     }
     kos_error_clear(&err);
@@ -113,13 +143,12 @@ static int open_queues(worker *w)
         return -1;
     }
     kos_error_clear(&err);
-    if (kos_mq_open(KOS_MQ_EVENTS_NAME, O_WRONLY, &w->events_queue, &err) != KOS_OK) {
+    if (kos_mq_open(events_name, O_WRONLY, &w->events_queue, &err) != KOS_OK) {
         kos_mq_close(w->task_queue);
         w->task_queue = (mqd_t)-1;
         if (!w->mq_wait_logged) {
             error_text(&err, text, sizeof text);
-            kos_log_info(w->rt.log, "mq_wait", "queue=%s error=%s", KOS_MQ_EVENTS_NAME,
-                         text);
+            kos_log_info(w->rt.log, "mq_wait", "queue=%s error=%s", events_name, text);
             w->mq_wait_logged = 1;
         }
         return -1;
@@ -127,16 +156,6 @@ static int open_queues(worker *w)
     w->queues_ready = 1;
     kos_log_info(w->rt.log, "mq_ready", "task_queue=%s chef=%d", name,
                  w->rt.opts.chef_id);
-    if (w->rt.opts.generation > 1 && !w->recovery_sent) {
-        /* Startup == "I have no task in hand"; the Scheduler turns this into a
-         * requeue of whatever was RUNNING for this chef before the crash. The first
-         * generation stays quiet: it has no prior task, and racing a just-dispatched
-         * task with a requeue would only churn ids. */
-        send_event(w, KOS_EVT_RECOVERED, "worker ready");
-        kos_log_info(w->rt.log, "worker_recovered_sent", "chef=%d generation=%d",
-                     w->rt.opts.chef_id, w->rt.opts.generation);
-        w->recovery_sent = 1;
-    }
     return 0;
 }
 
@@ -176,64 +195,40 @@ static void send_event(worker *w, int event, const char *detail)
     }
 }
 
-static void chef_start_position(worker *w, float *x, float *z)
+static void write_target(worker *w, int has_target, int pinned)
 {
-    kos_world_state world;
-    int i;
+    kos_nav_target target;
 
-    *x = w->kitchen.cells[0].x;
-    *z = w->kitchen.cells[0].z;
-    if (w->rt.shm != NULL &&
-        kos_shm_world_read(w->rt.shm, &world, KOS_SHM_READ_ATTEMPTS, NULL) == KOS_OK) {
-        for (i = 0; i < (int)world.chef_count; i++) {
-            if (world.chefs[i].id == w->rt.opts.chef_id) {
-                *x = world.chefs[i].x;
-                *z = world.chefs[i].y; /* shm 的 y 是厨房平面的另一个轴 */
-                return;
-            }
-        }
+    if (w->nav == NULL) {
+        return;
     }
-    if (w->rt.opts.chef_id > 0 && w->kitchen.cell_count > 1) {
-        *x = w->kitchen.cells[w->kitchen.cell_count - 1].x;
-        *z = w->kitchen.cells[w->kitchen.cell_count - 1].z;
+    memset(&target, 0, sizeof target);
+    target.has_target = has_target;
+    target.pinned = pinned ? 1 : 0;
+    target.target_seq = w->target_seq;
+    target.urgency = w->have_task ? (uint32_t)(w->current.priority > 0
+                                                   ? w->current.priority
+                                                   : 0)
+                                  : 0;
+    if (has_target) {
+        copy_str(target.station_id, sizeof target.station_id, w->current.station_id);
     }
+    target.station_id[KOS_SHM_NAME_MAX - 1] = '\0';
+    (void)kos_navtab_write_target(w->nav, w->rt.opts.chef_id, &target);
 }
 
-static int start_task(worker *w, const kos_mq_msg *msg)
+static void clear_target(worker *w)
 {
-    kos_error err;
-    float start_x;
-    float start_z;
-    int rc;
-    char text[256];
+    w->pinned = 0;
+    write_target(w, 0, 0);
+}
 
-    if (msg->version != KOS_MQ_VERSION || msg->kind != KOS_MQ_TASK ||
-        msg->chef_id != w->rt.opts.chef_id) {
-        kos_log_warn(w->rt.log, "task_bad_message",
-                     "version=%u kind=%u chef=%d expected=%d", msg->version, msg->kind,
-                     msg->chef_id, w->rt.opts.chef_id);
-        return -1;
+static int read_world(worker *w, kos_world_state *world)
+{
+    if (w->rt.shm == NULL) {
+        return 0;
     }
-    w->current = *msg;
-    chef_start_position(w, &start_x, &start_z);
-    kos_error_clear(&err);
-    rc = kos_worker_task_init(&w->task, &w->kitchen, msg->station_id, start_x, start_z,
-                              msg->duration_ms, now_ms(), &err);
-    if (rc != KOS_OK) {
-        error_text(&err, text, sizeof text);
-        kos_log_warn(w->rt.log, "task_path_failed", "task=%llu node=%s error=%s",
-                     (unsigned long long)msg->task_id, msg->node_id, text);
-        send_event(w, KOS_EVT_FAILED, "path not found");
-        w->have_task = 0;
-        return -1;
-    }
-    w->have_task = 1;
-    kos_log_info(w->rt.log, "task_received",
-                 "task=%llu order=%s node=%s op=%s station=%s duration_ms=%d start=%.2f,%.2f",
-                 (unsigned long long)msg->task_id, msg->order_id, msg->node_id, msg->op,
-                 msg->station_id, msg->duration_ms, (double)start_x, (double)start_z);
-    send_event(w, KOS_EVT_ACCEPTED, "accepted");
-    return 0;
+    return kos_shm_world_read(w->rt.shm, world, KOS_SHM_READ_ATTEMPTS, NULL) == KOS_OK;
 }
 
 static void publish_action(worker *w, kos_input_action *action)
@@ -257,13 +252,179 @@ static void publish_action(worker *w, kos_input_action *action)
     }
 }
 
-static void publish_idle(worker *w)
+static void publish_stop(worker *w)
 {
     kos_input_action action;
 
     memset(&action, 0, sizeof action);
     action.kind = KOS_ACTION_STOP;
     publish_action(w, &action);
+}
+
+static void publish_path(worker *w, const kos_nav_plan *plan)
+{
+    kos_input_action action;
+    int count = plan->waypoint_count;
+    int i;
+
+    if (count < 0) {
+        count = 0;
+    }
+    if (count > KOS_MAX_WAYPOINTS) {
+        count = KOS_MAX_WAYPOINTS;
+    }
+    memset(&action, 0, sizeof action);
+    action.kind = KOS_ACTION_PATH;
+    action.seq = plan->plan_seq;
+    action.waypoint_count = (uint32_t)count;
+    for (i = 0; i < count; i++) {
+        action.waypoints[i].x = plan->waypoints[i].x;
+        action.waypoints[i].y = plan->waypoints[i].y;
+    }
+    publish_action(w, &action);
+}
+
+static int start_task(worker *w, const kos_mq_msg *msg)
+{
+    if (msg->version != KOS_MQ_VERSION || msg->kind != KOS_MQ_TASK ||
+        msg->chef_id != w->rt.opts.chef_id) {
+        kos_log_warn(w->rt.log, "task_bad_message",
+                     "version=%u kind=%u chef=%d expected=%d", msg->version, msg->kind,
+                     msg->chef_id, w->rt.opts.chef_id);
+        return -1;
+    }
+    if (kos_kitchen_station_index(&w->kitchen, msg->station_id) < 0) {
+        kos_log_warn(w->rt.log, "task_bad_station", "task=%llu station=%s",
+                     (unsigned long long)msg->task_id, msg->station_id);
+        w->current = *msg;
+        send_event(w, KOS_EVT_FAILED, "unknown station");
+        return -1;
+    }
+    w->current = *msg;
+    w->target_seq++;
+    w->pinned = 0;
+    w->phase = WORKER_NAVIGATING;
+    w->stale_logged = 0;
+    w->have_task = 1;
+    write_target(w, 1, 0);
+    kos_log_info(w->rt.log, "task_received",
+                 "task=%llu order=%s node=%s op=%s station=%s duration_ms=%d target_seq=%u",
+                 (unsigned long long)msg->task_id, msg->order_id, msg->node_id, msg->op,
+                 msg->station_id, msg->duration_ms, w->target_seq);
+    send_event(w, KOS_EVT_ACCEPTED, "accepted");
+    return 0;
+}
+
+static void finish_task(worker *w, int event, const char *detail)
+{
+    send_event(w, event, detail);
+    clear_target(w);
+    w->have_task = 0;
+    w->phase = WORKER_IDLE;
+}
+
+static void maybe_recover(worker *w)
+{
+    if (w->recovery_sent || !w->queues_ready || w->nav == NULL) {
+        return;
+    }
+    if (w->rt.opts.generation <= 1) {
+        return;
+    }
+    if (!w->target_cleared) {
+        /* Worker 崩溃后 navd 还保留着旧目标；先清空再宣布 RECOVERED，Scheduler
+         * 重排这道工序之前这个人不会继续往旧工位走。 */
+        write_target(w, 0, 0);
+        w->target_cleared = 1;
+    }
+    send_event(w, KOS_EVT_RECOVERED, "worker ready");
+    kos_log_info(w->rt.log, "worker_recovered_sent", "chef=%d generation=%d",
+                 w->rt.opts.chef_id, w->rt.opts.generation);
+    w->recovery_sent = 1;
+}
+
+static void handle_plan(worker *w, int64_t game_ms)
+{
+    kos_nav_plan plan;
+    int fresh;
+    kos_input_action action;
+
+    memset(&plan, 0, sizeof plan);
+    if (w->nav == NULL || kos_navtab_read_plan(w->nav, w->rt.opts.chef_id, &plan) !=
+                              KOS_OK) {
+        publish_stop(w);
+        return;
+    }
+    fresh = plan.game_time_ms + WORKER_NAV_STALE_MS >= (uint64_t)game_ms;
+    if (!fresh) {
+        if (!w->stale_logged) {
+            kos_log_warn(w->rt.log, "nav_stale", "chef=%d plan_ms=%llu game_ms=%lld",
+                         w->rt.opts.chef_id, (unsigned long long)plan.game_time_ms,
+                         (long long)game_ms);
+            w->stale_logged = 1;
+        }
+        publish_stop(w);
+        return;
+    }
+    w->stale_logged = 0;
+
+    if (w->have_task) {
+        if (plan.target_seq == w->target_seq && plan.status == KOS_NAV_BLOCKED) {
+            char detail[KOS_MQ_DETAIL_MAX];
+
+            snprintf(detail, sizeof detail, "navd blocked: %s", w->current.station_id);
+            kos_log_warn(w->rt.log, "task_blocked", "task=%llu station=%s detail=%s",
+                         (unsigned long long)w->current.task_id, w->current.station_id,
+                         detail);
+            finish_task(w, KOS_EVT_BLOCKED, detail);
+            publish_stop(w);
+            return;
+        }
+        if (w->phase == WORKER_NAVIGATING && plan.target_seq == w->target_seq &&
+            plan.status == KOS_NAV_ARRIVED) {
+            w->pinned = 1;
+            write_target(w, 1, 1);
+            w->phase = WORKER_INTERACTING;
+            w->interact_end_game_ms = game_ms + WORKER_INTERACT_MS;
+        }
+        if (w->phase == WORKER_INTERACTING) {
+            memset(&action, 0, sizeof action);
+            action.kind = KOS_ACTION_INTERACT;
+            copy_str(action.target_object, sizeof action.target_object,
+                     w->current.station_id);
+            publish_action(w, &action);
+            if (game_ms >= w->interact_end_game_ms) {
+                w->phase = WORKER_WORKING;
+                w->work_end_game_ms =
+                    game_ms + (w->current.duration_ms > 0 ? w->current.duration_ms : 1);
+            }
+            return;
+        }
+        if (w->phase == WORKER_WORKING) {
+            publish_stop(w);
+            if (game_ms >= w->work_end_game_ms) {
+                kos_log_info(w->rt.log, "task_done", "task=%llu order=%s node=%s",
+                             (unsigned long long)w->current.task_id, w->current.order_id,
+                             w->current.node_id);
+                finish_task(w, KOS_EVT_DONE, "done");
+            }
+            return;
+        }
+        if (w->phase == WORKER_NAVIGATING && plan.target_seq == w->target_seq &&
+            plan.status == KOS_NAV_MOVING && plan.waypoint_count > 0) {
+            publish_path(w, &plan);
+            return;
+        }
+        publish_stop(w);
+        return;
+    }
+
+    /* 没任务也可能被 navd 规划着让路（目标就是自己所在格，可被推开）。 */
+    if (plan.status == KOS_NAV_MOVING && plan.waypoint_count > 0) {
+        publish_path(w, &plan);
+    } else {
+        publish_stop(w);
+    }
 }
 
 static int worker_main(worker *w, const kos_child_opts *opts)
@@ -301,6 +462,9 @@ static int worker_main(worker *w, const kos_child_opts *opts)
     w->next_slot_ms = 0;
     while (!kos_child_poll(&w->rt)) {
         int64_t now = now_ms();
+        kos_world_state world;
+        int have_world;
+        int64_t game_ms = 0;
 
         if (kos_child_take_sighup()) {
             kos_log_info(w->rt.log, "signal", "name=SIGHUP action=ignored");
@@ -308,8 +472,43 @@ static int worker_main(worker *w, const kos_child_opts *opts)
         if (kos_child_take_sigusr1()) {
             kos_log_info(w->rt.log, "signal", "name=SIGUSR1 action=ignored");
         }
+        if (w->nav == NULL && now >= w->next_nav_attach_ms) {
+            kos_navtab_opts nav_opts;
+            kos_error err;
+            char text[256];
+
+            kos_navtab_opts_init(&nav_opts);
+            if (w->rt.opts.nav_name[0] != '\0') {
+                nav_opts.object_name = w->rt.opts.nav_name;
+            }
+            if (w->rt.opts.nav_sem_name[0] != '\0') {
+                nav_opts.sem_name = w->rt.opts.nav_sem_name;
+            }
+            kos_error_clear(&err);
+            if (kos_navtab_open(&nav_opts, &w->nav, &err) == KOS_OK) {
+                kos_log_info(w->rt.log, "nav_attached", "name=%s",
+                             w->rt.opts.nav_name[0] ? w->rt.opts.nav_name
+                                                    : KOS_NAV_DEFAULT_NAME);
+                if (w->have_task) {
+                    write_target(w, 1, w->pinned);
+                }
+            } else {
+                if (!w->nav_wait_logged) {
+                    error_text(&err, text, sizeof text);
+                    kos_log_info(w->rt.log, "nav_wait", "error=%s", text);
+                    w->nav_wait_logged = 1;
+                }
+                w->next_nav_attach_ms = now + 100;
+            }
+        }
         if (!w->queues_ready) {
             (void)open_queues(w);
+        }
+        maybe_recover(w);
+
+        have_world = read_world(w, &world);
+        if (have_world) {
+            game_ms = world.game_time_ms;
         }
 
         if (!w->have_task && w->queues_ready) {
@@ -328,35 +527,17 @@ static int worker_main(worker *w, const kos_child_opts *opts)
             }
         }
 
-        if (w->have_task) {
-            kos_input_action action;
-            int rc = kos_worker_task_step(&w->task, now, &action);
-
-            if (now >= w->next_slot_ms || rc != 0) {
-                publish_action(w, &action);
-                w->next_slot_ms = now + w->rt.opts.slot_interval_ms;
-            }
-            if (rc == 1) {
-                kos_log_info(w->rt.log, "task_done", "task=%llu order=%s node=%s",
-                             (unsigned long long)w->current.task_id, w->current.order_id,
-                             w->current.node_id);
-                send_event(w, KOS_EVT_DONE, "done");
-                w->have_task = 0;
-                publish_idle(w);
-                w->next_slot_ms = now + w->rt.opts.slot_interval_ms;
-            } else if (rc < 0) {
-                send_event(w, KOS_EVT_FAILED, "task failed");
-                w->have_task = 0;
-                publish_idle(w);
-            }
-        } else if (now >= w->next_slot_ms) {
-            publish_idle(w);
+        if (now >= w->next_slot_ms) {
+            handle_plan(w, game_ms);
             w->next_slot_ms = now + w->rt.opts.slot_interval_ms;
         }
-
         kos_child_sleep(&w->rt, WORKER_LOOP_MS);
     }
 
+    if (w->nav != NULL) {
+        kos_navtab_close(w->nav);
+        w->nav = NULL;
+    }
     close_queues(w);
     kos_child_teardown(&w->rt);
     return 0;
@@ -376,7 +557,7 @@ int main(int argc, char **argv)
         return 0;
     }
     if (parsed == KOS_CHILD_ARG_VERSION) {
-        printf("kitchenos-worker 0.3.0\n");
+        printf("kitchenos-worker 0.4.0\n");
         return 0;
     }
     if (parsed != KOS_CHILD_ARG_OK) {
