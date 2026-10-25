@@ -456,9 +456,7 @@ class Instance:
         dispatch = dispatch or self.dispatch
         if nav != "pibt":
             log("  实例 %d 注意：当前 navd 只实现 pibt，忽略 nav=%s" % (self.index, nav))
-        if dispatch not in ("flexible", "flex"):
-            log("  实例 %d 注意：分区流水线在任务 10 才接入，忽略 dispatch=%s"
-                % (self.index, dispatch))
+        dispatch_opt = "zoned" if dispatch in ("zoned", "zone") else "flexible"
         argv = [
             str(bridge_binary("kitchenos-supervisor")),
             "--foreground",
@@ -471,6 +469,7 @@ class Instance:
             "--orders", str(self.orders),
             "--runs-dir", str(self.runs),
             "--strategy", strategy,
+            "--dispatch", dispatch_opt,
             "--health-interval-ms", "500",
             "--supervisor-heartbeat-ms", "500",
             "--heartbeat-timeout-ms", "3000",

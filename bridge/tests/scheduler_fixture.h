@@ -329,6 +329,17 @@ __attribute__((unused)) static int ksfx_init_ex(ksfx_run *r, int with_orders)
         ksfx_write_file(r->schedule_path, schedule_text, strlen(schedule_text)) != 0) {
         return -1;
     }
+    snprintf(relative, sizeof relative, "maps/%s/zones.json", KSFX_SCENE);
+    if (kos_child_default_config_path(relative, source, sizeof source) == 0 && access(source, R_OK) == 0) {
+        char target_zones[KSFX_PATH_MAX];
+        if (ksfx_join(target_zones, sizeof target_zones, r->dir, "zones.json") == 0) {
+            text = ksfx_read_file(source, &len);
+            if (text != NULL) {
+                (void)ksfx_write_file(target_zones, text, len);
+                free(text);
+            }
+        }
+    }
     if (ksfx_mkdir(r->runtime_dir) != 0 || ksfx_mkdir(r->runs_dir) != 0) {
         return -1;
     }
@@ -345,6 +356,13 @@ __attribute__((unused)) static int ksfx_init_ex(ksfx_run *r, int with_orders)
     if (kos_kitchen_load(r->kitchen_path, &r->kitchen, &err) != KOS_OK) {
         return -1;
     }
+    {
+        kos_zones zones;
+        kos_error_clear(&err);
+        if (kos_zones_for_kitchen(r->kitchen_path, &zones, &err) == KOS_OK && zones.from_file) {
+            (void)kos_zones_register_handoff(&zones, &r->kitchen, &err);
+        }
+    }
     kos_error_clear(&err);
     if (kos_resources_create(&r->kitchen, KOS_INSTANCE_NONE, &err) != KOS_OK) {
         return -1;
@@ -357,7 +375,8 @@ __attribute__((unused)) static int ksfx_init(ksfx_run *r)
     return ksfx_init_ex(r, 1);
 }
 
-__attribute__((unused)) static int ksfx_spawn(ksfx_run *r, const char *strategy)
+__attribute__((unused)) static int ksfx_spawn_ex(ksfx_run *r, const char *strategy,
+                                                 const char *dispatch)
 {
     char exe[KSFX_PATH_MAX];
     char bin[KSFX_PATH_MAX];
@@ -370,6 +389,9 @@ __attribute__((unused)) static int ksfx_spawn(ksfx_run *r, const char *strategy)
     int ac = 0;
     pid_t pid;
 
+    if (r == NULL || r->pid > 0) {
+        return -1;
+    }
     n = readlink("/proc/self/exe", exe, sizeof exe - 1);
     if (n <= 0) {
         return -1;
@@ -386,6 +408,7 @@ __attribute__((unused)) static int ksfx_spawn(ksfx_run *r, const char *strategy)
     }
     snprintf(chefs, sizeof chefs, "2");
     snprintf(tick, sizeof tick, "50");
+
     argv[ac++] = bin;
     argv[ac++] = (char *)"--runtime-dir";
     argv[ac++] = r->runtime_dir;
@@ -403,6 +426,10 @@ __attribute__((unused)) static int ksfx_spawn(ksfx_run *r, const char *strategy)
     argv[ac++] = tick;
     argv[ac++] = (char *)"--strategy";
     argv[ac++] = (char *)strategy;
+    if (dispatch != NULL) {
+        argv[ac++] = (char *)"--dispatch";
+        argv[ac++] = (char *)dispatch;
+    }
     argv[ac++] = (char *)"--state-name";
     argv[ac++] = r->state_name;
     argv[ac++] = (char *)"--sem-name";
@@ -429,6 +456,12 @@ __attribute__((unused)) static int ksfx_spawn(ksfx_run *r, const char *strategy)
     r->pid = pid;
     return pid;
 }
+
+__attribute__((unused)) static int ksfx_spawn(ksfx_run *r, const char *strategy)
+{
+    return ksfx_spawn_ex(r, strategy, "flexible");
+}
+
 
 /* runs/<ts>/decisions.jsonl：临时 runs 目录是新建的，只会有一个子目录。 */
 __attribute__((unused)) static int ksfx_decisions_path(const ksfx_run *r, char *out,

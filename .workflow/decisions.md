@@ -884,3 +884,12 @@ user may overturn on sight. `Revisit when` of "never" is allowed but suspicious;
 - **Revisit when:** 任务 02 的 `game_time_ms` 合并进本通道的任务（04/06/09），或实机出现暂停
   期间租约过期/LLF 选择漂移。
 - **Effort:** kitchen-control
+
+## 2026-10-25 - 分区模式下跨区中间产物在菜谱 DAG 中展开为 (drop, fetch) 节点
+
+- **Decided:** 分区流水线模式在 Scheduler 启用 `--dispatch zoned` 且读取 `zones.json` 后，对跨分区的菜谱边 $(u, v)$ 在 DAG 中展开插入一对交接工序：$u \to \text{drop} \to \text{fetch} \to v$。`drop` 归属源分区（由出区厨师放）、`fetch` 归属目标分区（由入区厨师取），工位均指向 `zones.json` 配置的交接台面（默认 `counter_handoff_0`）。厨师只接本区工序，除交接工序外无跨区派工。灵活模式（默认）不展开交接工序，原有 DAG 与派工逻辑完全不变。
+- **Instead of:** 不改 DAG、由 Worker 运行时动态检测跨区并在走到台面时拆解为放料与取料；或在派工时由 Scheduler 临时硬编码拦截跨区工序。
+- **Because:** 把交接显式作为 DAG 节点后，工序就绪依赖、关键路径工时、Kuhn 匹配开单计数与匈牙利矩阵代价都能统一复用既有的 L3 列表调度与代价模型，无须在调度循环中增加特例；`decisions.jsonl` 中也能清晰追踪每个跨区中间产物的交接决策与代价分量。
+- **Mine:** yes
+- **Revisit when:** 出现多级流水线（中间产物经过三个以上区域交接）或多交接台面竞争缓冲需要细粒度排队时。
+- **Effort:** kitchen-control

@@ -132,6 +132,7 @@ void kos_child_opts_init(kos_child_opts *o, kos_child_kind kind)
     o->slot_interval_ms = 10;
     o->lease_ttl_ms = 30000;
     copy_str(o->strategy, sizeof o->strategy, "fcfs");
+    copy_str(o->dispatch, sizeof o->dispatch, "flexible");
 }
 
 static const char *take_value(const char *inline_value, int argc, char **argv, int *i)
@@ -170,7 +171,7 @@ void kos_child_print_usage(FILE *out, kos_child_kind kind)
             "                      [--log FILE] [--supervisor-fd N]\n"
             "                      [--supervisor-heartbeat-ms M] [--attach-retry-ms M]\n"
             "                      [--kitchen FILE] [--recipes FILE] [--orders FILE]\n"
-            "                      [--runs-dir DIR] [--strategy fcfs|edf|llf|hrrn] [--chefs N]\n"
+            "                      [--runs-dir DIR] [--strategy fcfs|edf|llf|hrrn] [--dispatch flexible|zoned] [--chefs N]\n"
             "                      [--tick-ms M] [--slot-interval-ms M] [--instance N]\n"
             "                      [--verbose] [--help] [--version]\n",
             kind_name(kind));
@@ -326,6 +327,18 @@ int kos_child_parse_args(kos_child_opts *o, int argc, char **argv)
                 return KOS_CHILD_ARG_ERR;
             }
             copy_str(o->strategy, sizeof o->strategy, v);
+        } else if (strcmp(name, "--dispatch") == 0) {
+            const char *v = take_value(value, argc, argv, &i);
+
+            if (v == NULL || (strcmp(v, "flexible") != 0 && strcmp(v, "zoned") != 0 &&
+                              strcmp(v, "flex") != 0 && strcmp(v, "zone") != 0)) {
+                return KOS_CHILD_ARG_ERR;
+            }
+            if (strcmp(v, "zone") == 0 || strcmp(v, "zoned") == 0) {
+                copy_str(o->dispatch, sizeof o->dispatch, "zoned");
+            } else {
+                copy_str(o->dispatch, sizeof o->dispatch, "flexible");
+            }
         } else if (strcmp(name, "--chefs") == 0) {
             const char *v = take_value(value, argc, argv, &i);
 

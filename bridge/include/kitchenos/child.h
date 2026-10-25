@@ -55,6 +55,7 @@ typedef struct {
     char orders_path[KOS_DAEMON_PATH_MAX];
     char runs_dir[KOS_DAEMON_PATH_MAX];
     char strategy[16]; /* "fcfs" / "edf" / "llf" / "hrrn" */
+    char dispatch[16]; /* "flexible" / "zoned" */
     int chefs;         /* Scheduler: 输入槽数量（= Worker 数） */
     int generation;    /* Worker: 第几次拉起；>1 时才发 RECOVERED */
     int tick_ms;       /* Scheduler: 调度轮询周期 */

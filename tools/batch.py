@@ -191,6 +191,16 @@ def round_result(instance, scene, timeout_extra):
 
 def run_job(instance, job, args, attempt):
     scene = job["scene"]
+    map_kitchen = REPO_ROOT / "config" / "maps" / scene / "kitchen.json"
+    map_recipes = REPO_ROOT / "config" / "maps" / scene / "recipes.json"
+    if map_kitchen.is_file():
+        instance.kitchen = map_kitchen
+    elif args.kitchen:
+        instance.kitchen = Path(args.kitchen)
+    if map_recipes.is_file():
+        instance.recipes = map_recipes
+    elif args.recipes:
+        instance.recipes = Path(args.recipes)
     instance.orders = job["orders_path"]
     instance.write_orders(job["orders_path"], job["seed"])
     instance.write_config({

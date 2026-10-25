@@ -30,6 +30,7 @@
 #include <kitchenos/resource.h>
 #include <kitchenos/shm.h>
 #include <kitchenos/supervise.h>
+#include <kitchenos/zones.h>
 
 #include <errno.h>
 #include <fcntl.h>
@@ -97,6 +98,7 @@ typedef struct {
     const char *orders_path;
     const char *runs_dir;
     const char *strategy;
+    const char *dispatch;
     int lease_ttl_ms;
     const char *bridge_bin_opt;
     const char *scheduler_bin_opt;
@@ -596,6 +598,10 @@ static int spawn_child(supervisor *s, int index)
             if (s->strategy != NULL) {
                 argv[ac++] = (char *)"--strategy";
                 argv[ac++] = (char *)s->strategy;
+            }
+            if (s->dispatch != NULL) {
+                argv[ac++] = (char *)"--dispatch";
+                argv[ac++] = (char *)s->dispatch;
             }
             {
                 char lease_buf[16];
@@ -1170,6 +1176,7 @@ static void print_help(void)
            "  --orders FILE            orders.json menu passed to Scheduler\n"
            "  --runs-dir DIR           Scheduler run logs (default <runtime>/runs)\n"
            "  --strategy fcfs|edf|llf|hrrn  initial order policy (default fcfs; SIGHUP cycles)\n"
+           "  --dispatch flexible|zoned     dispatch mode (default flexible)\n"
            "  --lease-ttl-ms M         resource lease lifetime (default 30000)\n"
            "  --bridge-host H          Bridge bind address (default %s)\n"
            "  --bridge-port P          Bridge TCP port (default %d)\n"
@@ -1248,6 +1255,7 @@ static int parse_args(int argc, char **argv, supervisor *s)
     s->sem_name = KOS_SHM_DEFAULT_SEM_NAME;
     s->instance = KOS_INSTANCE_NONE;
     s->strategy = "fcfs";
+    s->dispatch = "flexible";
     s->lease_ttl_ms = 30000;
     s->daemon.ready_fd = -1;
     s->pidfile.fd = -1;
@@ -1433,6 +1441,14 @@ static int parse_args(int argc, char **argv, supervisor *s)
                 return ARG_ERR;
             }
             s->strategy = v;
+        } else if (strcmp(name, "--dispatch") == 0) {
+            const char *v = take_value(value, argc, argv, &i);
+
+            if (v == NULL || (strcmp(v, "flexible") != 0 && strcmp(v, "zoned") != 0 &&
+                              strcmp(v, "flex") != 0 && strcmp(v, "zone") != 0)) {
+                return ARG_ERR;
+            }
+            s->dispatch = (strcmp(v, "zone") == 0 || strcmp(v, "zoned") == 0) ? "zoned" : "flexible";
         } else if (strcmp(name, "--workers") == 0) {
             const char *v = take_value(value, argc, argv, &i);
 
@@ -1747,6 +1763,13 @@ static int supervisor_main(supervisor *s)
         return EXIT_STARTUP;
     }
     s->kitchen_loaded = 1;
+    if (s->dispatch != NULL && strcmp(s->dispatch, "zoned") == 0) {
+        kos_zones zones;
+        kos_error_clear(&err);
+        if (kos_zones_for_kitchen(s->kitchen_path, &zones, &err) == KOS_OK && zones.from_file) {
+            (void)kos_zones_register_handoff(&zones, &s->kitchen, &err);
+        }
+    }
     kos_error_clear(&err);
     if (kos_resources_create(&s->kitchen, s->instance, &err) != KOS_OK) {
         error_text(&err, text, sizeof text);
