@@ -2,8 +2,10 @@
 
 **Effort:** kitchen-control
 **Task type:** feature
-**Base commit:** <commit-sha>
-**Base branch:** small/os-core-acceptance-fixes
+**Base commit:** 765682a62090406e942125cb73a6082f59f55e01
+**Base branch:** kitchen-control/03-stand-cells-and-distance-field
+**Started:** 2026-10-25T15:25:00+08:00
+**Status:** active
 
 **Delivers:** Supervisor 多一个 `navd` 子进程，按每版世界状态用 PIBT 给所有厨师规划、按执行
 依赖图放行路点；Worker 写目标槽、读计划槽、发 `path`；两个厨师在 1 格宽过道对向能错身；
@@ -32,3 +34,15 @@ nav-corridor,nav-stuck,nav-crash` → 两人 10 s（游戏时钟）内到达且�
 - [ ] 计划窗口 H = 8；路点到达按实际坐标 ≤ 0.3 m 判定，不推算
 - [ ] 游戏暂停不判卡住；Worker 重启在 RECOVERED 前清空自己的目标槽
 - [ ] Worker 里旧的单厨师 A* 与 `move` 下发删掉，系统控制路径只发 `path`
+
+## Progress
+
+Dirty at start: none
+
+- 从 `origin/kitchen-control/03-stand-cells-and-distance-field` 开分支；`git merge --no-ff
+  origin/kitchen-control/02-action-contract-and-game-clock`（765682a）。唯一冲突在
+  `.workflow/specs/kitchen-control.md` 的 Open questions：保留 03 的每格移动时间实测，
+  同时保留 02 的砧板/脏盘/朝向实机结论。本分支的 Base commit 即该合并提交。
+- 前置 02 的 done 归档
+  `.workflow/done/kitchen-control/02-action-contract-and-game-clock.md` 已在
+  `origin/kitchen-control/02-action-contract-and-game-clock` 上确认存在，任务为完成态。
