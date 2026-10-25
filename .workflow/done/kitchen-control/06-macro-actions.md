@@ -47,7 +47,7 @@ Check after（全部实跑）:
 - `bash tools/run-bridge-scenarios.sh --only macro,os-loop` → **2/2 PASS**。`macro` 三局：完整一单 `macro_start` 覆盖 goto/pickup/drop/chop/start_cook/wait_ready/deliver，pickup/chop/drop 的 `waited_ms` 均 ≥ 2000（fake 延迟 2 s 才改世界状态），`order_completed` 出现；wash 局 `wash` 的 `waited_ms=2050`；不回料局 `macro_failed detail=macro=pickup wait=holding timeout`，`task_failed t_ms≈1700`（不是 30 s）。`os-loop` 原有 path/interact/无 move/无同格/worker 重启 RECOVERED→requeue→新任务全部保持。
 - 实现：`macro.{h,c}`（计划展开 + 状态机，不碰 shm/时钟）、`worker.c` 改为宏动作、`Makefile -lm`、`test_macro.c`、fake `WorldSim`+`macro` 场景（3 局，约 35 s）。
 - 已知并发风险：fake 的 mq 名不带 run-id，和别的通道同时跑场景时曾撞到对方的 `/kitchenos_tasks_0`（一次 os-loop 出现 `station=dispenser-left` 的错任务）；单独重跑通过。不是本任务引入，未改 mq 命名。
-- Review（flow-verify 两个 brief）与 `test-san` 未跑：本轮执行预算用尽；提交前已跑 make test 与任务 Check。
+- Review（flow-verify 两个 brief）与 `test-san` 已在下方“Review（2026-10-25，补跑 flow-verify）”补齐。
 
 
 ## Review（2026-10-25，补跑 flow-verify）
