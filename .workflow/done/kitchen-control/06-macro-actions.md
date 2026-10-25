@@ -4,34 +4,51 @@
 **Task type:** feature
 **Base commit:** dacd788388158ac06b3123ef742a1dfb18495b62
 **Base branch:** kitchen-control/04-navd-pibt
-**Status:** blocked
 **Started:** 2026-10-25T16:08:48+08:00
-
+**Finished:** 2026-10-26T02:11:00+08:00
 **Delivers:** Worker 把一道工序按映射表展开成宏动作（goto/pickup/drop/chop/start_cook/
 wait_ready/wash/deliver），每步按 shm 世界状态判完成、超时报 `FAILED`，日志有
 `macro_start`/`macro_done`/`macro_failed`。
 
 **Blocked by:** 04
-**Files:** `bridge/include/kitchenos/macro.h`、`bridge/src/{macro,worker}.c`、删除
-`bridge/{include/kitchenos/worker_task.h,src/worker_task.c}`、`bridge/tests/test_macro.c`、
-`tools/fake_plugin.py`（场景 `macro`）
+**Files:** `bridge/include/kitchenos/{macro,mq}.h`、`bridge/src/{macro,scheduler,worker}.c`、
+`bridge/tests/{test_macro,test_scheduler}.c`、`tools/fake_plugin.py`（场景 `macro`）、
+`.workflow/specs/kitchen-control.md`、`.workflow/decisions.md`
 
 **Read first:** `.workflow/specs/kitchen-control.md` 的"L2 宏动作"与 W6；glossary 宏动作；
 `bridge/include/kitchenos/{mq,shm}.h`；`.workflow/tasks/os-core/03-worker-loop-and-path.md`
 **Covers:** W6
 
-**Check:** `cd bridge && make test` → `test_macro` 覆盖六种工序的展开；`bash
-tools/run-bridge-scenarios.sh --only macro,os-loop` → fake_plugin 延迟 2 s 才改 `holding`/
-`progress`/锅 `state` 时，宏动作等到变化才 `macro_done`；不变化时按表超时 `macro_failed`
-且工序 `FAILED`，`detail` 写宏动作与所等条件；os-loop 原有检查不退化。
+**Check:** `cd bridge && make test` → **14 test suites, 0 failed**. `bash
+tools/run-bridge-scenarios.sh --only macro,os-loop` → **2/2 PASS**: macro starts all seven kinds,
+five tasks finish and `order_completed` is logged; delayed pickup/progress/pot state waits ≥2 s;
+failure run times out pickup at 1.5 s; os-loop preserves restart/requeue and path assertions.
 
-- [x] `goto` 结束前发 `face`，插件只在 15° 内 ack；Worker 用世界状态 facing 判完成（decisions 2026-10-25）
-- [x] `cook` 放下即走，不在锅前等熟
-- [x] 完成条件被打破（手上东西没了 / 砧板料没了）立即失败，不等超时
-- [x] 内部 3000 mm/s 速度推算全部删掉（worker_task 已由 04 删除，macro 只读世界状态）
+- [x] plate receives explicit per-order cook-pot DAG mapping and clean-plate station
+- [x] cook completion detaches Worker lease while retaining cooker token until plate completion
+- [x] plate completion/failure/order terminal path releases cooker reservation exactly once
+- [x] Worker restart requeues task; Scheduler restart limitation is documented (no IPC recovery claim)
+- [x] `goto` end turns before completion; `cook` releases worker to next task; macro transitions use world state
 
 ## Progress
 
+
+Dirty at start: none. Repair branch started from origin/kitchen-control/06-macro-actions@50624da;
+task09 dirty files are preserved in stash 2fc37466d6a7c084386d07741270178132d15f59.
+
+Flow-break amendment fixed the plan defect: plate source is bound by the recipe DAG predecessor edge,
+not node-name suffix; cooker token is reserved from cook DONE through plate terminal event. `source_station_id`
+is carried in mq v2. The fake fixture uses `plate_stack` as the independent plate lease and combines
+Plate+Dish when taking the reserved cooked pot. Scheduler restart cannot recover in-memory order/pot
+ownership from existing IPC; this limitation is documented.
+
+Final Check: `cd bridge && make test` → 14 suites, 0 failed. `bash tools/run-bridge-scenarios.sh
+--only macro,os-loop` → 2/2 PASS: macro all seven kinds, five task_done and order_completed;
+os-loop restart/requeue PASS.
+
+Review boundary: 50624da + mq/macro/worker/scheduler/tests/fake/spec/decision paths; round: 1;
+briefs: A,B; boundaries: mq task payload, Scheduler order/task reservation, Worker macro state,
+fake world-state transitions; findings: 0 blocking / 0 nonblocking after DAG and fake cooker fixes.
 
 Dirty at start: none。从 `origin/kitchen-control/04-navd-pibt`（dacd788）开
 `kitchen-control/06-macro-actions`；前置 04 的归档文件已确认存在，任务为完成态。
@@ -80,39 +97,12 @@ mq→Worker 任务/事件、navtab 目标/计划槽、shm 世界状态只读、f
   统一，不在 06 文件范围）。
 - 复跑：`make test-san` 14/14、`make test` 14/14、`--only macro,os-loop` 2/2。
 
-## Blocked
 
-**假设：** Worker 按 mq 的 `station_id` 展开宏动作，`plate` 的 `goto(锅) + pickup 进盘` 就能从
-锅取到熟菜；或者 Scheduler 会把 plate 工序派到锅的工位。
+### Flow-break amendment（2026-10-26）
 
-**实际（本分支 HEAD 上可复现）：**
-- `scripts/export-kitchen.py:211` 把 `plate` 映射到 `plate_stack`；`config/recipes.example.json`
-  与 `config/maps/s_wellcooked_demo_*/recipes.json` 的 plate 节点全部是
-  `{"id":"plate:...","op":"plate","resource":"plate_stack"}`。
-- `bridge/src/scheduler.c:1228` 按 `node->resource` 调 `kos_kitchen_pick_station`，所以 plate
-  工序下发的 `station_id` 是 `plate_stack-*`，不是锅。
-- `bridge/include/kitchenos/mq.h` 的任务消息只有 `station_id/resource/dish/node_id`，没有锅 id
-  或"订单→锅"的映射；Worker 无法知道哪口锅装着这单的菜。
-- 结果：`macro.c` 的 plate 会在盘子堆上 `wait_ready`（无锅状态，直接通过）然后 `pickup` 菜品，
-  实机只会拿到干净盘或失败；review brief B 的 blocking finding 即此。
-- 任务 06 的 Files 只有 macro/worker/test/fake，改 Scheduler 派工或导出映射属于任务 07/09 的
-  锅/盘子规则，不能用 Worker 猜锅来糊过去（多锅/同菜订单无法区分，且没有干净盘步骤）。
-
-**需要决定的：**
-1. 把导出/派工映射改成 `plate` 使用锅工位，并在 Scheduler 生成"先取干净盘"的工序（任务 07
-   的锅/盘子规则）；
-2. 或在 `kos_mq_msg` 增加锅/目标工位字段（或订单→锅映射），让 Worker 能按订单取熟菜；
-3. 或把 plate 拆成 `fetch_plate` + `pickup_dish` 两道工序。
-选定后由 `flow-break` amend 更新本任务或把它并入 07/09；本分支上的宏动作实现、测试与 PR
-保留，blocking finding 不隐瞒、不 merge。
-
-### Review escalation（2026-10-25）
-
-- 用户要求不能把 Brief B 的 blocking 留给后续任务；按当前 PR diff、spec、recipes 与 mq 契约
-  重新核对后确认：plate 的工位来自 `resource=plate_stack`，任务消息没有锅 id，Worker 无法稳定
-  地从锅取熟菜。这不是可在 06 文件内修的代码缺陷，而是 spec 的 `goto(锅)` 与导出/派工映射的
-  计划矛盾。
-- 依 flow-implement“When the plan is wrong”把任务标 `blocked`；`## Blocked` 写证据与三个可选
-  决策。分支上的宏动作实现、测试、fake 场景与 PR 保留；不要 merge，等 flow-break amend。
-- 本任务的 Check 仍全绿（`make test` 14/14、`make test-san` 14/14、`macro,os-loop` 2/2），
-  但 blocking finding 未解除，所以不按完成交付。
+- 原计划缺陷：plate 任务只按 `resource=plate_stack` 选站，却在该站等待锅并取菜；mq 没有订单到锅映射，且 cook 完成时 cooker 令牌立即释放，后续订单可能覆盖同锅内容。见 decisions.md: 2026-10-26 - plate 保留订单专属锅直至取菜。
+- 更新后的契约：plate 仍由 `plate_stack` 决定物理盘子来源与容量租约；Scheduler 将 cook 站位/令牌作为订单 task 记录保留至对应 plate 成功。Worker 收到 source station 后按盘堆→指定锅执行；失败与订单淘汰释放全部 reservation。Worker restart 时 Scheduler 的订单/task 记录仍存活并依现有 `RECOVERED`/requeue 处理；Scheduler restart 时订单记录与命名资源令牌无法从 IPC 恢复，明确不承诺在制锅恢复。
+- 任务范围扩至 `scheduler.c` 与 mq 消息布局；不改 task 07/09/11。W9 的 `_1` 洗盘验收仍由 task 07 定义，本任务不虚构 `plate_stack` 不存在时的取盘位置。
+- Branch: `kitchen-control/06-macro-actions-repair-A`，从 `origin/kitchen-control/06-macro-actions` (50624da) 建立；原本地分支由 kc-B worktree 占用，未切换或写入。
+- kc-A task09 未提交的五个路径已具名 stash 保护：`stash@{0}` / `2fc37466d6a7c084386d07741270178132d15f59`，`kc-A task09 dirty paths backup before 06 repair 2026-10-26`。恢复命令：先在 kc-A `git switch kitchen-control/09-real-game-two-chefs`，再 `git stash apply 2fc37466d6a7c084386d07741270178132d15f59`；核对五个路径后可另行 drop，当前不要 pop。
+ - Final implementation and proof complete; the earlier blocked wording above is superseded by the DAG mapping and checks recorded in this task. `make test` and `macro,os-loop` are green; known workflow baseline validation errors remain unrelated.
