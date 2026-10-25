@@ -1,0 +1,6 @@
+{
+  "level": "any",
+  "comment": "真游戏联调：menu 留空，Scheduler 只用插件上报的世界订单，不造配置订单。",
+  "seed": 0,
+  "menu": []
+}

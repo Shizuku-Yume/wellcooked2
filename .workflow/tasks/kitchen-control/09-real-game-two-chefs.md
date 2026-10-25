@@ -5,7 +5,7 @@
 **Base commit:** b0129232ece42cb481a5821c2688a86a0a631d7e
 **Base branch:** kitchen-control/05-ring-and-pa-baseline
 **Started:** 2026-10-25T16:50:00+08:00
-**Status:** active
+**Status:** paused
 
 **Delivers:** 插件 `work=auto` 关掉 `WorkOrder.cs` 的替身逻辑后，`s_wellcooked_demo_2` 上两个
 厨师完全由 Linux 侧控制，无手动输入完成至少一单；`_1`（没有干净盘堆）上洗盘让盘子循环起来。
@@ -45,3 +45,43 @@ origin/<分支> .workflow/done/kitchen-control/`：
 **Check before:** 本分支（仅 05）上 `cd bridge && make test` = 13 个套件、0 失败；
 `tools/run-real-game.sh` 仍是 game-bridge 的 W8 检查（只数 hello/state_update，不驱动作），
 插件 `work=auto` 走的是 `WorkOrder` 替身，Linux 侧没有真动作链路，任务 Check 尚不能执行。
+
+**2026-10-25T17:21 暂停交接（实机联调中，未完成）**
+
+已完成并提交：
+- `5eca602` 并入 06 宏动作执行器（冲突：fake_plugin 的场景表/imports/WorldSim 字段取并集；run-bridge 场景表取并集）。
+- `7bdafaa` 并入 07 派工代价与锅盘规则（冲突：child.h/child.c/supervisor 取并集；scheduler 以 07 的
+  assign 派发为基底，补回 04 的 `avoid_chef`/`blocked_hold`/BLOCKED 回队与按 (厨师,工序) 的避让）。
+  另修 07 原有 bug：`dispatch_ready` 的 `idle[i]=i` 未压缩空闲表，第二个厨师忙时 `idle[0]` 读到未初始化值；
+  改为 `idle[idle_count++]=i`。修后 `nav-stuck` fake 场景通过（此前 `task_blocked none`）。
+- `cd bridge && make test`：15 套件、0 失败（05 基线为 13 套件）。
+- `bash tools/run-bridge-scenarios.sh --only nav-stuck,os-loop`：2/2 PASS；`nav-ring`、`macro` 也各 PASS。
+
+未提交（本交接一并提交）：
+- `plugin/Takeover.cs`：`work=auto` 改为系统控制（只执行 Bridge 动作，`WorkOrder` 替身在
+  auto 下完全不运行），`work=local` 才跑旧工序状态机；`ActionDriver` 加 `OwnedCount`。
+- `bridge/src/navd.c`：`write_plan` 内容变化时打 INFO `nav_plan chef seq status waypoints released target_seq`，
+  供任务 Check 对 `path` 放行。
+- `bridge/src/scheduler.c`：空 menu 的 orders 文件记 `menu_empty` 且不造配置订单；配套
+  `config/orders.world.json`（真游戏只用插件上报的世界订单）。
+
+**真游戏实测证据（2026-10-25，_2，2 厨师，`work=auto`，supervisor 全树）**：
+运行目录 `logs/real-game/manual2-171656`（保留）。Bridge `hello` 成功，`state_update chefs=2
+orders=3 resources=3`；插件日志出现 `takeover: 工作模式 auto（系统控制：只执行 Bridge 动作）`，
+没有 `工序:` 日志。Scheduler 收世界单 `order_001/002`，开 `order_002` 后只派了
+`fetch:BurritoChicken`（decision 里 `ready_tasks=1`），worker-0 `macro_start goto`
+→ `macro_done waited_ms=1253` → `macro_start pickup` → `macro_done 87 ms`，navd 有
+`nav_plan ... status=arrived`。第二厨师始终空闲，`score=0`，没有 `order_completed`。
+
+**卡点 / 下一步**：同一订单的另外两个就绪 `fetch:Rice`、`fetch:Tortilla` 没进候选
+（`build_candidates` 只返回 1 个，且无 `task_no_station`/`task_failed`）；先加候选构建的
+DEBUG/探针查 `task_dispatch_ready`、`task_station_index`、`station_reachable` 哪一步把它们刷掉，
+修后重跑 _2。随后才做：
+1. 把 `tools/run-real-game.sh` 扩成 supervisor 全树 + 场景参数 + 自动断言
+   （score>0、`order_completed`、macro 链、navd `nav_plan`、无手动手柄、`_1` 的 wash/cook 优先）。
+2. `_1` 洗盘实机验收；`_1` 的 `plate:*` 无 `plate_stack` 工位（`recipe_no_station`）要按实机结果决定
+   是否补资源/宏映射，并把偏差回写 spec。
+3. 更新 os-core W10 与 game-bridge/05 的进度、spec、decisions；归档、PR（base `kitchen-control/05-ring-and-pa-baseline`）。
+
+实机结束已还原 `BepInEx/wellcooked-takeover.txt` 与 `wellcooked-orders.json`、删除 command 文件，
+并删除 `/tmp/wellcooked-game.lock`；游戏与 supervisor 已停止。

@@ -70,6 +70,11 @@ namespace WellCooked
             return Owned.Contains(slot);
         }
 
+        public static int OwnedCount
+        {
+            get { return Owned.Count; }
+        }
+
         public static void Install(ManualLogSource log)
         {
             _log = log;

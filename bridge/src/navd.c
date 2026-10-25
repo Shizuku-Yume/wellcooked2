@@ -749,13 +749,24 @@ static void write_plan(navd *n, nav_agent *agent, int status)
         }
     }
     plan.plan_seq = agent->plan_seq;
-    if (!agent->have_written || !plan_content_equal(&plan, &agent->last_plan)) {
-        plan.plan_seq = agent->plan_seq + 1;
-        agent->plan_seq = plan.plan_seq;
+    {
+        int changed = !agent->have_written || !plan_content_equal(&plan, &agent->last_plan);
+
+        if (changed) {
+            plan.plan_seq = agent->plan_seq + 1;
+            agent->plan_seq = plan.plan_seq;
+        }
+        agent->last_plan = plan;
+        agent->have_written = 1;
+        (void)kos_navtab_write_plan(n->tab, agent->chef_id, &plan);
+        if (changed) {
+            /* 实机验收要把 Worker 的 macro goto 和 navd 放行的 path 对上（任务 09）。 */
+            kos_log_info(n->rt.log, "nav_plan",
+                         "chef=%d seq=%u status=%s waypoints=%d released=%d target_seq=%u",
+                         agent->chef_id, plan.plan_seq, kos_nav_status_name(status),
+                         plan.waypoint_count, agent->released, plan.target_seq);
+        }
     }
-    agent->last_plan = plan;
-    agent->have_written = 1;
-    (void)kos_navtab_write_plan(n->tab, agent->chef_id, &plan);
 }
 
 static void apply_target(navd *n, int index, const kos_nav_target *target)

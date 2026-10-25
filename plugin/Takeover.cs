@@ -39,8 +39,10 @@ namespace WellCooked
         private static float _nextFrontendPress;
         private static bool _frontendHeld;
 
-        /// <summary>`work=auto` 时不再随便挑工位，改由工序状态机（`WorkOrder`）决定去哪、按不按交互。</summary>
-        private static bool _workMode;
+        /// <summary>`work=auto`：系统控制。只执行 Bridge 下发的动作，本地工序替身与来回走都不跑。</summary>
+        private static bool _workAuto;
+        /// <summary>`work=local`：旧的插件内工序状态机（`WorkOrder`），只用于没有 Bridge 的演示。</summary>
+        private static bool _workLocal;
         private static int _arrivals;
         private static int _retargets;
 
@@ -117,7 +119,16 @@ namespace WellCooked
                     }
                     else if (key == "work")
                     {
-                        _workMode = value == "auto";
+                        bool auto = value == "auto";
+                        bool local = value == "local";
+                        if (auto != _workAuto || local != _workLocal)
+                        {
+                            _workAuto = auto;
+                            _workLocal = local;
+                            _log.LogInfo("takeover: 工作模式 " + (value.Length == 0 ? "off" : value)
+                                         + (_workAuto ? "（系统控制：只执行 Bridge 动作）"
+                                                      : _workLocal ? "（插件内工序替身）" : "（最小走位策略）"));
+                        }
                     }
                     else if (key == "diag" || key == "trace")
                     {
@@ -665,7 +676,12 @@ namespace WellCooked
             bool action = elapsed % ActionPeriod < ActionLength;
             ScanChefPositions(now);
 
-            if (_workMode)
+            if (_workAuto)
+            {
+                DriveSystem(now);
+                return;
+            }
+            if (_workLocal)
             {
                 DriveWorkOrder(now);
                 return;
@@ -772,8 +788,43 @@ namespace WellCooked
         }
 
         /// <summary>
-        /// 工序模式：目标与交互都听 `WorkOrder` 的（任务 09）。走位仍然交给 `Navigation`。
-        /// 这里不做任何"该做什么"的判断，只把状态机的决定喂成输入。
+        /// 系统控制：所有输入只来自 Bridge 下发的动作。没收到过动作的玩家位保持原地不动，
+        /// 不用本地工序状态机或最小走位策略补位（任务 09：替身逻辑在 `work=auto` 下关闭）。
+        /// </summary>
+        private static void DriveSystem(float now)
+        {
+            foreach (var owned in OwnedPads)
+            {
+                Vector2 position;
+                if (!TryPosition(owned.Slot, out position))
+                {
+                    continue;
+                }
+
+                if (ActionDriver.Drive(owned.Slot, owned.Pad, position, now))
+                {
+                    continue;
+                }
+
+                owned.Pad.Want(false, false, Vector2.zero);
+                PlayerInputLookup.Player player;
+                if (TryPlayerOf(owned.Slot, out player))
+                {
+                    LogicalInput.SetButtons(player, Vector2.zero, false, false, false);
+                }
+            }
+
+            if (now >= _nextDriveLog)
+            {
+                _nextDriveLog = now + 2f;
+                Diag.Trace("takeover: 系统控制中 玩家位=" + OwnedPads.Count
+                           + " 已接管=" + ActionDriver.OwnedCount);
+            }
+        }
+
+        /// <summary>
+        /// 工序模式：目标与交互都听 `WorkOrder` 的（`work=local`，只用于无 Bridge 的演示）。
+        /// 走位仍然交给 `Navigation`。这里不做任何"该做什么"的判断，只把状态机的决定喂成输入。
         /// </summary>
         private static void DriveWorkOrder(float now)
         {

@@ -2487,6 +2487,11 @@ static int load_config(scheduler *s)
             }
             kos_log_info(s->rt.log, "menu_loaded", "path=%s dishes=%d config_orders=%d",
                          s->orders_path, menu_count, wanted);
+        } else if (rc == KOS_ERR_EMPTY) {
+            /* 真游戏只认游戏自己出的单：空 menu 明确表示"不造配置订单"。 */
+            kos_log_info(s->rt.log, "menu_empty",
+                         "path=%s orders will only come from the shm world state",
+                         s->orders_path);
         } else {
             char text[256];
 
