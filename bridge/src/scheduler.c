@@ -59,6 +59,7 @@ typedef struct {
     int node_index;
     int state;
     int chef_id;
+    int avoid_chef; /* 上一任报 BLOCKED 的厨师；改派时先避开他 */
     uint64_t task_id;
     int64_t started_ms;
     int64_t ready_since_ms; /* 第一次进入就绪队列 */
@@ -117,6 +118,7 @@ typedef struct {
     int64_t dispatch_edf;
     int64_t worker_restarts;
     int next_chef;
+    int blocked_hold[KOS_SHM_MAX_CHEFS]; /* 报过 BLOCKED 的厨师先不接新活 */
     char metrics_path[KOS_DAEMON_PATH_MAX + 48];
     uint64_t next_task_id;
     int64_t started_ms;
@@ -638,7 +640,7 @@ static void detect_deadlock(scheduler *s)
     }
 }
 
-static int order_has_ready(scheduler *s, int order_index)
+static int order_has_ready(scheduler *s, int order_index, int chef)
 {
     const sched_order *order = &s->orders[order_index];
     int i;
@@ -647,7 +649,7 @@ static int order_has_ready(scheduler *s, int order_index)
         int node = order->tasks[i].node_index;
 
         if (order->tasks[i].state == TASK_PENDING &&
-            order_node_ready(s, order, node)) {
+            order->tasks[i].avoid_chef != chef && order_node_ready(s, order, node)) {
             return 1;
         }
     }
@@ -693,6 +695,7 @@ static int add_order(scheduler *s, const char *id, const char *dish, int64_t arr
         order->tasks[i].node_index = s->recipes.dishes[dish_index].nodes[i];
         order->tasks[i].state = TASK_PENDING;
         order->tasks[i].chef_id = -1;
+        order->tasks[i].avoid_chef = -1;
         order->tasks[i].task_id = 0;
     }
 
@@ -1057,6 +1060,21 @@ static void handle_worker_event(scheduler *s, const kos_mq_msg *msg)
                                          "task-done");
             task->state = TASK_DONE;
             finish_order_if_done(s, order_index);
+        } else if (msg->event == KOS_EVT_BLOCKED) {
+            /* 走位连续 3 次卡住：租约还给资源模型，工序回就绪队列，并记住
+             * 别立刻又派给同一个人（他那里仍然走不通）。 */
+            int blocked_chef = msg->chef_id;
+            int task_index = (int)(task - order->tasks);
+
+            if (blocked_chef >= 0 && blocked_chef < KOS_SHM_MAX_CHEFS) {
+                s->blocked_hold[blocked_chef] = 1;
+            }
+            (void)release_lease_for_task(s, msg->task_id, "resource_reclaimed",
+                                         "task-blocked");
+            task_requeue(s, order_index, task_index, "worker-blocked");
+            if (task_index >= 0 && task_index < order->task_count) {
+                order->tasks[task_index].avoid_chef = blocked_chef;
+            }
         } else {
             (void)release_lease_for_task(s, msg->task_id, "resource_reclaimed",
                                          "task-failed");
@@ -1089,7 +1107,7 @@ static void drain_events(scheduler *s)
 
 /* ============================================================== 调度决策 */
 
-static int best_ready_task(scheduler *s, int order_index, int64_t now)
+static int best_ready_task(scheduler *s, int order_index, int64_t now, int chef)
 {
     sched_order *order = &s->orders[order_index];
     int best = -1;
@@ -1101,6 +1119,7 @@ static int best_ready_task(scheduler *s, int order_index, int64_t now)
         int64_t critical;
 
         if (order->tasks[i].state != TASK_PENDING ||
+            order->tasks[i].avoid_chef == chef ||
             !order_node_ready(s, order, node)) {
             continue;
         }
@@ -1155,7 +1174,7 @@ static int dispatch_one(scheduler *s, int chef, int64_t now)
         sched_order *candidate = &s->orders[i];
 
         if (candidate->status != KOS_ORDER_ACTIVE || now < candidate->arrival_ms ||
-            !order_has_ready(s, i)) {
+            !order_has_ready(s, i, chef)) {
             continue;
         }
         memset(&views[view_count], 0, sizeof views[view_count]);
@@ -1198,7 +1217,7 @@ static int dispatch_one(scheduler *s, int chef, int64_t now)
     }
     order_index = map[chosen];
     order = &s->orders[order_index];
-    task_index = best_ready_task(s, order_index, now);
+    task_index = best_ready_task(s, order_index, now, chef);
     if (task_index < 0) {
         return 0;
     }
@@ -1297,7 +1316,12 @@ static int dispatch_one(scheduler *s, int chef, int64_t now)
     }
 
     task->state = TASK_RUNNING;
+    if (task->avoid_chef >= 0 && task->avoid_chef != chef &&
+        task->avoid_chef < KOS_SHM_MAX_CHEFS) {
+        s->blocked_hold[task->avoid_chef] = 0;
+    }
     task->chef_id = chef;
+    task->avoid_chef = -1;
     task->task_id = msg.task_id;
     task->started_ms = now;
     s->running_by_chef[chef] = msg.task_id;
@@ -1356,6 +1380,27 @@ static int dispatch_one(scheduler *s, int chef, int64_t now)
     return 1;
 }
 
+static int has_avoid_task(const scheduler *s, int chef)
+{
+    int i;
+
+    for (i = 0; i < s->order_count; i++) {
+        const sched_order *order = &s->orders[i];
+        int j;
+
+        if (order->status != KOS_ORDER_ACTIVE) {
+            continue;
+        }
+        for (j = 0; j < order->task_count; j++) {
+            if (order->tasks[j].state == TASK_PENDING &&
+                order->tasks[j].avoid_chef == chef) {
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
 static void dispatch_ready(scheduler *s, int64_t now)
 {
     int offset;
@@ -1368,7 +1413,11 @@ static void dispatch_ready(scheduler *s, int64_t now)
         int chef = (s->next_chef + offset) % s->rt.opts.chefs;
         int rc;
 
-        if (s->running_by_chef[chef] != 0) {
+        if (s->blocked_hold[chef] && !has_avoid_task(s, chef)) {
+            /* 被重排的工序已经完成/失败，扣留自然解除，避免这个厨师永远没活。 */
+            s->blocked_hold[chef] = 0;
+        }
+        if (s->running_by_chef[chef] != 0 || s->blocked_hold[chef]) {
             continue;
         }
         rc = dispatch_one(s, chef, now);

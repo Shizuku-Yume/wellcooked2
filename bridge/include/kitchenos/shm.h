@@ -68,7 +68,7 @@
 /* "KOS1"：段头第一个字段。用可读魔数是为了 `xxd /dev/shm/kitchenos_state`
  * 时一眼能看出这是不是我们的段。 */
 #define KOS_SHM_MAGIC 0x4b4f5331u
-#define KOS_SHM_VERSION 1u
+#define KOS_SHM_VERSION 2u
 
 #define KOS_SHM_DEFAULT_NAME "/kitchenos_state"
 #define KOS_SHM_DEFAULT_SEM_NAME "/kitchenos_input_ready"
@@ -123,20 +123,30 @@ int kos_error_format(const kos_error *err, char *buf, size_t len);
 const char *kos_strerror(int code);
 
 /* ========================================================== 动作与槽 */
+#define KOS_MAX_WAYPOINTS 8
+
+typedef struct {
+    float x;
+    float y;
+} kos_waypoint;
+
 
 /* 输入动作种类。字符串名字由 kos_action_kind_name() 给出，与插件协议里的 action 取值同名：
- * move / stop / interact / pickup / dash 五个都上线（protocol/protocol.md §3.6 +
- * protocol/schema/action.schema.json），bridge.c 的 build_action_from_slot() 各有一个构造器，
- * 所以 Worker 往槽里写什么，插件就收到什么。NONE 不是动作，是"这个 Worker 本帧没话说"，
- * Bridge 按 idle 的 stop 处理。插件的 press/release/tap 不在这里 —— 要按帧调度原始按键时，
- * 再同时扩这个枚举与线上枚举。 */
+ * move / stop / interact / pickup / dash / path / face / work 八个都上线
+ * （protocol/protocol.md §3.6 + protocol/schema/action.schema.json），bridge.c 的
+ * build_action_from_slot() 各有一个构造器，所以 Worker 往槽里写什么，插件就收到什么。
+ * NONE 不是动作，是"这个 Worker 本帧没话说"，Bridge 按 idle 的 stop 处理。
+ * 插件的 press/release/tap 不在这里 —— 要按帧调度原始按键时，再同时扩这个枚举与线上枚举。 */
 typedef enum {
     KOS_ACTION_NONE = 0,
     KOS_ACTION_MOVE = 1,
     KOS_ACTION_STOP = 2,
     KOS_ACTION_INTERACT = 3,
     KOS_ACTION_PICKUP = 4,
-    KOS_ACTION_DASH = 5
+    KOS_ACTION_DASH = 5,
+    KOS_ACTION_PATH = 6,
+    KOS_ACTION_FACE = 7,
+    KOS_ACTION_WORK = 8
 } kos_action_kind;
 
 typedef struct {
@@ -146,6 +156,10 @@ typedef struct {
     float target_x;
     float target_y;
     char target_object[KOS_SHM_NAME_MAX];  /* 交互目标，如 "pot_0"；空串表示无 */
+    uint32_t waypoint_count;
+    uint32_t reserved0;
+    uint64_t seq;
+    kos_waypoint waypoints[KOS_MAX_WAYPOINTS];
     uint32_t checksum; /* 写者填的载荷校验，消费者只读，见 kos_action_checksum() */
     uint32_t reserved;
 } kos_input_action;
@@ -168,6 +182,7 @@ typedef struct {
     int32_t id;
     float x;
     float y;
+    float facing; /* 朝向（弧度） */
     char holding[KOS_SHM_NAME_MAX]; /* 手上物品名；空串 = 空手 */
     char state[KOS_SHM_STATE_MAX];  /* 插件给的 "idle"/"moving" 等 */
 } kos_chef;
@@ -185,6 +200,7 @@ typedef struct {
     char state[KOS_SHM_STATE_MAX];     /* "free"/"occupied"/"cooking"/"cooked"/"burning" */
     char content[KOS_SHM_CONTENT_MAX]; /* 内容物，插件用 "a+b" 拼串 */
     float time_left;                   /* 烹饪剩余秒；不适用时为 0 */
+    float progress;                    /* 切菜/洗盘进度（0..1）；不适用时为 0 */
     int32_t chef_id;                   /* 占用者厨师号，-1 = 无人/未知 */
     int32_t count;                     /* 计数类资源（plate_stack）的数量 */
 } kos_resource;
@@ -193,7 +209,8 @@ typedef struct {
  * 这些字节无意义，任何人都不该读它们。 */
 typedef struct {
     int64_t score;
-    int64_t game_time; /* 本局已进行秒数 */
+    int64_t game_time;    /* 本局已进行秒数 */
+    int64_t game_time_ms; /* 本局已进行毫秒数（暂停不走） */
     uint32_t chef_count;
     uint32_t reserved0;
     kos_chef chefs[KOS_SHM_MAX_CHEFS];

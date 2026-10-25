@@ -776,4 +776,51 @@ user may overturn on sight. `Revisit when` of "never" is allowed but suspicious;
 - **Mine:** yes
 - **Revisit when:** 导出里带上工位占用的格子或游戏 1.2 m 网格原点，能直接算交互邻居而不必按
   坐标取最近格。
+## 2026-10-25 - 手柄竖轴与游戏世界 z 轴反向
+
+- **Decided:** `ActionDriver.Feed` 在写设备层与逻辑层之前统一把方向向量的 y(z) 取反；
+  `Navigation`/`face` 仍用世界坐标，`Feed` 是唯一的坐标到输入转换点。
+- **Instead of:** 让每个动作（move/path/face）各自记住翻转，或改所有本地驾驶代码。
+- **Because:** 2026-10-25 `s_city_h5` 实机验证：喂 `stick=(0,1)` 时厨师向 `-z` 走，path 的
+  第一个 +z 路点越走越远（3.35 m 后超时）；翻转后同一条 4 路点 path 连续切换并到达。
+- **Mine:** yes
+- **Revisit when:** 游戏或输入注入层改变坐标约定（例如换 InControl 版本），用一条 +z path 复测。
+- **Effort:** kitchen-control
+
+## 2026-10-25 - game_time_ms 字段与计时消费者的任务边界
+
+- **Decided:** 任务 02 只交付 `game_time_ms` 的插件上报、协议/ shm 字段与 fake/测试；
+  现有 Scheduler/Worker 里仍用墙钟的计时路径，由后续任务 03/04/06/07 在改各自算法时接入。
+- **Instead of:** 在 02 里跨任务改 Scheduler/Worker 的超时、预约和卡住判定。
+- **Because:** 那些计时路径本来就要在导航、宏动作、派工任务里重写；在 02 提前改会与它们的边界重叠，
+  也无法在本任务内证明新计时语义。02 的 Check 只要求字段暂停不走。
+- **Mine:** yes
+- **Revisit when:** 任务 04 或 06 落地后，`grep CLOCK_MONOTONIC` 仍能看到本应使用游戏时钟的计时。
+- **Effort:** kitchen-control
+
+## 2026-10-25 - 已到站的目标厨师在 PIBT 里当固定障碍
+
+- **Decided:** 有目标且实际已在站位格的厨师，PIBT 当固定障碍处理（不移动、也不被推），
+  并按这些障碍格重算每个厨师的 BFS 距离场；没任务（目标=当前格）的厨师仍可被推开。
+- **Instead of:** 按字面把"到达目标优先级清零"理解成到站后仍可被推，并继续用 stand 的
+  静态距离场排序候选。
+- **Because:** `_3` 随机用例实测两种做法都会卡死：两人在同一条 1 格宽环上，若到站者立刻
+  被推开又会马上抢回目标格，两个方向的追击无限循环；静态距离场下，最近邻被固定障碍挡住时
+  又会在相邻两格间来回走。把到站者当障碍 + 障碍感知距离场后，test_pibt 四张图 100 组
+  随机用例全部 200 步内到达。真机上 Worker 读到 `arrived` 后也会置 `pinned`，语义一致。
+- **Mine:** yes
+- **Revisit when:** 需要让另一个厨师从到站者的格子上硬挤过去（例如站位格被永久占死），
+  那时改为依赖卡住重规划或换站位格，而不是放开推人。
+- **Effort:** kitchen-control
+
+## 2026-10-25 - BLOCKED 后先扣住原厨师，再把工序改派
+
+- **Decided:** Scheduler 收到 `BLOCKED` 时把工序放回就绪队列，给任务记 `avoid_chef`，并
+  暂时不把新任务派给报 blocked 的厨师；等该工序派给别的厨师后解除扣留。
+- **Instead of:** 只把工序回队列、让下一轮轮到谁就谁接；或把整单直接判 FAILED。
+- **Because:** 导航实测里单资源场景下，原厨师一空下来就抢走了下一单，被重排的工序反而在
+  资源队列上等，永远到不了另一个厨师手里（nav-stuck 第一次跑就是这样）。扣住一个调度周期
+  让重排真正生效，又不把整单失败掉。
+- **Mine:** yes
+- **Revisit when:** 所有厨师都被同一工序 block 过一遍，需要超时后判失败或扩大站位格集合。
 - **Effort:** kitchen-control

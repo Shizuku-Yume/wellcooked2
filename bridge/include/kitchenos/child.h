@@ -32,7 +32,8 @@ enum {
 
 typedef enum {
     KOS_CHILD_SCHEDULER = 0,
-    KOS_CHILD_WORKER = 1
+    KOS_CHILD_WORKER = 1,
+    KOS_CHILD_NAVD = 2
 } kos_child_kind;
 
 typedef struct {
@@ -58,6 +59,8 @@ typedef struct {
     int tick_ms;       /* Scheduler: 调度轮询周期 */
     int slot_interval_ms; /* Worker: 写输入槽的周期 */
     int lease_ttl_ms;    /* Scheduler: 资源租约时长 */
+    char nav_name[KOS_SHM_PATH_MAX];     /* Worker/navd: 导航表对象名 */
+    char nav_sem_name[KOS_SHM_PATH_MAX]; /* Worker/navd: 导航表锁名 */
 } kos_child_opts;
 
 typedef struct {
@@ -80,7 +83,7 @@ void kos_child_opts_init(kos_child_opts *o, kos_child_kind kind);
  *   --supervisor-fd N  --supervisor-heartbeat-ms M  --attach-retry-ms M
  *   --kitchen FILE  --recipes FILE  --orders FILE  --runs-dir DIR
  *   --strategy fcfs|edf  --chefs N  --generation N  --lease-ttl-ms M
- *   --tick-ms M  --slot-interval-ms M
+ *   --tick-ms M  --slot-interval-ms M  --nav-name NAME  --nav-sem-name NAME
  *   --verbose  --help  --version
  * Worker 另加 --chef-id N（缺省 0）。未知参数返回 KOS_CHILD_ARG_ERR。
  */
