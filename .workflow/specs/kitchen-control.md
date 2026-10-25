@@ -1,6 +1,6 @@
 # 厨房控制：多厨师走位、宏动作与调度代价
 
-**Status:** proposed
+**Status:** in progress
 **Priority:** high
 
 ## What this is for
@@ -321,9 +321,12 @@ C 部分是 `cd bridge && make test` 的单元检查；多进程行为用 `tools
 
 - **每格实际移动时间。** 决定 `path` 的转角容差和卡住阈值是否要按地图调。由实机测：任务 01
   在 `_2` 上让一个厨师走直线 10 格，取均值。
-- **砧板进度、脏盘数、厨师朝向能否从游戏读到。** `StateReader` 现在没有读；`WorkableItem`、
-  脏盘台类型的字段要在插件里确认。由插件任务实测，读不到时 `chop`/`wash` 退回"工时 + 余量"
-  计时完成，并在本文件里改写对应行。
+- **砧板进度、脏盘数、厨师朝向能否从游戏读到。** 2026-10-25 任务 02 在 `s_city_h5` 实机确认：
+  `facing`（`atan2(forward.x, forward.z)`，弧度）、`dirty_plates`（`ClientPlateStackBase.GetCount()`）、
+  水槽 `progress`（`m_cleaningTimer / m_washingStation.m_cleanPlateTime`）都能读到并写进
+  `state_update`；砧板 `progress` 走 `ClientWorkableItem.GetProgress()`，字段与方法已用
+  ilspy 对照 `Assembly-CSharp.dll` 确认存在，但本轮实机没有把料放上砧板，数值读取仍待一次
+  "放料后切一刀"的实机确认。本轮没有发现需要退回"工时 + 余量"的字段。
 - **`Screen.SetResolution` 能否盖过注册表里的全屏记录。** 由任务 08 实测；不行就在实例启动前
   改前缀注册表的 `Screenmanager` 键，并在本文件里改写"分辨率"一条。
 - **本机能稳定跑几个实例。** 实测 2 个同时跑时可用内存还剩约 5 GB，3 个没跑过。由任务 08 用

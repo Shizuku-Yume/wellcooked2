@@ -13,8 +13,8 @@
       "description": "目标厨师。"
     },
     "action": {
-      "enum": ["move", "stop", "interact", "pickup", "dash"],
-      "description": "move 需要 target；interact 需要 target_object；stop / pickup / dash 不带附加字段。pickup 与 dash 是插件本来就实现的动作（它一共八个），2026-10-15 才允许被调度下发。"
+      "enum": ["move", "stop", "interact", "pickup", "dash", "path", "face", "work"],
+      "description": "move 需要 target；interact/work 需要 target_object；path 需要 waypoints 与 seq；face 需要 target 或 target_object；stop / pickup / dash 不带附加字段。"
     },
     "target": {
       "type": "object",
@@ -23,14 +23,33 @@
         "x": { "type": "number" },
         "y": { "type": "number" }
       },
-      "description": "move 的目标坐标。"
+      "description": "move/face 的目标坐标；face 与 target_object 二选一。"
     },
     "target_object": {
       "type": "string",
-      "description": "interact 的目标，例如 cutting_board_0；与 resources 的键同名。"
+      "description": "interact/work 的目标，例如 cutting_board_0；face 可选，与 target 二选一。与 resources 的键同名。"
     },
     "button": { "type": "string", "description": "附加按键，插件透传给游戏。" },
-    "hold_ms": { "type": "number", "description": "长按时长。" }
+    "hold_ms": { "type": "number", "description": "长按时长。" },
+    "waypoints": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "required": ["x", "y"],
+        "properties": {
+          "x": { "type": "number" },
+          "y": { "type": "number" }
+        }
+      },
+      "description": "path 动作的路点数组（1..8 项相邻格中心）。"
+    },
+    "seq": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "path 动作的规划序号，同 seq 只追加路点。"
+    }
   },
   "allOf": [
     {
@@ -40,6 +59,18 @@
     {
       "if": { "properties": { "action": { "const": "interact" } }, "required": ["action"] },
       "then": { "required": ["target_object"] }
+    },
+    {
+      "if": { "properties": { "action": { "const": "path" } }, "required": ["action"] },
+      "then": { "required": ["waypoints", "seq"] }
+    },
+    {
+      "if": { "properties": { "action": { "const": "face" } }, "required": ["action"] },
+      "then": { "anyOf": [{ "required": ["target"] }, { "required": ["target_object"] }] }
+    },
+    {
+      "if": { "properties": { "action": { "const": "work" } }, "required": ["action"] },
+      "then": { "required": ["target_object"] }
     }
   ],
   "examples": [
@@ -47,6 +78,10 @@
     { "type": "action", "chef_id": 1, "action": "interact", "target_object": "cutting_board_0" },
     { "type": "action", "chef_id": 1, "action": "stop" },
     { "type": "action", "chef_id": 0, "action": "pickup" },
-    { "type": "action", "chef_id": 1, "action": "dash" }
+    { "type": "action", "chef_id": 1, "action": "dash" },
+    { "type": "action", "chef_id": 0, "action": "path", "seq": 1, "waypoints": [
+        { "x": 1.0, "y": 2.0 }, { "x": 1.0, "y": 3.0 }] },
+    { "type": "action", "chef_id": 0, "action": "face", "target": { "x": 2.0, "y": 2.0 } },
+    { "type": "action", "chef_id": 1, "action": "work", "target_object": "cutting_board_0" }
   ]
 }

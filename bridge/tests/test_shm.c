@@ -468,6 +468,13 @@ static void test_open_and_version(void)
     expect(rc == KOS_ERR_VERSION, "版本不匹配 → KOS_ERR_VERSION");
     expect(strstr(err.context, "版本") != NULL, "版本不匹配的错误上下文说得清是版本问题");
     shm->seg->version = KOS_SHM_VERSION;
+    /* 旧版本挂接方必须被拒（版本号从 1 升到 2） */
+    shm->seg->version = 1u;
+    kos_error_clear(&err);
+    rc = open_segment(shm_name, sem_name, KOS_SHM_ATTACH, &second, &err);
+    expect(rc == KOS_ERR_VERSION, "旧版（版本 1）挂接方被拒 → KOS_ERR_VERSION");
+    shm->seg->version = KOS_SHM_VERSION;
+
 
     shm->seg->magic = 0xdeadbeefu;
     rc = open_segment(shm_name, sem_name, KOS_SHM_ATTACH, &second, NULL);
@@ -915,7 +922,7 @@ static void test_cleanup(void)
     kos_input_action action;
     int rc;
 
-    printf("[test_shm] 5. 清理：unlink 之后能重新建段\n");
+    printf("[test_shm] 6. 清理：unlink 之后能重新建段\n");
     make_names(shm_name, sem_name, "clean");
     rc = open_segment(shm_name, sem_name, KOS_SHM_CREATE, &shm, NULL);
     expect(rc == KOS_OK, "创建段");
@@ -955,14 +962,116 @@ done:
 
 static void test_action_names(void)
 {
-    printf("[test_shm] 6. 动作种类与协议名互转\n");
+    printf("[test_shm] 7. 动作种类与协议名互转\n");
     expect(strcmp(kos_action_kind_name(KOS_ACTION_MOVE), "move") == 0, "MOVE → \"move\"");
     expect(strcmp(kos_action_kind_name(KOS_ACTION_DASH), "dash") == 0, "DASH → \"dash\"");
+    expect(strcmp(kos_action_kind_name(KOS_ACTION_PATH), "path") == 0, "PATH → \"path\"");
+    expect(strcmp(kos_action_kind_name(KOS_ACTION_FACE), "face") == 0, "FACE → \"face\"");
+    expect(strcmp(kos_action_kind_name(KOS_ACTION_WORK), "work") == 0, "WORK → \"work\"");
+    expect(kos_action_kind_from_name("path") == KOS_ACTION_PATH, "\"path\" → KOS_ACTION_PATH");
+    expect(kos_action_kind_from_name("face") == KOS_ACTION_FACE, "\"face\" → KOS_ACTION_FACE");
+    expect(kos_action_kind_from_name("work") == KOS_ACTION_WORK, "\"work\" → KOS_ACTION_WORK");
     expect(kos_action_kind_from_name("interact") == KOS_ACTION_INTERACT,
            "\"interact\" → KOS_ACTION_INTERACT");
     expect(kos_action_kind_from_name("nonsense") == -1, "未知名字 → -1");
     expect(kos_action_kind_from_name(NULL) == -1, "空名字 → -1");
     expect(strcmp(kos_action_kind_name(4242), "unknown") == 0, "越界种类 → \"unknown\"");
+}
+
+/* ========================================= 5. path/face/work 的槽载荷 */
+
+static void test_new_action_slots(void)
+{
+    char shm_name[KOS_SHM_PATH_MAX];
+    char sem_name[KOS_SHM_PATH_MAX];
+    kos_shm *shm = NULL;
+    kos_input_action action;
+    kos_input_action got;
+    int rc;
+    size_t i;
+
+    printf("[test_shm] 5. path/face/work 的槽载荷与序号\n");
+    make_names(shm_name, sem_name, "newactions");
+    rc = open_segment(shm_name, sem_name, KOS_SHM_CREATE, &shm, NULL);
+    expect(rc == KOS_OK, "创建新动作测试用的段");
+    if (rc != KOS_OK)
+        goto done;
+
+    memset(&action, 0, sizeof action);
+    action.frame_id = 1;
+    action.chef_id = 1;
+    action.kind = KOS_ACTION_PATH;
+    action.seq = 1234567890123LL;
+    action.waypoint_count = KOS_MAX_WAYPOINTS;
+    for (i = 0; i < KOS_MAX_WAYPOINTS; i++) {
+        action.waypoints[i].x = (float)i + 0.5f;
+        action.waypoints[i].y = -(float)i;
+    }
+    rc = kos_shm_slot_publish(shm, 0, &action);
+    expect(rc == KOS_OK, "8 个路点的 path 能发布（种类上界不再停在 dash）");
+    rc = kos_shm_slot_read(shm, 0, &got);
+    expect(rc == KOS_OK, "读回 path 载荷");
+    expect(got.kind == KOS_ACTION_PATH && got.seq == 1234567890123LL &&
+               got.waypoint_count == KOS_MAX_WAYPOINTS,
+           "path 的 seq 与路点数原样保留");
+    expect(got.waypoints[0].x == 0.5f && got.waypoints[7].x == 7.5f &&
+               got.waypoints[7].y == -7.0f,
+           "path 的 8 个路点逐项原样保留");
+
+    /* 同一个 seq 再发一版（插件负责“只追加”），槽本身只要求载荷仍是完整的。 */
+    action.frame_id = 2;
+    action.waypoint_count = 4;
+    rc = kos_shm_slot_publish(shm, 0, &action);
+    expect(rc == KOS_OK, "同 seq 的 path 可以再次发布");
+    rc = kos_shm_slot_read(shm, 0, &got);
+    expect(rc == KOS_OK && got.seq == 1234567890123LL && got.waypoint_count == 4,
+           "同 seq 的新一版仍是独立快照（seq 不被改写）");
+
+    memset(&action, 0, sizeof action);
+    action.frame_id = 3;
+    action.kind = KOS_ACTION_FACE;
+    snprintf(action.target_object, sizeof action.target_object, "cutting_board_2");
+    rc = kos_shm_slot_publish(shm, 1, &action);
+    expect(rc == KOS_OK, "face（target_object）能发布");
+    rc = kos_shm_slot_read(shm, 1, &got);
+    expect(rc == KOS_OK && got.kind == KOS_ACTION_FACE &&
+               strcmp(got.target_object, "cutting_board_2") == 0,
+           "face 的目标物原样保留");
+
+    memset(&action, 0, sizeof action);
+    action.frame_id = 4;
+    action.kind = KOS_ACTION_WORK;
+    snprintf(action.target_object, sizeof action.target_object, "sink_0");
+    rc = kos_shm_slot_publish(shm, 2, &action);
+    expect(rc == KOS_OK, "work 能发布");
+    rc = kos_shm_slot_read(shm, 2, &got);
+    expect(rc == KOS_OK && got.kind == KOS_ACTION_WORK &&
+               strcmp(got.target_object, "sink_0") == 0,
+           "work 的目标物原样保留");
+
+    action.kind = KOS_ACTION_WORK + 1;
+    expect(kos_shm_slot_publish(shm, 2, &action) == KOS_ERR_INVAL,
+           "work 之后的下一个编号仍被当作未知动作拒绝");
+
+    memset(&action, 0, sizeof action);
+    memset(action.target_object, 'A', sizeof action.target_object);
+    action.kind = KOS_ACTION_WORK;
+    action.frame_id = 5;
+    expect(kos_shm_slot_publish(shm, 2, &action) == KOS_ERR_INVAL,
+           "没有 NUL 结尾的 target_object 被拒绝");
+    memset(&action, 0, sizeof action);
+    action.kind = KOS_ACTION_PATH;
+    action.frame_id = 6;
+    action.waypoint_count = KOS_MAX_WAYPOINTS + 1;
+    expect(kos_shm_slot_publish(shm, 2, &action) == KOS_ERR_INVAL,
+           "超过 8 个路点的输入动作被拒绝");
+
+    kos_shm_close(shm, NULL);
+    shm = NULL;
+done:
+    if (shm != NULL)
+        kos_shm_close(shm, NULL);
+    drop_section(shm_name, sem_name);
 }
 
 int main(void)
@@ -973,6 +1082,7 @@ int main(void)
     test_open_and_version();
     test_seqlock_concurrency();
     test_slots_and_barrier();
+    test_new_action_slots();
     test_cleanup();
     test_action_names();
 

@@ -13,7 +13,7 @@
     },
     "version": {
       "type": "string",
-      "description": "协议版本，当前 0.1.0，与插件 WellCooked.Plugin 版本对齐。"
+      "description": "协议版本，当前 0.2.0，与插件 WellCooked.Plugin 版本对齐。"
     },
     "actions": {
       "type": "array",
@@ -26,7 +26,7 @@
     {
       "type": "hello",
       "instance": "linux-bridge",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "actions": ["move", "stop", "interact"]
     }
   ]
