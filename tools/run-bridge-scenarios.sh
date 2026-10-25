@@ -26,7 +26,7 @@ RUN_ID=${KITCHENOS_RUN_ID:-$$}
 SCENARIOS=(happy one-slot no-heartbeat bad-frames connect-mode reconnect-storm
            silent-connect data-shapes second-peer pickup-dash path-face-work
            input-grace os-loop os-resources nav-corridor nav-stuck nav-crash
-           nav-ring)
+           nav-ring macro)
 SCEN_TIMEOUT=90
 STRICT=0
 ALLOW_SKIP=0
