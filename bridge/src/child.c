@@ -104,7 +104,13 @@ static void copy_str(char *dst, size_t cap, const char *src)
 
 static const char *kind_name(kos_child_kind kind)
 {
-    return kind == KOS_CHILD_SCHEDULER ? "scheduler" : "worker";
+    if (kind == KOS_CHILD_SCHEDULER) {
+        return "scheduler";
+    }
+    if (kind == KOS_CHILD_NAVD) {
+        return "navd";
+    }
+    return "worker";
 }
 
 void kos_child_opts_init(kos_child_opts *o, kos_child_kind kind)
@@ -170,13 +176,19 @@ void kos_child_print_usage(FILE *out, kos_child_kind kind)
         fprintf(out, "       kitchenos-worker also takes --chef-id N (0..%d).\n",
                 KOS_SHM_MAX_CHEFS - 1);
     }
+    if (kind == KOS_CHILD_NAVD) {
+        fprintf(out, "       kitchenos-navd also takes --nav-name NAME --nav-sem-name NAME.\n");
+    }
     fprintf(out,
             "\n"
             "Scheduler: builds orders/tasks from config/{kitchen,recipes,orders}.example.json\n"
             "and the Bridge's shm world state, dispatches ready tasks over POSIX mq, and\n"
             "writes runs/<ts>/{events.jsonl,decisions.jsonl}. SIGHUP switches FCFS/EDF.\n"
-            "Worker: receives its mq task, A* over the kitchen grid, and publishes per-frame\n"
-            "move/interact into its input slot; task results go back on /kitchenos_events.\n"
+            "Worker: receives its mq task, writes the target slot of /kitchenos_nav, reads the\n"
+            "plan slot, publishes per-frame path/stop into its input slot, and reports task\n"
+            "results on /kitchenos_events.\n"
+            "navd: plans every chef with PIBT from each world snapshot and releases waypoints\n"
+            "through the execution dependency graph; it owns the plan slots.\n"
             "\n"
             "Exit codes: 0 clean shutdown, 1 startup failure, 2 argument error.\n");
 }
@@ -347,6 +359,20 @@ int kos_child_parse_args(kos_child_opts *o, int argc, char **argv)
                 return KOS_CHILD_ARG_ERR;
             }
             o->slot_interval_ms = (int)number;
+        } else if (strcmp(name, "--nav-name") == 0) {
+            const char *v = take_value(value, argc, argv, &i);
+
+            if (v == NULL || v[0] == '\0') {
+                return KOS_CHILD_ARG_ERR;
+            }
+            copy_str(o->nav_name, sizeof o->nav_name, v);
+        } else if (strcmp(name, "--nav-sem-name") == 0) {
+            const char *v = take_value(value, argc, argv, &i);
+
+            if (v == NULL || v[0] == '\0') {
+                return KOS_CHILD_ARG_ERR;
+            }
+            copy_str(o->nav_sem_name, sizeof o->nav_sem_name, v);
         } else {
             return KOS_CHILD_ARG_ERR;
         }
@@ -494,6 +520,8 @@ int kos_child_setup(kos_child_runtime *rt, const kos_child_opts *opts)
     } else {
         if (opts->kind == KOS_CHILD_SCHEDULER) {
             copy_str(default_name, sizeof default_name, "scheduler.log");
+        } else if (opts->kind == KOS_CHILD_NAVD) {
+            copy_str(default_name, sizeof default_name, "navd.log");
         } else {
             snprintf(default_name, sizeof default_name, "worker-%d.log", opts->chef_id);
         }
@@ -528,7 +556,9 @@ int kos_child_setup(kos_child_runtime *rt, const kos_child_opts *opts)
     rt->next_attach_ms = now_ms();
     rt->next_attach_log_ms = now_ms();
     kos_log_info(rt->log,
-                 opts->kind == KOS_CHILD_SCHEDULER ? "scheduler_start" : "worker_start",
+                 opts->kind == KOS_CHILD_SCHEDULER
+                     ? "scheduler_start"
+                     : (opts->kind == KOS_CHILD_NAVD ? "navd_start" : "worker_start"),
                  "pid=%ld chef_id=%d log=%s state=%s sem=%s supervisor_fd=%d "
                  "heartbeat_ms=%d attach_retry_ms=%d kitchen=%s recipes=%s orders=%s "
                  "runs=%s strategy=%s chefs=%d generation=%d lease_ttl_ms=%d "

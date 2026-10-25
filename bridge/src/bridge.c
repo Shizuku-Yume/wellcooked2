@@ -6,8 +6,8 @@
  * state the plugin reports into /kitchenos_state, turns every state_update into
  * one frame, waits (with an upper bound) for the N Chef Workers to publish their
  * input slots, aggregates those slots into `action` messages and sends them
- * back. Choosing who cooks what is the Scheduler's job; planning a path is a
- * Worker's job.
+ * back. Choosing who cooks what is the Scheduler's job; planning a path is navd's
+ * job (the Workers only publish target slots and follow released waypoints).
  *
  * Two invariants shape the whole file:
  *
