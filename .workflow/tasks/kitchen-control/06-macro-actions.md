@@ -2,8 +2,10 @@
 
 **Effort:** kitchen-control
 **Task type:** feature
-**Base commit:** <commit-sha>
-**Base branch:** small/os-core-acceptance-fixes
+**Base commit:** dacd788388158ac06b3123ef742a1dfb18495b62
+**Base branch:** kitchen-control/04-navd-pibt
+**Started:** 2026-10-25T16:08:48+08:00
+**Status:** active
 
 **Delivers:** Worker 把一道工序按映射表展开成宏动作（goto/pickup/drop/chop/start_cook/
 wait_ready/wash/deliver），每步按 shm 世界状态判完成、超时报 `FAILED`，日志有
@@ -27,3 +29,14 @@ tools/run-bridge-scenarios.sh --only macro,os-loop` → fake_plugin 延迟 2 s �
 - [ ] `cook` 放下即走，不在锅前等熟
 - [ ] 完成条件被打破（手上东西没了）立即失败，不等超时
 - [ ] 内部 3000 mm/s 速度推算全部删掉
+
+## Progress
+
+Dirty at start: none。从 `origin/kitchen-control/04-navd-pibt`（dacd788）开
+`kitchen-control/06-macro-actions`；前置 04 的归档文件已确认存在，任务为完成态。
+04 已删除 `worker_task.{h,c}` 与旧的单厨师 A*，本任务在它的 Worker 骨架（目标槽/计划槽 +
+`path` 下发）上把"交互 200 ms → 工时计时"的相位换成按世界状态判完成的宏动作。
+
+Check before: `test_macro` 与 `macro` 场景尚不存在，无法运行；作为基线，
+`cd bridge && make test` 与 `bash tools/run-bridge-scenarios.sh --only os-loop` 先跑一遍
+现有套件（结果记在下面）。
