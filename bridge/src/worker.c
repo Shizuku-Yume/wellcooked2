@@ -363,8 +363,9 @@ static int start_task(worker *w, const kos_mq_msg *msg)
         return -1;
     }
     kos_error_clear(&err);
-    if (kos_macro_plan_build(&w->kitchen, msg->op, msg->node_id, msg->station_id,
-                             msg->order_id, msg->duration_ms, &plan, &err) != KOS_OK) {
+    if (kos_macro_plan_build_with_source(&w->kitchen, msg->op, msg->node_id, msg->station_id,
+                                         msg->source_station_id, msg->order_id, msg->duration_ms,
+                                         &plan, &err) != KOS_OK) {
         char detail[KOS_MQ_DETAIL_MAX];
 
         error_text(&err, text, sizeof text);

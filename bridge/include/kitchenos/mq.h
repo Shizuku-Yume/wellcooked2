@@ -23,7 +23,8 @@
 #define KOS_MQ_EVENTS_NAME "/kitchenos_events"
 #define KOS_MQ_TASK_PREFIX "/kitchenos_tasks_"
 #define KOS_MQ_NAME_MAX 64
-#define KOS_MQ_VERSION 1u
+/* Task payload includes an explicit plate-source station. */
+#define KOS_MQ_VERSION 2u
 #define KOS_MQ_NODE_ID_MAX 64
 #define KOS_MQ_OP_MAX 16
 #define KOS_MQ_DETAIL_MAX 64
@@ -59,6 +60,8 @@ typedef struct {
     char op[KOS_MQ_OP_MAX];
     char resource[KOS_SHM_NAME_MAX];
     char station_id[KOS_SHM_NAME_MAX];
+    /* plate keeps the plate-stack lease but names the exact cooker holding this order. */
+    char source_station_id[KOS_SHM_NAME_MAX];
     char detail[KOS_MQ_DETAIL_MAX];
 } kos_mq_msg;
 

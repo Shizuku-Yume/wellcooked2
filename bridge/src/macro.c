@@ -122,9 +122,10 @@ static int add_step(kos_macro_plan *plan, int kind, const char *station_id,
     return 0;
 }
 
-int kos_macro_plan_build(const kos_kitchen *kitchen, const char *op, const char *node_id,
-                         const char *station_id, const char *order_id, int duration_ms,
-                         kos_macro_plan *out, kos_error *err)
+int kos_macro_plan_build_with_source(const kos_kitchen *kitchen, const char *op, const char *node_id,
+                                     const char *station_id, const char *source_station_id,
+                                     const char *order_id, int duration_ms,
+                                     kos_macro_plan *out, kos_error *err)
 {
     const char *item = node_item(node_id);
     int rc = KOS_OK;
@@ -169,11 +170,17 @@ int kos_macro_plan_build(const kos_kitchen *kitchen, const char *op, const char 
         if (item[0] == '\0') {
             rc = KOS_ERR_INVAL;
         } else {
-            /* cook 放下就走，所以盘工序必须自己等熟再拿；锅不可见时 wait_ready
-             * 直接通过，pickup 的 holding 条件仍然是唯一的成功判据。 */
             (void)add_step(out, KOS_MACRO_GOTO, station_id, "", duration_ms);
-            (void)add_step(out, KOS_MACRO_WAIT_READY, station_id, "", duration_ms);
-            (void)add_step(out, KOS_MACRO_PICKUP, station_id, item, duration_ms);
+            (void)add_step(out, KOS_MACRO_PICKUP, station_id, "Plate", duration_ms);
+            if (source_station_id != NULL && source_station_id[0] != '\0') {
+                if (kos_kitchen_station_index(kitchen, source_station_id) < 0) {
+                    rc = KOS_ERR_MISSING;
+                } else {
+                    (void)add_step(out, KOS_MACRO_GOTO, source_station_id, "", duration_ms);
+                    (void)add_step(out, KOS_MACRO_WAIT_READY, source_station_id, "", duration_ms);
+                    (void)add_step(out, KOS_MACRO_PICKUP, source_station_id, item, duration_ms);
+                }
+            }
         }
     } else if (strcmp(op, "deliver") == 0) {
         (void)add_step(out, KOS_MACRO_GOTO, station_id, "", duration_ms);
@@ -211,6 +218,13 @@ int kos_macro_plan_build(const kos_kitchen *kitchen, const char *op, const char 
     return KOS_OK;
 }
 
+int kos_macro_plan_build(const kos_kitchen *kitchen, const char *op, const char *node_id,
+                         const char *station_id, const char *order_id, int duration_ms,
+                         kos_macro_plan *out, kos_error *err)
+{
+    return kos_macro_plan_build_with_source(kitchen, op, node_id, station_id, "", order_id,
+                                            duration_ms, out, err);
+}
 void kos_macro_begin(kos_macro *macro, const kos_macro_plan *plan)
 {
     if (macro == NULL) {

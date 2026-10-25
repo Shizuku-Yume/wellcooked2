@@ -65,6 +65,9 @@ typedef struct {
     int64_t ready_since_ms; /* 第一次进入就绪队列 */
     int64_t wait_started_ms; /* 最近一段资源等待的开始；0 = 未等待 */
     int wait_logged;
+    char station_id[KOS_SHM_NAME_MAX];
+    int cooker_reserved;
+    int64_t cooker_reserved_ms;
 } sched_task;
 
 typedef struct {
@@ -129,6 +132,9 @@ typedef struct {
     mqd_t events;
     int queues_ready;
 } scheduler;
+static int cook_has_plate_successor(const scheduler *s, int cook_node);
+static void release_plate_source(scheduler *s, sched_order *order,
+                                 const kos_recipe_node *plate_node);
 
 static int64_t now_ms(void)
 {
@@ -338,6 +344,36 @@ static int release_lease_for_task(scheduler *s, uint64_t task_id, const char *ev
     }
     return 1;
 }
+/* Cook DONE releases the chef lease but transfers the already-held cooker token to the order. */
+static int detach_lease_keep_token(scheduler *s, uint64_t task_id)
+{
+    kos_lease *lease = kos_lease_by_task(&s->leases, task_id);
+    sched_res_stat *stat;
+    char kind[KOS_RES_KIND_MAX];
+    int64_t held_since;
+
+    if (lease == NULL) return 0;
+    copy_str(kind, sizeof kind, lease->kind);
+    held_since = lease->acquired_ms;
+    if (kos_lease_remove(&s->leases, task_id) != 1) return 0;
+    stat = stat_find(s, kind);
+    if (stat != NULL) stat->busy_ms += now_ms() - held_since;
+    return 1;
+}
+
+static void release_order_cook_reservations(scheduler *s, sched_order *order)
+{
+    int i;
+    for (i = 0; i < order->task_count; i++) {
+        sched_task *task = &order->tasks[i];
+        if (task->cooker_reserved) {
+            (void)kos_resource_release(&s->resources, "cooker");
+            task->cooker_reserved = 0;
+            task->station_id[0] = '\0';
+        }
+    }
+}
+
 
 /* 记录一次资源等待：每段等待只记一次，拿到令牌时再累加等待时长。 */
 static void mark_resource_wait(scheduler *s, int chef, const sched_order *order,
@@ -408,6 +444,7 @@ static sched_task *task_find(scheduler *s, uint64_t task_id, int *order_index)
     }
     return NULL;
 }
+
 
 static int order_task_by_node(const sched_order *order, int node_index)
 {
@@ -1056,9 +1093,25 @@ static void handle_worker_event(scheduler *s, const kos_mq_msg *msg)
         int node = task->node_index;
 
         if (msg->event == KOS_EVT_DONE) {
-            (void)release_lease_for_task(s, msg->task_id, "resource_released",
-                                         "task-done");
+            if (strcmp(s->recipes.nodes[node].op, "cook") == 0 &&
+                cook_has_plate_successor(s, node)) {
+                task->cooker_reserved = detach_lease_keep_token(s, msg->task_id);
+                if (!task->cooker_reserved) {
+                    (void)release_lease_for_task(s, msg->task_id, "resource_reclaimed",
+                                                 "reservation-transfer-failed");
+                    task->state = TASK_FAILED;
+                    mark_order_finished(order, KOS_ORDER_FAILED, now_ms());
+                    release_order_cook_reservations(s, order);
+                    return;
+                }
+                task->cooker_reserved_ms = now_ms();
+            } else {
+                (void)release_lease_for_task(s, msg->task_id, "resource_released", "task-done");
+            }
             task->state = TASK_DONE;
+            if (strcmp(s->recipes.nodes[node].op, "plate") == 0) {
+                release_plate_source(s, order, &s->recipes.nodes[node]);
+            }
             finish_order_if_done(s, order_index);
         } else if (msg->event == KOS_EVT_BLOCKED) {
             /* 走位连续 3 次卡住：租约还给资源模型，工序回就绪队列，并记住
@@ -1081,6 +1134,7 @@ static void handle_worker_event(scheduler *s, const kos_mq_msg *msg)
             task->state = TASK_FAILED;
             if (!order_has_done_all(order)) {
                 mark_order_finished(order, KOS_ORDER_FAILED, now_ms());
+                release_order_cook_reservations(s, order);
             }
             kos_log_warn(s->rt.log, "task_failed", "order=%s node=%s detail=%s",
                          order->id, s->recipes.nodes[node].id, msg->detail);
@@ -1147,6 +1201,100 @@ static unsigned task_priority(const sched_order *order, int64_t now)
     return (unsigned)(32 - seconds);
 }
 
+static int cooker_station_reserved(const scheduler *s, const char *station_id)
+{
+    int i;
+    int j;
+    for (i = 0; i < s->order_count; i++) {
+        const sched_order *order = &s->orders[i];
+        for (j = 0; j < order->task_count; j++) {
+            const sched_task *task = &order->tasks[j];
+            const kos_recipe_node *node = &s->recipes.nodes[task->node_index];
+            if (strcmp(node->op, "cook") == 0 && task->station_id[0] != '\0' &&
+                strcmp(task->station_id, station_id) == 0 &&
+                (task->state == TASK_RUNNING || task->cooker_reserved)) return 1;
+        }
+    }
+    return 0;
+}
+
+static int pick_cooker_station(scheduler *s, unsigned salt, int *index)
+{
+    int offset;
+    if (s->kitchen.station_count <= 0) return KOS_ERR_MISSING;
+    for (offset = 0; offset < s->kitchen.station_count; offset++) {
+        int candidate = (int)((salt + (unsigned)offset) % (unsigned)s->kitchen.station_count);
+        const kos_station *station = &s->kitchen.stations[candidate];
+        if (strcmp(station->kind, "cooker") == 0 &&
+            !cooker_station_reserved(s, station->id)) {
+            *index = candidate;
+            return KOS_OK;
+        }
+    }
+    return KOS_ERR_EMPTY;
+}
+
+static void release_plate_source(scheduler *s, sched_order *order,
+                                 const kos_recipe_node *plate_node)
+{
+    int plate_node_index = (int)(plate_node - s->recipes.nodes);
+    int edge_index;
+    for (edge_index = 0; edge_index < s->recipes.edge_count; edge_index++) {
+        const kos_recipe_edge *edge = &s->recipes.edges[edge_index];
+        int task_index;
+        sched_task *cook_task;
+        if (edge->to != plate_node_index) continue;
+        task_index = order_task_by_node(order, edge->from);
+        if (task_index < 0) continue;
+        cook_task = &order->tasks[task_index];
+        if (strcmp(s->recipes.nodes[cook_task->node_index].op, "cook") == 0 &&
+            cook_task->cooker_reserved) {
+            (void)kos_resource_release(&s->resources, "cooker");
+            cook_task->cooker_reserved = 0;
+            cook_task->station_id[0] = '\0';
+            return;
+        }
+    }
+}
+
+static int cook_has_plate_successor(const scheduler *s, int cook_node)
+{
+    int edge;
+    for (edge = 0; edge < s->recipes.edge_count; edge++) {
+        int parent = s->recipes.edges[edge].to;
+        if (s->recipes.edges[edge].from == cook_node &&
+            strcmp(s->recipes.nodes[parent].op, "plate") == 0) return 1;
+    }
+    return 0;
+}
+
+static int plate_cook_task(const scheduler *s, const sched_order *order, int plate_node)
+{
+    int pending[KOS_RECIPE_MAX_NODES];
+    int seen[KOS_RECIPE_MAX_NODES];
+    int count = 0;
+    int i;
+    memset(seen, 0, sizeof seen);
+    pending[count++] = plate_node;
+    while (count > 0) {
+        int current = pending[--count];
+        for (i = 0; i < s->recipes.edge_count; i++) {
+            const kos_recipe_edge *edge = &s->recipes.edges[i];
+            int task_index;
+            int ancestor;
+            if (edge->to != current || edge->from < 0 || edge->from >= KOS_RECIPE_MAX_NODES ||
+                seen[edge->from]) continue;
+            seen[edge->from] = 1;
+            task_index = order_task_by_node(order, edge->from);
+            if (task_index < 0) continue;
+            ancestor = order->tasks[task_index].node_index;
+            if (strcmp(s->recipes.nodes[ancestor].op, "cook") == 0 &&
+                order->tasks[task_index].cooker_reserved) return task_index;
+            if (count < KOS_RECIPE_MAX_NODES) pending[count++] = ancestor;
+        }
+    }
+    return -1;
+}
 static int dispatch_one(scheduler *s, int chef, int64_t now)
 {
     kos_order_view views[SCHED_MAX_ORDERS];
@@ -1162,6 +1310,7 @@ static int dispatch_one(scheduler *s, int chef, int64_t now)
     int station_index = -1;
     const kos_station *station;
     char station_id[KOS_KITCHEN_NAME_MAX] = "";
+    char source_station_id[KOS_SHM_NAME_MAX] = "";
     float station_x = 0.0f;
     float station_z = 0.0f;
     kos_mq_msg msg;
@@ -1225,23 +1374,37 @@ static int dispatch_one(scheduler *s, int chef, int64_t now)
     node = &s->recipes.nodes[task->node_index];
 
     station_hint = node->ingredient[0] != '\0' ? node->ingredient : node->label;
-    if (kos_kitchen_pick_station(&s->kitchen, node->resource, station_hint,
-                                 (unsigned)(s->next_task_id + (uint64_t)chef), &station_index) !=
-        KOS_OK) {
-        kos_log_warn(s->rt.log, "task_no_station", "node=%s resource=%s", node->id,
-                     node->resource);
-        task->state = TASK_FAILED;
-        order->status = KOS_ORDER_FAILED;
-        json_writer_init(&w, line, sizeof line);
-        event_common(&w, s, "task_failed");
-        json_writer_key(&w, "order_id");
-        json_writer_string(&w, order->id);
-        json_writer_key(&w, "node");
-        json_writer_string(&w, node->id);
-        json_writer_key(&w, "detail");
-        json_writer_string(&w, "no station for resource");
-        event_end(s, &w);
-        return 0;
+
+    if (strcmp(node->op, "plate") == 0) {
+        int cook_node = plate_cook_task(s, order, task->node_index);
+        if (kos_kitchen_pick_station(&s->kitchen, "plate_stack", "",
+                                     (unsigned)(s->next_task_id + (uint64_t)chef),
+                                     &station_index) != KOS_OK) {
+            mark_resource_wait(s, chef, order, task, node);
+            return -1;
+        }
+        if (cook_node >= 0) {
+            copy_str(source_station_id, sizeof source_station_id,
+                     order->tasks[cook_node].station_id);
+        }
+    } else {
+        int station_rc = strcmp(node->op, "cook") == 0
+            ? pick_cooker_station(s, (unsigned)(s->next_task_id + (uint64_t)chef), &station_index)
+            : kos_kitchen_pick_station(&s->kitchen, node->resource, station_hint,
+                                       (unsigned)(s->next_task_id + (uint64_t)chef),
+                                       &station_index);
+        if (station_rc == KOS_ERR_EMPTY) {
+            mark_resource_wait(s, chef, order, task, node);
+            return -1;
+        }
+        if (station_rc != KOS_OK) {
+            kos_log_warn(s->rt.log, "task_no_station", "node=%s resource=%s", node->id,
+                         node->resource);
+            task->state = TASK_FAILED;
+            order->status = KOS_ORDER_FAILED;
+            release_order_cook_reservations(s, order);
+            return 0;
+        }
     }
     station = &s->kitchen.stations[station_index];
     copy_str(station_id, sizeof station_id, station->id);
@@ -1278,6 +1441,7 @@ static int dispatch_one(scheduler *s, int chef, int64_t now)
     copy_str(msg.op, sizeof msg.op, node->op);
     copy_str(msg.resource, sizeof msg.resource, node->resource);
     copy_str(msg.station_id, sizeof msg.station_id, station_id);
+    copy_str(msg.source_station_id, sizeof msg.source_station_id, source_station_id);
 
     kos_error_clear(&err);
     if (kos_mq_send(s->tasks[chef], &msg, (unsigned)msg.priority, 20, &err) != KOS_OK) {
@@ -1324,6 +1488,9 @@ static int dispatch_one(scheduler *s, int chef, int64_t now)
     task->avoid_chef = -1;
     task->task_id = msg.task_id;
     task->started_ms = now;
+    if (strcmp(node->op, "cook") == 0) {
+        copy_str(task->station_id, sizeof task->station_id, station_id);
+    }
     s->running_by_chef[chef] = msg.task_id;
 
     if (kos_policy_kind_of(s->policy) == KOS_POLICY_EDF) {
@@ -1822,6 +1989,7 @@ static int scheduler_main(scheduler *s, const kos_child_opts *opts)
                                                  "resource_reclaimed", "task-timeout");
                     task->state = TASK_FAILED;
                     mark_order_finished(&s->orders[i], KOS_ORDER_FAILED, now);
+                    release_order_cook_reservations(s, &s->orders[i]);
                 }
             }
         }

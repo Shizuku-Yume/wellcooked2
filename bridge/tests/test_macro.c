@@ -179,11 +179,20 @@ static void test_expansions(const kos_kitchen *kitchen)
                plan.step_count == 3 && plan.steps[1].kind == KOS_MACRO_DROP &&
                plan.steps[2].kind == KOS_MACRO_START_COOK,
            "cook = goto + drop + start_cook");
-    expect(kos_macro_plan_build(kitchen, "plate", "plate:Dish", plate, "o1", 1000, &plan,
-                                &err) == KOS_OK &&
-               plan.step_count == 3 && plan.steps[1].kind == KOS_MACRO_WAIT_READY &&
-               plan.steps[2].kind == KOS_MACRO_PICKUP,
-           "plate = goto + wait_ready + pickup");
+    expect(kos_macro_plan_build_with_source(kitchen, "plate", "plate:Dish", plate, cooker,
+                                            "o1", 1000, &plan, &err) == KOS_OK &&
+               plan.step_count == 5 && plan.steps[0].kind == KOS_MACRO_GOTO &&
+               plan.steps[1].kind == KOS_MACRO_PICKUP &&
+               strcmp(plan.steps[1].item, "Plate") == 0 &&
+               strcmp(plan.steps[2].station_id, cooker) == 0 &&
+               plan.steps[3].kind == KOS_MACRO_WAIT_READY &&
+               plan.steps[4].kind == KOS_MACRO_PICKUP,
+           "plate = clean plate pickup + reserved pot wait/pickup");
+    expect(kos_macro_plan_build_with_source(kitchen, "plate", "plate:Sushi", plate, "",
+                                            "o2", 1000, &plan, &err) == KOS_OK &&
+               plan.step_count == 2 && plan.steps[1].kind == KOS_MACRO_PICKUP &&
+               strcmp(plan.steps[1].item, "Plate") == 0,
+           "cold plate = clean plate pickup only");
     expect(kos_macro_plan_build(kitchen, "deliver", "deliver:Dish", serving, "o1", 1000,
                                 &plan, &err) == KOS_OK &&
                plan.step_count == 2 && plan.steps[1].kind == KOS_MACRO_DELIVER,
@@ -349,11 +358,13 @@ static void test_cook(const kos_kitchen *kitchen, const char *cooker)
            "锅进入 cooking 后 cook 任务立即完成（不等 cooked）");
 }
 
-static void test_plate(const kos_kitchen *kitchen, const char *cooker)
+static void test_plate(const kos_kitchen *kitchen, const char *cooker, const char *plate_stack)
 {
     kos_world_state world;
+    kos_macro_plan plan;
     kos_macro macro;
     kos_macro_output out;
+    kos_error err;
     kos_chef *chef;
     kos_resource *pot;
     int64_t game_ms = 1000;
@@ -361,31 +372,49 @@ static void test_plate(const kos_kitchen *kitchen, const char *cooker)
 
     printf("test_plate\n");
     base_world(&world);
-    chef = chef_at_station(&world, kitchen, cooker);
+    chef = chef_at_station(&world, kitchen, plate_stack);
     chef->holding[0] = '\0';
+    (void)add_resource(&world, plate_stack);
     pot = add_resource(&world, cooker);
     snprintf(pot->state, sizeof pot->state, "cooking");
-    snprintf(pot->content, sizeof pot->content, "CookedCarrot");
-    expect(build(&macro, kitchen, "plate", "plate:Dish", cooker, "o1", 1000) == 0,
-           "plate 计划建成");
+    snprintf(pot->content, sizeof pot->content, "Dish");
+    kos_error_clear(&err);
+    expect(kos_macro_plan_build_with_source(kitchen, "plate", "plate:Dish", plate_stack,
+                                            cooker, "o1", 1000, &plan, &err) == KOS_OK,
+           "plate plans clean plate and exact pot");
+    kos_macro_begin(&macro, &plan);
     (void)finish_goto(&macro, kitchen, &world, &game_ms, &out);
     game_ms += 16;
     rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
-    expect(rc == 0 && macro.step_index == 1 && out.action == KOS_MACRO_ACT_STOP,
-           "plate 在 wait_ready 阶段原地等");
+    expect(rc == 0 && macro.step_index == 1 && out.action == KOS_MACRO_ACT_INTERACT,
+           "plate fetches clean plate first");
+    snprintf(chef->holding, sizeof chef->holding, "Plate");
+    game_ms += 16;
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    expect(rc == 0 && macro.step_index == 2, "clean plate pickup advances to reserved pot");
+    chef->x = kitchen->cells[kos_stand_cells(kitchen,
+                                              kos_kitchen_station_index(kitchen, cooker))->cells[0].cell].x;
+    chef->y = kitchen->cells[kos_stand_cells(kitchen,
+                                              kos_kitchen_station_index(kitchen, cooker))->cells[0].cell].z;
+    chef->facing = atan2f(kitchen->stations[kos_kitchen_station_index(kitchen, cooker)].x - chef->x,
+                          kitchen->stations[kos_kitchen_station_index(kitchen, cooker)].z - chef->y);
+    (void)kos_macro_advance(&macro, kitchen, &world, 0, 1, game_ms, &out);
+    game_ms += 16;
+    (void)kos_macro_advance(&macro, kitchen, &world, 0, 1, game_ms, &out);
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    expect(rc == 0 && macro.step_index == 3 && out.action == KOS_MACRO_ACT_STOP,
+           "waits on exact reserved pot");
     snprintf(pot->state, sizeof pot->state, "cooked");
     game_ms += 16;
     rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
-    expect(rc == 0 && macro.step_index == 2 && out.action == KOS_MACRO_ACT_STOP,
-           "锅 cooked 后 wait_ready 完成进入 pickup");
+    expect(rc == 0 && macro.step_index == 4, "cooked pot advances to dish pickup");
     game_ms += 16;
     rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
-    expect(rc == 0 && macro.step_index == 2 && out.action == KOS_MACRO_ACT_INTERACT,
-           "plate pickup 发 interact");
-    snprintf(chef->holding, sizeof chef->holding, "Dish");
+    expect(rc == 0 && out.action == KOS_MACRO_ACT_INTERACT, "dish pickup emits interact");
+    snprintf(chef->holding, sizeof chef->holding, "Plate+Dish");
     game_ms += 16;
-    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
-    expect(rc == 1, "拿到 Dish 后 plate 完成");
+    expect(kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out) == 1,
+           "plated dish completes");
 }
 
 static void test_deliver(const kos_kitchen *kitchen, const char *serving)
@@ -537,9 +566,9 @@ int main(void)
     const char *dispenser;
     const char *container;
     const char *cooker;
+    const char *plate_stack;
     const char *serving;
     const char *sink;
-
     if (load_kitchen(&kitchen) != 0) {
         printf("FAIL cannot load config/kitchen.example.json\n");
         return 1;
@@ -548,13 +577,14 @@ int main(void)
     container = station_of_kind(&kitchen, "container");
     cooker = station_of_kind(&kitchen, "cooker");
     serving = station_of_kind(&kitchen, "serving");
+    plate_stack = station_of_kind(&kitchen, "plate_stack");
     sink = station_of_kind(&kitchen, "sink");
 
     test_expansions(&kitchen);
     test_fetch(&kitchen, dispenser);
     test_cut(&kitchen, container);
     test_cook(&kitchen, cooker);
-    test_plate(&kitchen, cooker);
+    test_plate(&kitchen, cooker, plate_stack);
     test_deliver(&kitchen, serving);
     test_wash(&kitchen, sink);
     test_timeouts(&kitchen, dispenser, container);
