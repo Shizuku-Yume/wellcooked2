@@ -176,14 +176,24 @@ Worker 把它展开成宏动作序列，逐个执行；完成以世界状态为�
 | `deliver` | `interact` | 该订单从世界状态订单表消失 | 1.5 s |
 
 工序到宏动作的映射是 Worker 里的一张表：`fetch` = goto(料箱) + pickup，`cut` = goto(砧板) +
-drop + chop + pickup，`cook` = goto(锅) + drop/start_cook（Worker 放下就走，不等熟），
-`plate` = goto(锅) + wait_ready + pickup 进盘（cook 不等熟，所以盘工序自己等），`deliver` =
-goto(出菜口) + deliver，`wash` = goto(水槽) + drop + wash。导出配置里还有 `mix`（与 `cut`
-同样是按住加工键到 progress=1）与 `assemble`（goto 容器 + drop，组合由游戏完成），Worker
-一并支持；未知工序直接报 `FAILED`，`detail` 写 `macro-map`。宏动作超时或完成条件被打破
-（比如手上东西没了），工序报 `FAILED`，`detail` 写哪个宏动作、等的是什么；Scheduler 已有的
-重排队逻辑接手。每个宏动作的开始与结束写进 Worker 日志（`macro_start` / `macro_done` /
-`macro_failed`），`macro_done` 带游戏时钟的 `waited_ms`。
+drop + chop + pickup，`cook` = goto(锅) + drop/start_cook（启动成功后放下就走，但 Scheduler 将该
+订单的锅令牌与工位归属保留给其 `plate` 工序），`plate` = goto(干净盘堆) + pickup(Plate) +
+goto(本订单cook预留锅) + wait_ready + pickup(菜)，`deliver` = goto(出菜口) + deliver，
+`wash` = goto(水槽) + drop + wash。cook 完成事件先结束 Worker 对该工序的租约，再把锅令牌
+转为订单级预留；预留状态保存在 Scheduler 现有订单/task 内存记录，不新增持久化层。plate 的
+成功完成、FAILED、订单取消/淘汰时，Scheduler 释放对应锅令牌并清除预留；在 plate 完成前，派工
+不得把该物理锅分给其他订单。Scheduler 进程重启会重新创建资源信号量、丢弃内存订单与预留，
+现有 IPC 不提供任务/锅归属恢复，故重启后的恢复保证仅限 Supervisor/Worker 既有重排语义，
+不声称可恢复在制锅订单。导出配置里还有 `mix`（与 `cut` 同样是按住加工键到 progress=1）与
+`assemble`（goto 容器 + drop），Worker 一并支持；未知工序直接报 `FAILED`，`detail` 写
+`macro-map`。宏动作超时或完成条件被打破，工序报 `FAILED`，`detail` 写宏动作与所等条件；
+Scheduler 已有的重排队逻辑接手。每个宏动作的开始与结束写进 Worker 日志（`macro_start` /
+`macro_done` / `macro_failed`），`macro_done` 带游戏时钟的 `waited_ms`。
+
+**盘子配置边界：** plate 工序必须同时得到可达的干净盘工位与本订单 cook 预留锅。当前
+`s_wellcooked_demo_1` 没有导出的 `plate_stack` 工位，且洗盘产物的世界状态只报告计数、不报告
+可拿取位置；在补充可验证的干净盘来源位置前，该地图无法满足 plate 宏动作，不能把计数虚构为
+空间工位。其它地图使用配置中的 `plate_stack` 工位。
 
 game-bridge 插件里 `WorkOrder.cs` 那套在插件内选厨师、走工序的替身逻辑，在系统控制下不再
 启用；它的 `_looseApproach` 1.4 m 兜底和"按住 X + 超时"切菜由上面的站位格与 `chop` 完成条件

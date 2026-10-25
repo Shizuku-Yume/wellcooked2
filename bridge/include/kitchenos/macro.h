@@ -100,11 +100,13 @@ typedef struct {
 const char *kos_macro_kind_name(int kind);
 const char *kos_macro_action_name(int action);
 
-/*
- * 把 Scheduler 的 op 展开成宏动作序列。node_id 形如 "fetch:Carrot"，冒号后是目标
- * 物品/菜名；fetch/cut/plate 需要它。未知 op、缺物品名或工位不在 kitchen 里返回
- * KOS_ERR_INVAL / KOS_ERR_MISSING，err 里写原因。
- */
+/* 把 Scheduler 的 op 展开成宏动作序列。node_id 形如 "fetch:Carrot"；plate 还需要
+ * source_station_id 指向本订单 cook 已占用的锅。旧入口保留给非 plate 调用者。 */
+int kos_macro_plan_build_with_source(const kos_kitchen *kitchen, const char *op,
+                                     const char *node_id, const char *station_id,
+                                     const char *source_station_id, const char *order_id,
+                                     int duration_ms, kos_macro_plan *out, kos_error *err);
+
 int kos_macro_plan_build(const kos_kitchen *kitchen, const char *op, const char *node_id,
                          const char *station_id, const char *order_id, int duration_ms,
                          kos_macro_plan *out, kos_error *err);

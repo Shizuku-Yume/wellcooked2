@@ -3145,7 +3145,6 @@ class WorldSim(NavSim):
             resources=self.resources_message(), holdings=self.holdings,
             facings=self.facings, orders=self.orders)
 
-    # -- 动作 → 延迟生效的世界变化 --
     def _schedule(self, game_ms, chef, effect, station_id=None, cooldown=False):
         self.busy.add(chef)
         if self.wall_delay:
@@ -3156,10 +3155,7 @@ class WorldSim(NavSim):
         def run():
             effect()
             if cooldown and station_id is not None:
-                # "拿到东西"之后 Worker 还要一两个状态帧才看到；这期间它可能仍在发
-                # interact（游戏时钟被冻结时尤其明显）。同一工位短暂去重，避免
-                # "刚拿起的料又被同一串旧 interact 放回去"。放下/工作不设冷却，
-                # 否则 chop 完成后的 pickup 会被自己的冷却挡掉。
+                # Worker sees world state one or two frames later; coalesce repeated interact.
                 self.cooldown[(chef, station_id)] = time.monotonic() * 1000.0 + 750.0
 
         self.pending.append((due, chef, run))
@@ -3174,14 +3170,23 @@ class WorldSim(NavSim):
             if chef is None:
                 continue
             kind = action.get("action")
+            if kind == "face":
+                target = action.get("target") or {}
+                station = self.stations.get(action.get("target_object") or "")
+                if isinstance(target.get("x"), (int, float)) and isinstance(target.get("y"), (int, float)):
+                    tx, ty = float(target["x"]), float(target["y"])
+                elif station is not None:
+                    pos = station.get("pos") or [0.0, 0.0]
+                    tx, ty = float(pos[0]), float(pos[1])
+                else:
+                    continue
+                x, y = self.positions[chef]
+                self.facings[chef] = math.atan2(tx - x, ty - y)
+                continue
             station = self.stations.get(action.get("target_object") or "")
             if station is None:
                 continue
-            if kind == "face":
-                pos = station.get("pos") or [0.0, 0.0]
-                x, y = self.positions[chef]
-                self.facings[chef] = math.atan2(float(pos[0]) - x, float(pos[1]) - y)
-            elif kind == "interact":
+            if kind == "interact":
                 self._interact(chef, station, game_ms)
             elif kind == "work":
                 self._work(chef, station, game_ms)
@@ -3232,18 +3237,21 @@ class WorldSim(NavSim):
             return
 
         if kind == "cooker":
-            if holding is not None:
+            if holding is not None and not (holding == "Plate" and resource.get("state") == "cooked"):
                 def put_in_pot():
                     self.holdings[chef] = None
                     resource["content"] = holding
                     resource["state"] = "cooking"
                     resource["progress"] = 0.1
                     self._finish(chef)
+                    self.pending.append((time.monotonic() * 1000.0 + self.delay_ms,
+                                         chef, lambda: resource.__setitem__("state", "cooked")))
 
                 self._schedule(game_ms, chef, put_in_pot)
             elif resource.get("state") == "cooked" and resource.get("content"):
                 def take_cooked():
-                    self.holdings[chef] = resource["content"]
+                    product = self.products.get(station["id"], resource["content"])
+                    self.holdings[chef] = (holding + "+" + product) if holding else product
                     resource["content"] = ""
                     resource["state"] = "free"
                     resource["progress"] = 0.0
@@ -3308,12 +3316,6 @@ class WorldSim(NavSim):
             effect()
 
     def _clock(self, real_game_ms):
-        """wall_delay 时，有未生效的效果就把游戏时钟冻结，效果生效的下一帧再跳回去。
-
-        这是 fake 的约定：状态变化按墙钟延迟 2 s，但 Linux 侧看到的游戏时钟在这段
-        时间里不走，所以宏动作按表里的 1.5 s 超时不会误杀"世界还没变"的等待；
-        一直不回料（没有待生效效果）时时钟照常走，pickup 才会 1.5 s 超时。
-        """
         if self.wall_delay and self.busy:
             return self.frozen_clock
         self.frozen_clock = real_game_ms
@@ -3815,11 +3817,8 @@ def macro_configs(directory):
         path = directory / name
         path.write_text(json.dumps(payload, ensure_ascii=False))
         paths[name] = str(path)
-    products = {"container-0": "ChoppedTomato", "plate_stack-0": "TomatoDish"}
+    products = {"container-0": "ChoppedTomato", "cooker-0": "TomatoDish"}
     return paths, cells, stations, products
-
-
-MACRO_LOG = re.compile(r"macro_(\w+)\b.*?(?:macro=(\w+))?.*?(?:waited_ms=(\d+))?")
 
 
 def _macro_log_rows(path):

@@ -295,8 +295,22 @@ static void publish_macro_action(worker *w, const kos_macro_output *out, int64_t
 
     memset(&action, 0, sizeof action);
     if (out->action == KOS_MACRO_ACT_FACE) {
+        int station = kos_kitchen_station_index(&w->kitchen, out->target_object);
+
         action.kind = KOS_ACTION_FACE;
-    } else if (out->action == KOS_MACRO_ACT_WORK) {
+        if (station >= 0) {
+            /* 插件按资源键（pot_0/cutting_board_0）或 GameObject 名解析 target_object，
+             * kitchen.json 的 id 两者都不一定是；face 支持坐标，直接给工位坐标。 */
+            action.target_x = w->kitchen.stations[station].x;
+            action.target_y = w->kitchen.stations[station].z;
+        } else {
+            copy_str(action.target_object, sizeof action.target_object,
+                     out->target_object);
+        }
+        publish_action(w, &action);
+        return;
+    }
+    if (out->action == KOS_MACRO_ACT_WORK) {
         action.kind = KOS_ACTION_WORK;
     } else {
         /* 交互只发一小段：ActionDriver 对同一条未完成的按键会去重，但完成后的
@@ -349,8 +363,9 @@ static int start_task(worker *w, const kos_mq_msg *msg)
         return -1;
     }
     kos_error_clear(&err);
-    if (kos_macro_plan_build(&w->kitchen, msg->op, msg->node_id, msg->station_id,
-                             msg->order_id, msg->duration_ms, &plan, &err) != KOS_OK) {
+    if (kos_macro_plan_build_with_source(&w->kitchen, msg->op, msg->node_id, msg->station_id,
+                                         msg->source_station_id, msg->order_id, msg->duration_ms,
+                                         &plan, &err) != KOS_OK) {
         char detail[KOS_MQ_DETAIL_MAX];
 
         error_text(&err, text, sizeof text);

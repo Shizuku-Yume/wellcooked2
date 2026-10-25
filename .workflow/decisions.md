@@ -874,6 +874,7 @@ user may overturn on sight. `Revisit when` of "never" is allowed but suspicious;
 - **Mine:** yes
 - **Revisit when:** Scheduler 能按锅状态单独生成"等熟"工序，或能按订单精确匹配到某一口锅。
 - **Effort:** kitchen-control
+- **Superseded by:** 2026-10-26 - plate 保留订单专属锅直至取菜
 
 ## 2026-10-25 - 工位 id 与 shm 资源键按精确名/归一化/同类序号匹配
 
@@ -943,3 +944,12 @@ user may overturn on sight. `Revisit when` of "never" is allowed but suspicious;
 - **Revisit when:** 任务 02 的 `game_time_ms` 合并进本通道的任务（04/06/09），或实机出现暂停
   期间租约过期/LLF 选择漂移。
 - **Effort:** kitchen-control
+## 2026-10-26 - plate 保留订单专属锅直至取菜
+
+- **Decided:** Scheduler 在 cook 工序完成时从 Worker 租约表摘除该任务租约，但不归还 cooker 令牌；在同一订单/task 记录锅工位与预留状态，`plate` 仅使用该订单对应 cook 的预留锅。plate 成功、订单失败或取消时归还令牌并清除工位预留。Worker 收到 `source_station_id`，先取干净盘，再去该锅等待并拿菜。
+- **Instead of:** 让 Worker 从共享状态猜锅，或只改 `plate` 的 `resource` 为 cooker；前者无法区分并行订单，后者丢失盘子堆站位与有限容量约束。
+- **Because:** `kos_mq_msg` 原本无订单到锅映射，且 Scheduler 在 cook 完成时立即释放 cooker；两个独立缺口都需明确处理。Scheduler 现有订单/task 内存记录足以承载运行期预留，不引入持久化层。
+- **Mine:** yes
+- **Revisit when:** Scheduler 具备可恢复的持久化订单状态，或 recipe DAG 用显式产物位置替代 cook→plate 同名节点绑定。
+- **Effort:** kitchen-control
+- **Supersedes:** 2026-10-25 - plate 拆成 goto + wait_ready + pickup

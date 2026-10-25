@@ -5,7 +5,7 @@
 **Base commit:** b0129232ece42cb481a5821c2688a86a0a631d7e
 **Base branch:** kitchen-control/05-ring-and-pa-baseline
 **Started:** 2026-10-25T16:50:00+08:00
-**Status:** blocked
+**Status:** active
 
 **Delivers:** 插件 `work=auto` 关掉 `WorkOrder.cs` 的替身逻辑后，`s_wellcooked_demo_2` 上两个
 厨师完全由 Linux 侧控制，无手动输入完成至少一单；`_1`（没有干净盘堆）上洗盘让盘子循环起来。
@@ -96,12 +96,4 @@ No Supervisor acceptance run occurred. There is no evidence for positive score, 
 
 Game configs were verified restored byte-for-byte against `/tmp/kc09-backup`; `wellcooked-command.txt` is absent. No game, Bridge, or Supervisor process remains; the lock was already absent at handoff (previous owner record was this task's `A 09` session).
 
-## Blocked
-
-**假设：** 前置 05、06、07 已归档并可作为本任务的已完成依赖。
-
-**实际：** `git fetch -q origin` 后，`origin/kitchen-control/06-macro-actions` 的任务文件仍为 `Status: blocked`，其 `## Blocked` 明确记录 `plate` 节点使用 `plate_stack`、而 L2 规范要求从锅取熟菜；`kos_mq_msg` 没有订单到锅的映射，Worker 无法正确完成该工序。该分支也没有 `.workflow/done/kitchen-control/06-macro-actions.md`，因此按通道规则不能把 06 当作已完成前置。当前 09 的实机验收还缺少可证明的盘/锅契约，继续跑实机会把错误计划冒充为任务 Check。
-
-需要 `flow-break` amend 任务 06/09 的计划与接口契约（或先落地锅盘映射）后再恢复本任务；本分支已有的诊断、坐标 helper 与 launcher 改动保留在工作树，未将其作为完成证据。
-
-**Next:** `flow-break` amend 06/09 的计划与锅盘接口契约并恢复前置归档后，再解除本任务 blocked；恢复时重新取得共享锁、按本分支部署并严格执行 `_2` 与 `_1` 实机 Check。
+**2026-10-26 恢复：** 前置06修复分支 `origin/kitchen-control/06-macro-actions-repair-A` 已推送且含 `.workflow/done/kitchen-control/06-macro-actions.md`；07 的归档也已在 `origin/kitchen-control/07-assign-cost-and-policies` 核验。06 修复明确采用 recipe DAG 前驱绑定 `source_station_id`，cook 完成后保留锅令牌到 plate 终态，并覆盖冷菜及间接前驱。合并前置06并在当前分支保留 07 的匈牙利派工、订单策略、`avoid_chef`/`blocked_hold` 与 sink/wash 逻辑。`bridge && make` 已通过；`make test` 与 `macro,os-loop,nav-stuck` 场景均通过。继续恢复原 stash 后再验证全链路与实机验收。
