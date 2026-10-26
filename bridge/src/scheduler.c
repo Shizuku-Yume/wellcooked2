@@ -782,7 +782,16 @@ static int chef_can_take_task(const kos_world_state *world, int chef, const char
         if (holder >= 0 || bound) {
             return 0;
         }
+        /* 煮/煎类热菜在锅里（holder < 0），装盘需要空手去盘堆拿盘；
+         * 切好/做好的冷菜在手上（holder >= 0），由上面的 holder 判定锁定制作者。 */
+        if (strcmp(op, "plate") == 0) {
+            return 1;
+        }
         return !op_consumes_holding(op);
+    }
+    /* 热菜装盘原料在灶上（holder < 0），手上拿着别的东西的厨师不能接装盘 */
+    if (holder < 0 && strcmp(op, "plate") == 0) {
+        return 0;
     }
     /* holder < 0 说明图上没有唯一持有者（deliver 只有盘子、或两个子工序在两个人手里）：
      * 这时允许手上有东西的厨师去试，内容核对会把放错的料判成 content-mismatch。 */
