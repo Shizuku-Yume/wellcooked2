@@ -1167,7 +1167,11 @@ class Demo3World:
                     "holding": item.name if item is not None else None,
                     "state": "idle"}
             if item is not None and item.contents:
-                chef["holding_contents"] = self.leaves(item.contents)
+                leaves = self.leaves(item.contents)
+                dish = match_dish(item.contents)
+                # 调度器会把手里已经成菜的产品归并到 plate/pickup 节点（item_adopted）；
+                # 认它靠菜名或 plate 节点 label，所以手持内容里带上成菜名。
+                chef["holding_contents"] = ([dish] + leaves) if dish else leaves
             holdings.append(chef)
         orders = []
         for order in self.active_orders:
