@@ -723,34 +723,85 @@ static int run_start_cook(kos_macro *macro, const kos_kitchen *kitchen,
 }
 
 /*
- * 倒料：手上有锅，对着容器按 interact，直到源锅里那味料在世界状态里消失。
- *
- * 为什么不按 pot_N 找源锅：插件按"非空锅的位置"排序编号，锅端在手上移动时编号会重排
- * （ManualLog 的注释也记了这一点），照编号找会盯上另一口锅。这里按内容找：内容里含
- * step->item 的那口锅就是源锅；它消失（倒空后插件不再上报）或内容不再含这味料就算完成。
- * 整段都没看见源锅时按 MACRO_POUR_FALLBACK_MS 兜底，别把一次成功的倒料拖成超时。
+ * 手上的锅/容器（G1/G5）：插件按 `carried_<chefId>` 上报手持的锅/盘，容器内容进
+ * contents[]（content 是拼串兼容形式）。旧插件没有这一项，返回 NULL。
+ * 这个名字由 macro 侧直接认；proto 的 find_station_resource 只负责"按位置找工位上的
+ * 资源"，不覆盖"跟着人走"的锅。
  */
-static int run_pour(kos_macro *macro, const kos_world_state *world,
-                    const kos_macro_step *step, int64_t game_ms, kos_macro_output *out)
+static const kos_resource *find_carried_resource(const kos_world_state *world, int chef_id)
 {
-    int found = 0;
+    char name[KOS_SHM_NAME_MAX];
     int i;
 
+    if (chef_id < 0 || world == NULL) {
+        return NULL;
+    }
+    snprintf(name, sizeof name, "carried_%d", chef_id);
     for (i = 0; i < (int)world->resource_count; i++) {
-        const kos_resource *resource = &world->resources[i];
-
-        if (strncmp(resource->name, "pot_", 4) != 0 || resource->content[0] == '\0') {
-            continue;
-        }
-        if (kos_kitchen_name_matches(step->item, resource->content)) {
-            found = 1;
-            break;
+        if (strcmp(world->resources[i].name, name) == 0) {
+            return &world->resources[i];
         }
     }
-    if (found) {
-        macro->saw_content = 1;
-    } else if (macro->saw_content ||
-               game_ms - macro->step_start_ms >= MACRO_POUR_FALLBACK_MS) {
+    return NULL;
+}
+
+/*
+ * 倒料：手上端着锅/容器，对着台面容器按 interact，直到锅里的料进到台面上。
+ *
+ * 完成判据取世界状态的"内容"，不按资源编号（锅跟着人走，pot_N 是灶台槽位、不是锅）：
+ *   1. 插件报了 `carried_<chefId>`：先看到它的 content 非空（锅里确实有料），随后变空
+ *      = 倒完了。一帧都没见过内容（插件的 contents 还没接上）不算完成，走兜底；
+ *   2. 没有 carried_（旧插件）：退回"源锅里那味料从 pot_* 里消失"；
+ *   3. 整段都没有可用信号时按 MACRO_POUR_FALLBACK_MS 兜底，别把一次成功的倒料拖成超时。
+ * 目的台面（容器）的位置由 kitchen.json 的 station_id 给出，状态侧由 proto 的
+ * find_station_resource 按位置找；只有"没有 carried_ 的旧状态"才拿它的内容当第二信号
+ * （新状态里 carried_ 是权威：同一张台面可能被两单共用，内容分不清是谁的）。
+ */
+static int run_pour(kos_macro *macro, const kos_kitchen *kitchen, const kos_world_state *world,
+                    int chef_id, int64_t game_ms, kos_macro_output *out)
+{
+    const kos_macro_step *step = &macro->plan.steps[macro->step_index];
+    const kos_resource *carried = find_carried_resource(world, chef_id);
+    const kos_resource *counter = find_station_resource(kitchen, step, world);
+    int done = 0;
+
+    if (carried != NULL) {
+        if (carried->content[0] != '\0') {
+            macro->saw_content = 1;
+        } else if (macro->saw_content) {
+            done = 1;
+        }
+    } else {
+        int found = 0;
+        int i;
+
+        for (i = 0; i < (int)world->resource_count; i++) {
+            const kos_resource *resource = &world->resources[i];
+
+            if (strncmp(resource->name, "pot_", 4) != 0 || resource->content[0] == '\0') {
+                continue;
+            }
+            if (kos_kitchen_name_matches(step->item, resource->content)) {
+                found = 1;
+                break;
+            }
+        }
+        /* 台面容器上有内容（contents[] 里有料）说明这一步的料已经倒进去了；
+         * 台面资源由 proto 的 find_station_resource 按位置找，旧世界状态里没有这一项。 */
+        if (counter != NULL && counter->content[0] != '\0') {
+            found = 1;
+        }
+        if (found) {
+            macro->saw_content = 1;
+        } else if (macro->saw_content) {
+            done = 1;
+        }
+    }
+    if (!done && !macro->saw_content &&
+        game_ms - macro->step_start_ms >= MACRO_POUR_FALLBACK_MS) {
+        done = 1;
+    }
+    if (done) {
         return next_step(macro, out) == 1 ? 1 : 0;
     }
     if (game_ms >= macro->deadline_ms) {
@@ -845,7 +896,7 @@ int kos_macro_advance(kos_macro *macro, const kos_kitchen *kitchen,
     case KOS_MACRO_START_COOK:
         return run_start_cook(macro, kitchen, world, game_ms, out);
     case KOS_MACRO_POUR:
-        return run_pour(macro, world, step, game_ms, out);
+        return run_pour(macro, kitchen, world, chef_id, game_ms, out);
     case KOS_MACRO_WASH:
         return run_wash(macro, kitchen, world, game_ms, out);
     case KOS_MACRO_DELIVER:

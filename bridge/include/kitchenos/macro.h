@@ -19,8 +19,9 @@
  *   drop      holding 变空
  *   chop      工位 progress 到 1
  *   start_cook 锅 state 变成 cooking/cooked
- *   pour      源锅里的那味料从世界状态里消失（锅跟着厨师走、编号会重排，所以按内容
- *             找 pot_*，不按 pot_N）；整段没看见源锅时按工时兜底
+ *   pour      手上锅/容器（`carried_<chefId>`）的内容从非空变空；旧状态没有 carried_
+ *             时退回"源锅里那味料消失"（按内容找 pot_*，不按槽位号）；整段没有可用
+ *             信号时按 MACRO_POUR_FALLBACK_MS 兜底
  *   wash      水槽 progress 到 1 且干净盘数加一（没有 plate_stack 可读时只认 progress）
  *   deliver   订单从世界状态订单表消失
  */
