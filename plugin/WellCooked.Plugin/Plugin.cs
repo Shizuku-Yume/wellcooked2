@@ -71,6 +71,7 @@ namespace WellCooked
             _input.Init(_harmony);
             _state.Init(_harmony);
             ProcessingTuner.Init(_harmony, LogLine);
+            CapacityTuner.Init(_harmony, LogLine);
 
             ApplyInputConfig();
             _statePushEnabled = _stateEnabled.Value;
@@ -91,6 +92,7 @@ namespace WellCooked
             }
             _input.ClearAll();
             ProcessingTuner.Shutdown();
+            CapacityTuner.Shutdown();
             if (_harmony != null)
             {
                 try { _harmony.UnpatchSelf(); } catch { }
@@ -105,6 +107,7 @@ namespace WellCooked
 
             _input.Tick();
             ProcessingTuner.Tick();
+            CapacityTuner.Tick();
 
             // 选关菜单：F9 开关，↑/↓ 选择，回车载入，ESC 关闭（OnGUI 里绘制）
             LevelMenu.Tick();

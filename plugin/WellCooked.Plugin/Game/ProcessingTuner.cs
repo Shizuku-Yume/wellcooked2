@@ -55,6 +55,27 @@ namespace WellCooked.Game
         private static int _lastLogStages = -1;
         private static int _lastLogMult = -1;
 
+        // wellcooked_demo_3 is the "fast chopping" level: fewer stages per ingredient and a
+        // larger single-player time multiplier, so a dish can be prepared inside a 2 minute
+        // round. Other levels keep whatever the editor's processing config says.
+        private const int TunedChopStages = 2;
+        private const int TunedChopMultiplier = 8;
+
+        private static bool InTunedLevel()
+        {
+            try
+            {
+                UnityEngine.SceneManagement.Scene scene =
+                    UnityEngine.SceneManagement.SceneManager.GetActiveScene();
+                return scene.IsValid()
+                    && scene.name.IndexOf("wellcooked_demo_3", StringComparison.OrdinalIgnoreCase) >= 0;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
         public static string ConfigPath
         {
             get { return Path.Combine(Paths.BepInExRootPath, "wellcooked-processing.json"); }
@@ -138,7 +159,7 @@ namespace WellCooked.Game
             if (__instance == null || _stagesField == null) return;
             try
             {
-                _stagesField.SetValue(__instance, _cfg.chop_stages);
+                _stagesField.SetValue(__instance, InTunedLevel() ? TunedChopStages : _cfg.chop_stages);
             }
             catch { }
         }
@@ -147,7 +168,7 @@ namespace WellCooked.Game
         {
             // The game returns 1 for 2P+; only override the single-player multiplier (>1)
             // so a 1P setting can never make a 2P game slower than the game's own rule.
-            if (__result > 1) __result = _cfg.chop_multiplier;
+            if (__result > 1) __result = InTunedLevel() ? TunedChopMultiplier : _cfg.chop_multiplier;
         }
 
         private static void ApplyCookTime(bool log)
