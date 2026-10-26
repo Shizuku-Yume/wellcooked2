@@ -35,6 +35,9 @@ namespace WellCooked.Game
             public float cook_time = 10f;
             public int chop_stages = 8;
             public int chop_multiplier = 5;
+            // Level 3 only: shorter chopping. The active scene name contains "wellcooked_demo_3".
+            public int level3_chop_stages = 2;
+            public int level3_chop_multiplier = 1;
             public string updated_at;
             public string source;
         }
@@ -49,6 +52,19 @@ namespace WellCooked.Game
         private static Type _workableType;
         private static FieldInfo _stagesField;
         private static bool _patched;
+
+        private static bool IsLevel3()
+        {
+            try
+            {
+                string scene = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
+                return !string.IsNullOrEmpty(scene) && scene.Contains("wellcooked_demo_3");
+            }
+            catch
+            {
+                return false;
+            }
+        }
 
         private static int _lastLogPots = -1;
         private static float _lastLogCook = -1f;
@@ -138,7 +154,8 @@ namespace WellCooked.Game
             if (__instance == null || _stagesField == null) return;
             try
             {
-                _stagesField.SetValue(__instance, _cfg.chop_stages);
+                _stagesField.SetValue(__instance,
+                    IsLevel3() ? _cfg.level3_chop_stages : _cfg.chop_stages);
             }
             catch { }
         }
@@ -147,7 +164,7 @@ namespace WellCooked.Game
         {
             // The game returns 1 for 2P+; only override the single-player multiplier (>1)
             // so a 1P setting can never make a 2P game slower than the game's own rule.
-            if (__result > 1) __result = _cfg.chop_multiplier;
+            if (__result > 1) __result = IsLevel3() ? _cfg.level3_chop_multiplier : _cfg.chop_multiplier;
         }
 
         private static void ApplyCookTime(bool log)
@@ -214,6 +231,8 @@ namespace WellCooked.Game
             cfg.cook_time = ClampCook(cfg.cook_time);
             cfg.chop_stages = ClampStages(cfg.chop_stages);
             cfg.chop_multiplier = ClampMult(cfg.chop_multiplier);
+            cfg.level3_chop_stages = ClampStages(cfg.level3_chop_stages);
+            cfg.level3_chop_multiplier = ClampMult(cfg.level3_chop_multiplier);
             _cfg = cfg;
 
             if (initial || cfg.cook_time != _lastLogCook || cfg.chop_stages != _lastLogStages
@@ -221,6 +240,8 @@ namespace WellCooked.Game
             {
                 Log("[Processing] loaded cook_time=" + cfg.cook_time + "s chop_stages="
                     + cfg.chop_stages + " chop_multiplier=" + cfg.chop_multiplier
+                    + " | level3 chop_stages=" + cfg.level3_chop_stages
+                    + " chop_multiplier=" + cfg.level3_chop_multiplier
                     + (File.Exists(path) ? "" : " (defaults, file missing)"));
                 _lastLogCook = cfg.cook_time;
                 _lastLogStages = cfg.chop_stages;

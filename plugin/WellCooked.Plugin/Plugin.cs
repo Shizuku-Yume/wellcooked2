@@ -71,6 +71,7 @@ namespace WellCooked
             _input.Init(_harmony);
             _state.Init(_harmony);
             ProcessingTuner.Init(_harmony, LogLine);
+            IngredientCapacityTuner.Init(_harmony, LogLine);
 
             ApplyInputConfig();
             _statePushEnabled = _stateEnabled.Value;
@@ -91,6 +92,7 @@ namespace WellCooked
             }
             _input.ClearAll();
             ProcessingTuner.Shutdown();
+            IngredientCapacityTuner.Shutdown();
             if (_harmony != null)
             {
                 try { _harmony.UnpatchSelf(); } catch { }
