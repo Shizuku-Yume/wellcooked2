@@ -41,40 +41,57 @@ def newest_run(runtime):
     return runs[-1] if runs else None
 
 
+def norm_id(value):
+    """Scheduler uses order_001; the game state uses 1.  Both mean one order."""
+    text = str(value or "")
+    match = re.search(r"(\d+)$", text)
+    return str(int(match.group(1))) if match else text
+
+
 def order_rows(events, final_state):
     arrived = {}
     completed = {}
+    rejected = {}
     for event in events:
         kind = event.get("event")
         order_id = str(event.get("order_id", ""))
-        if kind == "order_arrived" and order_id:
-            arrived[order_id] = event
-        elif kind == "order_completed" and order_id:
-            completed[order_id] = event
+        if not order_id:
+            continue
+        key = norm_id(order_id)
+        if kind == "order_arrived":
+            arrived[key] = event
+        elif kind == "order_completed":
+            completed[key] = event
+        elif kind == "order_rejected":
+            rejected[key] = event
 
     live = {}
     for item in final_state.get("orders") or []:
         if isinstance(item, dict):
-            live[str(item.get("id", ""))] = item
+            live[norm_id(item.get("id", ""))] = item
 
     result = []
-    for order_id in sorted(arrived, key=lambda s: (len(s), s)):
-        info = arrived[order_id]
-        if order_id in completed:
+    for key in sorted(arrived, key=lambda s: (len(s), s)):
+        info = arrived[key]
+        if key in completed:
             outcome = "completed"
-            when = completed[order_id].get("t_ms")
-        elif order_id in live:
+            when = completed[key].get("t_ms")
+        elif key in rejected:
+            reason = rejected[key].get("reason", "rejected")
+            outcome = "rejected: %s" % reason
+            when = rejected[key].get("t_ms")
+        elif key in live:
             outcome = "unfinished"
             when = None
         else:
             outcome = "expired/left"
             when = None
         result.append({
-            "id": order_id,
+            "id": info.get("order_id", key),
             "dish": info.get("dish", "?"),
             "outcome": outcome,
             "t_ms": when,
-            "remaining": (live.get(order_id) or {}).get("remaining"),
+            "remaining": (live.get(key) or {}).get("remaining"),
         })
     return result
 

@@ -14,6 +14,7 @@
 # No step asks for a human key press.  Useful overrides:
 #   GAME_DIR=...            game installation
 #   SOURCE_ROOT=...         tree whose plugin/bridge/configs are used
+#   BUNDLE_REF=origin/main  git ref for the PR42 level bundles (or BUNDLE_SRC=dir)
 #   BUILD_PLUGIN=0          do not build; use SOURCE_ROOT's existing DLL
 #   BUILD_BRIDGE=0          do not build; use SOURCE_ROOT's existing bridge/build
 #   REUSE_GAME=1            keep an already-running game instead of relaunching
@@ -56,7 +57,8 @@ SOURCE_ROOT="${SOURCE_ROOT:-$ROOT}"
 PLUGIN_DLL="${PLUGIN_DLL:-$SOURCE_ROOT/plugin/bin/Release/net35/WellCooked.Smoke.dll}"
 BRIDGE_BIN_DIR="${BRIDGE_BIN_DIR:-$SOURCE_ROOT/bridge/build}"
 SUPERVISOR="$BRIDGE_BIN_DIR/kitchenos-supervisor"
-BUNDLE_SRC="$SOURCE_ROOT/levels/wellcooked_demo"
+BUNDLE_SRC="${BUNDLE_SRC:-}"
+BUNDLE_REF="${BUNDLE_REF:-origin/main}"
 
 STATE="$GAME_DIR/BepInEx/wellcooked-state.json"
 MENU="$GAME_DIR/BepInEx/wellcooked-menu.json"
@@ -469,15 +471,26 @@ for bin in kitchenos-supervisor kitchenos-bridge kitchenos-scheduler kitchenos-w
     [ -x "$BRIDGE_BIN_DIR/$bin" ] || die "missing bridge binary: $BRIDGE_BIN_DIR/$bin"
 done
 
+BUNDLE_TMP="$RT/bundles"
+mkdir -p "$BUNDLE_TMP"
+if [ -n "$BUNDLE_SRC" ]; then
+    for bundle in "$SCENE" info_wellcooked_demo; do
+        [ -f "$BUNDLE_SRC/$bundle" ] || die "missing level bundle: $BUNDLE_SRC/$bundle"
+        cp -p "$BUNDLE_SRC/$bundle" "$BUNDLE_TMP/$bundle"
+    done
+else
+    for bundle in "$SCENE" info_wellcooked_demo; do
+        git -C "$SOURCE_ROOT" show "$BUNDLE_REF:levels/wellcooked_demo/$bundle"             > "$BUNDLE_TMP/$bundle" 2>/dev/null             || die "cannot read $BUNDLE_REF:levels/wellcooked_demo/$bundle"
+    done
+fi
+mkdir -p "$DEST_LEVEL"
 for bundle in "$SCENE" info_wellcooked_demo; do
-    [ -f "$BUNDLE_SRC/$bundle" ] || die "missing level bundle: $BUNDLE_SRC/$bundle"
-    mkdir -p "$DEST_LEVEL"
     if [ -f "$DEST_LEVEL/$bundle" ]; then
         cp -p "$DEST_LEVEL/$bundle" "$RT/bundles.previous/$bundle"
     fi
-    cp -p "$BUNDLE_SRC/$bundle" "$DEST_LEVEL/$bundle"
+    cp -p "$BUNDLE_TMP/$bundle" "$DEST_LEVEL/$bundle"
 done
-say "deploy: bundles $SCENE info_wellcooked_demo"
+say "deploy: bundles $SCENE info_wellcooked_demo ($BUNDLE_REF)"
 
 write_takeover true
 rm -f "$COMMAND"
@@ -510,6 +523,20 @@ wait_frontend_off
 before="$(state_mtime_ns)"
 printf 'load=%s\n' "$SCENE" > "$COMMAND"
 wait_load_stable "$before" || die "scene $SCENE did not stay fresh/stable with $CHEFS chefs"
+
+# A scene with the right chef count can still be stuck in LoadKitchen (the old
+# false-positive).  Do not start a Supervisor until the round clock is moving.
+clock_ok=0
+for i in $(seq 1 30); do
+    read -r scene chefs stations left elapsed round <<<"$(state_probe)"
+    if python3 -c 'import sys; raise SystemExit(0 if float(sys.argv[1]) > 0 else 1)' \
+        "$round" 2>/dev/null; then
+        clock_ok=1
+        break
+    fi
+    sleep 1
+done
+[ "$clock_ok" = 1 ] || die "round clock stayed at 0 after load (scene is stuck before RunKitchen)"
 
 export_map
 if [ "$EXPORT" = 1 ]; then
