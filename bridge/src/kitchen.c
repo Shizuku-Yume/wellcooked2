@@ -448,3 +448,128 @@ int kos_kitchen_pick_station(const kos_kitchen *kitchen, const char *kind,
     *index = candidates[salt % (unsigned)count];
     return KOS_OK;
 }
+
+/* 从 from 的站位格走到 to 的站位格要几步；两个距离场之间最近的一对。 */
+static int station_gap(const kos_kitchen *kitchen, int from, int to)
+{
+    const kos_station_stands *stands = &kitchen->stand.station[to];
+    int best = -1;
+    int i;
+
+    for (i = 0; i < stands->count; i++) {
+        uint16_t distance = kitchen->stand.distance[from][stands->cells[i].cell];
+
+        if (distance == KOS_STAND_UNREACHABLE) {
+            continue;
+        }
+        if (best < 0 || (int)distance < best) {
+            best = (int)distance;
+        }
+    }
+    return best;
+}
+
+static int counter_usable(const kos_kitchen *kitchen, int index)
+{
+    const kos_station *station = &kitchen->stations[index];
+    int i;
+
+    if (strcmp(station->kind, "counter") != 0 || kitchen->stand.station[index].count == 0) {
+        return 0;
+    }
+    for (i = 0; i < kitchen->station_count; i++) {
+        const kos_station *other = &kitchen->stations[i];
+
+        if (i == index || strcmp(other->kind, "counter") == 0) {
+            continue;
+        }
+        /* 盘堆/灶/出菜口是摆在台面上的独立物体：那张台面放不了玉米饼。 */
+        if (fabsf(other->x - station->x) <= KOS_KITCHEN_STATION_OVERLAP &&
+            fabsf(other->z - station->z) <= KOS_KITCHEN_STATION_OVERLAP) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static int step_matches(const kos_station *station, const char *step)
+{
+    return step == NULL || step[0] == '\0' || station->step[0] == '\0' ||
+           strcmp(station->step, step) == 0;
+}
+
+/* 某类工位里离 candidate 最近的那个的格数；没有可达的返回 -1。 */
+static int nearest_gap(const kos_kitchen *kitchen, int candidate, const char *kind,
+                       const char *step)
+{
+    int best = -1;
+    int i;
+
+    for (i = 0; i < kitchen->station_count; i++) {
+        int gap;
+
+        if (strcmp(kitchen->stations[i].kind, kind) != 0) {
+            continue;
+        }
+        if (step != NULL && !step_matches(&kitchen->stations[i], step)) {
+            continue;
+        }
+        gap = station_gap(kitchen, candidate, i);
+        if (gap >= 0 && (best < 0 || gap < best)) {
+            best = gap;
+        }
+    }
+    return best;
+}
+
+int kos_kitchen_pick_counter(const kos_kitchen *kitchen, const char *const steps[],
+                             int step_count, const unsigned char *busy, int *index)
+{
+    int best = -1;
+    int best_score = 0;
+    int i;
+
+    if (kitchen == NULL || index == NULL || step_count < 0) {
+        return KOS_ERR_INVAL;
+    }
+    for (i = 0; i < kitchen->station_count; i++) {
+        int score = 0;
+        int plate_gap;
+        int s;
+
+        if (busy != NULL && busy[i]) {
+            continue;
+        }
+        if (!counter_usable(kitchen, i)) {
+            continue;
+        }
+        for (s = 0; s < step_count; s++) {
+            int gap = nearest_gap(kitchen, i, "cooker", steps != NULL ? steps[s] : NULL);
+
+            if (gap > 0) {
+                /* 每份熟料都要端锅来回一趟，灶的距离算两倍。 */
+                score += 2 * gap;
+            }
+        }
+        /* 盘子从盘堆取；没有盘堆（`_1`）时整道菜在水槽洗好再上，用 sink 当目标。 */
+        plate_gap = nearest_gap(kitchen, i, "plate_stack", NULL);
+        if (plate_gap < 0) {
+            plate_gap = nearest_gap(kitchen, i, "clean_plate_stack", NULL);
+        }
+        if (plate_gap < 0) {
+            plate_gap = nearest_gap(kitchen, i, "sink", NULL);
+        }
+        if (plate_gap > 0) {
+            score += plate_gap;
+        }
+        if (best < 0 || score < best_score) {
+            best = i;
+            best_score = score;
+        }
+    }
+    if (best < 0) {
+        return KOS_ERR_MISSING;
+    }
+    *index = best;
+    return KOS_OK;
+}

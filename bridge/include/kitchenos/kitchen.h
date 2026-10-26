@@ -17,7 +17,9 @@
 #include <kitchenos/shm.h>
 
 #define KOS_KITCHEN_MAX_CELLS 2048
-#define KOS_KITCHEN_MAX_STATIONS 64
+/* 普通台面（counter）现在也是工位：`_3` 的环形吧台有 42 张，加上料箱/锅/盘堆就过 64。
+ * 这个上限只在进程内使用（kos_kitchen 不进共享内存），放宽不改变段布局。 */
+#define KOS_KITCHEN_MAX_STATIONS 128
 #define KOS_KITCHEN_NAME_MAX 32
 #define KOS_KITCHEN_FILE_MAX (4 * 1024 * 1024)
 
@@ -119,5 +121,24 @@ int kos_kitchen_pick_station(const kos_kitchen *kitchen, const char *kind,
 
 /* 两个名字是否匹配：忽略大小写，任一方包含另一方即算。给上面选料箱用。 */
 int kos_kitchen_name_matches(const char *hint, const char *candidate);
+
+/*
+ * 普通台面（counter）：同格还有别的工位（盘堆/灶/出菜口都摆在台面上）就不算，
+ * 判定阈值与 `scripts/export-kitchen.py` 合并工位用的 0.15 m 相同。
+ */
+#define KOS_KITCHEN_STATION_OVERLAP 0.15f
+
+/*
+ * 挑一张能当容器的普通台面（卷饼 `place` / `pour` / `pickup` 落这里）。
+ * 只考虑有站位格、同格没有别的工位的 counter；`busy` 非空时跳过其中非 0 的下标
+ * （别的订单已经占了那张台面）。
+ *
+ * 分数 = 2 × Σ_steps（到最近同类灶的格数）+ 到最近盘堆（没有盘堆时水槽）的格数：
+ * 每份熟料都要端着锅从灶走到台面再走回去，所以灶距离算两倍。同分取 stations[]
+ * 下标小的——导出顺序固定，结果可复现。成功返回 0 并写下标，没有可用台面返回
+ * KOS_ERR_MISSING。
+ */
+int kos_kitchen_pick_counter(const kos_kitchen *kitchen, const char *const steps[],
+                             int step_count, const unsigned char *busy, int *index);
 
 #endif /* KITCHENOS_KITCHEN_H */
