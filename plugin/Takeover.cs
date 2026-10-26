@@ -977,12 +977,10 @@ namespace WellCooked
                     continue;
                 }
 
+                // 只归零设备层。不能给自有玩家位写逻辑层：SetButtons 会把逻辑层置成 Active，
+                // 之后一直盖住设备层的轴，ActionDriver.Feed 只写设备层的 path 就全被归零
+                // （2026-10-26 `_3` 四人实机：4 人整局停在出生格）。
                 owned.Pad.Want(false, false, Vector2.zero);
-                PlayerInputLookup.Player player;
-                if (TryPlayerOf(owned.Slot, out player))
-                {
-                    LogicalInput.SetButtons(player, Vector2.zero, false, false, false);
-                }
             }
 
             if (now >= _nextDriveLog)

@@ -931,8 +931,40 @@ namespace WellCooked
             foreach (var crate in Kitchen.Crates())
             {
                 _log.LogInfo("指令: 料箱 " + crate.Name + " 给=" + crate.Gives
-                             + " (" + crate.Position.x.ToString("F1") + "," + crate.Position.y.ToString("F1") + ")");
+                             + " (" + crate.Position.x.ToString("F2") + "," + crate.Position.y.ToString("F2") + ") "
+                             + GameCellNeighbours(crate.Position));
             }
+        }
+
+        /// <summary>
+        /// 工位所在的游戏格（1.2 米那套）、格心、本格占位物体，以及四个邻格的格心/占位/能不能站。
+        /// 交互只认"站在空邻格、朝着工位格"，站位点必须落在这些邻格里。
+        /// </summary>
+        private static string GameCellNeighbours(Vector2 station)
+        {
+            int ix, iz;
+            Vector2 centre;
+            if (!WorldState.GameCellOf(station, out ix, out iz) || !WorldState.GameCellPosition(ix, iz, out centre))
+            {
+                return "游戏格=?";
+            }
+            var own = WorldState.GameCellOccupant(ix, iz);
+            var text = "游戏格=(" + ix + "," + iz + ") 格心=(" + centre.x.ToString("F2") + "," + centre.y.ToString("F2")
+                       + ") 本格=「" + (own == null ? "" : own.name) + "」";
+            var offsets = new[] { new[] { 1, 0 }, new[] { -1, 0 }, new[] { 0, 1 }, new[] { 0, -1 } };
+            foreach (var o in offsets)
+            {
+                Vector2 p;
+                if (!WorldState.GameCellPosition(ix + o[0], iz + o[1], out p))
+                {
+                    continue;
+                }
+                var occupant = WorldState.GameCellOccupant(ix + o[0], iz + o[1]);
+                text += " [" + o[0] + "," + o[1] + "]=(" + p.x.ToString("F2") + "," + p.y.ToString("F2") + ")"
+                        + (occupant == null ? "空" : "「" + occupant.name + "」")
+                        + (WorldState.IsWalkablePoint(p.x, p.y) ? "可站" : "不可站");
+            }
+            return text;
         }
 
         /// <summary>scan=关键字：列出物体名或组件类型名含这个关键字的对象（找料箱/工位用）。</summary>

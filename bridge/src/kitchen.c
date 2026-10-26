@@ -229,6 +229,9 @@ int kos_kitchen_load(const char *path, kos_kitchen *out, kos_error *err)
         if (json_object_get_string(entry, "gives", &text_value, &text_len) == JSON_OK) {
             copy_str(station->gives, sizeof station->gives, text_value);
         }
+        if (json_object_get_string(entry, "step", &text_value, &text_len) == JSON_OK) {
+            copy_str(station->step, sizeof station->step, text_value);
+        }
         if (json_object_get_array(entry, "pos", &pos) != JSON_OK ||
             json_array_size(pos) != 2 ||
             json_typeof(json_array_get(pos, 0)) != JSON_NUMBER ||

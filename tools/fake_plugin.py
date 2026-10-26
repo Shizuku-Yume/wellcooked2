@@ -3989,6 +3989,12 @@ def scenario_macro(ctx, checks):
                     not any(row["event"] == "done" and row["macro"] == "pickup"
                             for row in fail_rows),
                     "done=%s" % [r for r in fail_rows if r["event"] == "done"][:3])
+        requeued = [e for e in stalled["events"]
+                    if e.get("event") == "task_requeued" and e.get("reason") == "macro-failed"]
+        checks.hard("macro_failure_requeues_before_order_fails",
+                    len(requeued) >= 1 and len(failures) >= 2,
+                    "requeued=%d macro_failed=%d（宏失败先回队重派，到上限才让订单失败）" %
+                    (len(requeued), len(failures)))
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
     return "soup/wash 两局世界状态延迟 2 s 后宏动作完成；不回料一局 pickup 超时 FAILED"

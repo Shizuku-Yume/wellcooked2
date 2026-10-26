@@ -33,6 +33,7 @@ namespace WellCooked
             ApplyFocusPausePatch();
             ApplyAlwaysFocusedPatch();
             WorldState.Install(_log);
+            GridAlign.Install(_log);
             Diag.Install(_log);
             LinkRunner.Install(_log);
             ActionDriver.Install(_log);

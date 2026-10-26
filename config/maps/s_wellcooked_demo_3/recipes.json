@@ -4,21 +4,21 @@
       "id": "assemble:Chicken_Burrito",
       "op": "assemble",
       "label": "Chicken_Burrito",
-      "resource": "container",
+      "resource": "plate_stack",
       "duration": 1.0
     },
     {
       "id": "assemble:Sushi_PlainFish",
       "op": "assemble",
       "label": "Sushi_PlainFish",
-      "resource": "container",
+      "resource": "plate_stack",
       "duration": 1.0
     },
     {
       "id": "assemble:Sushi_PlainPrawn",
       "op": "assemble",
       "label": "Sushi_PlainPrawn",
-      "resource": "container",
+      "resource": "plate_stack",
       "duration": 1.0
     },
     {
@@ -26,14 +26,16 @@
       "op": "cook",
       "label": "BoiledRice",
       "resource": "cooker",
-      "duration": 5.0
+      "duration": 5.0,
+      "step": "Pot"
     },
     {
       "id": "cook:FriedChicken",
       "op": "cook",
       "label": "FriedChicken",
       "resource": "cooker",
-      "duration": 5.0
+      "duration": 5.0,
+      "step": "FryingPan"
     },
     {
       "id": "deliver:Chicken_Burrito",
@@ -235,8 +237,8 @@
   ],
   "scene": "s_wellcooked_demo_3",
   "generated": {
-    "at": "2026-10-25T14:02:04+0800",
-    "state_t": 35.66,
+    "at": "2026-10-26T17:22:16+0800",
+    "state_t": 67.36,
     "sources": [
       "wellcooked-state.json",
       "wellcooked-terrain.json"

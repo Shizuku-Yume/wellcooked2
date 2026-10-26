@@ -36,6 +36,7 @@ typedef struct {
     char id[KOS_KITCHEN_NAME_MAX];
     char kind[KOS_KITCHEN_NAME_MAX];
     char gives[KOS_KITCHEN_NAME_MAX]; /* 空串 = 这个工位不发料 */
+    char step[KOS_KITCHEN_NAME_MAX];  /* cooker 上那口锅做哪种烹饪（Boil/Fry…）；空串 = 不限 */
     float x;
     float z;
 } kos_station;

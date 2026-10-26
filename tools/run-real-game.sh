@@ -43,34 +43,23 @@ esac
 # 插件的玩家位是 1 基，0 号厨师对应 1 号位。
 SLOTS="$(seq -s, 1 "$CHEFS")"
 GAME_SECONDS="${GAME_SECONDS:-240}"
-PLUGIN_LOG_OFFSET=0
 
 say() { printf '%s\n' "$*"; }
+# 启动前把旧的 LogOutput.log 挪进本次运行目录，所以这里读到的只会是这次启动写的日志。
+# 不能按旧文件长度/最后一个 loaded 标记切：BepInEx 重写日志之前，旧文件里上一局的
+# “加入 pad”“已请求加载”会让各道闸门立刻放行（2026-10-26 `_3` 实测：pad 还没加入就发了 load）。
 plugin_run_log() {
-    python3 - "$BEPINEX_LOG" "$PLUGIN_LOG_OFFSET" <<'PY'
-import sys
-try:
-    with open(sys.argv[1], encoding="utf-8", errors="replace") as log:
-        text = log.read()
-    offset = int(sys.argv[2])
-    marker = text.rfind("WellCooked.Smoke loaded")
-    # BepInEx may rewrite the log with a new run larger than the old offset;
-    # the newest plugin marker is the fresh boundary in that case.
-    start = marker if marker >= 0 and marker < offset else min(offset, len(text))
-    sys.stdout.write(text[start:])
-except Exception:
-    raise SystemExit(1)
-PY
+    [ -f "$BEPINEX_LOG" ] || return 1
+    cat "$BEPINEX_LOG"
 }
 
 assert_real_game() {
     [ "$REAL_GAME" = "1" ] || return 0
     [ -d "$RUNTIME_DIR/runs" ] || { say "FAIL real-game: runs 目录不存在"; return 1; }
     python3 - "$RUNTIME_DIR" "$GAME_DIR/BepInEx/wellcooked-state.json" \
-        "$GAME_DIR/BepInEx/LogOutput.log" "$SCENE" "$CHEFS" "$PLUGIN_LOG_OFFSET" <<'PY'
+        "$GAME_DIR/BepInEx/LogOutput.log" "$SCENE" "$CHEFS" <<'PY'
 import glob, json, os, sys
-runtime, state_path, plugin_path, scene, chefs, plugin_offset = sys.argv[1:]
-plugin_offset = int(plugin_offset)
+runtime, state_path, plugin_path, scene, chefs = sys.argv[1:]
 chefs = int(chefs)
 runs = sorted(glob.glob(os.path.join(runtime, "runs", "*")))
 if not runs:
@@ -127,11 +116,9 @@ if scene.endswith("_1"):
         raise SystemExit("FAIL real-game: cook dispatch has no critical-path priority weight")
 if not os.path.isfile(plugin_path):
     raise SystemExit("FAIL real-game: missing BepInEx LogOutput.log")
+# 启动前旧日志已挪走，这个文件只有本次启动写的内容。
 with open(plugin_path, encoding="utf-8", errors="replace") as f:
-    full_plugin_log = f.read()
-plugin_start = full_plugin_log.rfind("WellCooked.Smoke loaded")
-plugin = (full_plugin_log[plugin_start:] if plugin_start >= 0 else
-          full_plugin_log[min(plugin_offset, len(full_plugin_log)):])
+    plugin = f.read()
 if "工作模式 auto（系统控制：只执行 Bridge 动作）" not in plugin:
     raise SystemExit("FAIL real-game: plugin did not confirm Linux-controlled auto mode")
 if "工序:" in plugin:
@@ -180,8 +167,8 @@ run_supervisor_acceptance() {
     for name in wellcooked-takeover.txt wellcooked-command.txt wellcooked-orders.json; do
         [ ! -e "$GAME_DIR/BepInEx/$name" ] || cp -p "$GAME_DIR/BepInEx/$name" "$BACKUP_DIR/$name"
     done
-    if [ -f "$GAME_DIR/BepInEx/LogOutput.log" ]; then
-        PLUGIN_LOG_OFFSET="$(wc -c < "$GAME_DIR/BepInEx/LogOutput.log")"
+    if [ -f "$BEPINEX_LOG" ]; then
+        mv "$BEPINEX_LOG" "$RUNTIME_DIR/LogOutput.previous.log"
     fi
     printf 'work=auto\nslots=%s\nfrontend_press=true\ndiag=false\nbridge=127.0.0.1:%s\n' "$SLOTS" "$PORT" \
         > "$GAME_DIR/BepInEx/wellcooked-takeover.txt"
@@ -193,9 +180,7 @@ run_supervisor_acceptance() {
         say "Game launch failed; see scripts/run-game.sh output."
         return 1
     fi
-    if [ -f "$BEPINEX_LOG" ] && [ "$(wc -c < "$BEPINEX_LOG")" -lt "$PLUGIN_LOG_OFFSET" ]; then
-        PLUGIN_LOG_OFFSET=0
-    fi
+
     deadline=$(( $(date +%s) + WAIT_SECONDS ))
     plugin_ready=0
     while [ "$(date +%s)" -lt "$deadline" ]; do

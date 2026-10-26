@@ -88,7 +88,8 @@ def group_stations(raw):
         if key is None:
             key = (name, pos)
             groups[key] = {"name": name, "pos": pos, "height": station.get("height", 0.0),
-                           "types": [], "gives": None, "contents": [], "prefab_components": []}
+                           "types": [], "gives": None, "contents": [], "prefab_components": [],
+                           "step": None, "cook_steps": []}
             order.append(key)
         group = groups[key]
         station_type = station.get("type")
@@ -101,6 +102,11 @@ def group_stations(raw):
         for component in station.get("prefab_components") or []:
             if component not in group["prefab_components"]:
                 group["prefab_components"].append(component)
+        if station.get("step") and not group["step"]:
+            group["step"] = station["step"]
+        for step in station.get("cook_steps") or []:
+            if step not in group["cook_steps"]:
+                group["cook_steps"].append(step)
     return [groups[key] for key in order]
 
 
@@ -140,7 +146,25 @@ def build_stations(raw, grid_step, grid_origin):
         if group["prefab_components"]:
             # 料箱才有：这个料的 prefab 上挂了哪些组件（`WorkableItem` = 能加工）
             station["prefab_components"] = group["prefab_components"]
+        if group["cook_steps"]:
+            # 料箱才有：这个料能进哪种烹饪（CookableProperties.AllowedCookingSteps）
+            station["cook_steps"] = group["cook_steps"]
+        if group["step"]:
+            # 锅类容器才有：它做哪种烹饪（CookingHandler.m_cookingType）
+            station["step"] = group["step"]
         merged.append(station)
+    # 灶台本身不带烹饪类型，类型在放在它上面的锅/炸篮上（同一格、不同物体）。
+    # 游戏只让 AllowedCookingSteps 含这一步的料放进锅（CookableContainer.AllowItemPlacement），
+    # 所以 cooker 要带上它那口锅的 step，Scheduler 按 step 挑灶台（实机 `_3`：米被派到炸锅放不进去）。
+    for station in merged:
+        if station["kind"] != "cooker" or station.get("step"):
+            continue
+        for other in merged:
+            if other.get("step") and other is not station and \
+                    abs(other["pos"][0] - station["pos"][0]) <= POS_TOLERANCE and \
+                    abs(other["pos"][1] - station["pos"][1]) <= POS_TOLERANCE:
+                station["step"] = other["step"]
+                break
     merged.sort(key=lambda s: (KIND_ORDER.index(s["kind"]) if s["kind"] in KIND_ORDER else 99,
                                s["pos"][0], s["pos"][1], s["name"]))
     seen = {}
@@ -288,8 +312,14 @@ def topo_order(keys, edges, nodes):
     return out
 
 
-def build_recipes(menu, state):
-    """菜谱表 → 工序 DAG：节点按"工序 + 游戏里的节点名"去重，所以两道菜共用中间产物时只有一个节点。"""
+def build_recipes(menu, state, station_kinds=None):
+    """菜谱表 → 工序 DAG：节点按"工序 + 游戏里的节点名"去重，所以两道菜共用中间产物时只有一个节点。
+
+    `station_kinds` 是 kitchen.json 里有的工位类型；有 `plate_stack` 时，子节点带装盘步骤
+    （菜单里的 `plate`）的组合工序落在盘堆上：干净盘堆把放置转交给最上面那只盘子
+    （`ServerCleanPlateStack.HandlePlacement`），料直接放进盘里。落到锅类容器上游戏会拒收
+    （实机 `_3`：生虾对着平底锅按 interact 不放手）。"""
+    station_kinds = set(station_kinds or ())
     chop_flags = chop_ingredients(state)
     nodes = {}
     edges = set()
@@ -312,7 +342,8 @@ def build_recipes(menu, state):
         name = node.get("node") or "?"
         node_type = node.get("type") or ""
         op = OP_BY_NODE_TYPE.get(node_type, "assemble")
-        children = [walk(child) for child in (node.get("children") or [])]
+        raw_children = node.get("children") or []
+        children = [walk(child) for child in raw_children]
 
         ingredient = match_ingredient(name, chop_flags) if op == "fetch" else None
         extra = {}
@@ -321,6 +352,12 @@ def build_recipes(menu, state):
             # 能不能加工（`WorkableItem`）是事实；"这道菜要不要切"不是——菜谱树里没有这道工序，
             # 所以不替游戏做决定（早先按 WorkableItem 自动插 chop 节点会给出多余的工序）。
             extra["workable"] = bool(chop_flags.get(ingredient))
+        if op == "assemble" and "plate_stack" in station_kinds and \
+                any(child.get("plate") for child in raw_children):
+            extra["resource"] = "plate_stack"
+        if op == "cook" and node.get("cook"):
+            # 这一步要哪种锅（CookedCompositeOrderNode.m_cookingStep）：与 cooker 的 `step` 对上才放得进
+            extra["step"] = node["cook"]
         key = add_node(op, name, **extra)
         for child in children:
             edges.add((child, key))
@@ -462,7 +499,7 @@ def main():
         return 0
 
     menu = load(args.menu)
-    recipes = build_recipes(menu, state)
+    recipes = build_recipes(menu, state, kitchen["kinds"].keys())
     recipes["scene"] = menu.get("scene") or kitchen["scene"]
     recipes["generated"] = kitchen["generated"]
     station_kinds = set(kitchen["kinds"].keys())

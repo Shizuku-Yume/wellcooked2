@@ -35,6 +35,7 @@ typedef struct {
     char resource[KOS_RECIPE_RESOURCE_MAX];
     char label[KOS_RECIPE_LABEL_MAX];
     char ingredient[KOS_RECIPE_NAME_MAX]; /* fetch 节点才有，其它为空 */
+    char step[KOS_RECIPE_NAME_MAX];       /* cook 节点要哪种锅（与工位 step 对上）；空串 = 不限 */
     int duration_ms;
     int zone; /* 所属分区下标；-1 = 未指定/不限 */
 } kos_recipe_node;

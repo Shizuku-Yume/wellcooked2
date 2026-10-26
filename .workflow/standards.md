@@ -147,9 +147,9 @@ python3 scripts/export-kitchen.py --out /tmp/k.json --out-recipes /tmp/r.json   
 ```
 
 `config/kitchen.json` 里：`stations[]` 是工位（`kind` 归类、`id` 稳定、`pos` 是水平面 (x,z)、料箱带 `gives`
-与它那个 prefab 的组件名），`grid.cells` 是 0.6 米采样的可走格，`grid.mask` 是每格的邻居掩码
+与它那个 prefab 的组件名、`cook_steps` 是这个料能进的烹饪类型；锅类容器和它所在的 cooker 带 `step`，即那口锅的烹饪类型，如 `Pot`/`FryingPan`/`DeepFatFryer`），`grid.cells` 是 0.6 米采样的可走格，`grid.mask` 是每格的邻居掩码
 （`edge_bits` 说明位含义，掩码对称）。
-`config/recipes.json` 里：`nodes[]` 是工序（`op` 取 fetch/cook/mix/assemble/plate/deliver，带资源类型与工时），
+`config/recipes.json` 里：`nodes[]` 是工序（`op` 取 fetch/cook/mix/assemble/plate/deliver，带资源类型与工时；`cook` 节点带 `step`，Scheduler 只把它派到 `step` 相同的 cooker），
 `edges[]` 是"子 → 父"的前置依赖，`dishes[]` 每道菜的工序顺序（拓扑序）；节点 id 是 `工序:游戏里的节点名`，
 两道菜共用同一中间产物时只有一个节点。工时目前是方案 §6.5 的默认值，文件里写了来源。
 仓库里的 `config/kitchen.example.json` 与 `config/recipes.example.json` 是 `s_city_h5` 的实测导出

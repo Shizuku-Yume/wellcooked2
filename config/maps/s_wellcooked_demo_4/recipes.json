@@ -4,21 +4,21 @@
       "id": "assemble:Chicken_Burrito",
       "op": "assemble",
       "label": "Chicken_Burrito",
-      "resource": "container",
+      "resource": "plate_stack",
       "duration": 1.0
     },
     {
       "id": "assemble:Sushi_PlainFish",
       "op": "assemble",
       "label": "Sushi_PlainFish",
-      "resource": "container",
+      "resource": "plate_stack",
       "duration": 1.0
     },
     {
       "id": "assemble:Sushi_PlainPrawn",
       "op": "assemble",
       "label": "Sushi_PlainPrawn",
-      "resource": "container",
+      "resource": "plate_stack",
       "duration": 1.0
     },
     {

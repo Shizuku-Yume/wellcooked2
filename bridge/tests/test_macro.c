@@ -526,7 +526,7 @@ static void test_timeouts(const kos_kitchen *kitchen, const char *dispenser,
                strstr(kos_macro_fail_detail(&macro), "timeout") != NULL,
            "pickup 1.5 s 未拿到东西按表超时，detail 写宏动作与条件");
 
-    /* goto 到不了：按距离×2+3 s 超时，不是永远等。 */
+    /* goto 到不了：按距离×2+6 s 超时，不是永远等。 */
     base_world(&world);
     chef = chef_at_station(&world, kitchen, dispenser);
     expect(build(&macro, kitchen, "fetch", "fetch:Carrot", dispenser, "o1", 1000) == 0,
@@ -534,10 +534,31 @@ static void test_timeouts(const kos_kitchen *kitchen, const char *dispenser,
     game_ms = 2000;
     rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
     expect(rc == 0 && out.action == KOS_MACRO_ACT_NAVIGATE, "goto 未到达时发 navigate");
-    game_ms += 4000;
+    game_ms += 5000;
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    expect(rc == 0 && out.action == KOS_MACRO_ACT_NAVIGATE, "6 s 余量内仍在走，不判超时");
+    game_ms += 2000;
     rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
     expect(rc == -1 && strstr(kos_macro_fail_detail(&macro), "macro=goto") != NULL,
            "goto 超时失败");
+
+    /* 到站后转身把厨师推离格心，navd 报回 moving：goto 仍在转身阶段发 face，不退回 navigate。 */
+    base_world(&world);
+    chef = chef_at_station(&world, kitchen, dispenser);
+    chef->facing += 3.14159265f;
+    expect(build(&macro, kitchen, "fetch", "fetch:Carrot", dispenser, "o1", 1000) == 0,
+           "到站后漂移场景计划建成");
+    game_ms = 9000;
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 1, game_ms, &out);
+    expect(rc == 0 && out.action == KOS_MACRO_ACT_FACE, "到站先发 face");
+    game_ms += 16;
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    expect(rc == 0 && out.action == KOS_MACRO_ACT_FACE && macro.step_index == 0,
+           "转身时 navd 报回 moving，goto 继续发 face");
+    chef->facing -= 3.14159265f;
+    game_ms += 16;
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    expect(rc == 0 && macro.step_index == 1, "转过去后 goto 完成，不要求重新到站");
 
     /* chop 的工时超时：工时 1 s + 3 s。 */
     base_world(&world);

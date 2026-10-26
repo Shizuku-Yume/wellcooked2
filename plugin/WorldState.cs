@@ -81,6 +81,7 @@ namespace WellCooked
             AppendKitchen(json, missing);
             AppendCooking(json, missing);
             int stationCount = AppendMap(json, missing);
+            GridAlign.Apply();
             DumpTerrainOnce(stationCount);
 
             json.Append(",\"missing\":[");
@@ -285,6 +286,10 @@ namespace WellCooked
                     .Append(",\"progress\":").Append(Num(Invoke(handler, "GetCookingProgress")))
                     .Append(",\"cooked\":").Append(Bool(Invoke(handler, "IsCooked")))
                     .Append(",\"burning\":").Append(Bool(Invoke(handler, "IsBurning")))
+                    // 这口锅做哪种烹饪（CookingHandler.m_cookingType）：游戏只让
+                    // AllowedCookingSteps 含这一步的料放进来（CookableContainer.AllowItemPlacement），
+                    // 米只能进煮锅、鸡只能进炸篮，OS 侧挑灶台必须按它配
+                    .Append(",\"step\":\"").Append(StepName(Get(component, "m_cookingType")) ?? "").Append('"')
                     .Append('}');
             }
 
@@ -382,6 +387,39 @@ namespace WellCooked
                         }
 
                         json.Append(']');
+                        // 这个料能进哪种烹饪（CookableProperties.AllowedCookingSteps），与上面锅的 step 对上才放得进
+                        json.Append(",\"cook_steps\":[");
+                        var cookable = prefabObject == null ? null : prefabObject.GetComponent("CookableProperties");
+                        var allowed = AsEnumerable(Get(cookable, "AllowedCookingSteps"));
+                        if (allowed != null)
+                        {
+                            bool firstStep = true;
+                            foreach (var step in allowed)
+                            {
+                                var stepName = StepName(step);
+                                if (stepName == null)
+                                {
+                                    continue;
+                                }
+
+                                if (!firstStep)
+                                {
+                                    json.Append(',');
+                                }
+
+                                firstStep = false;
+                                json.Append('"').Append(stepName).Append('"');
+                            }
+                        }
+
+                        json.Append(']');
+                    }
+
+                    if (typeName == "ClientCookableContainer")
+                    {
+                        // 锅/炸篮/平底锅做哪种烹饪：ClientCookableContainer.GetCookingHandler().AccessCookingType
+                        var cookingHandler = Invoke(component, "GetCookingHandler");
+                        json.Append(",\"step\":\"").Append(StepName(Get(cookingHandler, "AccessCookingType")) ?? "").Append('"');
                     }
 
                     json.Append(",\"contents\":[");
@@ -1475,9 +1513,13 @@ namespace WellCooked
                     : null;
             }
 
+            // 煮/炸/煎：CookedCompositeOrderNode.m_cookingStep 说这一步要哪种锅
+            string cooking = StepName(Get(node, "m_cookingStep"));
+            string cookAttr = cooking == null ? "" : ",\"cook\":\"" + cooking + "\"";
+
             if (children == null || children.Count == 0)
             {
-                steps.Add("{\"node\":\"" + name + "\",\"type\":\"" + type.Name + "\""
+                steps.Add("{\"node\":\"" + name + "\",\"type\":\"" + type.Name + "\"" + cookAttr
                           + (plating == null ? "" : ",\"plate\":\"" + plating + "\"") + "}");
                 return;
             }
@@ -1488,8 +1530,15 @@ namespace WellCooked
                 CollectOrderSteps(child, parts, depth + 1);
             }
 
-            steps.Add("{\"node\":\"" + name + "\",\"type\":\"" + type.Name + "\",\"children\":["
+            steps.Add("{\"node\":\"" + name + "\",\"type\":\"" + type.Name + "\"" + cookAttr + ",\"children\":["
                       + string.Join(",", parts.ToArray()) + "]}");
+        }
+
+        /// <summary>CookingStepData（ScriptableObject）的资源名，如 Boil/Fry；空/非 Unity 对象给 null。</summary>
+        private static string StepName(object step)
+        {
+            var unity = step as UnityEngine.Object;
+            return unity != null && !string.IsNullOrEmpty(unity.name) ? Clean(unity.name) : null;
         }
 
         /// <summary>

@@ -420,6 +420,48 @@ C 部分是 `cd bridge && make test` 的单元检查；多进程行为用 `tools
 占着（换下一个站位格）；死胡同里的站位格（PIBT 保证不成立，靠重规划）；`navd` 或 Worker 被
 `SIGKILL`；游戏暂停中（时钟不走，不判卡住）；同一格两个工位共用站位格；批跑中某个实例崩溃。
 
+## W11 实机遗留（2026-10-26 交接）
+
+任务 09 在 `_3` 四人实机上已修到"派对锅、放进料"这一步，仍是 `score=-300`、0 单。修过什么、每局
+证据见任务 09 Progress 的"`_3` 四人联调修复"（最后一局 `logs/real-game/20261026-172424-_3-fix8`）。
+分支 `kitchen-control/09-real-game-two-chefs`（worktree `~/Project/overcooked-schedule-wt/kc-A`）。
+下一次接手按下面顺序做，每做完一项实机跑一次 `_3`：
+
+1. **空锅不上报（阻塞 cook）。** `state_update` 没有 `pot_<N>`，`start_cook` 报
+   `no-station-resource`。原因：`ServerCookableContainer.StartSynchronising` 把自己的
+   `ServerCookingHandler.enabled` 设成 false，只有锅里有料时 `OnContentsChanged` 才打开；
+   `ServerCookingHandler` 在 `OnEnable` 才进静态表，所以 `GetCookingHandlers()` 只列出有料的锅。
+   修法：`plugin/Kitchen.cs` 的 `SortedCookingHandlers` 改成枚举 `ServerCookableContainer`
+   （`WorldState.FindAll`），每个取 `GetCookingHandler()`，位置用容器自己的 transform，按 x、再 z
+   排序。`StateFrame.AppendPots`、`Kitchen.TryStationPosition("pot_N")`、`WorldState.AppendCooking`
+   都改用这份列表。空锅报 `state=free`。
+   - 编号必须和 `kitchen.json` 的 `cooker-N` 一一对应：`macro.c` 的 `find_station_resource` 按序号
+     把 `cooker-N` 映射成 `pot_N`；`export-kitchen.py` 对 cooker 也是按 (x, z) 排序。`_3` 上 6 口锅
+     （炸篮 2、平底锅 2、煮锅 2）都要进列表，排序后应与 cooker-0..5 的坐标一致，实机核对一次。
+   - 同一处的两个反射错位（插件日志 `反射: 没找到 …`）：`ServerCookingHandler` 本身就是
+     `Component`，`handler as Component` 拿到的是它自己，于是 `Get(component, "m_cookingType")`
+     与 `Invoke(component, "GetContents")` 都落空。锅类型改读 `ServerCookingHandler.AccessCookingType`；
+     内容改读容器的 `m_itemContainer`（`ServerIngredientContainer.GetContents()`，节点名取
+     `IngredientAssembledNode.m_ingriedientOrderNode` 的 `name`，写法可参照
+     `plugin/WellCooked.Plugin/Game/StateReader.cs` 的 `ContainerJson`/`CollectNodeNames`）。
+   - 进度：`GetCookingProgress()` 是秒数，不是 0..1（局末一口锅 `progress=24.013`）。`time_left`
+     应为 `AccessCookingTime − progress`，`state=cooking` 的判断改成"有料且未熟"。README.md 的
+     "锅"一行同步改掉"0..1"的说法。
+2. **FriedChicken 放不进平底锅。** fix8 局 `cook:FriedChicken` 在 `cooker-2` 首次 `drop wait=empty-hand`
+   超时 2 次，之后一次成功。先查料箱给的 `BurritoChicken` 的 `cook_steps` 为什么是 `[]`
+   （可能要先切，切后的 prefab 才带 `CookableProperties`；若是，菜谱缺一个 `cut` 节点），再看是不是
+   站位/朝向问题。
+3. **`assemble:Sushi_PlainPrawn` 在盘堆 `drop` 超时**（fix6 起一直有）、**`fetch:SushiFish` `pickup`
+   超时**。拿插件 `press` 日志里的位姿与面前格对一下按键时面对的是不是盘堆/料箱。
+4. **`goto arrived+face` 6–10 s 超时**：4 人让路反复重规划，`MACRO_GOTO_MARGIN_MS` 已是 6 s。
+   前 3 项通了再看是否还影响出单。
+
+通过标准不变（任务 09 的 Check）：局内得分 > 0、有 `order_completed`、四个厨师都由 Worker 驱动、
+一单完整的 `macro_*` 链能在 Worker 日志里对上、全程无手动输入。实机命令与注意事项见
+`.workflow/standards.md` 和任务 09（`RUNTIME_DIR=… SCENE=s_wellcooked_demo_3 CHEFS=4 REAL_GAME=1
+bash tools/run-real-game.sh`，局后把游戏目录的 `BepInEx/LogOutput.log` 复制成运行目录里的
+`LogOutput.run.log`；跑之前取 `/tmp/wellcooked-game.lock`）。
+
 ## Open questions
 
 - **每格实际移动时间。** 已测（任务 01，2026-10-25）：`_2` 上让 1 号厨师沿 z=-7.2 的直线用

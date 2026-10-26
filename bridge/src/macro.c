@@ -29,7 +29,9 @@
 #define MACRO_CHOP_MARGIN_MS 3000
 #define MACRO_WASH_MARGIN_MS 3000
 #define MACRO_READY_MARGIN_MS 5000
-#define MACRO_GOTO_MARGIN_MS 3000
+/* 四人同场时 PIBT 让路、反复重规划，实机 `_3` 里 goto 在快到站时（剩 0~1 个路点）
+ * 被 3 s 余量判超时；6 s 覆盖一次让路往返。 */
+#define MACRO_GOTO_MARGIN_MS 6000
 #define MACRO_GOTO_NO_DISTANCE_MS 30000
 
 static void copy_str(char *dst, size_t cap, const char *src)
@@ -567,7 +569,10 @@ static int run_goto(kos_macro *macro, const kos_kitchen *kitchen,
     const kos_macro_step *step = &macro->plan.steps[macro->step_index];
     const kos_chef *chef = find_chef(world, chef_id);
 
-    if (!nav_arrived) {
+    /* 到站一次就算到站：转身时厨师会被推离格心超过 navd 的 0.3 m，navd 随即把
+     * arrived 改回 moving（没有路点）。这时再回到 navigate，Worker 发的是 stop，
+     * 插件里的 face 被冲掉，永远转不过去，最后 arrived+face 超时（实机 `_3`）。 */
+    if (!nav_arrived && !macro->face_sent) {
         out->action = KOS_MACRO_ACT_NAVIGATE;
         copy_str(out->target_object, sizeof out->target_object, step->station_id);
         if (game_ms >= macro->deadline_ms) {

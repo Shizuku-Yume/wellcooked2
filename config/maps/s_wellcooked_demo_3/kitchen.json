@@ -1,8 +1,8 @@
 {
   "scene": "s_wellcooked_demo_3",
   "generated": {
-    "at": "2026-10-25T14:02:04+0800",
-    "state_t": 35.66,
+    "at": "2026-10-26T17:22:16+0800",
+    "state_t": 67.36,
     "sources": [
       "wellcooked-state.json",
       "wellcooked-terrain.json"
@@ -73,6 +73,10 @@
         "WorkableItem",
         "LimitedQuantityItem",
         "LimitedFromOrderComplexity"
+      ],
+      "cook_steps": [
+        "Pot",
+        "FryingPan"
       ],
       "id": "dispenser-0"
     },
@@ -146,6 +150,9 @@
         "AttachmentWindReceiver",
         "LimitedQuantityItem",
         "LimitedFromOrderComplexity"
+      ],
+      "cook_steps": [
+        "Pot"
       ],
       "id": "dispenser-2"
     },
@@ -295,6 +302,7 @@
       "height": 0.0,
       "gives": null,
       "contents": [],
+      "step": "DeepFatFryer",
       "id": "cooker-0"
     },
     {
@@ -310,6 +318,7 @@
       "height": 0.0,
       "gives": null,
       "contents": [],
+      "step": "DeepFatFryer",
       "id": "cooker-1"
     },
     {
@@ -325,6 +334,7 @@
       "height": 0.0,
       "gives": null,
       "contents": [],
+      "step": "FryingPan",
       "id": "cooker-2"
     },
     {
@@ -340,6 +350,7 @@
       "height": 0.0,
       "gives": null,
       "contents": [],
+      "step": "FryingPan",
       "id": "cooker-3"
     },
     {
@@ -355,6 +366,7 @@
       "height": 0.0,
       "gives": null,
       "contents": [],
+      "step": "Pot",
       "id": "cooker-4"
     },
     {
@@ -370,6 +382,7 @@
       "height": 0.0,
       "gives": null,
       "contents": [],
+      "step": "Pot",
       "id": "cooker-5"
     },
     {
@@ -427,12 +440,47 @@
       ],
       "pos": [
         -3.0,
+        -3.6
+      ],
+      "height": 0.27,
+      "gives": null,
+      "contents": [],
+      "step": "DeepFatFryer",
+      "id": "container-0"
+    },
+    {
+      "kind": "container",
+      "name": "FrierBasket",
+      "types": [
+        "ClientIngredientContainer",
+        "ClientCookableContainer"
+      ],
+      "pos": [
+        -3.0,
         -2.4
       ],
       "height": 0.27,
       "gives": null,
       "contents": [],
-      "id": "container-0"
+      "step": "DeepFatFryer",
+      "id": "container-1"
+    },
+    {
+      "kind": "container",
+      "name": "utensil_frying_pan_01",
+      "types": [
+        "ClientIngredientContainer",
+        "ClientCookableContainer"
+      ],
+      "pos": [
+        1.8,
+        -6.0
+      ],
+      "height": 0.6,
+      "gives": null,
+      "contents": [],
+      "step": "FryingPan",
+      "id": "container-2"
     },
     {
       "kind": "container",
@@ -448,23 +496,8 @@
       "height": 0.6,
       "gives": null,
       "contents": [],
-      "id": "container-1"
-    },
-    {
-      "kind": "container",
-      "name": "utensil_frying_pan_01",
-      "types": [
-        "ClientIngredientContainer",
-        "ClientCookableContainer"
-      ],
-      "pos": [
-        5.06,
-        -5.02
-      ],
-      "height": 0.0,
-      "gives": null,
-      "contents": [],
-      "id": "container-2"
+      "step": "FryingPan",
+      "id": "container-3"
     },
     {
       "kind": "container",
@@ -480,22 +513,7 @@
       "height": 0.6,
       "gives": null,
       "contents": [],
-      "id": "container-3"
-    },
-    {
-      "kind": "container",
-      "name": "FrierBasket",
-      "types": [
-        "ClientIngredientContainer",
-        "ClientCookableContainer"
-      ],
-      "pos": [
-        6.61,
-        -5.42
-      ],
-      "height": 0.55,
-      "gives": null,
-      "contents": [],
+      "step": "Pot",
       "id": "container-4"
     },
     {
@@ -512,6 +530,7 @@
       "height": 0.6,
       "gives": null,
       "contents": [],
+      "step": "Pot",
       "id": "container-5"
     }
   ],

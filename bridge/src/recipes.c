@@ -189,6 +189,9 @@ int kos_recipes_load(const char *path, kos_recipes *out, kos_error *err)
         if (json_object_get_string(entry, "ingredient", &value, &value_len) == JSON_OK) {
             copy_str(node->ingredient, sizeof node->ingredient, value);
         }
+        if (json_object_get_string(entry, "step", &value, &value_len) == JSON_OK) {
+            copy_str(node->step, sizeof node->step, value);
+        }
         if (json_object_get_double(entry, "duration", &duration) == JSON_OK &&
             duration >= 0.0) {
             node->duration_ms = (int)(duration * 1000.0 + 0.5);

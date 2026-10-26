@@ -37,6 +37,9 @@ namespace WellCooked
         private const float PulseSeconds = 0.25f;     // 按键按下去多久（游戏只认边沿）
         private const float PulseInterval = 0.6f;     // 一次动作没做出效果时，隔多久再按一次
         private const int KeyPulses = 2;              // 按键类按几次算"做过了"（游戏只认边沿，按一次可能被吃掉）
+        // 桥对一步按键会连发 KOS_WORKER_INTERACT_WINDOW_MS（bridge/src/worker_timing.h，1 秒）。
+        // 这段时间里上一条按键已经做完再收到同类按键，是同一步的重发，不是新的一步。
+        private const float ResendWindow = 1.0f;
 
         private sealed class Command
         {
@@ -49,6 +52,8 @@ namespace WellCooked
             public float NextPulseAt;
             public float StartedAt;
             public bool Done;   // 走完/超时了：留着这条，但不再驱动
+            public string HeldAtFirstPulse; // 按键类：第一下按下时手上是什么
+            public float DoneAt;            // 按键类：哪一刻做完的（游戏时钟）
 
             // path 专用
             public long Seq;
@@ -175,6 +180,13 @@ namespace WellCooked
                 {
                     // 同一条按键动作还在（桥每帧都会重发）：不重复登记 —— 重复登记会把
                     // 脉冲间隔和超时都重置，变成"一直按着、永远不结束"。
+                    return null;
+                }
+
+                if (command != null && command.Kind == kind && command.Done && now - command.DoneAt < ResendWindow)
+                {
+                    // 刚做完又收到同类按键：是桥同一步的重发。再登记就是第 3 下，
+                    // 会把刚拿起的东西放回去（实测 `_3`：拿起→放回→再拿起）。
                     return null;
                 }
 
@@ -546,12 +558,30 @@ namespace WellCooked
             bool pressed = now < command.PulseUntil;
             if (!pressed && command.Pulses < KeyPulses && now >= command.NextPulseAt)
             {
+                string held = HeldOf(slot);
+                if (command.Pulses == 0)
+                {
+                    command.HeldAtFirstPulse = held;
+                }
+                else if (held != command.HeldAtFirstPulse)
+                {
+                    // 第一下已经生效（手上的东西变了）：补按的第二下会把它撤回（拿起又放下），不按。
+                    _log.LogInfo("action: 厨师位 " + (slot + 1) + " " + command.Kind + " 第一下已生效（手上「"
+                                 + command.HeldAtFirstPulse + "」→「" + held + "」），不再补按");
+                    command.Pulses = KeyPulses;
+                }
+            }
+
+            if (!pressed && command.Pulses < KeyPulses && now >= command.NextPulseAt)
+            {
                 command.PulseUntil = now + PulseSeconds;
                 command.NextPulseAt = now + PulseInterval;
                 command.Pulses++;
                 pressed = true;
+                // 按键有没有效果要看"面前是谁、手上是什么"：游戏按厨师所在格的邻格里朝向最对齐的
+                // 那一格判定交互对象，按错格子时 ack 照样 ok，只有这一行能看出来。
                 _log.LogInfo("action: 厨师位 " + (slot + 1) + " 按 " + command.Kind
-                             + (command.Pulses > 1 ? "（再按一次）" : ""));
+                             + (command.Pulses > 1 ? "（再按一次）" : "") + " " + PoseSummary(slot, position));
             }
 
             if (clock > command.Deadline)
@@ -560,6 +590,7 @@ namespace WellCooked
                 _log.LogWarning("action: 厨师位 " + (slot + 1) + " " + command.Kind + " " + late);
                 Report(slot, command.Kind, false, late);
                 command.Done = true;
+                command.DoneAt = clock;
                 Feed(slot, pad, Vector2.zero, false, false, false);
                 return true;
             }
@@ -567,8 +598,11 @@ namespace WellCooked
             if (command.Pulses >= KeyPulses && !pressed)
             {
                 string done = "已按键 " + command.Pulses + " 次";
+                _log.LogInfo("action: 厨师位 " + (slot + 1) + " " + command.Kind + " 按完 "
+                             + PoseSummary(slot, position));
                 Report(slot, command.Kind, true, done);
                 command.Done = true;
+                command.DoneAt = clock;
                 Feed(slot, pad, Vector2.zero, false, false, false);
                 return true;
             }
@@ -577,6 +611,50 @@ namespace WellCooked
             bool dash = command.Kind == "dash";
             Feed(slot, pad, Vector2.zero, pickup && pressed, dash && pressed, false);
             return true;
+        }
+
+        /// <summary>厨师手上是什么（拿不到厨师时返回空串）。</summary>
+        private static string HeldOf(int slot)
+        {
+            PlayerControls chef;
+            return Takeover.TryChefOf(slot, out chef) ? Kitchen.HeldSummary(chef) : "";
+        }
+
+        /// <summary>厨师位置、朝向、面前的占位物体、手上的东西（按键诊断用）。</summary>
+        private static string PoseSummary(int slot, Vector2 position)
+        {
+            PlayerControls chef;
+            if (!Takeover.TryChefOf(slot, out chef))
+            {
+                return "位置=(" + position.x.ToString("F2") + "," + position.y.ToString("F2") + ") 厨师=缺";
+            }
+            var forward = chef.transform.forward;
+            return "位置=(" + position.x.ToString("F2") + "," + position.y.ToString("F2")
+                   + ") 朝向=(" + forward.x.ToString("F2") + "," + forward.z.ToString("F2")
+                   + ") 面前=「" + Kitchen.FacingObjectName(chef) + "」 手上=「" + Kitchen.HeldSummary(chef) + "」 "
+                   + GameCellSummary(position);
+        }
+
+        /// <summary>
+        /// 游戏 1.2 米网格上：厨师所在格、本格占位物体、四个邻格的占位物体。
+        /// `GetFacingGridOccupant` 在本格有占位物体时直接跳过，只看邻格 —— 这一段能看出是哪种情况。
+        /// </summary>
+        private static string GameCellSummary(Vector2 position)
+        {
+            int ix, iz;
+            if (!WorldState.GameCellOf(position, out ix, out iz))
+            {
+                return "游戏格=?";
+            }
+            return "游戏格=(" + ix + "," + iz + ") 本格=「" + OccupantName(ix, iz)
+                   + "」 +x=「" + OccupantName(ix + 1, iz) + "」 -x=「" + OccupantName(ix - 1, iz)
+                   + "」 +z=「" + OccupantName(ix, iz + 1) + "」 -z=「" + OccupantName(ix, iz - 1) + "」";
+        }
+
+        private static string OccupantName(int ix, int iz)
+        {
+            var occupant = WorldState.GameCellOccupant(ix, iz);
+            return occupant == null ? "" : occupant.name;
         }
 
         private static bool IsFinite(float value)

@@ -52,6 +52,7 @@
 /* 距离场够不到（另一个连通区/厨师格未知）时给的路程惩罚，单位是格。 */
 #define SCHED_UNREACHABLE_CELLS 600
 #define SCHED_WASH_PRIORITY 32
+#define SCHED_TASK_MAX_RETRIES 3 /* 同一工序宏动作最多失败 3 次 */
 
 typedef enum {
     TASK_PENDING = 0,
@@ -65,6 +66,7 @@ typedef struct {
     int state;
     int chef_id;
     int avoid_chef; /* 上一任报 BLOCKED 的厨师；改派时先避开他 */
+    int fail_count; /* 宏动作失败后回队的次数；到 SCHED_TASK_MAX_RETRIES 才让订单失败 */
     uint64_t task_id;
     int64_t started_ms;
     int64_t ready_since_ms; /* 第一次进入就绪队列 */
@@ -537,6 +539,75 @@ static int order_node_ready(const scheduler *s, const sched_order *order, int no
     return 1;
 }
 
+/* 宏动作以 pickup 收尾的工序：做完后产物在这个厨师手里。 */
+static int op_leaves_item_in_hand(const char *op)
+{
+    return strcmp(op, "fetch") == 0 || strcmp(op, "cut") == 0 || strcmp(op, "mix") == 0 ||
+           strcmp(op, "plate") == 0;
+}
+
+/*
+ * 手里拿着这道工序原料的厨师：某个已完成的子工序把产物留在了他手上，后继只能由他做，
+ * 换成空手的人去 drop/deliver 会空等到超时（_3 实测 deliver 被派给没端盘子的人）。
+ * 两个子工序分别在两个厨师手里时一道工序满足不了两人，返回 -1 不绑定。
+ */
+static int task_holder_chef(const scheduler *s, const sched_order *order, int task_index)
+{
+    int node_index = order->tasks[task_index].node_index;
+    int holder = -1;
+    int e;
+
+    for (e = 0; e < s->recipes.edge_count; e++) {
+        int child_task;
+        const sched_task *child;
+
+        if (s->recipes.edges[e].to != node_index) {
+            continue;
+        }
+        child_task = order_task_by_node(order, s->recipes.edges[e].from);
+        if (child_task < 0) {
+            continue;
+        }
+        child = &order->tasks[child_task];
+        if (child->state != TASK_DONE || child->chef_id < 0 ||
+            !op_leaves_item_in_hand(s->recipes.nodes[child->node_index].op)) {
+            continue;
+        }
+        if (holder >= 0 && holder != child->chef_id) {
+            return -1;
+        }
+        holder = child->chef_id;
+    }
+    return holder;
+}
+
+/* bound[chef] = 1：这个厨师手里拿着某道待派工序的原料，只能接那道工序。 */
+static void holding_chefs(const scheduler *s, int bound[KOS_SHM_MAX_CHEFS])
+{
+    int i;
+    int j;
+
+    memset(bound, 0, sizeof(int) * KOS_SHM_MAX_CHEFS);
+    for (i = 0; i < s->order_count; i++) {
+        const sched_order *order = &s->orders[i];
+
+        if (order->status != KOS_ORDER_ACTIVE) {
+            continue;
+        }
+        for (j = 0; j < order->task_count; j++) {
+            int holder;
+
+            if (order->tasks[j].state != TASK_PENDING) {
+                continue;
+            }
+            holder = task_holder_chef(s, order, j);
+            if (holder >= 0 && holder < KOS_SHM_MAX_CHEFS) {
+                bound[holder] = 1;
+            }
+        }
+    }
+}
+
 static int order_has_done_all(const sched_order *order)
 {
     int i;
@@ -812,6 +883,7 @@ static int add_order(scheduler *s, const char *id, const char *dish, int64_t arr
         order->tasks[i].state = TASK_PENDING;
         order->tasks[i].chef_id = -1;
         order->tasks[i].avoid_chef = -1;
+        order->tasks[i].fail_count = 0;
         order->tasks[i].task_id = 0;
     }
 
@@ -1261,19 +1333,33 @@ static void handle_worker_event(scheduler *s, const kos_mq_msg *msg)
             finish_order_if_done(s, order_index);
         } else if (msg->event == KOS_EVT_BLOCKED) {
             /* 走位连续 3 次卡住：租约还给资源模型，工序回就绪队列，并记住
-             * 别立刻又派给同一个人（他那里仍然走不通）。 */
+             * 别立刻又派给同一个人（他那里仍然走不通）。原料在他手里时别人做不了，
+             * 不避开也不扣留，让他原地重试。 */
             int blocked_chef = msg->chef_id;
             int task_index = (int)(task - order->tasks);
+            int holder = task_holder_chef(s, order, task_index);
 
-            if (blocked_chef >= 0 && blocked_chef < KOS_SHM_MAX_CHEFS) {
-                s->blocked_hold[blocked_chef] = 1;
-            }
             (void)release_lease_for_task(s, msg->task_id, "resource_reclaimed",
                                          "task-blocked");
             task_requeue(s, order_index, task_index, "worker-blocked");
-            if (task_index >= 0 && task_index < order->task_count) {
+            if (holder < 0 || holder != blocked_chef) {
+                if (blocked_chef >= 0 && blocked_chef < KOS_SHM_MAX_CHEFS) {
+                    s->blocked_hold[blocked_chef] = 1;
+                }
                 order->tasks[task_index].avoid_chef = blocked_chef;
             }
+        } else if (strncmp(msg->detail, "macro=", 6) == 0 &&
+                   task->fail_count + 1 < SCHED_TASK_MAX_RETRIES) {
+            /* 宏动作超时（多人拥堵时 goto 走不到、料箱没回料）不是订单本身坏了：
+             * 回就绪队列再派。不设 avoid_chef：料多半还在这个厨师手里，换成空手的人
+             * 去 drop 会被当成"已放下"直接完成。缺工位/宏映射失败这类配置错误照旧
+             * 让订单失败。 */
+            int task_index = (int)(task - order->tasks);
+
+            (void)release_lease_for_task(s, msg->task_id, "resource_reclaimed",
+                                         "task-failed");
+            task->fail_count++;
+            task_requeue(s, order_index, task_index, "macro-failed");
         } else {
             (void)release_lease_for_task(s, msg->task_id, "resource_reclaimed",
                                          "task-failed");
@@ -1374,21 +1460,33 @@ static int cooker_station_reserved(const scheduler *s, const char *station_id)
     return 0;
 }
 
-static int pick_cooker_station(const scheduler *s, unsigned salt, int *index)
+/* 游戏只让 AllowedCookingSteps 含锅的烹饪类型的料放进去（CookableContainer.AllowItemPlacement）：
+ * 节点或工位任一方没写 step 时不限，两边都写了就必须相同（实机 `_3`：米被派到炸锅放不进去）。 */
+static int cooker_step_matches(const kos_station *station, const char *step)
+{
+    return step == NULL || step[0] == '\0' || station->step[0] == '\0' ||
+           strcmp(station->step, step) == 0;
+}
+
+static int pick_cooker_station(const scheduler *s, const char *step, unsigned salt, int *index)
 {
     int offset;
+    int matching = 0;
 
     for (offset = 0; offset < s->kitchen.station_count; offset++) {
         int candidate = (int)((salt + (unsigned)offset) % (unsigned)s->kitchen.station_count);
         const kos_station *station = &s->kitchen.stations[candidate];
 
-        if (strcmp(station->kind, "cooker") == 0 &&
-            !cooker_station_reserved(s, station->id)) {
+        if (strcmp(station->kind, "cooker") != 0 || !cooker_step_matches(station, step)) {
+            continue;
+        }
+        matching++;
+        if (!cooker_station_reserved(s, station->id)) {
             *index = candidate;
             return KOS_OK;
         }
     }
-    return kos_kitchen_count_kind(&s->kitchen, "cooker") > 0 ? KOS_ERR_EMPTY : KOS_ERR_MISSING;
+    return matching > 0 ? KOS_ERR_EMPTY : KOS_ERR_MISSING;
 }
 
 static void release_plate_source(scheduler *s, sched_order *order,
@@ -1548,7 +1646,7 @@ static int task_station_index(const scheduler *s, int order_index, int task_inde
         return KOS_ERR_MISSING;
     }
     if (strcmp(node->op, "cook") == 0) {
-        return pick_cooker_station(s,
+        return pick_cooker_station(s, node->step,
                                    (unsigned)(order_index * KOS_RECIPE_MAX_DISH_NODES +
                                               task_index),
                                    station_out);
@@ -1634,10 +1732,12 @@ static int match_task_to_chef(int task, const int *mask, int *chef_task,
  * 资源 kind 本轮还有令牌，然后做一次二分图最大匹配。只数"任意厨师可达"会把两个只有
  * 同一个厨师够得着的工序当成两份工作：匈牙利之后另一个厨师仍然空转，也不会开下一单
  * （_2 的两条互不相通条带就会这样）。匹配数小于空闲厨师数时才该按策略开下一单。
+ * 手里拿着原料的厨师只算进那道工序的匹配（task_holder_chef）。
  */
-static int opened_ready_count(scheduler *s, int64_t now, const int *chef_cells,
-                              int chef_count)
+static int opened_ready_count(scheduler *s, int64_t now, const int *idle,
+                              const int *chef_cells, int chef_count)
 {
+    int bound[KOS_SHM_MAX_CHEFS];
     char kind_names[KOS_ASSIGN_MAX_TASKS][KOS_RES_KIND_MAX];
     int kind_free[KOS_ASSIGN_MAX_TASKS];
     int kind_n = 0;
@@ -1649,6 +1749,7 @@ static int opened_ready_count(scheduler *s, int64_t now, const int *chef_cells,
     int j;
     int k;
 
+    holding_chefs(s, bound);
     for (i = 0; i < KOS_ASSIGN_MAX_CHEFS; i++) {
         chef_task[i] = -1;
     }
@@ -1700,6 +1801,15 @@ static int opened_ready_count(scheduler *s, int64_t now, const int *chef_cells,
                         kos_stand_distance(&s->kitchen, station, chef_cells[k]) !=
                             KOS_STAND_UNREACHABLE) {
                         mask |= 1 << k;
+                    }
+                }
+            }
+            {
+                int holder = task_holder_chef(s, order, j);
+
+                for (k = 0; k < KOS_ASSIGN_MAX_CHEFS && k < chef_count; k++) {
+                    if (holder >= 0 ? idle[k] != holder : bound[idle[k]]) {
+                        mask &= ~(1 << k);
                     }
                 }
             }
@@ -2090,6 +2200,7 @@ static void dispatch_ready(scheduler *s, int64_t now)
     int idle[KOS_ASSIGN_MAX_CHEFS];
     int chef_cells[KOS_ASSIGN_MAX_CHEFS];
     int task_of_chef[KOS_ASSIGN_MAX_CHEFS];
+    int bound[KOS_SHM_MAX_CHEFS];
     double urgency[SCHED_MAX_ORDERS];
     const kos_world_state *world;
     char kind_names[KOS_ASSIGN_MAX_TASKS][KOS_RES_KIND_MAX];
@@ -2130,7 +2241,7 @@ static void dispatch_ready(scheduler *s, int64_t now)
     }
     /* 已开工订单没有足够多的可派工序填满空闲厨师时，才按策略开下一单。 */
     for (;;) {
-        int ready = opened_ready_count(s, now, chef_cells, idle_count);
+        int ready = opened_ready_count(s, now, idle, chef_cells, idle_count);
 
         if (ready >= idle_count ||
             open_next_order(s, now, chef_cells, idle_count) != KOS_OK) {
@@ -2183,6 +2294,7 @@ static void dispatch_ready(scheduler *s, int64_t now)
     }
 
     order_urgency_ranks(s, now, urgency);
+    holding_chefs(s, bound);
     for (i = 0; i < idle_count; i++) {
         int cell = chef_cells[i];
         int chef = idle[i];
@@ -2190,6 +2302,7 @@ static void dispatch_ready(scheduler *s, int64_t now)
             int index = i * pool_count + j;
             kos_assign_terms *term = &terms[index];
             int station = pool[j].station_index;
+            int holder = -1;
 
             memset(term, 0, sizeof *term);
             travel_cells[index] = 0;
@@ -2197,11 +2310,18 @@ static void dispatch_ready(scheduler *s, int64_t now)
                 sched_task *pooled =
                     &s->orders[pool[j].order_index].tasks[pool[j].task_index];
 
+                holder = task_holder_chef(s, &s->orders[pool[j].order_index],
+                                          pool[j].task_index);
                 if (pooled->avoid_chef == idle[i]) {
                     /* 这个厨师上一轮走到一半卡住；先派给别人，别原地重试。 */
                     term->unreachable = 1;
                     travel_cells[index] = SCHED_UNREACHABLE_CELLS;
                 }
+            }
+            if (holder >= 0 ? holder != chef : bound[chef]) {
+                /* 原料在 holder 手里：只有他能做这道；他也不接别的活，免得手里的东西没处放。 */
+                term->unreachable = 1;
+                travel_cells[index] = SCHED_UNREACHABLE_CELLS;
             }
             if (cell >= 0) {
                 uint16_t distance = kos_stand_distance(&s->kitchen, station, cell);
