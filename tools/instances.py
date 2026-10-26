@@ -164,7 +164,7 @@ def pids_with_cwd(path):
 class Instance:
     def __init__(self, index, window=DEFAULT_WINDOW, kitchen=DEFAULT_KITCHEN,
                  recipes=DEFAULT_RECIPES, orders=DEFAULT_ORDERS, strategy="fcfs",
-                 workers=2, nav="pibt", dispatch="flexible"):
+                 workers=4, nav="pibt", dispatch="flexible"):
         self.index = index
         self.window = window or DEFAULT_WINDOW
         self.kitchen = Path(kitchen)
@@ -241,7 +241,8 @@ class Instance:
         self.write_config({
             "window": self.window,
             "window_pos": "%d,0" % ((self.index - 1) * self.window_width()),
-            "slots": "1,2",
+            # 插件玩家位 1 基：N 个厨师占 1..N 号位。
+            "slots": ",".join(str(slot) for slot in range(1, self.workers + 1)),
             "bridge": "127.0.0.1:%d" % self.port,
             "frontend_press": "true",
         })
@@ -667,7 +668,8 @@ def build_parser():
     parser.add_argument("--nav", default="pibt", help="走位算法（当前仅 pibt）")
     parser.add_argument("--dispatch", default="flexible",
                         help="派工模式（当前仅 flexible）")
-    parser.add_argument("--workers", type=int, default=2, help="每实例厨师数（默认 2）")
+    parser.add_argument("--workers", type=int, default=4, choices=[1, 2, 3, 4],
+                        help="每实例厨师数（默认 4，本地合作最多 4 个玩家位）")
     return parser
 
 

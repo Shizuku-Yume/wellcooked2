@@ -378,7 +378,8 @@ def build_parser():
     parser.add_argument("--out", default="results.csv", help="结果 CSV（默认 results.csv）")
     parser.add_argument("--kitchen", default=str(instance_mod.DEFAULT_KITCHEN))
     parser.add_argument("--recipes", default=str(instance_mod.DEFAULT_RECIPES))
-    parser.add_argument("--workers", type=int, default=2, help="每实例厨师数（默认 2）")
+    parser.add_argument("--workers", type=int, default=4, choices=[1, 2, 3, 4],
+                        help="每实例厨师数（默认 4，本地合作最多 4 个玩家位）")
     parser.add_argument("--timeout", type=int, default=90, help="回合结束后额外等待秒数")
     parser.add_argument("--start-timeout", type=int, default=240, help="游戏启动等待秒数")
     parser.add_argument("--load-timeout", type=int, default=120, help="进关等待秒数")

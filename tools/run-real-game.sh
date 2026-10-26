@@ -3,10 +3,10 @@
 # W8 默认模式只做 Bridge 连接检查；REAL_GAME=1 用完整 Supervisor + 真游戏验收。
 #
 # 用法：
-#     GAME_DIR=<游戏目录> REAL_GAME=1 SCENE=s_wellcooked_demo_2 CHEFS=2 \
+#     GAME_DIR=<游戏目录> REAL_GAME=1 SCENE=s_wellcooked_demo_3 CHEFS=4 \
 #       bash tools/run-real-game.sh
 # 完整模式会启动 Supervisor、通过 Steam 启动游戏、自动继续存档并加载场景，再检查新鲜运行产物。
-# `_1` 验收同样设置 SCENE=s_wellcooked_demo_1。
+# `_1` 验收同样设置 SCENE=s_wellcooked_demo_1。CHEFS 决定占几个玩家位（slots=1..CHEFS）与起几个 Worker。
 #
 # 两种模式都要求先取得共享游戏锁；完整模式还会备份并恢复三个 wellcooked 配置文件。
 
@@ -34,8 +34,14 @@ PLUGIN_CFG="${GAME_DIR}/BepInEx/config/com.wellcooked.plugin.cfg"
 # REAL_GAME=1 时对整棵进程树的产物做严格断言，不把 fake_plugin 当作证据。
 REAL_GAME="${REAL_GAME:-0}"
 RUNTIME_DIR="${RUNTIME_DIR:-}"
-SCENE="${SCENE:-s_wellcooked_demo_2}"
-CHEFS="${CHEFS:-2}"
+SCENE="${SCENE:-s_wellcooked_demo_3}"
+CHEFS="${CHEFS:-4}"
+case "$CHEFS" in
+    1|2|3|4) ;;
+    *) printf 'CHEFS 必须是 1..4（本地合作最多 4 个玩家位），收到：%s\n' "$CHEFS" >&2; exit 2 ;;
+esac
+# 插件的玩家位是 1 基，0 号厨师对应 1 号位。
+SLOTS="$(seq -s, 1 "$CHEFS")"
 GAME_SECONDS="${GAME_SECONDS:-240}"
 PLUGIN_LOG_OFFSET=0
 
@@ -177,12 +183,12 @@ run_supervisor_acceptance() {
     if [ -f "$GAME_DIR/BepInEx/LogOutput.log" ]; then
         PLUGIN_LOG_OFFSET="$(wc -c < "$GAME_DIR/BepInEx/LogOutput.log")"
     fi
-    printf 'work=auto\nslots=1,2\nfrontend_press=true\ndiag=false\nbridge=127.0.0.1:%s\n' "$PORT" \
+    printf 'work=auto\nslots=%s\nfrontend_press=true\ndiag=false\nbridge=127.0.0.1:%s\n' "$SLOTS" "$PORT" \
         > "$GAME_DIR/BepInEx/wellcooked-takeover.txt"
     rm -f "$GAME_DIR/BepInEx/wellcooked-command.txt"
     state="$GAME_DIR/BepInEx/wellcooked-state.json"
     state_mtime_before="$(stat -c %Y "$state" 2>/dev/null || printf '0')"
-    say "Launching the game through Steam; waiting for both virtual pads to join before loading the level."
+    say "Launching the game through Steam; waiting for $CHEFS virtual pads to join before loading the level."
     if ! bash "$REPO_ROOT/scripts/run-game.sh"; then
         say "Game launch failed; see scripts/run-game.sh output."
         return 1
@@ -204,20 +210,20 @@ run_supervisor_acceptance() {
         return 1
     fi
 
-    say "Waiting for the game itself to join both virtual pads (no continue/engage command)."
+    say "Waiting for the game itself to join $CHEFS virtual pads (no continue/engage command)."
     deadline=$(( $(date +%s) + WAIT_SECONDS ))
     joined=0
     while [ "$(date +%s)" -lt "$deadline" ]; do
         joined="$(plugin_run_log | grep -Fc 'takeover: 游戏已自己加入 pad ' || true)"
-        [ "$joined" -ge 2 ] && break
+        [ "$joined" -ge "$CHEFS" ] && break
         sleep 2
     done
-    if [ "$joined" -lt 2 ]; then
-        say "游戏未在 ${WAIT_SECONDS}s 内自动加入两个虚拟 pad（${joined}/2）；停在 $(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("scene","?"))' "$state" 2>/dev/null || echo '?')。"
+    if [ "$joined" -lt "$CHEFS" ]; then
+        say "游戏未在 ${WAIT_SECONDS}s 内自动加入 ${CHEFS} 个虚拟 pad（${joined}/${CHEFS}）；停在 $(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("scene","?"))' "$state" 2>/dev/null || echo '?')。"
         return 1
     fi
 
-    printf 'work=auto\nslots=1,2\nfrontend_press=false\ndiag=false\nbridge=127.0.0.1:%s\n' "$PORT" \
+    printf 'work=auto\nslots=%s\nfrontend_press=false\ndiag=false\nbridge=127.0.0.1:%s\n' "$SLOTS" "$PORT" \
         > "$GAME_DIR/BepInEx/wellcooked-takeover.txt"
     sleep 2
     printf 'load=%s\n' "$SCENE" > "$GAME_DIR/BepInEx/wellcooked-command.txt"
