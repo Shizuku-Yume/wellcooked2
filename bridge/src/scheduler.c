@@ -749,7 +749,7 @@ static int op_consumes_holding(const char *op)
 {
     return op != NULL && (strcmp(op, "cook") == 0 || strcmp(op, "cut") == 0 ||
                           strcmp(op, "mix") == 0 || strcmp(op, "assemble") == 0 ||
-                          strcmp(op, "deliver") == 0);
+                          strcmp(op, "plate") == 0 || strcmp(op, "deliver") == 0);
 }
 
 /*
@@ -2895,6 +2895,30 @@ static int station_reachable(const scheduler *s, int station, const int *chef_ce
     return 0;
 }
 
+/*
+ * 倒料要等源锅真的煮熟：cook 任务在 start_cook 就 DONE，这时锅里还在煮；
+ * 端起来就倒会把生料倒进卷饼（sim demo3 复现）。世界状态里没有 pot 字段
+ * （老 Bridge）时不拦，交给宏自己等。
+ */
+static int pour_pot_ready(const scheduler *s, const sched_order *order, int task_index)
+{
+    const kos_resource *resource;
+    int cook_task;
+
+    if (!s->world_valid) {
+        return 1;
+    }
+    cook_task = pour_source_cook_task(s, order, order->tasks[task_index].node_index);
+    if (cook_task < 0 || order->tasks[cook_task].station_id[0] == '\0') {
+        return 1; /* 让派发路径报 pour_source_missing，而不是永远卡在就绪外 */
+    }
+    resource = station_world_resource(s, order->tasks[cook_task].station_id);
+    if (resource == NULL || resource->state[0] == '\0') {
+        return 1;
+    }
+    return strcmp(resource->state, "cooked") == 0;
+}
+
 static int task_dispatch_ready(const scheduler *s, const sched_order *order, int task_index,
                                int64_t now)
 {
@@ -2910,6 +2934,9 @@ static int task_dispatch_ready(const scheduler *s, const sched_order *order, int
         return 0;
     }
     node = &s->recipes.nodes[task->node_index];
+    if (strcmp(node->op, "pour") == 0 && !pour_pot_ready(s, order, task_index)) {
+        return 0;
+    }
     if (strcmp(node->op, "deliver") == 0 && !order_delivery_allowed(s, order)) {
         return 0;
     }

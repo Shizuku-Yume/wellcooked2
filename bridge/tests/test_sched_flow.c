@@ -1140,7 +1140,7 @@ static void put_station_resource(kos_world_state *world, const char *name,
 }
 
 /* 从 "cooker-4" 拼出 "pot_4"；测试用它写世界状态。 */
-__attribute__((unused)) static int station_resource_name(const char *station, char *out, size_t cap)
+static int station_resource_name(const char *station, char *out, size_t cap)
 {
     const char *dash = strrchr(station, '-');
 
@@ -1241,6 +1241,74 @@ static void test_cooker_occupied_from_world(void)
     cleanup_run(&run, &shm, &events, 1);
 }
 
+static int write_recipe_cook_pour(const ksfx_run *run, const char *dish)
+{
+    char text[2048];
+    int n = snprintf(text, sizeof text,
+                     "{\"scene\":\"%s\",\"nodes\":["
+                     "{\"id\":\"cook:C\",\"op\":\"cook\",\"label\":\"C\","
+                     "\"resource\":\"zz%ld_cooker\",\"duration\":1.0},"
+                     "{\"id\":\"pour:P\",\"op\":\"pour\",\"label\":\"P\","
+                     "\"resource\":\"counter\",\"duration\":1.0}],"
+                     "\"edges\":[[\"cook:C\",\"pour:P\"]],"
+                     "\"dishes\":[{\"dish\":\"%s\",\"score\":80,\"root\":\"pour:P\","
+                     "\"nodes\":[\"cook:C\",\"pour:P\"]}]}\n",
+                     run->scene, (long)getpid(), dish);
+    return n > 0 && ksfx_write_file(run->recipes_path, text, (size_t)n) == 0 ? 0 : -1;
+}
+
+/* 倒料必须等源锅 state=cooked。 */
+static void test_pour_waits_for_cooked(void)
+{
+    ksfx_run run;
+    kos_shm *shm = NULL;
+    kos_world_state world;
+    mqd_t events = (mqd_t)-1;
+    mqd_t taskss[KOS_SHM_MAX_CHEFS];
+    got_task got[4];
+    char pot[KOS_SHM_NAME_MAX];
+    int n;
+
+    printf("[test_sched_flow] 16. 锅没熟不派 pour\n");
+    ksfx_scene_override = "s_wellcooked_demo_3";
+    if (ksfx_init_ex(&run, 0) != 0 || write_orders(&run) != 0 ||
+        write_recipe_cook_pour(&run, "PourDish") != 0) {
+        expect(0, "pour_fixture_init");
+        ksfx_cleanup(&run);
+        ksfx_scene_override = NULL;
+        return;
+    }
+    ksfx_scene_override = NULL;
+    kos_world_state_reset(&world);
+    put_chef(&world, &run.kitchen, 0, 0, "Rice", "cooker");
+    put_order(&world, "w1", "PourDish", 80);
+    if (start_run(&run, &shm, &events, taskss, 1, &world) != 0) {
+        expect(0, "pour_scheduler_started");
+        cleanup_run(&run, &shm, &events, 1);
+        return;
+    }
+    n = collect_tasks(taskss, 1, got, 1, 3000);
+    expect(n == 1 && strcmp(got[0].op, "cook") == 0, "pour_source_cook_dispatched");
+    if (n == 1 && station_resource_name(got[0].station, pot, sizeof pot) == 0) {
+        put_station_resource(&world, pot, "cooking", "Rice");
+        world.chefs[0].holding[0] = '\0';
+        expect(world_write(shm, &world) == 0, "pour_pot_cooking_written");
+    }
+    expect(send_event(events, got[0].task_id, 0, KOS_EVT_DONE, "done") == 0,
+           "pour_source_cook_done");
+    ksfx_sleep_ms(150);
+    n = collect_tasks(taskss, 1, got, 1, 800);
+    expect(n == 0, "pour_not_dispatched_while_cooking");
+    world.resources[world.resource_count - 1].state[0] = '\0';
+    ksfx_copy(world.resources[world.resource_count - 1].state,
+              sizeof world.resources[world.resource_count - 1].state, "cooked");
+    expect(world_write(shm, &world) == 0, "pour_pot_cooked_written");
+    n = collect_tasks(taskss, 1, got, 1, 3000);
+    expect(n == 1 && strcmp(got[0].op, "pour") == 0,
+           "pour_dispatched_after_cooked");
+    cleanup_run(&run, &shm, &events, 1);
+}
+
 int main(void)
 {
     printf("[test_sched_flow] 开始：派工看手持、失败分流、订单结果闭环\n");
@@ -1257,6 +1325,7 @@ int main(void)
     test_worker_handoff_registration();
     test_cooker_station_exclusive();
     test_cooker_occupied_from_world();
+    test_pour_waits_for_cooked();
     printf("[test_sched_flow] 检查 %d 项，失败 %d 项\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;
 }
