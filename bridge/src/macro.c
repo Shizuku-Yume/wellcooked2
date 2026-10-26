@@ -585,6 +585,7 @@ static int step_init(kos_macro *macro, const kos_kitchen *kitchen,
     macro->entry_holding[0] = '\0';
     macro->clean_baseline_valid = 0;
     macro->clean_baseline = 0;
+    macro->counter_baseline[0] = '\0';
 
     if (step->kind == KOS_MACRO_GOTO) {
         macro->deadline_ms = game_ms + goto_timeout_ms(kitchen, step, chef);
@@ -609,6 +610,12 @@ static int step_init(kos_macro *macro, const kos_kitchen *kitchen,
     }
     if (step->kind == KOS_MACRO_WASH) {
         macro->clean_baseline_valid = clean_plate_count(world, &macro->clean_baseline);
+    }
+    if (step->kind == KOS_MACRO_POUR) {
+        const kos_resource *counter = find_station_resource(kitchen, step, world);
+        if (counter != NULL && counter->content[0] != '\0') {
+            copy_str(macro->counter_baseline, sizeof macro->counter_baseline, counter->content);
+        }
     }
     return 0;
 }
@@ -852,6 +859,30 @@ static int poured_content_matches(const char *node_id, const char *content)
     return common_suffix_length(name_a, len_a, name_b, len_b) >= 3;
 }
 
+static int counter_has_content(const char *counter_content, const char *item)
+{
+    char buf[KOS_SHM_NAME_MAX];
+    char *token;
+    char *saveptr = NULL;
+
+    if (counter_content == NULL || counter_content[0] == '\0' ||
+        item == NULL || item[0] == '\0') {
+        return 0;
+    }
+    if (poured_content_matches(item, counter_content)) {
+        return 1;
+    }
+    copy_str(buf, sizeof buf, counter_content);
+    token = strtok_r(buf, "+,", &saveptr);
+    while (token != NULL) {
+        if (poured_content_matches(item, token)) {
+            return 1;
+        }
+        token = strtok_r(NULL, "+,", &saveptr);
+    }
+    return 0;
+}
+
 /*
  * 倒料：手上端着锅/容器，对着台面容器按 interact，直到锅里的料进到台面上。
  *
@@ -910,15 +941,22 @@ static int run_pour(kos_macro *macro, const kos_kitchen *kitchen, const kos_worl
                 break;
             }
         }
-        /* 台面容器上有内容（contents[] 里有料）说明这一步的料已经倒进去了；
-         * 台面资源由 proto 的 find_station_resource 按位置找，旧世界状态里没有这一项。 */
-        if (counter != NULL && counter->content[0] != '\0') {
-            found = 1;
-        }
         if (found) {
             macro->saw_content = 1;
         } else if (macro->saw_content) {
             done = 1;
+        }
+
+        /* 台面容器信号：在没有 carried_ 的旧状态里，台面内容新增了当前工序原料可判完成。
+         * 注意：台面已有内容绝不能置 found=1（found 专指源锅仍有料）；
+         * 否则同一张台面连续两次倒料（如卷饼先倒肉再倒米）时，台面在第二步开始就非空，
+         * 会导致 found 恒为 1，永远无法判完成，并禁用兜底超时。 */
+        if (!done && counter != NULL && counter->content[0] != '\0') {
+            int baseline_had = counter_has_content(macro->counter_baseline, step->item);
+            int now_has = counter_has_content(counter->content, step->item);
+            if (now_has && !baseline_had) {
+                done = 1;
+            }
         }
     }
     if (!done && !macro->saw_content &&

@@ -98,6 +98,7 @@ typedef struct {
     char entry_holding[KOS_SHM_NAME_MAX];
     int clean_baseline_valid;
     int32_t clean_baseline;
+    char counter_baseline[KOS_SHM_NAME_MAX];
     char fail_detail[KOS_MACRO_DETAIL_MAX];
     kos_log *log;                      /* 模块 logger，NULL 时不输出 */
 } kos_macro;
