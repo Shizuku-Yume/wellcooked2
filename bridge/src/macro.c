@@ -17,6 +17,7 @@
 
 #include <kitchenos/nav.h>
 #include <kitchenos/stand.h>
+#include <kitchenos/navtab.h>
 
 #define MACRO_PI 3.14159265358979323846f
 #define MACRO_PROGRESS_DONE 0.999f
@@ -36,9 +37,13 @@
  * 几百毫秒；手空后等这么久还没有结果才判 holding-lost。 */
 #define MACRO_DELIVER_LOST_GRACE_MS 1000
 /* 四人同场时 PIBT 让路、反复重规划，实机 `_3` 里 goto 在快到站时（剩 0~1 个路点）
- * 被 3 s 余量判超时；6 s 覆盖一次让路往返。 */
-#define MACRO_GOTO_MARGIN_MS 6000
-#define MACRO_GOTO_DEFAULT_TIMEOUT_MS 6000
+ * 被 3 s 余量判超时；覆盖一次让路往返与完整卡死判定窗口。 */
+#define MACRO_GOTO_MARGIN_MS KOS_NAV_BLOCKED_WINDOW_MS
+/* goto 的默认超时必须覆盖 navd 判定 BLOCKED 所需的完整窗口（3 次卡住 = 6 s），
+ * 再加 2 s 余量（总计 8 s，即 6~8 s 有界超时）。决不能等于或短于 6 s，
+ * 否则 Worker 会在 navd 报告第 3 次重规划与 BLOCKED 之前超时失败。 */
+#define MACRO_GOTO_BLOCKED_MARGIN_MS 2000
+#define MACRO_GOTO_DEFAULT_TIMEOUT_MS (KOS_NAV_BLOCKED_WINDOW_MS + MACRO_GOTO_BLOCKED_MARGIN_MS)
 
 static void copy_str(char *dst, size_t cap, const char *src)
 {

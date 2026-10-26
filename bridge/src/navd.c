@@ -33,8 +33,8 @@
 #include <unistd.h>
 
 #define NAVD_LOOP_MS 10
-#define NAVD_STUCK_MS 2000
-#define NAVD_STUCK_LIMIT 3
+#define NAVD_STUCK_MS KOS_NAV_STUCK_MS
+#define NAVD_STUCK_LIMIT KOS_NAV_STUCK_LIMIT
 #include "navd_plan.h"
 #define NAVD_MOVE_EPS 0.02f
 #define NAVD_PLAN_H KOS_NAV_MAX_PLAN
