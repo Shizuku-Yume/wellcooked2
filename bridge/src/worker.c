@@ -547,7 +547,8 @@ static int worker_main(worker *w, const kos_child_opts *opts)
         char text[256];
 
         kos_error_clear(&err);
-        if (kos_kitchen_load(w->kitchen_path, &w->kitchen, &err) != KOS_OK) {
+        /* 与 Scheduler 同一份工位表：zones 的 handoff 台面也要在，放下工序才能建计划。 */
+        if (kos_kitchen_load_with_zones(w->kitchen_path, &w->kitchen, &err) != KOS_OK) {
             error_text(&err, text, sizeof text);
             kos_log_error(w->rt.log, "kitchen_load_failed", "path=%s error=%s",
                           w->kitchen_path, text);
