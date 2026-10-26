@@ -695,26 +695,80 @@ namespace WellCooked
                 return false;
             }
 
-            var progressValue = WorldState.Get(workableItem, "m_progress");
-            var subValue = WorldState.Get(workableItem, "m_subProgress");
-            int progress = progressValue is int p0 ? p0 : 0;
-            int sub = subValue is int s0 ? s0 : 0;
-
+            int progress = 0;
+            int sub = 0;
             int stages = 0;
-            var workable = WorldState.Get(workableItem, "m_workable");
-            if (workable != null)
+            double normalised = WorkableProgress(attached.gameObject, out finished, out progress,
+                                                 out sub, out stages);
+            description = "阶段 " + progress + "/" + Mathf.Max(stages - 1, 1)
+                          + " 子进度 " + sub + (finished ? " 已切好" : "");
+            if (normalised < 0.0)
             {
-                var stagesValue = WorldState.Get(workable, "m_stages");
-                if (stagesValue is int stagesInt)
-                {
-                    stages = stagesInt;
-                }
+                description += " 进度?";
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// 加工进度：`m_progress / max(m_stages - 1, 1)`，0..1；读不到阶段数返回 -1
+        /// （调用方应省略字段，别用 0 假装"还没开始"）。实机这一版
+        /// `ClientWorkableItem.GetProgress()` 调不通（LogOutput: 没找到属性/字段
+        /// GetProgress），所以只能按字段读，且**只有这一份实现**：手动局日志
+        /// （`WorkState`）与 `state_update` 的砧板进度共用它。
+        /// </summary>
+        public static double WorkableProgress(GameObject item, out bool finished)
+        {
+            int progress;
+            int sub;
+            int stages;
+            return WorkableProgress(item, out finished, out progress, out sub, out stages);
+        }
+
+        private static double WorkableProgress(GameObject item, out bool finished, out int progress,
+                                               out int sub, out int stages)
+        {
+            finished = false;
+            progress = 0;
+            sub = 0;
+            stages = 0;
+            if (item == null)
+            {
+                return -1.0;
+            }
+
+            var workableItem = item.GetComponent("ClientWorkableItem");
+            if (workableItem == null)
+            {
+                return -1.0;
+            }
+
+            if (WorldState.Get(workableItem, "m_progress") is int p)
+            {
+                progress = p;
+            }
+            if (WorldState.Get(workableItem, "m_subProgress") is int s)
+            {
+                sub = s;
+            }
+
+            var workable = WorldState.Get(workableItem, "m_workable");
+            if (workable != null && WorldState.Get(workable, "m_stages") is int stagesInt)
+            {
+                stages = stagesInt;
             }
 
             finished = WorldState.Get(workableItem, "HasFinished") is bool done && done;
-            description = "阶段 " + progress + "/" + Mathf.Max(stages - 1, 1)
-                          + " 子进度 " + sub + (finished ? " 已切好" : "");
-            return true;
+            if (stages < 2)
+            {
+                return -1.0; // 阶段数读不到：宁可省略，也不能把原始阶段数钳成 1
+            }
+
+            double value = (double)progress / (stages - 1);
+            if (value < 0.0)
+            {
+                return 0.0;
+            }
+            return value > 1.0 ? 1.0 : value;
         }
 
         /// <summary>
