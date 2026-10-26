@@ -110,14 +110,16 @@ namespace WellCooked
         {
             var timer = flow == null ? null : WorldState.Get(flow, "RoundTimer");
             var left = timer == null ? null : WorldState.Get(timer, "m_timeLeft");
-            var limit = timer == null ? null : WorldState.Get(timer, "m_timeLimit");
-            if (limit == null && flow != null)
+            // 上限先读 flow（`wellcooked-state.json` 的 timer.limit 一直用这个来源），
+            // 再退回 ServerRoundTimer.m_timeLimit。
+            var limit = flow == null ? null : WorldState.Get(flow, "m_timeLimit");
+            if (limit == null && timer != null)
             {
-                limit = WorldState.Get(flow, "m_timeLimit");
+                limit = WorldState.Get(timer, "m_timeLimit");
             }
-            if (left == null || limit == null)
+            if (left == null || limit == null || ToDouble(limit) <= 0.0)
             {
-                return;
+                return; // 未初始化/读不到就不报，别给调度侧一个 0 秒的局
             }
             b.FieldNum("round_time_left", ToDouble(left));
             b.FieldNum("round_time_limit", ToDouble(limit));

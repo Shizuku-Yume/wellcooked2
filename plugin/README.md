@@ -39,9 +39,10 @@
   网格外）与 `wellcooked-menu.json`（菜谱表，`menu=1` 导出）。
 - `state_update`（TCP，**默认每帧**；`wellcooked-takeover.txt` 里写 `state_ms=<毫秒>` 就按间隔限流）：
   字段名以 `protocol/protocol.md` 为准，构造在 `plugin/Link/StateFrame.cs`。协议的分帧硬上限是单行 1 MiB；
-  4 KB 是状态帧的**预算**（超过只在日志里警告一次，不截断也不丢弃 —— 见 `LinkRunner.MaxStateBytes`）。
-  协议里可选的字段取不到时**省略**（不是填 0）：`chefs[].state`、`orders[].ingredients`、
-  `resources[].chef_id` 这一轮没映射；锅/砧板读不到状态时只报编号。
+  `LinkRunner.MaxStateBytes` 的 **4 KB 只是软预算**：超了在日志里警告一次，仍然发送、对端不截断。
+  递归 `contents[]` 上线后满帧约 7–9 KB，那条警告是预期的（预算值随上报内容一起上调前不要当故障）。
+  协议里可选的字段取不到时**省略**（不是填 0）：`chefs[].state`、`orders[].ingredients` 这一轮没映射；
+  锅/砧板读不到状态时只报编号。
 
 ## 链路配置与重连（`wellcooked-takeover.txt`）
 
