@@ -644,9 +644,9 @@ static void test_distance_and_wash(void)
 
 
 /*
- * 没有对应工位的工序要尽早让订单失败，而不是留在未开工状态：open_next_order 把
- * "找不到工位"也算可开，随后 build_candidates 的 fail_task_no_station 负责收尾。
- * 这条路径在 `_1`（没有 plate_stack 工位）会用到。
+ * 没有对应工位的工序要尽早让订单失败，而不是留在未开工状态：启动时的
+ * recipe_feasibility_check 把这道菜标成不可行，订单一到就写 order_rejected 并置
+ * KOS_ORDER_FAILED，不派任何任务。这条路径在 `_1`（没有 plate_stack 工位）会用到。
  */
 static void test_missing_station_fails_order(void)
 {
@@ -681,14 +681,17 @@ static void test_missing_station_fails_order(void)
         ksfx_cleanup(&run);
         return;
     }
-    expect(ksfx_wait_events(&run, "no station for resource", 3000, events,
+    expect(ksfx_wait_events(&run, "order_rejected", 3000, events,
                             sizeof events) == 0,
            "missing_station_event_written");
     expect(ksfx_stop(&run) == 0, "missing_station_scheduler_stopped");
     text = ksfx_read_file(events, &len);
-    expect(text != NULL && strstr(text, "\"task_failed\"") != NULL &&
+    expect(text != NULL && strstr(text, "\"order_rejected\"") != NULL &&
+               strstr(text, "\"reason\":\"recipe_infeasible\"") != NULL &&
                strstr(text, "\"order_id\":\"cfg-00\"") != NULL,
            "missing_station_order_failed");
+    expect(text != NULL && strstr(text, "\"task_failed\"") == NULL,
+           "missing_station_no_task_dispatched");
     free(text);
     ksfx_cleanup(&run);
 }

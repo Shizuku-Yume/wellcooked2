@@ -17,7 +17,9 @@
 #include <kitchenos/shm.h>
 
 #define KOS_KITCHEN_MAX_CELLS 2048
-#define KOS_KITCHEN_MAX_STATIONS 64
+/* 普通台面（counter）现在也是工位：`_3` 的环形吧台有 42 张，加上料箱/锅/盘堆就过 64。
+ * 这个上限只在进程内使用（kos_kitchen 不进共享内存），放宽不改变段布局。 */
+#define KOS_KITCHEN_MAX_STATIONS 128
 #define KOS_KITCHEN_NAME_MAX 32
 #define KOS_KITCHEN_FILE_MAX (4 * 1024 * 1024)
 

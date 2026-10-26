@@ -37,6 +37,36 @@ static int find_config(const char *relative, char *path, size_t len)
     return kos_child_default_config_path(relative, path, len) == 0;
 }
 
+/* 生成器（scripts/export-kitchen.py）当前会写出的 op 集合。 */
+static int known_op(const char *op)
+{
+    static const char *const known[] = {
+        "fetch", "cut", "cook", "pour", "plate", "pickup", "place", "drop",
+        "deliver", "assemble", "wash", "mix",
+    };
+    size_t i;
+
+    for (i = 0; i < sizeof known / sizeof known[0]; i++) {
+        if (strcmp(op, known[i]) == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/* 生成器把每道工序钉在固定类型的工位上（macro.c 的完成判据配套）。 */
+static const char *op_expected_resource(const char *op)
+{
+    if (strcmp(op, "cut") == 0) {
+        return "board";
+    }
+    if (strcmp(op, "pour") == 0 || strcmp(op, "place") == 0 ||
+        strcmp(op, "pickup") == 0) {
+        return "counter";
+    }
+    return NULL;
+}
+
 static void test_one_map(const char *scene)
 {
     char relative[128];
@@ -142,6 +172,24 @@ static void test_one_map(const char *scene)
             }
         }
         expect(i == recipes.dish_count, label);
+        snprintf(label, sizeof label, "%s: 工序 op 都在生成器认识的集合里", scene);
+        for (i = 0; i < recipes.node_count; i++) {
+            if (!known_op(recipes.nodes[i].op)) {
+                break;
+            }
+        }
+        expect(i == recipes.node_count, label);
+        /* 卷饼流程（place/pour/pickup）的工位类型写错了，Scheduler 只会把菜判成不可行；
+         * 这里在配置层面先钉住生成器的约定。 */
+        snprintf(label, sizeof label, "%s: 切菜落砧板、倒料/放/取落台面", scene);
+        for (i = 0; i < recipes.node_count; i++) {
+            const char *expected = op_expected_resource(recipes.nodes[i].op);
+
+            if (expected != NULL && strcmp(recipes.nodes[i].resource, expected) != 0) {
+                break;
+            }
+        }
+        expect(i == recipes.node_count, label);
             /* 每个工序的资源类型都要有对象可派，否则 Scheduler 的派工会落到
              * "recipe_no_station"。`_1` 没有干净盘堆（spec Notes），plate 工序在
              * 洗盘任务（04/05）补上资源模型前是已知缺口，不在这里冒充通过。 */

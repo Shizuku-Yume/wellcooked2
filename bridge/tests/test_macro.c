@@ -238,18 +238,35 @@ static void test_expansions(const kos_kitchen *kitchen)
            "cook = goto + drop + start_cook");
     expect(kos_macro_plan_build_with_source(kitchen, "plate", "plate:Dish", plate, cooker,
                                             "o1", 1000, &plan, &err) == KOS_OK &&
-               plan.step_count == 5 && plan.steps[0].kind == KOS_MACRO_GOTO &&
-               plan.steps[1].kind == KOS_MACRO_PICKUP &&
-               strcmp(plan.steps[1].item, "Plate") == 0 &&
-               strcmp(plan.steps[2].station_id, cooker) == 0 &&
-               plan.steps[3].kind == KOS_MACRO_WAIT_READY &&
-               plan.steps[4].kind == KOS_MACRO_PICKUP,
-           "plate = clean plate pickup + reserved pot wait/pickup");
-    expect(kos_macro_plan_build_with_source(kitchen, "plate", "plate:Sushi", plate, "",
-                                            "o2", 1000, &plan, &err) == KOS_OK &&
+               plan.step_count == 3 && plan.steps[0].kind == KOS_MACRO_GOTO &&
+               plan.steps[1].kind == KOS_MACRO_DROP &&
+               plan.steps[2].kind == KOS_MACRO_PICKUP &&
+               strcmp(plan.steps[2].item, "Plate") == 0,
+           "plate = drop held dish on the stack + take the plate");
+    expect(kos_macro_plan_build(kitchen, "pickup", "pickup:Chicken_Burrito", container, "o2",
+                                1000, &plan, &err) == KOS_OK &&
                plan.step_count == 2 && plan.steps[1].kind == KOS_MACRO_PICKUP &&
-               strcmp(plan.steps[1].item, "Plate") == 0,
-           "cold plate = clean plate pickup only");
+               plan.steps[1].item[0] == '\0',
+           "pickup = goto + pickup(任意物品)");
+    expect(kos_macro_plan_build(kitchen, "place", "place:Tortilla", container, "o2", 1000,
+                                &plan, &err) == KOS_OK &&
+               plan.step_count == 2 && plan.steps[1].kind == KOS_MACRO_DROP,
+           "place = goto + drop（玉米饼上台面）");
+    expect(kos_macro_plan_build_with_source(kitchen, "pour", "pour:BurritoChicken", container,
+                                            cooker, "o1", 100, &plan, &err) == KOS_OK &&
+               plan.step_count == 6 && plan.steps[0].kind == KOS_MACRO_GOTO &&
+               strcmp(plan.steps[0].station_id, cooker) == 0 &&
+               plan.steps[1].kind == KOS_MACRO_PICKUP && plan.steps[1].item[0] == '\0' &&
+               plan.steps[2].kind == KOS_MACRO_GOTO &&
+               strcmp(plan.steps[2].station_id, container) == 0 &&
+               plan.steps[3].kind == KOS_MACRO_POUR &&
+               strcmp(plan.steps[3].item, "BurritoChicken") == 0 &&
+               plan.steps[4].kind == KOS_MACRO_GOTO &&
+               plan.steps[5].kind == KOS_MACRO_DROP,
+           "pour = 端锅 + 到容器倒 + 锅放回灶");
+    expect(kos_macro_plan_build_with_source(kitchen, "pour", "pour:Rice", container, "",
+                                            "o1", 100, &plan, &err) == KOS_ERR_INVAL,
+           "pour 缺源灶被拒绝");
     expect(kos_macro_plan_build(kitchen, "deliver", "deliver:Dish", serving, "o1", 1000,
                                 &plan, &err) == KOS_OK &&
                plan.step_count == 2 && plan.steps[1].kind == KOS_MACRO_DELIVER,
@@ -423,55 +440,127 @@ static void test_plate(const kos_kitchen *kitchen, const char *cooker, const cha
     kos_macro_output out;
     kos_error err;
     kos_chef *chef;
-    kos_resource *pot;
     int64_t game_ms = 1000;
     int rc;
 
     printf("test_plate\n");
     base_world(&world);
     chef = chef_at_station(&world, kitchen, plate_stack);
-    chef->holding[0] = '\0';
+    snprintf(chef->holding, sizeof chef->holding, "Tortilla+Fillings");
     (void)add_resource(&world, plate_stack);
-    pot = add_resource(&world, "pot_0");
-    snprintf(pot->state, sizeof pot->state, "cooking");
-    snprintf(pot->content, sizeof pot->content, "Dish");
     kos_error_clear(&err);
+    /* source 指向灶台只是旧调用方还在传；plate 不再用它取料。 */
     expect(kos_macro_plan_build_with_source(kitchen, "plate", "plate:Dish", plate_stack,
-                                            cooker, "o1", 1000, &plan, &err) == KOS_OK,
-           "plate plans clean plate and exact pot");
+                                            cooker, "o1", 100, &plan, &err) == KOS_OK,
+           "plate 计划 = 放菜 + 取盘");
     kos_macro_begin(&macro, &plan);
     (void)finish_goto(&macro, kitchen, &world, &game_ms, &out);
     game_ms += 16;
     rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
-    expect(rc == 0 && macro.step_index == 1 && out.action == KOS_MACRO_ACT_INTERACT,
-           "plate fetches clean plate first");
-    snprintf(chef->holding, sizeof chef->holding, "Plate");
+    expect(rc == 0 && macro.step_index == 1 && out.action == KOS_MACRO_ACT_INTERACT &&
+               strcmp(out.target_object, plate_stack) == 0,
+           "plate 先把手里整份菜放到盘堆上");
+    chef->holding[0] = '\0';
     game_ms += 16;
     rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
-    expect(rc == 0 && macro.step_index == 2, "clean plate pickup advances to reserved pot");
-    chef->x = kitchen->cells[kos_stand_cells(kitchen,
-                                              kos_kitchen_station_index(kitchen, cooker))->cells[0].cell].x;
-    chef->y = kitchen->cells[kos_stand_cells(kitchen,
-                                              kos_kitchen_station_index(kitchen, cooker))->cells[0].cell].z;
-    chef->facing = atan2f(kitchen->stations[kos_kitchen_station_index(kitchen, cooker)].x - chef->x,
-                          kitchen->stations[kos_kitchen_station_index(kitchen, cooker)].z - chef->y);
-    (void)kos_macro_advance(&macro, kitchen, &world, 0, 1, game_ms, &out);
-    game_ms += 16;
-    (void)kos_macro_advance(&macro, kitchen, &world, 0, 1, game_ms, &out);
-    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
-    expect(rc == 0 && macro.step_index == 3 && out.action == KOS_MACRO_ACT_STOP,
-           "waits on exact reserved pot");
-    snprintf(pot->state, sizeof pot->state, "cooked");
+    expect(rc == 0 && macro.step_index == 2, "放下后进入取盘");
     game_ms += 16;
     rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
-    expect(rc == 0 && macro.step_index == 4, "cooked pot advances to dish pickup");
-    game_ms += 16;
-    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
-    expect(rc == 0 && out.action == KOS_MACRO_ACT_INTERACT, "dish pickup emits interact");
-    snprintf(chef->holding, sizeof chef->holding, "Plate+Dish");
+    expect(rc == 0 && macro.step_index == 2 && out.action == KOS_MACRO_ACT_INTERACT,
+           "取盘发 interact");
+    snprintf(chef->holding, sizeof chef->holding, "equipment_plate_01");
     game_ms += 16;
     expect(kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out) == 1,
-           "plated dish completes");
+           "拿到 equipment_plate_01 后 plate 完成（Plate 按子串匹配）");
+}
+
+static void move_chef_to(kos_world_state *world, const kos_kitchen *kitchen,
+                         const char *station_id)
+{
+    int station_index = kos_kitchen_station_index(kitchen, station_id);
+    const kos_station_stands *stands;
+    kos_chef *chef = &world->chefs[0];
+
+    if (station_index < 0) {
+        return;
+    }
+    stands = kos_stand_cells(kitchen, station_index);
+    if (stands == NULL || stands->count <= 0) {
+        return;
+    }
+    chef->x = kitchen->cells[stands->cells[0].cell].x;
+    chef->y = kitchen->cells[stands->cells[0].cell].z;
+    chef->facing = atan2f(kitchen->stations[station_index].x - chef->x,
+                         kitchen->stations[station_index].z - chef->y);
+}
+
+/*
+ * 倒料按"源锅内容消失"判完成：锅跟人走、pot_N 会重排，所以这里连 pot 编号都故意
+ * 用 pot_0 之外的名字，确认实现不是按编号找锅。
+ */
+static void test_pour(const kos_kitchen *kitchen, const char *cooker, const char *container)
+{
+    kos_world_state world;
+    kos_macro_plan plan;
+    kos_macro macro;
+    kos_macro_output out;
+    kos_error err;
+    kos_chef *chef;
+    kos_resource *pot;
+    int64_t game_ms = 1000;
+    int rc;
+
+    printf("test_pour\n");
+    base_world(&world);
+    chef = chef_at_station(&world, kitchen, cooker);
+    pot = add_resource(&world, "pot_3");
+    snprintf(pot->state, sizeof pot->state, "cooked");
+    snprintf(pot->content, sizeof pot->content, "BurritoChicken");
+    kos_error_clear(&err);
+    expect(kos_macro_plan_build_with_source(kitchen, "pour", "pour:BurritoChicken", container,
+                                            cooker, "o1", 100, &plan, &err) == KOS_OK,
+           "pour 计划建成");
+    kos_macro_begin(&macro, &plan);
+    (void)finish_goto(&macro, kitchen, &world, &game_ms, &out);
+    game_ms += 16;
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    expect(rc == 0 && macro.step_index == 1 && out.action == KOS_MACRO_ACT_INTERACT &&
+               strcmp(out.target_object, cooker) == 0,
+           "pour 先从灶上端锅（pickup 不认物品名）");
+    snprintf(chef->holding, sizeof chef->holding, "utensil_frying_pan_01");
+    game_ms += 16;
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    expect(rc == 0 && macro.step_index == 2, "端到锅后去容器");
+    move_chef_to(&world, kitchen, container);
+    (void)kos_macro_advance(&macro, kitchen, &world, 0, 1, game_ms, &out);
+    game_ms += 16;
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 1, game_ms, &out);
+    expect(rc == 0 && macro.step_index == 3, "面向容器后进入倒料");
+    game_ms += 16;
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    expect(rc == 0 && macro.step_index == 3 && out.action == KOS_MACRO_ACT_INTERACT &&
+               strcmp(out.target_object, container) == 0,
+           "倒料按容器上的 interact 推进");
+    game_ms += 16;
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    expect(rc == 0 && macro.step_index == 3, "源锅还有料时继续按");
+    pot->content[0] = '\0';
+    game_ms += 16;
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    expect(rc == 0 && macro.step_index == 4, "源锅内容消失后回灶");
+    move_chef_to(&world, kitchen, cooker);
+    (void)kos_macro_advance(&macro, kitchen, &world, 0, 1, game_ms, &out);
+    game_ms += 16;
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 1, game_ms, &out);
+    expect(rc == 0 && macro.step_index == 5, "面向灶台后进入放锅");
+    game_ms += 16;
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    expect(rc == 0 && macro.step_index == 5 && out.action == KOS_MACRO_ACT_INTERACT,
+           "放锅发 interact");
+    chef->holding[0] = '\0';
+    game_ms += 16;
+    expect(kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out) == 1,
+           "锅放回灶上后 pour 完成");
 }
 
 static void test_deliver(const kos_kitchen *kitchen, const char *serving)
@@ -784,6 +873,7 @@ int main(void)
     test_cut(&kitchen, board);
     test_cook(&kitchen, cooker);
     test_plate(&kitchen, cooker, plate_stack);
+    test_pour(&kitchen, cooker, container);
     test_deliver(&kitchen, serving);
     test_wash(&kitchen, sink);
     test_timeouts(&kitchen, dispenser, board);
