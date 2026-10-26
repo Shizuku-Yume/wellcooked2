@@ -277,6 +277,50 @@ static int name_eq(const char *a, const char *b)
     }
 }
 
+/*
+ * 工位 content 与期望物品比对。插件把多个内容物用 '+' 拼成一个串（shm.h 的
+ * KOS_SHM_CONTENT_MAX 注释），所以逐段比；忽略大小写与 '-'/'_' 的差异。
+ */
+static int content_matches(const char *content, const char *item)
+{
+    const char *start;
+
+    if (content == NULL || item == NULL || item[0] == '\0') {
+        return 0;
+    }
+    start = content;
+    for (;;) {
+        const char *plus = strchr(start, '+');
+        size_t len = plus != NULL ? (size_t)(plus - start) : strlen(start);
+        char token[KOS_SHM_CONTENT_MAX];
+
+        if (len >= sizeof token) {
+            len = sizeof token - 1;
+        }
+        memcpy(token, start, len);
+        token[len] = '\0';
+        if (name_eq(token, item)) {
+            return 1;
+        }
+        if (plus == NULL) {
+            return 0;
+        }
+        start = plus + 1;
+    }
+}
+
+/*
+ * 工位 content 是否还是这一步该有的东西：DROP 时记下的原料或节点产物名之一。
+ * 空 content 不算匹配——"什么都没有"由调用方按 content-gone 处理。
+ */
+static int content_is_expected(const kos_resource *resource, const kos_macro *macro,
+                               const kos_macro_step *step)
+{
+    return resource->content[0] != '\0' &&
+           (content_matches(resource->content, macro->dropped_item) ||
+            content_matches(resource->content, step->item));
+}
+
 /* 工位 id 末尾的序号（cooker-0 → 0）；没有数字返回 -1。 */
 static int station_ordinal(const char *id)
 {
@@ -524,6 +568,11 @@ static int step_init(kos_macro *macro, const kos_kitchen *kitchen,
     macro->entry_holding[0] = '\0';
     macro->clean_baseline_valid = 0;
     macro->clean_baseline = 0;
+    if (step->kind == KOS_MACRO_DROP && chef != NULL) {
+        /* 后面 start_cook/chop 要核对锅/板上放的是不是这一份料。DROP 之后厨师
+         * 手就空了，所以只能在这里记。 */
+        copy_str(macro->dropped_item, sizeof macro->dropped_item, chef->holding);
+    }
 
     if (step->kind == KOS_MACRO_GOTO) {
         macro->deadline_ms = game_ms + goto_timeout_ms(kitchen, step, chef);
@@ -545,6 +594,9 @@ static int step_init(kos_macro *macro, const kos_kitchen *kitchen,
         if (chef != NULL) {
             copy_str(macro->entry_holding, sizeof macro->entry_holding, chef->holding);
         }
+        /* G9：订单消失既可能是交付也可能是过期，只有游戏分数能分开。 */
+        macro->score_base = world->score;
+        macro->score_base_valid = 1;
     }
     if (step->kind == KOS_MACRO_WASH) {
         macro->clean_baseline_valid = clean_plate_count(world, &macro->clean_baseline);
@@ -647,14 +699,20 @@ static int run_chop(kos_macro *macro, const kos_kitchen *kitchen,
         fail_step(macro, game_ms, "progress=1", "no-station-resource");
         return -1;
     }
-    if (resource->progress >= MACRO_PROGRESS_DONE) {
-        return next_step(macro, out) == 1 ? 1 : 0;
-    }
     if (resource->content[0] != '\0') {
         macro->saw_content = 1;
+        /* G13：板上不是这一步该放的东西（放错料/别人占着砧板）就立刻判工序不可行，
+         * 不要等 progress 超时后把坏菜送到装盘才暴露。 */
+        if (!content_is_expected(resource, macro, step)) {
+            fail_step(macro, game_ms, "progress=1", "content-mismatch");
+            return -1;
+        }
     } else if (macro->saw_content) {
         fail_step(macro, game_ms, "progress=1", "content-gone");
         return -1;
+    }
+    if (resource->progress >= MACRO_PROGRESS_DONE) {
+        return next_step(macro, out) == 1 ? 1 : 0;
     }
     if (game_ms >= macro->deadline_ms) {
         fail_step(macro, game_ms, "progress=1", "timeout");
@@ -677,6 +735,11 @@ static int run_start_cook(kos_macro *macro, const kos_kitchen *kitchen,
         return -1;
     }
     if (strcmp(resource->state, "cooking") == 0 || strcmp(resource->state, "cooked") == 0) {
+        /* G13：锅里已经是别的料时，"开火"动作游戏会接受，但做出的不是本单的菜。 */
+        if (resource->content[0] != '\0' && !content_is_expected(resource, macro, step)) {
+            fail_step(macro, game_ms, "pot=cooking", "content-mismatch");
+            return -1;
+        }
         return next_step(macro, out) == 1 ? 1 : 0;
     }
     if (strcmp(resource->state, "burning") == 0) {
@@ -685,6 +748,10 @@ static int run_start_cook(kos_macro *macro, const kos_kitchen *kitchen,
     }
     if (resource->content[0] != '\0') {
         macro->saw_content = 1;
+        if (!content_is_expected(resource, macro, step)) {
+            fail_step(macro, game_ms, "pot=cooking", "content-mismatch");
+            return -1;
+        }
     } else if (macro->saw_content) {
         fail_step(macro, game_ms, "pot=cooking", "content-gone");
         return -1;
@@ -755,6 +822,20 @@ static int run_deliver(kos_macro *macro, const kos_world_state *world,
                        int64_t game_ms, kos_macro_output *out)
 {
     if (!order_present(world, macro->plan.order_id)) {
+        /* 订单消失有两种：交付成功（分数上涨）或到期（分数下降/不变）。以前只看
+         * "订单不在了"，过期也被当成交付，W11 实机把扣分记成过完成（G9）。 */
+        if (macro->score_base_valid) {
+            int64_t delta = world->score - macro->score_base;
+
+            if (delta < 0) {
+                char reason[48];
+
+                snprintf(reason, sizeof reason, "expired score_delta=%lld",
+                         (long long)delta);
+                fail_step(macro, game_ms, "order-gone", reason);
+                return -1;
+            }
+        }
         return next_step(macro, out) == 1 ? 1 : 0;
     }
     /* 手上本来拿着菜，等订单消失时菜先没了：这是完成条件被打破，不必等到超时。 */

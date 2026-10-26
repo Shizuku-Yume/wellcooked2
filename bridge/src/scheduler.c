@@ -47,12 +47,25 @@
 #define SCHED_LINE_MAX 2048
 #define SCHED_WORLD_POLL_MS 100
 #define SCHED_ORDER_GAP_MS 700
-#define SCHED_ORDER_REWARD_FALLBACK 10
+#define SCHED_ORDER_REWARD_UNKNOWN 0 /* 订单没有分值：策略按 0 处理，不参与奖励比较 */
 #define SCHED_TASK_TIMEOUT_MS 30000
 /* 距离场够不到（另一个连通区/厨师格未知）时给的路程惩罚，单位是格。 */
 #define SCHED_UNREACHABLE_CELLS 600
 #define SCHED_WASH_PRIORITY 32
 #define SCHED_TASK_MAX_RETRIES 3 /* 同一工序宏动作最多失败 3 次 */
+/* 第 n 次宏失败回队后等 n × 2 s 再派（P2 重试风暴的退避）。 */
+#define SCHED_TASK_RETRY_BACKOFF_MS 2000
+/* 交付动作做完后等游戏把这一单的分数记上；超过这个窗口才按分数增量判断成败。
+ * fake_plugin 在 0.5 s 后才改分数，实机同一帧，1.5 s 两边都够。 */
+#define SCHED_OUTCOME_GRACE_MS 1500
+/* 子工序 DONE 后原料应在这个时间内出现在厨师手上；超过还空手就是"手上东西丢了"。 */
+#define SCHED_HOLDING_LOSS_MS 1000
+
+enum {
+    SCHED_OUTCOME_UNKNOWN = 0,
+    SCHED_OUTCOME_DELIVERED = 1,
+    SCHED_OUTCOME_EXPIRED = 2
+};
 
 typedef enum {
     TASK_PENDING = 0,
@@ -72,6 +85,10 @@ typedef struct {
     int64_t ready_since_ms; /* 第一次进入就绪队列 */
     int64_t wait_started_ms; /* 最近一段资源等待的开始；0 = 未等待 */
     int wait_logged;
+    int64_t not_before_ms; /* 宏失败回队后的退避截止；0 = 立即可派 */
+    int64_t done_ms;       /* DONE 的时刻；持有亲和丢失判定的宽限起点 */
+    int64_t score_base;    /* deliver 派发时的 world.score；G9 的分数锚点 */
+    int score_base_valid;
     char station_id[KOS_SHM_NAME_MAX];
     int cooker_reserved;
     int64_t cooker_reserved_ms;
@@ -91,6 +108,14 @@ typedef struct {
     int open_seq;  /* 开工顺序，交付必须按它来 */
     int64_t finished_ms;
     int64_t lateness_ms;
+    /* G9：完成/过期以游戏结果为准。world 订单的 DAG 走完只说明动作做完；
+     * 分数增量为正才算交付，为负或动作没做完订单就消失则算过期。 */
+    int outcome;
+    int64_t reward_observed; /* 交付时实际观察到的分数增量 */
+    int64_t score_anchor;    /* 订单到达、以及 deliver 派发时刷新的分数锚点 */
+    int seen_in_world;       /* 至少有一帧在世界状态里见过；防止启动空帧误判过期 */
+    int outcome_pending_logged;
+    int64_t outcome_check_ms; /* 交付动作 DONE 后等游戏记分的截止 */
     int task_count;
     sched_task tasks[SCHED_MAX_TASKS];
 } sched_order;
@@ -108,8 +133,18 @@ typedef struct {
     int64_t started_ms;
 } sched_wash;
 
+/* 手上拿着的东西没人要时的放下工序（不属于任何订单，和 wash 一样是服务任务）。 */
 typedef struct {
-    int order_index; /* -1 = wash */
+    int state; /* 0 = 没有，1 = 待派，2 = 已派 */
+    int chef_id;
+    uint64_t task_id;
+    int64_t ready_ms;
+    char item[KOS_SHM_NAME_MAX];
+    int station_index;
+} sched_putdown;
+
+typedef struct {
+    int order_index; /* -1 = wash, -2 = putdown */
     int task_index;
     int node_index;
     int station_index;
@@ -165,6 +200,7 @@ typedef struct {
     int64_t world_read_ms;
     int64_t next_plate_poll_ms;
     sched_wash wash;
+    sched_putdown putdown;
     int open_seq;
 
     mqd_t tasks[KOS_SHM_MAX_CHEFS];
