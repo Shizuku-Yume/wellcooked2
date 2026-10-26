@@ -126,8 +126,12 @@ The failed `_2` Supervisor tree owned by this task was stopped via PID 1416010; 
 **2026-10-27 离线实现 P0 第 3/4 步（卷饼流程，未进游戏）：** 按 spec P0 第 1 步的动作表把宏、
 调度、导出三处改齐，进游戏只差重导。改动：
 
-- `bridge/src/macro.c`：新增 `pour`（goto 源灶 → 拿锅 → goto 容器 → interact 到源锅里那味料从
-  世界状态消失 → 回灶放锅；完成判据看锅内容不看手空，整段看不到源锅时 800 ms 兜底）；`plate` 改成
+- `bridge/src/macro.c`：新增 `pour`（goto 源灶 → 拿锅 → goto 容器 → interact → 回灶放锅）。
+  完成判据按世界状态的"内容"、不按资源编号：先看到手持锅/容器 `carried_<chefId>` 的内容非空、
+  随后变空 = 倒完；旧状态没有 `carried_` 时退回"`pot_*` 里那味料消失"，并顺带看 proto 的
+  `find_station_resource`（按位置）找到的台面容器有没有内容；整段都没有可用信号时 800 ms 兜底。
+  `carried_` 由 `find_carried_resource`（macro.c 内的名字查找）取；台面的位置匹配仍归 proto 的
+  `find_station_resource`。`plate` 改成
   "放下手里整份菜 → 取盘"（删掉 cooker source、`wait_ready` 与取料）；`cut` 的收尾 pickup 与新增的
   `pickup`（台面容器取成品）都按"拿到任意物品"判；新增 `place`（goto + drop）。`KOS_MACRO_WAIT_READY`
   删除，kind 表里换成 `pour`。
