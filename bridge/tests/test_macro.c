@@ -698,11 +698,11 @@ static void test_pour_by_carried(const kos_kitchen *kitchen, const char *cooker,
     printf("test_pour_by_carried\n");
     base_world(&world);
     (void)chef_at_station(&world, kitchen, cooker);
-    drive_to_pour(kitchen, &world, &macro, cooker, container, "cooked:FriedChicken", &game_ms,
+    drive_to_pour(kitchen, &world, &macro, cooker, container, "cooked:BurritoChicken", &game_ms,
                   &out);
     carried = resource_by_name(&world, "carried_0");
     expect(macro.step_index == 3 && carried != NULL &&
-               strcmp(carried->content, "cooked:FriedChicken") == 0,
+               strcmp(carried->content, "cooked:BurritoChicken") == 0,
            "carried：端到锅后进入倒料");
     game_ms += 16;
     rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
@@ -717,6 +717,31 @@ static void test_pour_by_carried(const kos_kitchen *kitchen, const char *cooker,
     game_ms += 16;
     rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
     expect(rc == 0 && macro.step_index == 4, "carried：锅内容清空后回灶");
+}
+
+/* 手里的锅装错了料：不能按"内容变空"判成功，要在倒之前就失败（G13 的内容身份）。 */
+static void test_pour_wrong_content(const kos_kitchen *kitchen, const char *cooker,
+                                    const char *container)
+{
+    kos_world_state world;
+    kos_macro macro;
+    kos_macro_output out;
+    int64_t game_ms = 1000;
+    int rc;
+
+    printf("test_pour_wrong_content\n");
+    base_world(&world);
+    (void)chef_at_station(&world, kitchen, cooker);
+    drive_to_pour(kitchen, &world, &macro, cooker, container, "cooked:FriedChicken", &game_ms,
+                  &out);
+    expect(macro.step_index == 3, "wrong-content：进入倒料");
+    game_ms += 16;
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    expect(rc < 0 && macro.step_index == 3,
+           "wrong-content：料对不上时停在倒料这一步并失败");
+    expect(strstr(macro.fail_detail, "macro=pour") != NULL &&
+               strstr(macro.fail_detail, "wrong-item") != NULL,
+           "wrong-content：失败原因写明 pour 与 wrong-item");
 }
 
 /* 没有任何信号（carried_ 空、台面也没多料）时不再有 800 ms 兜底：一直按到步超时，
@@ -1096,6 +1121,7 @@ int main(void)
     test_plate(&kitchen, cooker, plate_stack);
     test_pour(&kitchen, cooker, container);
     test_pour_by_carried(&kitchen, cooker, container);
+    test_pour_wrong_content(&kitchen, cooker, container);
     test_pour_carried_without_contents(&kitchen, cooker, container);
     test_deliver(&kitchen, serving);
     test_wash(&kitchen, sink);
