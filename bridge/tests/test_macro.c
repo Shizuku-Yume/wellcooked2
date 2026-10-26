@@ -373,6 +373,24 @@ static void test_cut(const kos_kitchen *kitchen, const char *board_id)
     expect(rc == -1 && strstr(kos_macro_fail_detail(&macro), "content-gone") != NULL &&
                strstr(kos_macro_fail_detail(&macro), "macro=chop") != NULL,
            "砧板内容消失立即失败（不等超时）");
+
+    /* G13：板上放的是别的料（放错板/别人占着）→ 立即判工序不可行，不等 progress 超时。 */
+    base_world(&world);
+    chef = chef_at_station(&world, kitchen, board_id);
+    chef->holding[0] = '\0';
+    board = add_resource(&world, "cutting_board_0");
+    snprintf(board->content, sizeof board->content, "Onion");
+    board->progress = 0.2f;
+    expect(build(&macro, kitchen, "cut", "cut:ChoppedCarrot", board_id, "o1", 1000) == 0,
+           "content-mismatch 场景计划建成");
+    (void)finish_goto(&macro, kitchen, &world, &game_ms, &out);
+    game_ms += 16;
+    (void)kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out); /* drop 完成 */
+    game_ms += 16;
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out); /* chop 开始 */
+    expect(rc == -1 && strstr(kos_macro_fail_detail(&macro), "content-mismatch") != NULL &&
+               strstr(kos_macro_fail_detail(&macro), "macro=chop") != NULL,
+           "砧板放了别的料立即判 content-mismatch");
 }
 
 static void test_cook(const kos_kitchen *kitchen, const char *cooker)
@@ -413,6 +431,27 @@ static void test_cook(const kos_kitchen *kitchen, const char *cooker)
     rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
     expect(rc == 1 && strcmp(pot->state, "cooking") == 0,
            "锅进入 cooking 后 cook 任务立即完成（不等 cooked）");
+
+    /* G13：锅里是别的料——开火会被游戏接受，但做的不是本单的菜。 */
+    base_world(&world);
+    chef = chef_at_station(&world, kitchen, cooker);
+    snprintf(chef->holding, sizeof chef->holding, "ChoppedCarrot");
+    pot = add_resource(&world, "pot_0");
+    snprintf(pot->state, sizeof pot->state, "free");
+    snprintf(pot->content, sizeof pot->content, "Onion");
+    expect(build(&macro, kitchen, "cook", "cook:CookedCarrot", cooker, "o1", 1000) == 0,
+           "cook content-mismatch 计划建成");
+    (void)finish_goto(&macro, kitchen, &world, &game_ms, &out);
+    game_ms += 16;
+    (void)kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out); /* drop */
+    chef->holding[0] = '\0';
+    game_ms += 16;
+    (void)kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out); /* drop 完成 */
+    game_ms += 16;
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out); /* start_cook */
+    expect(rc == -1 && strstr(kos_macro_fail_detail(&macro), "content-mismatch") != NULL &&
+               strstr(kos_macro_fail_detail(&macro), "macro=start_cook") != NULL,
+           "锅里是别的料立即判 content-mismatch");
 }
 
 static void test_plate(const kos_kitchen *kitchen, const char *cooker, const char *plate_stack)
@@ -515,6 +554,42 @@ static void test_deliver(const kos_kitchen *kitchen, const char *serving)
     rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
     expect(rc == -1 && strstr(kos_macro_fail_detail(&macro), "holding-lost") != NULL,
            "deliver 手上东西没了立即失败");
+
+    /* G9：订单消失 + 分数下降 = 过期，不能记成交付。 */
+    base_world(&world);
+    world.score = 100;
+    chef = chef_at_station(&world, kitchen, serving);
+    snprintf(chef->holding, sizeof chef->holding, "Dish");
+    (void)add_order(&world, "world-3");
+    expect(build(&macro, kitchen, "deliver", "deliver:Dish", serving, "world-3", 1000) == 0,
+           "deliver 过期场景计划建成");
+    (void)finish_goto(&macro, kitchen, &world, &game_ms, &out);
+    game_ms += 16;
+    (void)kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    world.order_count = 0;
+    world.score = 80;
+    game_ms += 16;
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    expect(rc == -1 && strstr(kos_macro_fail_detail(&macro), "macro=deliver") != NULL &&
+               strstr(kos_macro_fail_detail(&macro), "expired") != NULL,
+           "订单消失且分数下降 → deliver 判过期失败");
+
+    /* 分数上涨 = 交付成功。 */
+    base_world(&world);
+    world.score = 100;
+    chef = chef_at_station(&world, kitchen, serving);
+    snprintf(chef->holding, sizeof chef->holding, "Dish");
+    (void)add_order(&world, "world-4");
+    expect(build(&macro, kitchen, "deliver", "deliver:Dish", serving, "world-4", 1000) == 0,
+           "deliver 交付场景计划建成");
+    (void)finish_goto(&macro, kitchen, &world, &game_ms, &out);
+    game_ms += 16;
+    (void)kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    world.order_count = 0;
+    world.score = 180;
+    game_ms += 16;
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    expect(rc == 1, "订单消失且分数上涨 → deliver 成功");
 }
 
 static void test_wash(const kos_kitchen *kitchen, const char *sink)
@@ -617,12 +692,13 @@ static void test_timeouts(const kos_kitchen *kitchen, const char *dispenser,
     rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
     expect(rc == 0 && macro.step_index == 1, "转过去后 goto 完成，不要求重新到站");
 
-    /* chop 的工时超时：工时 1 s + 3 s。 */
+    /* chop 的工时超时：工时 1 s + 3 s。板上放的是该节点的产物名（G13 内容核对
+     * 通过），进度一直不涨，等的就是超时。 */
     base_world(&world);
     chef = chef_at_station(&world, kitchen, board_id);
     chef->holding[0] = '\0';
     board = add_resource(&world, "cutting_board_0");
-    snprintf(board->content, sizeof board->content, "Carrot");
+    snprintf(board->content, sizeof board->content, "ChoppedCarrot");
     expect(build(&macro, kitchen, "cut", "cut:ChoppedCarrot", board_id, "o1", 1000) == 0,
            "chop 超时场景计划建成");
     game_ms = 3000;

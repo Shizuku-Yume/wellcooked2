@@ -828,11 +828,7 @@ static int run_deliver(kos_macro *macro, const kos_world_state *world,
             int64_t delta = world->score - macro->score_base;
 
             if (delta < 0) {
-                char reason[48];
-
-                snprintf(reason, sizeof reason, "expired score_delta=%lld",
-                         (long long)delta);
-                fail_step(macro, game_ms, "order-gone", reason);
+                fail_step(macro, game_ms, "order-gone", "expired");
                 return -1;
             }
         }

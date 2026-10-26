@@ -551,6 +551,84 @@ static void test_sighup_switches_policy(void)
     ksfx_cleanup(&run);
 }
 
+/*
+ * G7：每单分值进入四种策略。主键（到达/截止/松弛/响应比）仍是第一判据；主键
+ * 分不出先后时，80 分的单先于 20 分的单。0 = 未知，不参与奖励比较。
+ */
+static void test_reward_tiebreak(void)
+{
+    static const kos_policy_kind kinds[] = {KOS_POLICY_FCFS, KOS_POLICY_EDF,
+                                            KOS_POLICY_LLF, KOS_POLICY_HRRN};
+    kos_order_view orders[2];
+    int k;
+
+    printf("[test_policy] 3. 奖励作为策略次键（G7）\n");
+    memset(orders, 0, sizeof orders);
+    snprintf(orders[0].id, sizeof orders[0].id, "sushi");
+    orders[0].arrival_ms = 100;
+    orders[0].deadline_ms = 5000;
+    orders[0].est_cost_ms = 1000;
+    orders[0].reward = 20;
+    orders[0].status = KOS_ORDER_ACTIVE;
+    snprintf(orders[1].id, sizeof orders[1].id, "burrito");
+    orders[1].arrival_ms = 100;
+    orders[1].deadline_ms = 5000;
+    orders[1].est_cost_ms = 1000;
+    orders[1].reward = 80;
+    orders[1].status = KOS_ORDER_ACTIVE;
+    for (k = 0; k < (int)(sizeof kinds / sizeof kinds[0]); k++) {
+        kos_policy *policy = make_policy(kinds[k]);
+        int chosen = -1;
+        char label[64];
+
+        expect(policy != NULL &&
+                   kos_policy_pick(policy, orders, 2, NULL, 0, 1000, &chosen) == KOS_OK &&
+                   chosen == 1,
+               (snprintf(label, sizeof label, "%s_prefers_higher_reward",
+                         kos_policy_kind_name(kinds[k])),
+                label));
+        kos_policy_destroy(policy);
+    }
+
+    /* 主键优先：早到 1 ms 的低分单仍然先做（FCFS 语义不能被奖励改掉）。 */
+    orders[0].arrival_ms = 99;
+    {
+        kos_policy *fcfs = make_policy(KOS_POLICY_FCFS);
+        int chosen = -1;
+
+        expect(fcfs != NULL &&
+                   kos_policy_pick(fcfs, orders, 2, NULL, 0, 1000, &chosen) == KOS_OK &&
+                   chosen == 0,
+               "fcfs_arrival_still_beats_reward");
+        kos_policy_destroy(fcfs);
+    }
+    /* EDF 同理：更早的截止期优先。 */
+    orders[0].arrival_ms = 100;
+    orders[1].deadline_ms = 4000;
+    {
+        kos_policy *edf = make_policy(KOS_POLICY_EDF);
+        int chosen = -1;
+
+        expect(edf != NULL &&
+                   kos_policy_pick(edf, orders, 2, NULL, 0, 1000, &chosen) == KOS_OK &&
+                   chosen == 1,
+               "edf_deadline_still_beats_reward");
+        kos_policy_destroy(edf);
+    }
+    /* 奖励未知（0）不改变原有 FCFS 次序。 */
+    orders[1].reward = 0;
+    {
+        kos_policy *fcfs = make_policy(KOS_POLICY_FCFS);
+        int chosen = -1;
+
+        expect(fcfs != NULL &&
+                   kos_policy_pick(fcfs, orders, 2, NULL, 0, 1000, &chosen) == KOS_OK &&
+                   chosen == 0,
+               "unknown_reward_keeps_fcfs_order");
+        kos_policy_destroy(fcfs);
+    }
+}
+
 int main(void)
 {
     printf("[test_policy] 开始：订单策略、工序 DAG、mq\n");
@@ -558,6 +636,7 @@ int main(void)
     test_llf_hrrn();
     test_recipes();
     test_list_schedule();
+    test_reward_tiebreak();
     test_mq();
     test_sighup_switches_policy();
     printf("[test_policy] 检查 %d 项，失败 %d 项\n", g_checks, g_failures);
