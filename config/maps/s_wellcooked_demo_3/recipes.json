@@ -1,154 +1,303 @@
 {
   "nodes": [
     {
-      "id": "assemble:Chicken_Burrito",
-      "op": "assemble",
-      "label": "Chicken_Burrito",
-      "resource": "plate_stack",
-      "duration": 1.0
-    },
-    {
-      "id": "assemble:Sushi_PlainFish",
-      "op": "assemble",
-      "label": "Sushi_PlainFish",
-      "resource": "plate_stack",
-      "duration": 1.0
-    },
-    {
-      "id": "assemble:Sushi_PlainPrawn",
-      "op": "assemble",
-      "label": "Sushi_PlainPrawn",
-      "resource": "plate_stack",
-      "duration": 1.0
-    },
-    {
       "id": "cook:BoiledRice",
       "op": "cook",
       "label": "BoiledRice",
       "resource": "cooker",
-      "duration": 5.0,
+      "duration": 12.1,
       "step": "Pot"
+    },
+    {
+      "id": "cook:FriedBurritoMeat",
+      "op": "cook",
+      "label": "FriedBurritoMeat",
+      "resource": "cooker",
+      "duration": 12.1,
+      "step": "FryingPan"
     },
     {
       "id": "cook:FriedChicken",
       "op": "cook",
       "label": "FriedChicken",
       "resource": "cooker",
-      "duration": 5.0,
+      "duration": 12.1,
       "step": "FryingPan"
+    },
+    {
+      "id": "cook:FriedMushrooms",
+      "op": "cook",
+      "label": "FriedMushrooms",
+      "resource": "cooker",
+      "duration": 12.1,
+      "step": "FryingPan"
+    },
+    {
+      "id": "cut:BurritoChicken",
+      "op": "cut",
+      "label": "BurritoChicken",
+      "resource": "board",
+      "duration": 1.7
+    },
+    {
+      "id": "cut:BurritoMeat",
+      "op": "cut",
+      "label": "BurritoMeat",
+      "resource": "board",
+      "duration": 1.7
+    },
+    {
+      "id": "cut:Mushroom",
+      "op": "cut",
+      "label": "Mushroom",
+      "resource": "board",
+      "duration": 1.7
+    },
+    {
+      "id": "cut:SushiFish",
+      "op": "cut",
+      "label": "SushiFish",
+      "resource": "board",
+      "duration": 1.7
+    },
+    {
+      "id": "cut:SushiPrawn",
+      "op": "cut",
+      "label": "SushiPrawn",
+      "resource": "board",
+      "duration": 1.7
     },
     {
       "id": "deliver:Chicken_Burrito",
       "op": "deliver",
       "label": "Chicken_Burrito",
       "resource": "serving",
-      "duration": 1.0
+      "duration": 0.5
+    },
+    {
+      "id": "deliver:Meat_Burrito",
+      "op": "deliver",
+      "label": "Meat_Burrito",
+      "resource": "serving",
+      "duration": 0.5
+    },
+    {
+      "id": "deliver:Mushroom_Burrito",
+      "op": "deliver",
+      "label": "Mushroom_Burrito",
+      "resource": "serving",
+      "duration": 0.5
     },
     {
       "id": "deliver:Sushi_PlainFish",
       "op": "deliver",
       "label": "Sushi_PlainFish",
       "resource": "serving",
-      "duration": 1.0
+      "duration": 0.5
     },
     {
       "id": "deliver:Sushi_PlainPrawn",
       "op": "deliver",
       "label": "Sushi_PlainPrawn",
       "resource": "serving",
-      "duration": 1.0
+      "duration": 0.5
     },
     {
       "id": "fetch:BurritoChicken",
       "op": "fetch",
       "label": "BurritoChicken",
       "resource": "dispenser",
-      "duration": 1.0,
-      "ingredient": "burritochicken",
-      "workable": true
+      "duration": 0.1,
+      "ingredient": "burritochicken"
+    },
+    {
+      "id": "fetch:BurritoMeat",
+      "op": "fetch",
+      "label": "BurritoMeat",
+      "resource": "dispenser",
+      "duration": 0.1,
+      "ingredient": "burritomeat"
+    },
+    {
+      "id": "fetch:Mushroom",
+      "op": "fetch",
+      "label": "Mushroom",
+      "resource": "dispenser",
+      "duration": 0.1,
+      "ingredient": "mushroom"
     },
     {
       "id": "fetch:Rice",
       "op": "fetch",
       "label": "Rice",
       "resource": "dispenser",
-      "duration": 1.0,
-      "ingredient": "rice",
-      "workable": false
+      "duration": 0.1,
+      "ingredient": "rice"
     },
     {
       "id": "fetch:SushiFish",
       "op": "fetch",
       "label": "SushiFish",
       "resource": "dispenser",
-      "duration": 1.0,
-      "ingredient": "sushifish",
-      "workable": true
+      "duration": 0.1,
+      "ingredient": "sushifish"
     },
     {
       "id": "fetch:SushiPrawn",
       "op": "fetch",
       "label": "SushiPrawn",
       "resource": "dispenser",
-      "duration": 1.0,
-      "ingredient": "sushiprawn",
-      "workable": true
+      "duration": 0.1,
+      "ingredient": "sushiprawn"
     },
     {
       "id": "fetch:Tortilla",
       "op": "fetch",
       "label": "Tortilla",
       "resource": "dispenser",
-      "duration": 1.0,
-      "ingredient": "tortilla",
-      "workable": false
+      "duration": 0.1,
+      "ingredient": "tortilla"
+    },
+    {
+      "id": "pickup:Chicken_Burrito",
+      "op": "pickup",
+      "label": "Chicken_Burrito",
+      "resource": "counter",
+      "duration": 0.1
+    },
+    {
+      "id": "pickup:Meat_Burrito",
+      "op": "pickup",
+      "label": "Meat_Burrito",
+      "resource": "counter",
+      "duration": 0.1
+    },
+    {
+      "id": "pickup:Mushroom_Burrito",
+      "op": "pickup",
+      "label": "Mushroom_Burrito",
+      "resource": "counter",
+      "duration": 0.1
+    },
+    {
+      "id": "place:Tortilla",
+      "op": "place",
+      "label": "Tortilla",
+      "resource": "counter",
+      "duration": 0.1
     },
     {
       "id": "plate:Chicken_Burrito",
       "op": "plate",
       "label": "Chicken_Burrito",
       "resource": "plate_stack",
-      "duration": 2.0
+      "duration": 0.1
+    },
+    {
+      "id": "plate:Meat_Burrito",
+      "op": "plate",
+      "label": "Meat_Burrito",
+      "resource": "plate_stack",
+      "duration": 0.1
+    },
+    {
+      "id": "plate:Mushroom_Burrito",
+      "op": "plate",
+      "label": "Mushroom_Burrito",
+      "resource": "plate_stack",
+      "duration": 0.1
     },
     {
       "id": "plate:Sushi_PlainFish",
       "op": "plate",
       "label": "Sushi_PlainFish",
       "resource": "plate_stack",
-      "duration": 2.0
+      "duration": 0.1
     },
     {
       "id": "plate:Sushi_PlainPrawn",
       "op": "plate",
       "label": "Sushi_PlainPrawn",
       "resource": "plate_stack",
-      "duration": 2.0
+      "duration": 0.1
+    },
+    {
+      "id": "pour:BurritoChicken",
+      "op": "pour",
+      "label": "BurritoChicken",
+      "resource": "counter",
+      "duration": 0.1
+    },
+    {
+      "id": "pour:BurritoMeat",
+      "op": "pour",
+      "label": "BurritoMeat",
+      "resource": "counter",
+      "duration": 0.1
+    },
+    {
+      "id": "pour:Mushroom",
+      "op": "pour",
+      "label": "Mushroom",
+      "resource": "counter",
+      "duration": 0.1
+    },
+    {
+      "id": "pour:Rice",
+      "op": "pour",
+      "label": "Rice",
+      "resource": "counter",
+      "duration": 0.1
     }
   ],
   "edges": [
     [
-      "assemble:Chicken_Burrito",
-      "plate:Chicken_Burrito"
-    ],
-    [
-      "assemble:Sushi_PlainFish",
-      "plate:Sushi_PlainFish"
-    ],
-    [
-      "assemble:Sushi_PlainPrawn",
-      "plate:Sushi_PlainPrawn"
-    ],
-    [
       "cook:BoiledRice",
-      "assemble:Chicken_Burrito"
+      "pour:Rice"
+    ],
+    [
+      "cook:FriedBurritoMeat",
+      "pour:BurritoMeat"
     ],
     [
       "cook:FriedChicken",
-      "assemble:Chicken_Burrito"
+      "pour:BurritoChicken"
+    ],
+    [
+      "cook:FriedMushrooms",
+      "pour:Mushroom"
+    ],
+    [
+      "cut:BurritoChicken",
+      "cook:FriedChicken"
+    ],
+    [
+      "cut:BurritoMeat",
+      "cook:FriedBurritoMeat"
+    ],
+    [
+      "cut:Mushroom",
+      "cook:FriedMushrooms"
+    ],
+    [
+      "cut:SushiFish",
+      "plate:Sushi_PlainFish"
+    ],
+    [
+      "cut:SushiPrawn",
+      "plate:Sushi_PlainPrawn"
     ],
     [
       "fetch:BurritoChicken",
-      "cook:FriedChicken"
+      "cut:BurritoChicken"
+    ],
+    [
+      "fetch:BurritoMeat",
+      "cut:BurritoMeat"
+    ],
+    [
+      "fetch:Mushroom",
+      "cut:Mushroom"
     ],
     [
       "fetch:Rice",
@@ -156,19 +305,55 @@
     ],
     [
       "fetch:SushiFish",
-      "assemble:Sushi_PlainFish"
+      "cut:SushiFish"
     ],
     [
       "fetch:SushiPrawn",
-      "assemble:Sushi_PlainPrawn"
+      "cut:SushiPrawn"
     ],
     [
       "fetch:Tortilla",
-      "assemble:Chicken_Burrito"
+      "place:Tortilla"
+    ],
+    [
+      "pickup:Chicken_Burrito",
+      "plate:Chicken_Burrito"
+    ],
+    [
+      "pickup:Meat_Burrito",
+      "plate:Meat_Burrito"
+    ],
+    [
+      "pickup:Mushroom_Burrito",
+      "plate:Mushroom_Burrito"
+    ],
+    [
+      "place:Tortilla",
+      "pour:BurritoChicken"
+    ],
+    [
+      "place:Tortilla",
+      "pour:BurritoMeat"
+    ],
+    [
+      "place:Tortilla",
+      "pour:Mushroom"
+    ],
+    [
+      "place:Tortilla",
+      "pour:Rice"
     ],
     [
       "plate:Chicken_Burrito",
       "deliver:Chicken_Burrito"
+    ],
+    [
+      "plate:Meat_Burrito",
+      "deliver:Meat_Burrito"
+    ],
+    [
+      "plate:Mushroom_Burrito",
+      "deliver:Mushroom_Burrito"
     ],
     [
       "plate:Sushi_PlainFish",
@@ -177,31 +362,97 @@
     [
       "plate:Sushi_PlainPrawn",
       "deliver:Sushi_PlainPrawn"
+    ],
+    [
+      "pour:BurritoChicken",
+      "pickup:Chicken_Burrito"
+    ],
+    [
+      "pour:BurritoMeat",
+      "pickup:Meat_Burrito"
+    ],
+    [
+      "pour:Mushroom",
+      "pickup:Mushroom_Burrito"
+    ],
+    [
+      "pour:Rice",
+      "pickup:Chicken_Burrito"
+    ],
+    [
+      "pour:Rice",
+      "pickup:Meat_Burrito"
+    ],
+    [
+      "pour:Rice",
+      "pickup:Mushroom_Burrito"
     ]
   ],
   "dishes": [
     {
       "dish": "Chicken_Burrito",
       "score": 80,
-      "root": "assemble:Chicken_Burrito",
+      "root": "pickup:Chicken_Burrito",
       "nodes": [
         "fetch:BurritoChicken",
         "fetch:Rice",
         "fetch:Tortilla",
+        "cut:BurritoChicken",
         "cook:BoiledRice",
         "cook:FriedChicken",
-        "assemble:Chicken_Burrito",
+        "place:Tortilla",
+        "pour:BurritoChicken",
+        "pour:Rice",
+        "pickup:Chicken_Burrito",
         "plate:Chicken_Burrito",
         "deliver:Chicken_Burrito"
       ]
     },
     {
+      "dish": "Meat_Burrito",
+      "score": 80,
+      "root": "pickup:Meat_Burrito",
+      "nodes": [
+        "fetch:BurritoMeat",
+        "fetch:Rice",
+        "fetch:Tortilla",
+        "cut:BurritoMeat",
+        "cook:BoiledRice",
+        "cook:FriedBurritoMeat",
+        "place:Tortilla",
+        "pour:BurritoMeat",
+        "pour:Rice",
+        "pickup:Meat_Burrito",
+        "plate:Meat_Burrito",
+        "deliver:Meat_Burrito"
+      ]
+    },
+    {
+      "dish": "Mushroom_Burrito",
+      "score": 80,
+      "root": "pickup:Mushroom_Burrito",
+      "nodes": [
+        "fetch:Mushroom",
+        "fetch:Rice",
+        "fetch:Tortilla",
+        "cut:Mushroom",
+        "cook:BoiledRice",
+        "cook:FriedMushrooms",
+        "place:Tortilla",
+        "pour:Mushroom",
+        "pour:Rice",
+        "pickup:Mushroom_Burrito",
+        "plate:Mushroom_Burrito",
+        "deliver:Mushroom_Burrito"
+      ]
+    },
+    {
       "dish": "Sushi_PlainFish",
       "score": 20,
-      "root": "assemble:Sushi_PlainFish",
+      "root": "cut:SushiFish",
       "nodes": [
         "fetch:SushiFish",
-        "assemble:Sushi_PlainFish",
+        "cut:SushiFish",
         "plate:Sushi_PlainFish",
         "deliver:Sushi_PlainFish"
       ]
@@ -209,36 +460,42 @@
     {
       "dish": "Sushi_PlainPrawn",
       "score": 20,
-      "root": "assemble:Sushi_PlainPrawn",
+      "root": "cut:SushiPrawn",
       "nodes": [
         "fetch:SushiPrawn",
-        "assemble:Sushi_PlainPrawn",
+        "cut:SushiPrawn",
         "plate:Sushi_PlainPrawn",
         "deliver:Sushi_PlainPrawn"
       ]
     }
   ],
   "durations": {
-    "source": "plan-§6.5-default（未实测；任务 12 拿到真实进度后再改）",
+    "source": "logs/manual/20261027-022317（人工局实测；_3 调参 chop 2 阶段 ×8、锅容量 1）：切 1.7 s / 煮煎 12.1 s / 装盘 0.1 s / 交付 0.5 s / 拿料·倒料·放置 0.1 s；烧焦时间未知（实测已熟后 16.1 s 仍未烧焦）",
     "seconds": {
-      "fetch": 1.0,
-      "cook": 5.0,
+      "fetch": 0.1,
+      "cut": 1.7,
+      "cook": 12.1,
+      "pour": 0.1,
+      "place": 0.1,
+      "pickup": 0.1,
+      "plate": 0.1,
+      "deliver": 0.5,
       "mix": 5.0,
-      "assemble": 1.0,
-      "plate": 2.0,
-      "deliver": 1.0
+      "assemble": 0.1
     }
   },
   "notes": [
     "节点 id = 工序:游戏里的节点名，两道菜共用同一中间产物时只有一个节点",
-    "工时是方案 §6.5 的默认值，不是实测值",
-    "菜谱树里没有\"切\"这道工序：`fetch` 节点带 `workable`（料箱 prefab 上有没有 WorkableItem）作为事实，",
-    "要不要切由游戏决定，本文件不替它下结论（早先按 WorkableItem 自动插 chop 节点会给出多余的工序）"
+    "工时来自 logs/manual/20261027-022317：切 1.7 s（8 格）、煮/煎 12.1 s、装盘 0.1 s、交付 0.5 s、拿料/倒料/放置 0.1 s",
+    "烧焦时间未知：实测已熟后继续加热到 16.1 s 仍未烧焦",
+    "寿司 = 拿料 → 切 → 放到盘堆上 → 取盘 → 交付（没有独立的 assemble）",
+    "卷饼 = 玉米饼放普通台面当容器 → 每份熟料从锅倒进去（pour）→ 取玉米饼 → 放到盘堆上 → 取盘 → 交付",
+    "其它形状的旧菜单仍按树直译、assemble 收口，等对应地图重导时再按实测改"
   ],
   "scene": "s_wellcooked_demo_3",
   "generated": {
-    "at": "2026-10-26T17:22:16+0800",
-    "state_t": 67.36,
+    "at": "2026-10-27T04:09:43+0800",
+    "state_t": 28.34,
     "sources": [
       "wellcooked-state.json",
       "wellcooked-terrain.json"

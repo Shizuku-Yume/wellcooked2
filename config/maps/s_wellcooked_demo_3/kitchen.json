@@ -1,8 +1,8 @@
 {
   "scene": "s_wellcooked_demo_3",
   "generated": {
-    "at": "2026-10-26T17:22:16+0800",
-    "state_t": 67.36,
+    "at": "2026-10-27T04:09:43+0800",
+    "state_t": 28.34,
     "sources": [
       "wellcooked-state.json",
       "wellcooked-terrain.json"
@@ -386,6 +386,36 @@
       "id": "cooker-5"
     },
     {
+      "kind": "board",
+      "name": "countertop_01_chopping_board_wood_no_edge",
+      "types": [
+        "ClientWorkstation"
+      ],
+      "pos": [
+        3.0,
+        -1.2
+      ],
+      "height": 0.0,
+      "gives": null,
+      "contents": [],
+      "id": "board-0"
+    },
+    {
+      "kind": "board",
+      "name": "countertop_01_chopping_board_wood_no_edge",
+      "types": [
+        "ClientWorkstation"
+      ],
+      "pos": [
+        6.6,
+        -1.2
+      ],
+      "height": 0.0,
+      "gives": null,
+      "contents": [],
+      "id": "board-1"
+    },
+    {
       "kind": "sink",
       "name": "WashingPart",
       "types": [
@@ -432,115 +462,584 @@
       "id": "plate_stack-0"
     },
     {
-      "kind": "container",
-      "name": "FrierBasket",
+      "kind": "counter",
+      "name": "countertop_01_standard_wood",
       "types": [
-        "ClientIngredientContainer",
-        "ClientCookableContainer"
+        "ClientAttachStation"
       ],
       "pos": [
         -3.0,
-        -3.6
+        -7.2
       ],
-      "height": 0.27,
+      "height": 0.0,
       "gives": null,
       "contents": [],
-      "step": "DeepFatFryer",
-      "id": "container-0"
+      "id": "counter-0"
     },
     {
-      "kind": "container",
-      "name": "FrierBasket",
+      "kind": "counter",
+      "name": "countertop_01_standard_wood",
       "types": [
-        "ClientIngredientContainer",
-        "ClientCookableContainer"
+        "ClientAttachStation"
       ],
       "pos": [
         -3.0,
+        -6.0
+      ],
+      "height": 0.0,
+      "gives": null,
+      "contents": [],
+      "id": "counter-1"
+    },
+    {
+      "kind": "counter",
+      "name": "countertop_01_standard_wood",
+      "types": [
+        "ClientAttachStation"
+      ],
+      "pos": [
+        -3.0,
+        -4.8
+      ],
+      "height": 0.0,
+      "gives": null,
+      "contents": [],
+      "id": "counter-2"
+    },
+    {
+      "kind": "counter",
+      "name": "countertop_01_standard_wood",
+      "types": [
+        "ClientAttachStation"
+      ],
+      "pos": [
+        -3.0,
+        -1.2
+      ],
+      "height": 0.0,
+      "gives": null,
+      "contents": [],
+      "id": "counter-3"
+    },
+    {
+      "kind": "counter",
+      "name": "countertop_01_standard_wood",
+      "types": [
+        "ClientAttachStation"
+      ],
+      "pos": [
+        -3.0,
+        -0.0
+      ],
+      "height": 0.0,
+      "gives": null,
+      "contents": [],
+      "id": "counter-4"
+    },
+    {
+      "kind": "counter",
+      "name": "countertop_01_standard_wood",
+      "types": [
+        "ClientAttachStation"
+      ],
+      "pos": [
+        -1.8,
+        -8.4
+      ],
+      "height": 0.0,
+      "gives": null,
+      "contents": [],
+      "id": "counter-5"
+    },
+    {
+      "kind": "counter",
+      "name": "countertop_01_standard_wood",
+      "types": [
+        "ClientAttachStation"
+      ],
+      "pos": [
+        -1.8,
+        1.2
+      ],
+      "height": 0.0,
+      "gives": null,
+      "contents": [],
+      "id": "counter-6"
+    },
+    {
+      "kind": "counter",
+      "name": "countertop_01_standard_wood",
+      "types": [
+        "ClientAttachStation"
+      ],
+      "pos": [
+        -0.6,
+        -8.4
+      ],
+      "height": 0.0,
+      "gives": null,
+      "contents": [],
+      "id": "counter-7"
+    },
+    {
+      "kind": "counter",
+      "name": "countertop_01_standard_wood",
+      "types": [
+        "ClientAttachStation"
+      ],
+      "pos": [
+        -0.6,
+        -6.0
+      ],
+      "height": 0.0,
+      "gives": null,
+      "contents": [],
+      "id": "counter-8"
+    },
+    {
+      "kind": "counter",
+      "name": "countertop_01_standard_wood",
+      "types": [
+        "ClientAttachStation"
+      ],
+      "pos": [
+        -0.6,
+        -4.8
+      ],
+      "height": 0.0,
+      "gives": null,
+      "contents": [],
+      "id": "counter-9"
+    },
+    {
+      "kind": "counter",
+      "name": "countertop_01_standard_wood",
+      "types": [
+        "ClientAttachStation"
+      ],
+      "pos": [
+        -0.6,
         -2.4
       ],
-      "height": 0.27,
+      "height": 0.0,
       "gives": null,
       "contents": [],
-      "step": "DeepFatFryer",
-      "id": "container-1"
+      "id": "counter-10"
     },
     {
-      "kind": "container",
-      "name": "utensil_frying_pan_01",
+      "kind": "counter",
+      "name": "countertop_01_standard_wood",
       "types": [
-        "ClientIngredientContainer",
-        "ClientCookableContainer"
+        "ClientAttachStation"
+      ],
+      "pos": [
+        -0.6,
+        -1.2
+      ],
+      "height": 0.0,
+      "gives": null,
+      "contents": [],
+      "id": "counter-11"
+    },
+    {
+      "kind": "counter",
+      "name": "countertop_01_standard_wood",
+      "types": [
+        "ClientAttachStation"
+      ],
+      "pos": [
+        -0.6,
+        1.2
+      ],
+      "height": 0.0,
+      "gives": null,
+      "contents": [],
+      "id": "counter-12"
+    },
+    {
+      "kind": "counter",
+      "name": "countertop_01_standard_wood",
+      "types": [
+        "ClientAttachStation"
+      ],
+      "pos": [
+        0.6,
+        -6.0
+      ],
+      "height": 0.0,
+      "gives": null,
+      "contents": [],
+      "id": "counter-13"
+    },
+    {
+      "kind": "counter",
+      "name": "countertop_01_standard_wood",
+      "types": [
+        "ClientAttachStation"
+      ],
+      "pos": [
+        0.6,
+        -1.2
+      ],
+      "height": 0.0,
+      "gives": null,
+      "contents": [],
+      "id": "counter-14"
+    },
+    {
+      "kind": "counter",
+      "name": "countertop_01_standard_wood",
+      "types": [
+        "ClientAttachStation"
+      ],
+      "pos": [
+        0.6,
+        1.2
+      ],
+      "height": 0.0,
+      "gives": null,
+      "contents": [],
+      "id": "counter-15"
+    },
+    {
+      "kind": "counter",
+      "name": "countertop_01_standard_wood",
+      "types": [
+        "ClientAttachStation"
       ],
       "pos": [
         1.8,
-        -6.0
+        -1.2
       ],
-      "height": 0.6,
+      "height": 0.0,
       "gives": null,
       "contents": [],
-      "step": "FryingPan",
-      "id": "container-2"
+      "id": "counter-16"
     },
     {
-      "kind": "container",
-      "name": "utensil_frying_pan_01",
+      "kind": "counter",
+      "name": "countertop_01_standard_wood",
       "types": [
-        "ClientIngredientContainer",
-        "ClientCookableContainer"
+        "ClientAttachStation"
+      ],
+      "pos": [
+        1.8,
+        1.2
+      ],
+      "height": 0.0,
+      "gives": null,
+      "contents": [],
+      "id": "counter-17"
+    },
+    {
+      "kind": "counter",
+      "name": "countertop_01_standard_wood",
+      "types": [
+        "ClientAttachStation"
       ],
       "pos": [
         3.0,
-        -6.0
+        1.2
       ],
-      "height": 0.6,
+      "height": 0.0,
       "gives": null,
       "contents": [],
-      "step": "FryingPan",
-      "id": "container-3"
+      "id": "counter-18"
     },
     {
-      "kind": "container",
-      "name": "utensil_pot_01",
+      "kind": "counter",
+      "name": "countertop_01_standard_wood",
       "types": [
-        "ClientIngredientContainer",
-        "ClientCookableContainer"
-      ],
-      "pos": [
-        6.6,
-        -6.0
-      ],
-      "height": 0.6,
-      "gives": null,
-      "contents": [],
-      "step": "Pot",
-      "id": "container-4"
-    },
-    {
-      "kind": "container",
-      "name": "utensil_pot_01",
-      "types": [
-        "ClientIngredientContainer",
-        "ClientCookableContainer"
+        "ClientAttachStation"
       ],
       "pos": [
         7.8,
-        -6.0
+        -1.2
       ],
-      "height": 0.6,
+      "height": 0.0,
       "gives": null,
       "contents": [],
-      "step": "Pot",
-      "id": "container-5"
+      "id": "counter-19"
+    },
+    {
+      "kind": "counter",
+      "name": "countertop_01_standard_wood",
+      "types": [
+        "ClientAttachStation"
+      ],
+      "pos": [
+        7.8,
+        1.2
+      ],
+      "height": 0.0,
+      "gives": null,
+      "contents": [],
+      "id": "counter-20"
+    },
+    {
+      "kind": "counter",
+      "name": "countertop_01_standard_wood",
+      "types": [
+        "ClientAttachStation"
+      ],
+      "pos": [
+        9.0,
+        -8.4
+      ],
+      "height": 0.0,
+      "gives": null,
+      "contents": [],
+      "id": "counter-21"
+    },
+    {
+      "kind": "counter",
+      "name": "countertop_01_standard_wood",
+      "types": [
+        "ClientAttachStation"
+      ],
+      "pos": [
+        9.0,
+        -6.0
+      ],
+      "height": 0.0,
+      "gives": null,
+      "contents": [],
+      "id": "counter-22"
+    },
+    {
+      "kind": "counter",
+      "name": "countertop_01_standard_wood",
+      "types": [
+        "ClientAttachStation"
+      ],
+      "pos": [
+        9.0,
+        -1.2
+      ],
+      "height": 0.0,
+      "gives": null,
+      "contents": [],
+      "id": "counter-23"
+    },
+    {
+      "kind": "counter",
+      "name": "countertop_01_standard_wood",
+      "types": [
+        "ClientAttachStation"
+      ],
+      "pos": [
+        9.0,
+        1.2
+      ],
+      "height": 0.0,
+      "gives": null,
+      "contents": [],
+      "id": "counter-24"
+    },
+    {
+      "kind": "counter",
+      "name": "countertop_01_standard_wood",
+      "types": [
+        "ClientAttachStation"
+      ],
+      "pos": [
+        10.2,
+        -8.4
+      ],
+      "height": 0.0,
+      "gives": null,
+      "contents": [],
+      "id": "counter-25"
+    },
+    {
+      "kind": "counter",
+      "name": "countertop_01_standard_wood",
+      "types": [
+        "ClientAttachStation"
+      ],
+      "pos": [
+        10.2,
+        -6.0
+      ],
+      "height": 0.0,
+      "gives": null,
+      "contents": [],
+      "id": "counter-26"
+    },
+    {
+      "kind": "counter",
+      "name": "countertop_01_standard_wood",
+      "types": [
+        "ClientAttachStation"
+      ],
+      "pos": [
+        10.2,
+        -4.8
+      ],
+      "height": 0.0,
+      "gives": null,
+      "contents": [],
+      "id": "counter-27"
+    },
+    {
+      "kind": "counter",
+      "name": "countertop_01_standard_wood",
+      "types": [
+        "ClientAttachStation"
+      ],
+      "pos": [
+        10.2,
+        -2.4
+      ],
+      "height": 0.0,
+      "gives": null,
+      "contents": [],
+      "id": "counter-28"
+    },
+    {
+      "kind": "counter",
+      "name": "countertop_01_standard_wood",
+      "types": [
+        "ClientAttachStation"
+      ],
+      "pos": [
+        10.2,
+        -1.2
+      ],
+      "height": 0.0,
+      "gives": null,
+      "contents": [],
+      "id": "counter-29"
+    },
+    {
+      "kind": "counter",
+      "name": "countertop_01_standard_wood",
+      "types": [
+        "ClientAttachStation"
+      ],
+      "pos": [
+        10.2,
+        1.2
+      ],
+      "height": 0.0,
+      "gives": null,
+      "contents": [],
+      "id": "counter-30"
+    },
+    {
+      "kind": "counter",
+      "name": "countertop_01_standard_wood",
+      "types": [
+        "ClientAttachStation"
+      ],
+      "pos": [
+        11.4,
+        -8.4
+      ],
+      "height": 0.0,
+      "gives": null,
+      "contents": [],
+      "id": "counter-31"
+    },
+    {
+      "kind": "counter",
+      "name": "countertop_01_standard_wood",
+      "types": [
+        "ClientAttachStation"
+      ],
+      "pos": [
+        11.4,
+        1.2
+      ],
+      "height": 0.0,
+      "gives": null,
+      "contents": [],
+      "id": "counter-32"
+    },
+    {
+      "kind": "counter",
+      "name": "countertop_01_standard_wood",
+      "types": [
+        "ClientAttachStation"
+      ],
+      "pos": [
+        12.6,
+        -7.2
+      ],
+      "height": 0.0,
+      "gives": null,
+      "contents": [],
+      "id": "counter-33"
+    },
+    {
+      "kind": "counter",
+      "name": "countertop_01_standard_wood",
+      "types": [
+        "ClientAttachStation"
+      ],
+      "pos": [
+        12.6,
+        -6.0
+      ],
+      "height": 0.0,
+      "gives": null,
+      "contents": [],
+      "id": "counter-34"
+    },
+    {
+      "kind": "counter",
+      "name": "countertop_01_standard_wood",
+      "types": [
+        "ClientAttachStation"
+      ],
+      "pos": [
+        12.6,
+        -4.8
+      ],
+      "height": 0.0,
+      "gives": null,
+      "contents": [],
+      "id": "counter-35"
+    },
+    {
+      "kind": "counter",
+      "name": "countertop_01_standard_wood",
+      "types": [
+        "ClientAttachStation"
+      ],
+      "pos": [
+        12.6,
+        -1.2
+      ],
+      "height": 0.0,
+      "gives": null,
+      "contents": [],
+      "id": "counter-36"
+    },
+    {
+      "kind": "counter",
+      "name": "countertop_01_standard_wood",
+      "types": [
+        "ClientAttachStation"
+      ],
+      "pos": [
+        12.6,
+        -0.0
+      ],
+      "height": 0.0,
+      "gives": null,
+      "contents": [],
+      "id": "counter-37"
     }
   ],
   "kinds": {
     "serving": 1,
     "dispenser": 7,
     "cooker": 6,
+    "board": 2,
     "sink": 1,
     "clean_plate_stack": 1,
     "plate_stack": 1,
-    "container": 6
+    "counter": 38
   }
 }
