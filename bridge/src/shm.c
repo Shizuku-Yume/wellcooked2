@@ -159,6 +159,32 @@ static int64_t real_ms(void)
     return (int64_t)ts.tv_sec * 1000 + (int64_t)(ts.tv_nsec / 1000000L);
 }
 
+int kos_instance_suffix(int instance, char *buf, size_t len)
+{
+    if (buf == NULL || len == 0)
+        return KOS_ERR_INVAL;
+    if (instance < 0) {
+        buf[0] = '\0';
+        return KOS_OK;
+    }
+    if (snprintf(buf, len, "_%d", instance) >= (int)len)
+        return KOS_ERR_RANGE;
+    return KOS_OK;
+}
+
+int kos_name_instance(const char *base, int instance, char *buf, size_t len)
+{
+    if (base == NULL || buf == NULL || len == 0)
+        return KOS_ERR_INVAL;
+    if (instance < 0) {
+        copy_str(buf, len, base);
+        return KOS_OK;
+    }
+    if (snprintf(buf, len, "%s_%d", base, instance) >= (int)len)
+        return KOS_ERR_RANGE;
+    return KOS_OK;
+}
+
 /* sem_timedwait 只认 CLOCK_REALTIME 的绝对时刻，所以每次等待都要从"现在"换算。 */
 static void realtime_after(int timeout_ms, struct timespec *abs)
 {

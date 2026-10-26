@@ -39,6 +39,7 @@ typedef enum {
 typedef struct {
     kos_child_kind kind;
     int chef_id; /* Worker: 0..KOS_SHM_MAX_CHEFS-1；Scheduler: -1 */
+    int instance; /* 多开实例号；KOS_INSTANCE_NONE = 单实例，IPC 名字不加后缀 */
     char runtime_dir[KOS_DAEMON_PATH_MAX];
     char log_path[KOS_DAEMON_PATH_MAX]; /* 空 = <runtime>/logs/<默认名> */
     const char *state_name;             /* NULL = shm.h 默认值 */
@@ -54,6 +55,7 @@ typedef struct {
     char orders_path[KOS_DAEMON_PATH_MAX];
     char runs_dir[KOS_DAEMON_PATH_MAX];
     char strategy[16]; /* "fcfs" / "edf" / "llf" / "hrrn" */
+    char dispatch[16]; /* "flexible" / "zoned" */
     int chefs;         /* Scheduler: 输入槽数量（= Worker 数） */
     int generation;    /* Worker: 第几次拉起；>1 时才发 RECOVERED */
     int tick_ms;       /* Scheduler: 调度轮询周期 */
@@ -85,7 +87,8 @@ void kos_child_opts_init(kos_child_opts *o, kos_child_kind kind);
  *   --kitchen FILE  --recipes FILE  --orders FILE  --runs-dir DIR
  *   --strategy fcfs|edf|llf|hrrn  --chefs N  --generation N  --lease-ttl-ms M
  *   --tick-ms M  --slot-interval-ms M  --nav-name NAME  --nav-sem-name NAME
- *   --nav pibt|pa  --verbose  --help  --version
+ *   --nav pibt|pa  --instance N
+ *   --verbose  --help  --version
  * Worker 另加 --chef-id N（缺省 0）。未知参数返回 KOS_CHILD_ARG_ERR。
  */
 int kos_child_parse_args(kos_child_opts *o, int argc, char **argv);

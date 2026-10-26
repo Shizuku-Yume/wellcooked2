@@ -624,18 +624,21 @@ namespace WellCooked
         private static void Feed(int slot, VirtualPad pad, Vector2 direction,
                                  bool pickup, bool dash, bool work)
         {
-            // 手柄/逻辑层的竖轴与世界的 z 轴相反：实机喂 +y 时厨师向 -z 走
-            // （2026-10-25 s_city_h5，path +z 超时在反方向 3.8 m 处）。这里统一翻转一次，
-            // Navigation/face 仍然用世界坐标说话，Feed 是唯一的坐标到输入转换点。
-            var stick = new Vector2(direction.x, -direction.y);
+            // 设备层和逻辑层对竖轴的方向相反（2026-10-25 s_city_h5：逻辑层喂 +y 时厨师
+            // 向 -z 走）。设备层与 Takeover 的本地驱动走同一条路，必须喂世界方向；
+            // 逻辑层才翻转。
             if (pad != null)
             {
-                pad.Want(pickup, dash, work, stick);
+                // 只写设备层：逻辑层对"已经由我们手柄占住的玩家位"会把设备层的轴覆盖成
+                // 零/反方向（实测厨师坐标完全不动）。这也与 Takeover 本地驱动一致。
+                pad.Want(pickup, dash, work, direction);
+                return;
             }
 
             PlayerInputLookup.Player player;
             if (Takeover.TryPlayerOf(slot, out player))
             {
+                var stick = new Vector2(direction.x, -direction.y);
                 LogicalInput.SetButtons(player, stick, pickup, dash, work);
             }
         }

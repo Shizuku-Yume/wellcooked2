@@ -418,6 +418,25 @@ static void test_names(void)
     rc = kos_shm_open(&opts, KOS_SHM_CREATE, &shm, &err);
     expect(rc == KOS_ERR_DIR, "shm 目录不是绝对路径 → KOS_ERR_DIR");
     expect(shm == NULL, "失败的 open 不返回句柄");
+
+    {
+        char name[KOS_SHM_PATH_MAX];
+        char suffix[16];
+
+        expect(kos_name_instance("/kitchenos_state", 2, name, sizeof name) == KOS_OK &&
+                   strcmp(name, "/kitchenos_state_2") == 0,
+               "多实例名字加 _<k> 后缀");
+        expect(kos_name_instance("/kitchenos_state", KOS_INSTANCE_NONE, name, sizeof name) ==
+                       KOS_OK &&
+                   strcmp(name, "/kitchenos_state") == 0,
+               "不给实例号时名字与以前相同");
+        expect(kos_instance_suffix(2, suffix, sizeof suffix) == KOS_OK &&
+                   strcmp(suffix, "_2") == 0,
+               "后缀单独可取");
+        expect(kos_instance_suffix(KOS_INSTANCE_NONE, suffix, sizeof suffix) == KOS_OK &&
+                   suffix[0] == '\0',
+               "不给实例号时后缀为空");
+    }
 }
 
 /* ============================================ 2. 创建、挂接、版本校验 */

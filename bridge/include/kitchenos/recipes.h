@@ -15,6 +15,8 @@
 #include <stdint.h>
 
 #include <kitchenos/shm.h>
+#include <kitchenos/kitchen.h>
+#include <kitchenos/zones.h>
 
 #define KOS_RECIPE_MAX_NODES 64
 #define KOS_RECIPE_MAX_EDGES 128
@@ -34,6 +36,7 @@ typedef struct {
     char label[KOS_RECIPE_LABEL_MAX];
     char ingredient[KOS_RECIPE_NAME_MAX]; /* fetch 节点才有，其它为空 */
     int duration_ms;
+    int zone; /* 所属分区下标；-1 = 未指定/不限 */
 } kos_recipe_node;
 
 typedef struct {
@@ -83,5 +86,11 @@ int64_t kos_recipe_est_cost_ms(const kos_recipes *recipes, int dish_index);
  */
 int kos_recipe_menu_load(const char *path, char dishes[][KOS_RECIPE_NAME_MAX], int max,
                          int *count, kos_error *err);
+
+/*
+ * 在分区模式下，根据工位位置与分区归属扩展菜谱：为跨区中间产物插入 (drop, fetch) 节点。
+ */
+int kos_recipes_apply_zones(kos_recipes *recipes, const kos_kitchen *kitchen,
+                            const kos_zones *zones, kos_error *err);
 
 #endif /* KITCHENOS_RECIPES_H */

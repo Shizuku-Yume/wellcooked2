@@ -65,7 +65,9 @@ typedef struct {
     char detail[KOS_MQ_DETAIL_MAX];
 } kos_mq_msg;
 
-int kos_mq_task_name(int chef, char *buf, size_t len);
+/* instance >= 0 时名字加 `_<instance>`，与 shm 的后缀规则一致。 */
+int kos_mq_events_name(int instance, char *buf, size_t len);
+int kos_mq_task_name(int chef, int instance, char *buf, size_t len);
 
 /* 创建队列；同名已存在返回 KOS_ERR_EXISTS。max_messages 限制队列深度。 */
 int kos_mq_create(const char *name, int max_messages, kos_error *err);
@@ -83,6 +85,6 @@ int kos_mq_receive(mqd_t queue, kos_mq_msg *msg, int timeout_ms, kos_error *err)
  * 删除 events 与 workers 条任务队列；已经不存在的名字也算成功（清理必须幂等）。
  * 返回第一个真实错误；调用方负责记录 workers 数量与结果。
  */
-int kos_mq_unlink_all(int workers, kos_error *err);
+int kos_mq_unlink_all(int workers, int instance, kos_error *err);
 
 #endif /* KITCHENOS_MQ_H */

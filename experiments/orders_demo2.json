@@ -1,0 +1,13 @@
+{
+  "seed": 12345,
+  "level": "s_wellcooked_demo_2",
+  "menu": [
+    {
+      "recipes": [
+        "Chicken_Burrito",
+        "Sushi_PlainFish",
+        "Sushi_PlainPrawn"
+      ]
+    }
+  ]
+}

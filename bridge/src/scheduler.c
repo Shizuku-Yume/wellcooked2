@@ -29,7 +29,7 @@
 #include <kitchenos/resource.h>
 #include <kitchenos/shm.h>
 #include <kitchenos/stand.h>
-
+#include <kitchenos/zones.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
@@ -168,6 +168,8 @@ typedef struct {
     mqd_t tasks[KOS_SHM_MAX_CHEFS];
     mqd_t events;
     int queues_ready;
+    int zoned;
+    kos_zones zones;
 } scheduler;
 static int cook_has_plate_successor(const scheduler *s, int cook_node);
 static void release_plate_source(scheduler *s, sched_order *order,
@@ -948,11 +950,16 @@ static int prepare_run_dir(scheduler *s)
 static int open_queues(scheduler *s)
 {
     kos_error err;
+    char events_name[KOS_MQ_NAME_MAX];
     int i;
     int rc;
 
+    if (kos_mq_events_name(s->rt.opts.instance, events_name, sizeof events_name) != KOS_OK) {
+        kos_log_error(s->rt.log, "mq_name_failed", "instance=%d", s->rt.opts.instance);
+        return -1;
+    }
     kos_error_clear(&err);
-    rc = kos_mq_unlink_all(s->rt.opts.chefs, &err);
+    rc = kos_mq_unlink_all(s->rt.opts.chefs, s->rt.opts.instance, &err);
     if (rc != KOS_OK) {
         char text[256];
 
@@ -960,18 +967,17 @@ static int open_queues(scheduler *s)
         kos_log_warn(s->rt.log, "mq_stale_cleanup_failed", "error=%s", text);
     }
     kos_error_clear(&err);
-    if (kos_mq_create(KOS_MQ_EVENTS_NAME, KOS_MQ_MAX_MESSAGES, &err) != KOS_OK) {
+    if (kos_mq_create(events_name, KOS_MQ_MAX_MESSAGES, &err) != KOS_OK) {
         char text[256];
 
         error_text(&err, text, sizeof text);
-        kos_log_error(s->rt.log, "mq_create_failed", "name=%s error=%s",
-                      KOS_MQ_EVENTS_NAME, text);
+        kos_log_error(s->rt.log, "mq_create_failed", "name=%s error=%s", events_name, text);
         return -1;
     }
     for (i = 0; i < s->rt.opts.chefs; i++) {
         char name[KOS_MQ_NAME_MAX];
 
-        if (kos_mq_task_name(i, name, sizeof name) != KOS_OK) {
+        if (kos_mq_task_name(i, s->rt.opts.instance, name, sizeof name) != KOS_OK) {
             return -1;
         }
         kos_error_clear(&err);
@@ -984,18 +990,17 @@ static int open_queues(scheduler *s)
         }
     }
     kos_error_clear(&err);
-    if (kos_mq_open(KOS_MQ_EVENTS_NAME, O_RDONLY, &s->events, &err) != KOS_OK) {
+    if (kos_mq_open(events_name, O_RDONLY, &s->events, &err) != KOS_OK) {
         char text[256];
 
         error_text(&err, text, sizeof text);
-        kos_log_error(s->rt.log, "mq_open_failed", "name=%s error=%s", KOS_MQ_EVENTS_NAME,
-                      text);
+        kos_log_error(s->rt.log, "mq_open_failed", "name=%s error=%s", events_name, text);
         return -1;
     }
     for (i = 0; i < s->rt.opts.chefs; i++) {
         char name[KOS_MQ_NAME_MAX];
 
-        if (kos_mq_task_name(i, name, sizeof name) != KOS_OK) {
+        if (kos_mq_task_name(i, s->rt.opts.instance, name, sizeof name) != KOS_OK) {
             return -1;
         }
         kos_error_clear(&err);
@@ -1008,7 +1013,7 @@ static int open_queues(scheduler *s)
         }
     }
     s->queues_ready = 1;
-    kos_log_info(s->rt.log, "mq_ready", "events=%s task_queues=%d", KOS_MQ_EVENTS_NAME,
+    kos_log_info(s->rt.log, "mq_ready", "events=%s task_queues=%d", events_name,
                  s->rt.opts.chefs);
     return 0;
 }
@@ -1031,7 +1036,7 @@ static void close_queues(scheduler *s)
         kos_error err;
 
         kos_error_clear(&err);
-        (void)kos_mq_unlink_all(s->rt.opts.chefs, &err);
+        (void)kos_mq_unlink_all(s->rt.opts.chefs, s->rt.opts.instance, &err);
         s->queues_ready = 0;
     }
 }
@@ -1532,6 +1537,16 @@ static int task_station_index(const scheduler *s, int order_index, int task_inde
         &s->recipes.nodes[order->tasks[task_index].node_index];
     const char *hint = node->ingredient[0] != '\0' ? node->ingredient : node->label;
 
+    if (s->zoned && s->zones.from_file &&
+        (strcmp(node->op, "drop") == 0 ||
+         (strcmp(node->op, "fetch") == 0 && strcmp(node->resource, "counter") == 0))) {
+        int idx = kos_kitchen_station_index(&s->kitchen, s->zones.handoff.id);
+        if (idx >= 0) {
+            *station_out = idx;
+            return KOS_OK;
+        }
+        return KOS_ERR_MISSING;
+    }
     if (strcmp(node->op, "cook") == 0) {
         return pick_cooker_station(s,
                                    (unsigned)(order_index * KOS_RECIPE_MAX_DISH_NODES +
@@ -1659,11 +1674,33 @@ static int opened_ready_count(scheduler *s, int64_t now, const int *chef_cells,
             if (task_station_index(s, i, j, &station) != KOS_OK) {
                 continue;
             }
-            for (k = 0; k < KOS_ASSIGN_MAX_CHEFS && k < chef_count; k++) {
-                if (chef_cells[k] < 0 ||
-                    kos_stand_distance(&s->kitchen, station, chef_cells[k]) !=
-                        KOS_STAND_UNREACHABLE) {
-                    mask |= 1 << k;
+            if (s->zoned && s->zones.from_file) {
+                const kos_recipe_node *rnode = &s->recipes.nodes[order->tasks[j].node_index];
+                int cand_zone = -1;
+                if (strcmp(rnode->op, "drop") == 0 ||
+                    (strcmp(rnode->op, "fetch") == 0 && strcmp(rnode->resource, "counter") == 0)) {
+                    cand_zone = rnode->zone;
+                } else {
+                    cand_zone = kos_zones_station_zone(&s->zones, s->kitchen.stations[station].id);
+                }
+                for (k = 0; k < KOS_ASSIGN_MAX_CHEFS && k < chef_count; k++) {
+                    int chef_zone = kos_zones_chef_zone(&s->zones, k);
+                    if (chef_zone >= 0 && cand_zone >= 0 && chef_zone != cand_zone) {
+                        continue;
+                    }
+                    if (chef_cells[k] < 0 ||
+                        kos_stand_distance(&s->kitchen, station, chef_cells[k]) !=
+                            KOS_STAND_UNREACHABLE) {
+                        mask |= 1 << k;
+                    }
+                }
+            } else {
+                for (k = 0; k < KOS_ASSIGN_MAX_CHEFS && k < chef_count; k++) {
+                    if (chef_cells[k] < 0 ||
+                        kos_stand_distance(&s->kitchen, station, chef_cells[k]) !=
+                            KOS_STAND_UNREACHABLE) {
+                        mask |= 1 << k;
+                    }
                 }
             }
             if (mask == 0) {
@@ -1678,7 +1715,7 @@ static int opened_ready_count(scheduler *s, int64_t now, const int *chef_cells,
             if (k == kind_n) {
                 copy_str(kind_names[k], sizeof kind_names[k], kind);
                 if (kos_resource_value(&s->resources, kind, &value) != KOS_OK) {
-                    value = 0;
+                    value = KOS_SHM_MAX_CHEFS;
                 }
                 kind_free[k] = value;
                 kind_n++;
@@ -2121,7 +2158,7 @@ static void dispatch_ready(scheduler *s, int64_t now)
             k = kind_n++;
             copy_str(kind_names[k], sizeof kind_names[k], kind);
             if (kos_resource_value(&s->resources, kind, &value) != KOS_OK) {
-                value = 0;
+                value = KOS_SHM_MAX_CHEFS;
             }
             kind_free[k] = value;
         }
@@ -2148,7 +2185,7 @@ static void dispatch_ready(scheduler *s, int64_t now)
     order_urgency_ranks(s, now, urgency);
     for (i = 0; i < idle_count; i++) {
         int cell = chef_cells[i];
-
+        int chef = idle[i];
         for (j = 0; j < pool_count; j++) {
             int index = i * pool_count + j;
             kos_assign_terms *term = &terms[index];
@@ -2191,6 +2228,30 @@ static void dispatch_ready(scheduler *s, int64_t now)
                     1000.0;
                 term->urgency = urgency[pool[j].order_index];
                 term->critical_x2 = s->pot_chain[pool[j].node_index] ? 1 : 0;
+                if (s->orders[pool[j].order_index].tasks[pool[j].task_index].avoid_chef == chef) {
+                    term->unreachable = 1;
+                }
+            }
+            if (s->zoned && s->zones.from_file) {
+                int chef_zone = kos_zones_chef_zone(&s->zones, chef);
+                int cand_zone = -1;
+                if (pool[j].order_index >= 0) {
+                    const kos_recipe_node *rnode = &s->recipes.nodes[pool[j].node_index];
+                    if (strcmp(rnode->op, "drop") == 0 ||
+                        (strcmp(rnode->op, "fetch") == 0 && strcmp(rnode->resource, "counter") == 0)) {
+                        cand_zone = rnode->zone;
+                    } else {
+                        cand_zone = kos_zones_station_zone(&s->zones, s->kitchen.stations[station].id);
+                    }
+                } else {
+                    cand_zone = kos_zones_station_zone(&s->zones, s->kitchen.stations[station].id);
+                }
+                if (chef_zone >= 0 && cand_zone >= 0 && chef_zone != cand_zone) {
+                    term->unreachable = 1;
+                    term->zone_penalty = 1.0;
+                } else {
+                    term->zone_penalty = 0.0;
+                }
             }
         }
     }
@@ -2284,7 +2345,7 @@ static void dispatch_ready(scheduler *s, int64_t now)
             }
             continue;
         }
-        if (rc != KOS_OK) {
+        if (rc != KOS_OK && rc != KOS_ERR_MISSING) {
             kos_log_warn(s->rt.log, "resource_acquire_failed", "kind=%s rc=%d", kind, rc);
             continue;
         }
@@ -2354,6 +2415,11 @@ static void dispatch_ready(scheduler *s, int64_t now)
             }
             task->avoid_chef = -1;
             task->state = TASK_RUNNING;
+            if (task->avoid_chef >= 0 && task->avoid_chef != chef &&
+                task->avoid_chef < KOS_SHM_MAX_CHEFS) {
+                s->blocked_hold[task->avoid_chef] = 0;
+            }
+            task->avoid_chef = -1;
             task->chef_id = chef;
             task->task_id = msg.task_id;
             task->started_ms = now;
@@ -2398,6 +2464,8 @@ static void dispatch_ready(scheduler *s, int64_t now)
         json_writer_int(&w, (long long)msg.task_id);
         json_writer_key(&w, "node");
         json_writer_string(&w, node_id);
+        json_writer_key(&w, "op");
+        json_writer_string(&w, msg.op);
         json_writer_key(&w, "chef_id");
         json_writer_int(&w, chef);
         json_writer_key(&w, "priority");
@@ -2689,6 +2757,16 @@ static int load_config(scheduler *s)
                  "edges=%d", s->kitchen_path, s->kitchen.cell_count,
                  s->kitchen.station_count, s->recipes_path, s->recipes.node_count,
                  s->recipes.dish_count, s->recipes.edge_count);
+    if (s->zoned) {
+        kos_error_clear(&err);
+        if (kos_zones_for_kitchen(s->kitchen_path, &s->zones, &err) == KOS_OK && s->zones.from_file) {
+            (void)kos_zones_register_handoff(&s->zones, &s->kitchen, &err);
+            (void)kos_recipes_apply_zones(&s->recipes, &s->kitchen, &s->zones, &err);
+            kos_assign_pot_chain(&s->recipes, s->pot_chain);
+            kos_log_info(s->rt.log, "zoned_pipeline_ready", "zones=%d handoff=%s",
+                         s->zones.zone_count, s->zones.handoff.id);
+        }
+    }
     kos_assign_pot_chain(&s->recipes, s->pot_chain);
     kos_error_clear(&err);
     if (kos_assign_config_for_kitchen(s->kitchen_path, &s->assign_cfg, &err) != KOS_OK) {
@@ -2778,6 +2856,7 @@ static int scheduler_main(scheduler *s, const kos_child_opts *opts)
 
     memset(s, 0, sizeof *s);
     s->rt.opts = *opts;
+    s->zoned = (strcmp(opts->dispatch, "zoned") == 0 || strcmp(opts->dispatch, "zone") == 0);
     if (opts->runs_dir[0] != '\0') {
         copy_str(s->runs_dir, sizeof s->runs_dir, opts->runs_dir);
     }
@@ -2820,7 +2899,7 @@ static int scheduler_main(scheduler *s, const kos_child_opts *opts)
         return 1;
     }
     kos_error_clear(&err);
-    if (kos_resources_attach(&s->kitchen, &s->resources, &err) != KOS_OK) {
+    if (kos_resources_attach(&s->kitchen, &s->resources, s->rt.opts.instance, &err) != KOS_OK) {
         char text[256];
 
         error_text(&err, text, sizeof text);

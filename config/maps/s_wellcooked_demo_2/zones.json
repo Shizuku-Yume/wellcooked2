@@ -1,0 +1,39 @@
+{
+  "scene": "s_wellcooked_demo_2",
+  "handoff": {
+    "id": "counter_handoff_0",
+    "kind": "counter",
+    "pos": [4.2, -3.6]
+  },
+  "zones": [
+    {
+      "id": "bottom",
+      "chef": 0,
+      "stations": [
+        "plate_stack-0",
+        "clean_plate_stack-0",
+        "dispenser-4",
+        "sink-0"
+      ]
+    },
+    {
+      "id": "top",
+      "chef": 1,
+      "stations": [
+        "serving-0",
+        "dispenser-0",
+        "dispenser-1",
+        "dispenser-2",
+        "dispenser-3",
+        "cooker-0",
+        "cooker-1",
+        "cooker-2",
+        "cooker-3",
+        "container-0",
+        "container-1",
+        "container-2",
+        "container-3"
+      ]
+    }
+  ]
+}
