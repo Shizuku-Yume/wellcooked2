@@ -254,7 +254,8 @@ __attribute__((unused)) static int ksfx_init_ex(ksfx_run *r, int with_orders)
     }
     snprintf(r->state_name, sizeof r->state_name, "/kos_fx_state_%ld", (long)getpid());
     snprintf(r->sem_name, sizeof r->sem_name, "/kos_fx_sem_%ld", (long)getpid());
-    r->instance = (int)(getpid() % 900) + 1;
+    /* --instance 的合法范围是 0..255（child.c 的 parse_long）。 */
+    r->instance = (int)(getpid() % 250) + 1;
     snprintf(suffix, sizeof suffix, "%ld", (long)getpid());
 
     snprintf(relative, sizeof relative, "maps/%s/kitchen.json", KSFX_SCENE);
