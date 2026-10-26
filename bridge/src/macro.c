@@ -797,9 +797,40 @@ static const char *content_name(const char *text)
     return colon == NULL ? text : colon + 1;
 }
 
+/*
+ * 比较倒料目标原料与锅内内容是否匹配。
+ * [推断] 实机在开局时所有锅内 contents=[]（见 /tmp/kc-fixtures/demo3/wellcooked-state.json），
+ * 实机锅内上报的究竟是熟料名（FriedChicken / FriedBurritoMeat / FriedMushrooms / BoiledRice）、
+ * 切块 prefab 名（BurritoChoppedChicken / DicedMeat / ChoppedMushroom）还是生料名
+ * （BurritoChicken / BurritoMeat / Mushroom / Rice）尚无实机真值。
+ * 故在此按源烹饪工序的输入原料进行容差匹配（而非对 content 做硬编码或全字精确匹配）：
+ * 1. 子串包含（kos_kitchen_name_matches）：覆盖已含原料名的形式（如 BurritoMeat ↔ FriedBurritoMeat、
+ *    Rice ↔ BoiledRice、Mushroom ↔ FriedMushrooms）；
+ * 2. 核心原料词根匹配：覆盖前缀不同但核心原料一致的情况（如 BurritoChicken ↔ FriedChicken，
+ *    两者均包含核心原料 "chicken"；BurritoMeat ↔ DicedMeat 均包含 "meat"）。
+ * 只要锅内内容与倒料步骤的目标物品同属一种核心原料（不区分大小写），即判定匹配；
+ * 若内容属于无关原料（如倒鸡肉时锅里是米饭），则判定为 wrong-item 予以拦截。
+ */
 static int poured_content_matches(const char *node_id, const char *content)
 {
-    return kos_kitchen_name_matches(content_name(node_id), content_name(content));
+    static const char *const STEMS[] = {
+        "chicken", "meat", "mushroom", "rice", "fish", "prawn",
+        "cheese", "tomato", "onion", "potato", "carrot", "pasta"
+    };
+    const char *name_a = content_name(node_id);
+    const char *name_b = content_name(content);
+    size_t i;
+
+    if (kos_kitchen_name_matches(name_a, name_b)) {
+        return 1;
+    }
+    for (i = 0; i < sizeof(STEMS) / sizeof(STEMS[0]); i++) {
+        const char *stem = STEMS[i];
+        if (kos_kitchen_name_matches(stem, name_a) && kos_kitchen_name_matches(stem, name_b)) {
+            return 1;
+        }
+    }
+    return 0;
 }
 
 /*
@@ -824,6 +855,11 @@ static int run_pour(kos_macro *macro, const kos_kitchen *kitchen, const kos_worl
 
     if (carried != NULL) {
         if (carried->content[0] != '\0') {
+            if (!macro->saw_content) {
+                fprintf(stderr, "[macro:pour] chef=%d item=%s source=%s carried_content='%s'\n",
+                        chef_id, step->item, macro->plan.steps[0].station_id, carried->content);
+                fflush(stderr);
+            }
             /* 手里这口锅装的必须是这道工序要的料：派错锅/没熟就倒会把别的东西
              * 倒进玉米饼，而且倒完内容变空，只按"变空"判完成会当成成功。 */
             if (!poured_content_matches(step->item, carried->content)) {
@@ -844,7 +880,13 @@ static int run_pour(kos_macro *macro, const kos_kitchen *kitchen, const kos_worl
             if (strncmp(resource->name, "pot_", 4) != 0 || resource->content[0] == '\0') {
                 continue;
             }
-            if (kos_kitchen_name_matches(step->item, resource->content)) {
+            if (poured_content_matches(step->item, resource->content)) {
+                if (!macro->saw_content) {
+                    fprintf(stderr, "[macro:pour] chef=%d item=%s source=%s pot=%s pot_content='%s'\n",
+                            chef_id, step->item, macro->plan.steps[0].station_id,
+                            resource->name, resource->content);
+                    fflush(stderr);
+                }
                 found = 1;
                 break;
             }

@@ -663,7 +663,7 @@ static void test_pour_by_carried(const kos_kitchen *kitchen, const char *cooker,
     expect(rc == 0 && macro.step_index == 4, "carried：锅内容清空后回灶");
 }
 
-/* 手里的锅装错了料：不能按"内容变空"判成功，要在倒之前就失败（G13 的内容身份）。 */
+/* 手里的锅装错了料（如鸡肉工序装了米饭）：不能按"内容变空"判成功，要在倒之前就失败（G13 的内容身份）。 */
 static void test_pour_wrong_content(const kos_kitchen *kitchen, const char *cooker,
                                     const char *container)
 {
@@ -676,7 +676,7 @@ static void test_pour_wrong_content(const kos_kitchen *kitchen, const char *cook
     printf("test_pour_wrong_content\n");
     base_world(&world);
     (void)chef_at_station(&world, kitchen, cooker);
-    drive_to_pour(kitchen, &world, &macro, cooker, container, "cooked:FriedChicken", &game_ms,
+    drive_to_pour(kitchen, &world, &macro, cooker, container, "cooked:BoiledRice", &game_ms,
                   &out);
     expect(macro.step_index == 3, "wrong-content：进入倒料");
     game_ms += 16;
@@ -686,6 +686,55 @@ static void test_pour_wrong_content(const kos_kitchen *kitchen, const char *cook
     expect(strstr(macro.fail_detail, "macro=pour") != NULL &&
                strstr(macro.fail_detail, "wrong-item") != NULL,
            "wrong-content：失败原因写明 pour 与 wrong-item");
+}
+
+/*
+ * 容差匹配：pour 节点按生料名命名（pour:BurritoChicken），锅内上报熟料名
+ * （cooked:FriedChicken）或切块 prefab 名（cooked:BurritoChoppedChicken）均能
+ * 正常推进倒料，而不是报 wrong-item 失败。
+ */
+static void test_pour_tolerant_matching(const kos_kitchen *kitchen, const char *cooker,
+                                        const char *container)
+{
+    kos_world_state world;
+    kos_macro macro;
+    kos_macro_output out;
+    kos_resource *carried;
+    int64_t game_ms = 1000;
+    int rc;
+
+    printf("test_pour_tolerant_matching\n");
+
+    /* 1. 熟料名 cooked:FriedChicken 匹配 pour:BurritoChicken */
+    base_world(&world);
+    (void)chef_at_station(&world, kitchen, cooker);
+    drive_to_pour(kitchen, &world, &macro, cooker, container, "cooked:FriedChicken", &game_ms,
+                  &out);
+    carried = resource_by_name(&world, "carried_0");
+    expect(macro.step_index == 3 && carried != NULL,
+           "tolerant：熟料名 FriedChicken 进入倒料");
+    game_ms += 16;
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    expect(rc == 0 && macro.step_index == 3 && out.action == KOS_MACRO_ACT_INTERACT,
+           "tolerant：熟料名 FriedChicken 通过原料校验并发送 interact");
+    carried->content[0] = '\0';
+    game_ms += 16;
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    expect(rc == 0 && macro.step_index == 4, "tolerant：倒料完成后回灶");
+
+    /* 2. 切块 prefab 名 cooked:BurritoChoppedChicken 匹配 pour:BurritoChicken */
+    base_world(&world);
+    (void)chef_at_station(&world, kitchen, cooker);
+    game_ms = 1000;
+    drive_to_pour(kitchen, &world, &macro, cooker, container, "cooked:BurritoChoppedChicken",
+                  &game_ms, &out);
+    carried = resource_by_name(&world, "carried_0");
+    expect(macro.step_index == 3 && carried != NULL,
+           "tolerant：切块 prefab 名 BurritoChoppedChicken 进入倒料");
+    game_ms += 16;
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    expect(rc == 0 && macro.step_index == 3 && out.action == KOS_MACRO_ACT_INTERACT,
+           "tolerant：切块 prefab 名通过原料校验并发送 interact");
 }
 
 /* 插件还没填 carried 内容（一帧都没见过非空）时按兜底推进，别卡到 3 s 超时。 */
@@ -1028,6 +1077,7 @@ int main(void)
     test_pour(&kitchen, cooker, container);
     test_pour_by_carried(&kitchen, cooker, container);
     test_pour_wrong_content(&kitchen, cooker, container);
+    test_pour_tolerant_matching(&kitchen, cooker, container);
     test_pour_carried_without_contents(&kitchen, cooker, container);
     test_deliver(&kitchen, serving);
     test_wash(&kitchen, sink);
