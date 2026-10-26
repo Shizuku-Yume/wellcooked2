@@ -85,12 +85,22 @@ for _raw, _rules in INGREDIENTS.items():
 CHOPPED_NAMES = {"ChoppedSushiFish", "ChoppedSushiPrawn", "BurritoChoppedChicken",
                  "DicedMeat", "ChoppedMushroom"}
 
+# 实测（logs/manual/20261027-022317 manual.log）：切好的料进锅后，锅/容器内容报的是
+# 订单里的生料名——t=64.63 锅=[BurritoChicken]（手上是 BurritoChoppedChicken）、
+# t=105.47 锅=[BurritoMeat] 已熟、t=124.67 锅=[Mushroom]。既不是切完的 prefab
+# （DicedMeat/BurritoChoppedChicken），也不是菜单上的熟料名（FriedChicken）。
+# 所以“进锅”这一刻把 prefab 名换回生料名；手里拿的仍是切完的 prefab。
+ORDER_NAMES = {"BurritoChoppedChicken": "BurritoChicken", "DicedMeat": "BurritoMeat",
+               "ChoppedMushroom": "Mushroom", "ChoppedSushiFish": "SushiFish",
+               "ChoppedSushiPrawn": "SushiPrawn"}
+
 DISH_CONTENTS = {
     "Sushi_PlainFish":   (("ChoppedSushiFish", False),),
     "Sushi_PlainPrawn":  (("ChoppedSushiPrawn", False),),
-    "Chicken_Burrito":   (("BurritoChoppedChicken", True), ("Rice", True)),
-    "Meat_Burrito":      (("DicedMeat", True), ("Rice", True)),
-    "Mushroom_Burrito":  (("ChoppedMushroom", True), ("Rice", True)),
+    # 锅里的叶子按生料名上报，装盘/玉米饼里也就是生料名（熟叶子带 cooked: 前缀）。
+    "Chicken_Burrito":   (("BurritoChicken", True), ("Rice", True)),
+    "Meat_Burrito":      (("BurritoMeat", True), ("Rice", True)),
+    "Mushroom_Burrito":  (("Mushroom", True), ("Rice", True)),
 }
 
 # 实测位置（spec 动作表）：砧板0/1、卷饼台面；料箱一排 z=-8.40 由导出给出
@@ -269,10 +279,11 @@ def build_recipes(*, cook_step=True, dishes=None, plate_layout="spec"):
             raw, chopped, cooked, step = "BurritoChicken", "BurritoChoppedChicken", \
                 "FriedChicken", "FryingPan"
         elif dish == "Meat_Burrito":
-            raw, chopped, cooked, step = "BurritoMeat", "DicedMeat", "FriedMeat", "FryingPan"
+            raw, chopped, cooked, step = "BurritoMeat", "DicedMeat", \
+                "FriedBurritoMeat", "FryingPan"
         else:
             raw, chopped, cooked, step = "Mushroom", "ChoppedMushroom", \
-                "FriedMushroom", "FryingPan"
+                "FriedMushrooms", "FryingPan"
         fetch = add(_node("fetch:%s" % raw, "fetch", raw, "dispenser",
                           ingredient=raw.lower(), workable=True))
         cut = add(_node("cut:%s" % chopped, "cut", chopped, "board", duration=1.7),
@@ -284,10 +295,12 @@ def build_recipes(*, cook_step=True, dishes=None, plate_layout="spec"):
         rice_cook = add(_node("cook:BoiledRice", "cook", "BoiledRice", "cooker",
                               duration=12.1, step="Pot" if cook_step else ""),
                         child_of=(rice_fetch,))
-        # pour 的 item 取锅里 contents[] 的叶子名（切好的料 / Rice），不是菜单里
-        # CookedCompositeOrderNode 的名字：macro run_pour 按 content 子串找源锅。
-        pour_meat = add(_node("pour:%s" % chopped, "pour", chopped, "counter",
-                              ingredient=chopped.lower(), duration=1.0),
+        # pour 的 item 取锅里 contents[] 的叶子名：实机锅里报的是订单里的生料名
+        # （logs/manual 20261027-022317：手上 BurritoChoppedChicken，锅=[BurritoChicken]；
+        # 已熟的 BurritoMeat/Rice 也是这个名字），既不是切完的 prefab 也不是熟料名。
+        # macro run_pour 按 content 子串对源锅，节点 label 必须写这个名字。
+        pour_meat = add(_node("pour:%s" % raw, "pour", raw, "counter",
+                              ingredient=raw.lower(), duration=1.0),
                         child_of=(cook, tortilla_place))
         pour_rice = add(_node("pour:Rice", "pour", "Rice", "counter",
                               ingredient="rice", duration=1.0),
@@ -932,7 +945,8 @@ class Demo3World:
             # 料的 AllowedCookingSteps 里；放错类型游戏不收（米进炸锅）。
             self._reject_reason = "wrong-cooker-type"
             return "rejected"
-        state["item"] = held
+        # 实测：切好的料一下锅，锅内容就报订单里的生料名（上面 ORDER_NAMES 的注释）。
+        state["item"] = Item(ORDER_NAMES.get(held.name, held.name), cooked=held.cooked)
         state["state"] = "cooking"
         state["started_ms"] = game_ms
         self.holdings[chef] = None
