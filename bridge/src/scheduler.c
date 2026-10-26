@@ -2331,7 +2331,8 @@ static int station_ordinal(const char *id)
 
 /*
  * 工位 id → 世界状态里的资源（cooker-4 ↔ pot_4、board-1 ↔ cutting_board_1、
- * sink-0 ↔ sink_0），先认原名。协议字段是动态键，认不出就返回 NULL。
+ * sink-0 ↔ sink_0）。G1 契约下先按位置认（世界状态里的 pos 与工位 pos 对齐，
+ * 容差 0.3 m），再退回精确名与序号归一名。
  */
 static const kos_resource *station_world_resource(const scheduler *s, const char *station_id)
 {
@@ -2339,9 +2340,38 @@ static const kos_resource *station_world_resource(const scheduler *s, const char
     int ordinal;
     char name[KOS_SHM_NAME_MAX];
     const char *prefix = NULL;
+    int station_index;
 
     if (station_id == NULL || station_id[0] == '\0' || !s->world_valid) {
         return NULL;
+    }
+    station_index = kos_kitchen_station_index(&s->kitchen, station_id);
+    if (station_index >= 0) {
+        const kos_station *station = &s->kitchen.stations[station_index];
+        const kos_resource *nearest = NULL;
+        float nearest_d2 = 0.3f * 0.3f;
+
+        for (i = 0; i < (int)s->world.resource_count && i < KOS_SHM_MAX_RESOURCES; i++) {
+            float dx, dy, d2;
+
+            if (!s->world.resources[i].has_pos) {
+                continue;
+            }
+            if (s->world.resources[i].kind[0] != '\0' &&
+                strcmp(s->world.resources[i].kind, station->kind) != 0) {
+                continue;
+            }
+            dx = s->world.resources[i].pos_x - station->x;
+            dy = s->world.resources[i].pos_y - station->z;
+            d2 = dx * dx + dy * dy;
+            if (d2 <= nearest_d2) {
+                nearest_d2 = d2;
+                nearest = &s->world.resources[i];
+            }
+        }
+        if (nearest != NULL) {
+            return nearest;
+        }
     }
     for (i = 0; i < (int)s->world.resource_count && i < KOS_SHM_MAX_RESOURCES; i++) {
         if (strcmp(s->world.resources[i].name, station_id) == 0) {

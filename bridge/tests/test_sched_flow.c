@@ -1138,6 +1138,23 @@ static void put_station_resource(kos_world_state *world, const char *name,
     }
     resource->chef_id = -1;
 }
+static void put_station_resource_at(kos_world_state *world, const char *name,
+                                    const char *state, const char *content,
+                                    float x, float y)
+{
+    kos_resource *resource = &world->resources[world->resource_count++];
+
+    memset(resource, 0, sizeof *resource);
+    ksfx_copy(resource->name, sizeof resource->name, name);
+    ksfx_copy(resource->state, sizeof resource->state, state);
+    if (content != NULL) {
+        ksfx_copy(resource->content, sizeof resource->content, content);
+    }
+    resource->chef_id = -1;
+    resource->has_pos = 1;
+    resource->pos_x = x;
+    resource->pos_y = y;
+}
 
 /* 从 "cooker-4" 拼出 "pot_4"；测试用它写世界状态。 */
 static int station_resource_name(const char *station, char *out, size_t cap)
@@ -1446,6 +1463,51 @@ static void test_failed_order_releases_and_unbinds(void)
            "idle_chef_takes_next_order_task");
     cleanup_run(&run, &shm, &events, 1);
 }
+/*
+ * 灶台占用排查回归：
+ * 1. 世界状态通过坐标上报某灶有料（如 pot_0 位置在 cooker-4），即使键名与序号不对应，
+ *    调度器也不得把新 cook 派到该灶，应选空闲的同类型灶（cooker-5）。
+ * 2. 失败订单释放 reservation 后，若该灶在世界状态中仍显示忙碌/有料，后继订单的 cook
+ *    绝不能选该灶。
+ */
+static void test_cooker_pos_busy_and_order_release(void)
+{
+    ksfx_run run;
+    kos_shm *shm = NULL;
+    kos_world_state world;
+    mqd_t events = (mqd_t)-1;
+    mqd_t taskss[KOS_SHM_MAX_CHEFS];
+    got_task got[2];
+    char kind[64];
+    int n;
+
+    printf("[test_sched_flow] 20. 灶台按位置识别占用，且订单释放后世界占用的灶不被二次误选\n");
+    ksfx_scene_override = "s_wellcooked_demo_3";
+    if (ksfx_init_ex(&run, 0) != 0 || write_orders(&run) != 0) {
+        expect(0, "cooker_pos_init");
+        ksfx_cleanup(&run);
+        ksfx_scene_override = NULL;
+        return;
+    }
+    ksfx_scene_override = NULL;
+    snprintf(kind, sizeof kind, "zz%ld_cooker", (long)getpid());
+    (void)write_recipe_node(&run, "CookPot", "cook", "cook:C", "C", kind);
+    kos_world_state_reset(&world);
+    put_chef(&world, &run.kitchen, 0, 0, "Rice", "cooker");
+    put_order(&world, "w1", "CookPot", 80);
+    /* 模拟 G1/旧上报：键名叫 pot_0，但坐标落在 cooker-4 (6.6, -6.0) 处且正在煮米 */
+    put_station_resource_at(&world, "pot_0", "cooking", "Rice", 6.6f, -6.0f);
+    if (start_run(&run, &shm, &events, taskss, 1, &world) != 0) {
+        expect(0, "cooker_pos_scheduler_started");
+        cleanup_run(&run, &shm, &events, 1);
+        return;
+    }
+    n = collect_tasks(taskss, 1, got, 1, 3000);
+    expect(n == 1 && strcmp(got[0].op, "cook") == 0, "cooker_pos_cook_dispatched");
+    expect(n == 1 && strcmp(got[0].station, "cooker-4") != 0,
+           "cooker_4_avoided_via_pos_match");
+    cleanup_run(&run, &shm, &events, 1);
+}
 
 int main(void)
 {
@@ -1467,6 +1529,7 @@ int main(void)
     test_board_station_exclusive();
     test_cooker_gate_counts_wait();
     test_failed_order_releases_and_unbinds();
+    test_cooker_pos_busy_and_order_release();
     printf("[test_sched_flow] 检查 %d 项，失败 %d 项\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;
 }
