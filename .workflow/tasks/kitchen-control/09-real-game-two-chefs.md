@@ -413,5 +413,5 @@ Dirty at start: `plugin/README.md`、`plugin/SmokePlugin.cs`、`plugin/Takeover.
 
 - 倒料节点命名与实测对齐：`/tmp/kc-fixtures/demo3`（实机新关卡导出）中 `recipes.json` 的 pour 节点以生料名标注（`pour:BurritoChicken` / `pour:BurritoMeat` / `pour:Mushroom` / `pour:Rice`），烹饪节点为熟料名（`cook:FriedChicken` / `cook:FriedBurritoMeat` / `cook:FriedMushrooms` / `cook:BoiledRice`）。
 - 开局状态 `wellcooked-state.json` 中锅具 `contents=[]`，实机运行中熟料在锅内上报的名字究竟是熟料名（`FriedChicken`）、切块 prefab 名（`BurritoChoppedChicken`）还是生料名（`BurritoChicken`）属于 [推断]。
-- 决策：C 侧 `macro.c` 的 `run_pour` 采用源工序输入原料词根容差匹配（`chicken`/`meat`/`mushroom`/`rice` 等），避免全字严格匹配将同源熟料 `FriedChicken` 误拦截为 `wrong-item`；同时保留对完全不同原料（如鸡肉倒米饭）的校验。倒料执行时输出 `[macro:pour]` 运行时日志打印实机锅内 content 名称，待下次真机运行直接确认实机真实命名。
-- 检查锁住：`bridge/tests/test_macro.c` 补充 `test_pour_tolerant_matching` 单测；`python3 scripts/test_export_kitchen.py` 与 `cd bridge && make test` 全绿。
+- 决策：C 侧 `macro.c` 的 `run_pour` 采用动态公共后缀词根推导（common suffix stem matching，无硬编码词根列表），避免全字严格匹配将同源熟料 `FriedChicken` 误拦截为 `wrong-item`；同时保留对完全不同原料（如鸡肉倒米饭）的校验。倒料执行时通过 `kos_log_info(macro->log, "macro_pour_source", ...)` 输出项目日志到 `worker-*.log`，待下次真机运行直接确认实机真实命名（检索模式：`grep -E '\bmacro_pour_source\b' logs/worker-*.log`）。
+- 检查锁住：`bridge/tests/test_macro.c` 补充 `test_pour_tolerant_matching` 单测（含不在任何列表中的 `TacoBeef` ↔ `CookedBeef` 测试）；`python3 scripts/test_export_kitchen.py` 与 `cd bridge && make && make test && make test-san` 全绿。
