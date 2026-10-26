@@ -35,7 +35,7 @@
 /* 四人同场时 PIBT 让路、反复重规划，实机 `_3` 里 goto 在快到站时（剩 0~1 个路点）
  * 被 3 s 余量判超时；6 s 覆盖一次让路往返。 */
 #define MACRO_GOTO_MARGIN_MS 6000
-#define MACRO_GOTO_NO_DISTANCE_MS 30000
+#define MACRO_GOTO_DEFAULT_TIMEOUT_MS 6000
 
 static void copy_str(char *dst, size_t cap, const char *src)
 {
@@ -592,21 +592,34 @@ static int64_t goto_timeout_ms(const kos_kitchen *kitchen, const kos_macro_step 
     int cell;
     uint16_t distance;
 
-    if (station_index < 0) {
-        return MACRO_GOTO_NO_DISTANCE_MS;
-    }
-    if (chef == NULL) {
-        return MACRO_GOTO_NO_DISTANCE_MS;
+    if (station_index < 0 || chef == NULL) {
+        return MACRO_GOTO_DEFAULT_TIMEOUT_MS;
     }
     cell = kos_kitchen_nearest_cell(kitchen, chef->x, chef->y);
-    if (cell < 0) {
-        return MACRO_GOTO_NO_DISTANCE_MS;
+    if (cell >= 0) {
+        distance = kos_stand_distance(kitchen, station_index, cell);
+        if (distance != KOS_STAND_UNREACHABLE) {
+            return (int64_t)distance * KOS_MACRO_CELL_MS * 2 + MACRO_GOTO_MARGIN_MS;
+        }
     }
-    distance = kos_stand_distance(kitchen, station_index, cell);
-    if (distance == KOS_STAND_UNREACHABLE) {
-        return MACRO_GOTO_NO_DISTANCE_MS;
+    /* 站位格距离未知或不可达：从世界状态估算有效欧氏距离，短兜底，决不放大到 30 s */
+    if (station_index < kitchen->station_count) {
+        float dx = kitchen->stations[station_index].x - chef->x;
+        float dz = kitchen->stations[station_index].z - chef->y;
+        float dist_m = sqrtf(dx * dx + dz * dz);
+        if (dist_m >= 0.0f && dist_m <= 15.0f) {
+            int est_cells = (int)ceilf(dist_m / 0.6f);
+            int64_t est_ms = (int64_t)est_cells * KOS_MACRO_CELL_MS * 2 + MACRO_GOTO_MARGIN_MS;
+            if (est_ms < MACRO_GOTO_DEFAULT_TIMEOUT_MS) {
+                est_ms = MACRO_GOTO_DEFAULT_TIMEOUT_MS;
+            }
+            if (est_ms > MACRO_GOTO_MARGIN_MS + 2000) {
+                est_ms = MACRO_GOTO_MARGIN_MS + 2000;
+            }
+            return est_ms;
+        }
     }
-    return (int64_t)distance * KOS_MACRO_CELL_MS * 2 + MACRO_GOTO_MARGIN_MS;
+    return MACRO_GOTO_DEFAULT_TIMEOUT_MS;
 }
 
 static void fail_step(kos_macro *macro, int64_t game_ms, const char *condition,
