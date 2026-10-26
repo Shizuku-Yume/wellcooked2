@@ -14,6 +14,7 @@
 
 #include "kitchenos/child.h"
 #include "kitchenos/json.h"
+#include "kitchenos/macro.h"
 #include "kitchenos/mq.h"
 #include "kitchenos/recipes.h"
 #include "kitchenos/shm.h"
@@ -61,17 +62,17 @@ typedef struct {
     char order_id[KOS_SHM_NAME_MAX];
 } got_task;
 
-static int open_queue(int chef, int events, mqd_t *out)
+static int open_queue(int instance, int chef, int events, mqd_t *out)
 {
     char name[KOS_MQ_NAME_MAX];
     kos_error err;
     int waited = 0;
 
     if (events) {
-        if (kos_mq_events_name(KOS_INSTANCE_NONE, name, sizeof name) != KOS_OK) {
+        if (kos_mq_events_name(instance, name, sizeof name) != KOS_OK) {
             return -1;
         }
-    } else if (kos_mq_task_name(chef, KOS_INSTANCE_NONE, name, sizeof name) != KOS_OK) {
+    } else if (kos_mq_task_name(chef, instance, name, sizeof name) != KOS_OK) {
         return -1;
     }
     while (waited <= 3000) {
@@ -391,11 +392,11 @@ static int start_run_ex(ksfx_run *run, kos_shm **shm, mqd_t *events, mqd_t *task
         ksfx_dump_logs(run);
         return -1;
     }
-    if (open_queue(0, 1, events) != 0) {
+    if (open_queue(run->instance, 0, 1, events) != 0) {
         return -1;
     }
     for (i = 0; i < chefs; i++) {
-        if (open_queue(i, 0, &taskss[i]) != 0) {
+        if (open_queue(run->instance, i, 0, &taskss[i]) != 0) {
             return -1;
         }
     }
@@ -507,7 +508,8 @@ static void test_holding_and_candidates(void)
         return;
     }
     kos_world_state_reset(&world);
-    put_chef(&world, &run.kitchen, 0, 0, "A", "dispenser");
+    /* 手里的 Z 不是任何待派 fetch 的产物：不该被采纳，也不该接 fetch。 */
+    put_chef(&world, &run.kitchen, 0, 0, "Z", "dispenser");
     put_chef(&world, &run.kitchen, 1, 1, NULL, "dispenser");
     put_order(&world, "w1", "ThreeFetch", 80);
     if (start_run(&run, &shm, &events, taskss, 2, &world) != 0) {
@@ -1021,6 +1023,51 @@ static void test_holding_lost(void)
     cleanup_run(&run, &shm, &events, 1);
 }
 
+/*
+ * Worker 重启（RECOVERED）时把在飞的 fetch 排回队列，但世界状态里料已经在他手上：
+ * 不能把 fetch 再派给手不空的厨师，应该把产物记成该工序的完成（os-loop）。
+ */
+static void test_recovery_adopts_holding(void)
+{
+    ksfx_run run;
+    kos_shm *shm = NULL;
+    kos_world_state world;
+    mqd_t events = (mqd_t)-1;
+    mqd_t taskss[KOS_SHM_MAX_CHEFS];
+    got_task got[4];
+    int n;
+
+    printf("[test_sched_flow] 12. Worker 重启：手上已有的料不再重派 fetch\n");
+    if (ksfx_init_ex(&run, 0) != 0 || write_orders(&run) != 0 ||
+        write_recipes(&run, "CookDish", 1, 0) != 0) {
+        expect(0, "recovery_fixture_init");
+        ksfx_cleanup(&run);
+        return;
+    }
+    kos_world_state_reset(&world);
+    put_chef(&world, &run.kitchen, 0, 0, NULL, "dispenser");
+    put_order(&world, "w1", "CookDish", 80);
+    if (start_run(&run, &shm, &events, taskss, 1, &world) != 0) {
+        expect(0, "recovery_scheduler_started");
+        cleanup_run(&run, &shm, &events, 1);
+        return;
+    }
+    n = collect_tasks(taskss, 1, got, 1, 3000);
+    expect(n == 1 && strcmp(got[0].node, "fetch:X") == 0, "recovery_fetch_dispatched");
+    /* 模拟"宏已经拿到料但 DONE 事件丢了"：世界状态里手上有 X，再发 RECOVERED。 */
+    world.chefs[0].holding[0] = '\0';
+    ksfx_copy(world.chefs[0].holding, sizeof world.chefs[0].holding, "X");
+    expect(world_write(shm, &world) == 0, "recovery_holding_written");
+    expect(send_event(events, 0, 0, KOS_EVT_RECOVERED, "worker ready") == 0,
+           "recovery_event_sent");
+    expect(ksfx_wait_events(&run, "\"event\":\"item_adopted\"", 2000, NULL, 0) == 0,
+           "recovered_fetch_adopted_from_hand");
+    n = collect_tasks(taskss, 1, got, 1, 3000);
+    expect(n == 1 && strcmp(got[0].node, "cook:Y") == 0,
+           "recovered_chef_gets_the_next_step");
+    cleanup_run(&run, &shm, &events, 1);
+}
+
 int main(void)
 {
     printf("[test_sched_flow] 开始：派工看手持、失败分流、订单结果闭环\n");
@@ -1033,6 +1080,7 @@ int main(void)
     test_putdown();
     test_score_fallback();
     test_holding_lost();
+    test_recovery_adopts_holding();
     printf("[test_sched_flow] 检查 %d 项，失败 %d 项\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;
 }

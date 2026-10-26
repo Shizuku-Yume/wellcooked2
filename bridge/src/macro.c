@@ -777,6 +777,11 @@ static int run_chop(kos_macro *macro, const kos_kitchen *kitchen,
         return -1;
     }
     if (resource->progress >= MACRO_PROGRESS_DONE) {
+        if (resource->content[0] == '\0') {
+            /* 切完了但板上是空的：要么被拿走，要么本来就放错了，后面 pickup 只会空等。 */
+            fail_step(macro, game_ms, "progress=1", "content-gone");
+            return -1;
+        }
         return next_step(macro, out) == 1 ? 1 : 0;
     }
     if (game_ms >= macro->deadline_ms) {

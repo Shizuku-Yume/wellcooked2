@@ -350,7 +350,7 @@ int kos_child_parse_args(kos_child_opts *o, int argc, char **argv)
         } else if (strcmp(name, "--instance") == 0) {
             const char *v = take_value(value, argc, argv, &i);
 
-            if (parse_long(v, 0, 255, &number) != 0) {
+            if (parse_long(v, 0, 65534, &number) != 0) {
                 return KOS_CHILD_ARG_ERR;
             }
             o->instance = (int)number;

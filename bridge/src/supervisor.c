@@ -87,6 +87,7 @@ typedef struct {
     int instance;
     int state_name_set;
     int sem_name_set;
+    int instance_derived;
     int nav_name_set;
     int nav_sem_name_set;
     const char *state_name;
@@ -1410,7 +1411,7 @@ static int parse_args(int argc, char **argv, supervisor *s)
         } else if (strcmp(name, "--instance") == 0) {
             const char *v = take_value(value, argc, argv, &i);
 
-            if (parse_long(v, 0, 255, &number) != 0) {
+            if (parse_long(v, 0, 65534, &number) != 0) {
                 return ARG_ERR;
             }
             s->instance = (int)number;
@@ -1593,6 +1594,16 @@ static int supervisor_main(supervisor *s)
     char text[ERR_BUF];
     int i;
 
+    /*
+     * 自定义 shm 名的运行（场景 harness、多个 batch）通常不传 --instance：Scheduler
+     * 与 Worker 的 mq/资源信号量就会退回默认名，同机并行的两棵树会互相收对方的事件
+     * （os-loop 的 RECOVERED 丢在另一棵树的 /kitchenos_events 上）。用本进程 pid
+     * 派生一个实例号：同一棵树内所有子进程一致，不同运行互不相同。
+     */
+    if (s->instance == KOS_INSTANCE_NONE && (s->state_name_set || s->sem_name_set)) {
+        s->instance = (int)(getpid() % 65534) + 1;
+        s->instance_derived = 1;
+    }
     /* daemon 之后 chdir("/")，所有路径必须现在就是绝对的。 */
     if (s->instance >= 0) {
         if (!s->state_name_set) {
@@ -1850,12 +1861,13 @@ static int supervisor_main(supervisor *s)
 
     s->started_ms = now_ms();
     kos_log_info(s->log, "supervisor_start",
-                 "pid=%ld mode=%s instance=%d runtime=%s log=%s status=%s workers=%d "
+                 "pid=%ld mode=%s instance=%d derived=%d runtime=%s log=%s status=%s workers=%d "
                  "bridge=%s scheduler=%s health_ms=%d heartbeat_ms=%d "
                  "heartbeat_timeout_ms=%d stop_timeout_ms=%d crash_limit=%d "
                  "crash_window_ms=%d version=%s",
                  (long)getpid(), s->foreground ? "foreground" : "daemon", s->instance,
-                 s->runtime_dir, s->supervisor_log_path, s->status_path, s->workers,
+                 s->instance_derived, s->runtime_dir, s->supervisor_log_path,
+                 s->status_path, s->workers,
                  s->no_bridge ? "off" : s->bridge_bin,
                  s->no_scheduler ? "off" : s->scheduler_bin, s->health_interval_ms,
                  s->heartbeat_interval_ms, s->heartbeat_timeout_ms, s->stop_timeout_ms,
