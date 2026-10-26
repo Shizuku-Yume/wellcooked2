@@ -37,6 +37,9 @@
 #define KSFX_PATH_MAX 512
 #define KSFX_SCENE "s_wellcooked_demo_2"
 
+/* 用例在 ksfx_init_ex 前设置它来换地图（init 会 memset 结构体）。 */
+static const char *ksfx_scene_override;
+
 typedef struct {
     char dir[KSFX_PATH_MAX];
     char kitchen_path[KSFX_PATH_MAX];
@@ -52,6 +55,7 @@ typedef struct {
     int chefs; /* 0 = 旧默认 2；测试在 spawn 前改 */
     int verbose; /* 1 = 给 Scheduler 加 --verbose（调试用） */
     int instance; /* 每个测试进程一个实例号：资源信号量与 mq 名不撞同机并发跑的套件 */
+    char scene[64]; /* 空 = KSFX_SCENE；用例可改成 s_wellcooked_demo_3 用板/多灶 */
 } ksfx_run;
 
 __attribute__((unused)) static void ksfx_copy(char *dst, size_t cap, const char *src)
@@ -240,6 +244,9 @@ __attribute__((unused)) static int ksfx_init_ex(ksfx_run *r, int with_orders)
 
     memset(r, 0, sizeof *r);
     r->pid = -1;
+    if (ksfx_scene_override != NULL) {
+        ksfx_copy(r->scene, sizeof r->scene, ksfx_scene_override);
+    }
     ksfx_copy(r->dir, sizeof r->dir, "/tmp/kos-sched-fx-XXXXXX");
     if (mkdtemp(r->dir) == NULL) {
         return -1;
@@ -258,7 +265,10 @@ __attribute__((unused)) static int ksfx_init_ex(ksfx_run *r, int with_orders)
     r->instance = (int)(getpid() % 250) + 1;
     snprintf(suffix, sizeof suffix, "%ld", (long)getpid());
 
-    snprintf(relative, sizeof relative, "maps/%s/kitchen.json", KSFX_SCENE);
+    if (r->scene[0] == '\0') {
+        ksfx_copy(r->scene, sizeof r->scene, KSFX_SCENE);
+    }
+    snprintf(relative, sizeof relative, "maps/%s/kitchen.json", r->scene);
     if (kos_child_default_config_path(relative, source, sizeof source) != 0) {
         return -1;
     }
@@ -287,7 +297,7 @@ __attribute__((unused)) static int ksfx_init_ex(ksfx_run *r, int with_orders)
     free(text);
     len = 0;
 
-    snprintf(relative, sizeof relative, "maps/%s/recipes.json", KSFX_SCENE);
+    snprintf(relative, sizeof relative, "maps/%s/recipes.json", r->scene);
     if (kos_child_default_config_path(relative, source, sizeof source) != 0) {
         return -1;
     }
@@ -325,7 +335,7 @@ __attribute__((unused)) static int ksfx_init_ex(ksfx_run *r, int with_orders)
     if (with_orders) {
         snprintf(orders, sizeof orders,
                  "{\"seed\":1,\"level\":\"%s\",\"menu\":[{\"recipes\":[\"%.31s\"]}]}\n",
-                 KSFX_SCENE, recipes.dishes[dish].dish);
+                 r->scene, recipes.dishes[dish].dish);
     } else {
         /* 空菜单：Scheduler 只会有 wash 一个候选，用来单独验证洗盘生成。 */
         snprintf(orders, sizeof orders, "{\"menu\":[]}\n");
@@ -334,7 +344,7 @@ __attribute__((unused)) static int ksfx_init_ex(ksfx_run *r, int with_orders)
         ksfx_write_file(r->schedule_path, schedule_text, strlen(schedule_text)) != 0) {
         return -1;
     }
-    snprintf(relative, sizeof relative, "maps/%s/zones.json", KSFX_SCENE);
+    snprintf(relative, sizeof relative, "maps/%s/zones.json", r->scene);
     if (kos_child_default_config_path(relative, source, sizeof source) == 0 && access(source, R_OK) == 0) {
         char target_zones[KSFX_PATH_MAX];
         if (ksfx_join(target_zones, sizeof target_zones, r->dir, "zones.json") == 0) {

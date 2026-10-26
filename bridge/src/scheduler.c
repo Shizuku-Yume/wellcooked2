@@ -229,6 +229,7 @@ static void release_plate_source(scheduler *s, sched_order *order,
 static int plate_cook_task(const scheduler *s, const sched_order *order, int plate_node);
 static int sink_station_index(const kos_kitchen *kitchen);
 static int plate_count(const kos_world_state *world, const char *name);
+static void salvage_expired_holdings(scheduler *s, const sched_order *order, int64_t now);
 static int cooker_step_matches(const kos_station *station, const char *step);
 static void recipe_feasibility_check(scheduler *s);
 static void finish_order_if_done(scheduler *s, int order_index);
@@ -500,7 +501,8 @@ static void release_order_cook_reservations(scheduler *s, sched_order *order)
     for (i = 0; i < order->task_count; i++) {
         sched_task *task = &order->tasks[i];
         if (task->cooker_reserved) {
-            (void)kos_resource_release(&s->resources, "cooker");
+            const kos_recipe_node *node = &s->recipes.nodes[task->node_index];
+            (void)kos_resource_release(&s->resources, node->resource);
             task->cooker_reserved = 0;
             task->station_id[0] = '\0';
         }
@@ -527,7 +529,9 @@ static void mark_resource_wait(scheduler *s, int chef, const sched_order *order,
     if (task->wait_logged) {
         return;
     }
-    s->wanted_kind[chef] = kos_resources_index(&s->resources, kind);
+    if (chef >= 0 && chef < KOS_SHM_MAX_CHEFS) {
+        s->wanted_kind[chef] = kos_resources_index(&s->resources, kind);
+    }
     task->wait_started_ms = now_ms();
     stat = stat_find(s, kind);
     if (stat != NULL) {
@@ -1463,6 +1467,7 @@ static void finish_order_with_outcome(scheduler *s, int order_index, int status,
     }
     release_order_cook_reservations(s, order);
     for (i = 0; i < order->task_count; i++) {
+        order->tasks[i].station_id[0] = '\0';
         if (order->tasks[i].state == TASK_PENDING) {
             order->tasks[i].state = TASK_FAILED;
         }
@@ -2150,7 +2155,7 @@ static void handle_worker_event(scheduler *s, const kos_mq_msg *msg)
             task->state = TASK_DONE;
             task->done_ms = now;
             task->not_before_ms = 0;
-            if (strcmp(op, "pour") == 0) {
+            if (strcmp(op, "pour") == 0 || strcmp(op, "plate") == 0) {
                 release_pour_source(s, order, &s->recipes.nodes[node]);
             }
             if (strcmp(op, "plate") == 0) {
@@ -2225,18 +2230,21 @@ static void handle_worker_event(scheduler *s, const kos_mq_msg *msg)
                                            msg->detail);
                     finish_order_with_outcome(s, order_index, KOS_ORDER_FAILED,
                                               "macro-retries-exhausted", now);
+                    salvage_expired_holdings(s, order, now);
                 }
             } else if (disposition == SCHED_FAIL_INFEASIBLE) {
                 task->state = TASK_FAILED;
                 emit_recipe_infeasible(s, order, task, "game-refused", msg->detail);
                 finish_order_with_outcome(s, order_index, KOS_ORDER_FAILED,
                                           "recipe-infeasible", now);
+                salvage_expired_holdings(s, order, now);
             } else {
                 task->state = TASK_FAILED;
                 kos_log_warn(s->rt.log, "task_failed", "order=%s node=%s detail=%s",
                              order->id, s->recipes.nodes[node].id, msg->detail);
                 finish_order_with_outcome(s, order_index, KOS_ORDER_FAILED, "macro-error",
                                           now);
+                salvage_expired_holdings(s, order, now);
             }
         } else {
             (void)release_lease_for_task(s, msg->task_id, "resource_reclaimed",
@@ -2318,6 +2326,185 @@ static int sink_station_index(const kos_kitchen *kitchen)
     }
     return -1;
 }
+/* 工位 id 末尾的序号（cooker-4 → 4）；没有数字返回 -1。 */
+static int station_ordinal(const char *id)
+{
+    const char *p;
+    const char *digits = NULL;
+    int value = 0;
+    int count = 0;
+
+    if (id == NULL) {
+        return -1;
+    }
+    for (p = id; *p != '\0'; p++) {
+        if (*p >= '0' && *p <= '9') {
+            if (digits == NULL) {
+                digits = p;
+            }
+            value = value * 10 + (*p - '0');
+            count++;
+        } else {
+            digits = NULL;
+            value = 0;
+            count = 0;
+        }
+    }
+    return count > 0 ? value : -1;
+}
+
+/*
+ * 工位 id → 世界状态里的资源（cooker-4 ↔ pot_4、board-1 ↔ cutting_board_1、
+ * sink-0 ↔ sink_0）。G1 契约下先按位置认（世界状态里的 pos 与工位 pos 对齐，
+ * 容差 0.3 m），再退回精确名与序号归一名。
+ */
+static const kos_resource *station_world_resource(const scheduler *s, const char *station_id)
+{
+    int i;
+    int ordinal;
+    char name[KOS_SHM_NAME_MAX];
+    const char *prefix = NULL;
+    int station_index;
+
+    if (station_id == NULL || station_id[0] == '\0' || !s->world_valid) {
+        return NULL;
+    }
+    station_index = kos_kitchen_station_index(&s->kitchen, station_id);
+    if (station_index >= 0) {
+        const kos_station *station = &s->kitchen.stations[station_index];
+        const kos_resource *nearest = NULL;
+        float nearest_d2 = 0.3f * 0.3f;
+
+        for (i = 0; i < (int)s->world.resource_count && i < KOS_SHM_MAX_RESOURCES; i++) {
+            float dx, dy, d2;
+
+            if (!s->world.resources[i].has_pos) {
+                continue;
+            }
+            if (s->world.resources[i].kind[0] != '\0' &&
+                strcmp(s->world.resources[i].kind, station->kind) != 0) {
+                continue;
+            }
+            dx = s->world.resources[i].pos_x - station->x;
+            dy = s->world.resources[i].pos_y - station->z;
+            d2 = dx * dx + dy * dy;
+            if (d2 <= nearest_d2) {
+                nearest_d2 = d2;
+                nearest = &s->world.resources[i];
+            }
+        }
+        if (nearest != NULL) {
+            return nearest;
+        }
+    }
+    for (i = 0; i < (int)s->world.resource_count && i < KOS_SHM_MAX_RESOURCES; i++) {
+        if (strcmp(s->world.resources[i].name, station_id) == 0) {
+            return &s->world.resources[i];
+        }
+    }
+    ordinal = station_ordinal(station_id);
+    if (ordinal < 0) {
+        return NULL;
+    }
+    if (strncmp(station_id, "cooker", 6) == 0) {
+        prefix = "pot";
+    } else if (strncmp(station_id, "board", 5) == 0) {
+        prefix = "cutting_board";
+    } else if (strncmp(station_id, "sink", 4) == 0) {
+        prefix = "sink";
+    }
+    if (prefix == NULL) {
+        return NULL;
+    }
+    snprintf(name, sizeof name, "%s_%d", prefix, ordinal);
+    for (i = 0; i < (int)s->world.resource_count && i < KOS_SHM_MAX_RESOURCES; i++) {
+        if (strcmp(s->world.resources[i].name, name) == 0) {
+            return &s->world.resources[i];
+        }
+    }
+    return NULL;
+}
+
+/*
+ * 工位上还有东西（锅里有料/正在煮、板上放着料）。新工序不能选它：
+ * 游戏会以 pot-occupied/board-occupied 拒绝（demo3 实机与 sim 都复现）。
+ * 世界状态读不到时不拦（老 Bridge 没有这些字段）。
+ */
+static int world_station_busy(const scheduler *s, const char *station_id)
+{
+    const kos_resource *resource = station_world_resource(s, station_id);
+
+    if (resource == NULL) {
+        return 0;
+    }
+    if (resource->state[0] == '\0' || strcmp(resource->state, "free") == 0 ||
+        strcmp(resource->state, "empty") == 0) {
+        return 0;
+    }
+    if (resource->item[0] != '\0' || resource->content[0] != '\0' ||
+        resource->content_count > 0) {
+        return 1;
+    }
+    return strcmp(resource->state, "cooking") == 0 ||
+           strcmp(resource->state, "cooked") == 0 ||
+           strcmp(resource->state, "burning") == 0 ||
+           strcmp(resource->state, "occupied") == 0;
+}
+
+/* 砧板/搅拌台按运行中的工序占用；产出的料被拿走（任务 DONE）就空出来。 */
+static int board_station_reserved(const scheduler *s, const char *station_id)
+{
+    int i;
+    int j;
+
+    for (i = 0; i < s->order_count; i++) {
+        const sched_order *order = &s->orders[i];
+
+        for (j = 0; j < order->task_count; j++) {
+            const sched_task *task = &order->tasks[j];
+            const kos_recipe_node *node = &s->recipes.nodes[task->node_index];
+
+            if ((strcmp(node->op, "cut") == 0 || strcmp(node->op, "mix") == 0) &&
+                task->station_id[0] != '\0' &&
+                strcmp(task->station_id, station_id) == 0 &&
+                task->state == TASK_RUNNING) {
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
+static int pick_board_station(const scheduler *s, const char *kind, unsigned salt,
+                              int *index)
+{
+    int candidates[KOS_KITCHEN_MAX_STATIONS];
+    int count = 0;
+    int i;
+    int offset;
+
+    for (i = 0; i < s->kitchen.station_count; i++) {
+        if (strcmp(s->kitchen.stations[i].kind, kind) == 0) {
+            candidates[count++] = i;
+        }
+    }
+    if (count == 0) {
+        return KOS_ERR_MISSING;
+    }
+    for (offset = 0; offset < count; offset++) {
+        int candidate = candidates[(salt + (unsigned)offset) % (unsigned)count];
+        const kos_station *station = &s->kitchen.stations[candidate];
+
+        if (board_station_reserved(s, station->id) ||
+            world_station_busy(s, station->id)) {
+            continue;
+        }
+        *index = candidate;
+        return KOS_OK;
+    }
+    return KOS_ERR_EMPTY;
+}
+
 static int cooker_station_reserved(const scheduler *s, const char *station_id)
 {
     int i;
@@ -2364,7 +2551,8 @@ static int pick_cooker_station(const scheduler *s, const char *kind, const char 
             continue;
         }
         matching++;
-        if (!cooker_station_reserved(s, station->id)) {
+        if (!cooker_station_reserved(s, station->id) &&
+            !world_station_busy(s, station->id)) {
             *index = candidate;
             return KOS_OK;
         }
@@ -2478,7 +2666,8 @@ static int cook_has_pour_successor(const scheduler *s, int cook_node)
             parent >= s->recipes.node_count) {
             continue;
         }
-        if (strcmp(s->recipes.nodes[parent].op, "pour") == 0) {
+        if (strcmp(s->recipes.nodes[parent].op, "pour") == 0 ||
+            strcmp(s->recipes.nodes[parent].op, "plate") == 0) {
             return 1;
         }
     }
@@ -2527,7 +2716,8 @@ static void release_pour_source(scheduler *s, sched_order *order,
     }
     cook_task = &order->tasks[cook_task_index];
     if (cook_task->cooker_reserved) {
-        (void)kos_resource_release(&s->resources, "cooker");
+        const kos_recipe_node *cook_node = &s->recipes.nodes[cook_task->node_index];
+        (void)kos_resource_release(&s->resources, cook_node->resource);
         cook_task->cooker_reserved = 0;
         cook_task->station_id[0] = '\0';
     }
@@ -2859,6 +3049,13 @@ static int task_station_index(const scheduler *s, int order_index, int task_inde
                                               task_index),
                                    station_out);
     }
+    if (strcmp(node->op, "cut") == 0 || strcmp(node->op, "mix") == 0) {
+        /* 砧板/搅拌台和灶一样要占住：同一轮里两条 cut 不能都挑 board-1。 */
+        return pick_board_station(s, node->resource,
+                                  (unsigned)(order_index * KOS_RECIPE_MAX_DISH_NODES +
+                                             task_index),
+                                  station_out);
+    }
     if (strcmp(node->op, "plate") == 0 &&
         kos_kitchen_count_kind(&s->kitchen, node->resource) == 0) {
         int sink;
@@ -2911,6 +3108,30 @@ static int station_reachable(const scheduler *s, int station, const int *chef_ce
     return 0;
 }
 
+/*
+ * 倒料要等源锅真的煮熟：cook 任务在 start_cook 就 DONE，这时锅里还在煮；
+ * 端起来就倒会把生料倒进卷饼（sim demo3 复现）。世界状态里没有 pot 字段
+ * （老 Bridge）时不拦，交给宏自己等。
+ */
+static int pour_pot_ready(const scheduler *s, const sched_order *order, int task_index)
+{
+    const kos_resource *resource;
+    int cook_task;
+
+    if (!s->world_valid) {
+        return 1;
+    }
+    cook_task = pour_source_cook_task(s, order, order->tasks[task_index].node_index);
+    if (cook_task < 0 || order->tasks[cook_task].station_id[0] == '\0') {
+        return 1; /* 让派发路径报 pour_source_missing，而不是永远卡在就绪外 */
+    }
+    resource = station_world_resource(s, order->tasks[cook_task].station_id);
+    if (resource == NULL || resource->state[0] == '\0') {
+        return 1;
+    }
+    return strcmp(resource->state, "cooked") == 0;
+}
+
 static int task_dispatch_ready(const scheduler *s, const sched_order *order, int task_index,
                                int64_t now)
 {
@@ -2926,6 +3147,9 @@ static int task_dispatch_ready(const scheduler *s, const sched_order *order, int
         return 0;
     }
     node = &s->recipes.nodes[task->node_index];
+    if (strcmp(node->op, "pour") == 0 && !pour_pot_ready(s, order, task_index)) {
+        return 0;
+    }
     if (strcmp(node->op, "deliver") == 0 && !order_delivery_allowed(s, order)) {
         return 0;
     }
@@ -3235,6 +3459,9 @@ static int build_candidates(scheduler *s, int64_t now, const int *chef_cells,
             {
                 int station_rc = task_station_index(s, i, j, &station);
                 if (station_rc == KOS_ERR_EMPTY) {
+                    /* 灶/板都被占着：这也是资源竞争，要进 waits 统计（OS 课设证据）。 */
+                    mark_resource_wait(s, -1, order, task,
+                                       &s->recipes.nodes[task->node_index]);
                     kos_log_debug(s->rt.log, "cooker_station_wait", "order=%s node=%s",
                                   order->id, s->recipes.nodes[task->node_index].id);
                     continue;
@@ -3805,6 +4032,29 @@ static void dispatch_ready(scheduler *s, int64_t now)
             priority = SCHED_WASH_PRIORITY;
         }
         station = &s->kitchen.stations[cand->station_index];
+        if (node != NULL &&
+            (strcmp(node->op, "cook") == 0 || strcmp(node->op, "cut") == 0 ||
+             strcmp(node->op, "mix") == 0)) {
+            unsigned salt = (unsigned)(cand->order_index * KOS_RECIPE_MAX_DISH_NODES +
+                                       cand->task_index);
+            int repick = -1;
+            int repick_rc;
+
+            if (strcmp(node->op, "cook") == 0) {
+                repick_rc = pick_cooker_station(s, node->resource, node->step, salt,
+                                                &repick);
+            } else {
+                repick_rc = pick_board_station(s, node->resource, salt, &repick);
+            }
+            if (repick_rc == KOS_ERR_EMPTY) {
+                mark_resource_wait(s, chef, order, task, node);
+                continue;
+            }
+            if (repick_rc == KOS_OK) {
+                cand->station_index = repick;
+                station = &s->kitchen.stations[repick];
+            }
+        }
         if (node != NULL && strcmp(node->op, "pour") == 0) {
             int cook_task_index = pour_source_cook_task(s, order, cand->node_index);
 
@@ -3830,7 +4080,8 @@ static void dispatch_ready(scheduler *s, int64_t now)
                      order->tasks[cook_task_index].station_id);
         }
         if (node != NULL &&
-            (strcmp(node->op, "cook") == 0 || strcmp(node->op, "place") == 0)) {
+            (strcmp(node->op, "cook") == 0 || strcmp(node->op, "place") == 0 ||
+             strcmp(node->op, "cut") == 0 || strcmp(node->op, "mix") == 0)) {
             /* cook 留锅要它；place 的台面是 pour/pickup 的容器位置，必须跟着任务走。 */
             copy_str(task->station_id, sizeof task->station_id, station->id);
         }
