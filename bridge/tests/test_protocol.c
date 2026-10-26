@@ -275,12 +275,15 @@ static void test_state_new_fields(void)
         CHECK_STR(board->content, "fish");
     }
     if (dirty != NULL) {
-        CHECK_INT(dirty->kind, PROTO_RES_UNKNOWN); /* 原样保留，不因不认识而拒绝 */
+        CHECK_INT(dirty->kind, PROTO_RES_DIRTY_PLATES);
+        CHECK_INT(dirty->index, -1);
         CHECK_INT(dirty->has_count, 1);
         CHECK_INT(dirty->count, 3);
         CHECK_INT(dirty->has_progress, 0);
     }
     if (sink != NULL) {
+        CHECK_INT(sink->kind, PROTO_RES_SINK);
+        CHECK_INT(sink->index, 0);
         CHECK_INT(sink->has_progress, 1);
         CHECK_DBL(sink->progress, 0.75);
         CHECK_INT(sink->count, 2);
@@ -315,7 +318,8 @@ static void test_dynamic_resources(void)
         CHECK_DBL(pot7->time_left, 3.0);
     }
     if (sink != NULL) {
-        CHECK_INT(sink->kind, PROTO_RES_UNKNOWN); /* kept, not rejected */
+        CHECK_INT(sink->kind, PROTO_RES_SINK);
+        CHECK_INT(sink->index, 2);
         CHECK_STR(sink->key, "sink_2");
         CHECK_STR(sink->state, "dirty");
     }
@@ -325,6 +329,161 @@ static void test_dynamic_resources(void)
     }
 
     json_free(root);
+}
+
+/* 任务 09 G1–G9：灶台槽位、递归内容、手持内容、每单分值、回合时钟、订单结果。 */
+static void test_state_audit_fields(void)
+{
+    static const char sample[] =
+        "{\"type\":\"state_update\",\"game_time_ms\":5000,\"score\":80,"
+        "\"round_time_left\":42,\"round_time_limit\":120,"
+        "\"chefs\":[{\"id\":2,\"position\":{\"x\":1,\"y\":2},\"holding\":\"utensil_pot_01\","
+        "\"holding_contents\":[\"Rice\",\"cooked:BurritoChoppedChicken\"]}],"
+        "\"orders\":[{\"id\":\"order_001\",\"recipe\":\"Chicken_Burrito\","
+        "\"time_remaining\":88,\"score\":80}],"
+        "\"order_results\":["
+        "{\"seq\":7,\"id\":\"order_001\",\"recipe\":\"Chicken_Burrito\","
+        "\"outcome\":\"delivered\",\"score\":80,\"game_time_ms\":4900},"
+        "{\"seq\":8,\"id\":\"order_002\",\"outcome\":\"expired\"}],"
+        "\"resources\":{"
+        "\"pot_4\":{\"kind\":\"cooker\",\"pos\":{\"x\":6.6,\"y\":-6.0},"
+        "\"state\":\"cooking\",\"item\":\"utensil_pot_01\",\"step\":\"Pot\","
+        "\"progress\":0.25,\"time_left\":9,\"contents\":[\"Rice\"],\"content\":\"Rice\"},"
+        "\"counter_0\":{\"kind\":\"counter\",\"pos\":{\"x\":0.6,\"y\":-6.0},"
+        "\"state\":\"occupied\",\"item\":\"Tortilla\","
+        "\"contents\":[\"cooked:BurritoChoppedChicken\",\"cooked:Rice\"]},"
+        "\"carried_2\":{\"kind\":\"carried\",\"chef_id\":2,\"pos\":{\"x\":1.0,\"y\":-5.5},"
+        "\"state\":\"carried\",\"item\":\"utensil_frying_pan_01\","
+        "\"contents\":[\"BurritoChicken\"]},"
+        "\"container_3\":{\"kind\":\"container\",\"pos\":{\"x\":-1,\"y\":-1},"
+        "\"state\":\"empty\",\"item\":\"equipment_plate_01\",\"contents\":[]},"
+        "\"plate_stack\":{\"kind\":\"plate_stack\",\"count\":4,\"pos\":{\"x\":3,\"y\":1.2}},"
+        "\"mystery\":{\"state\":\"free\"}"
+        "}}";
+    json_value *root = parse_ok(sample, sizeof sample - 1);
+    proto_state_update state;
+    const proto_resource *pot;
+    const proto_resource *counter;
+    const proto_resource *carried;
+    const proto_resource *container;
+    const proto_resource *mystery;
+
+    printf("[test_protocol] 任务 09 状态字段：锅槽位 / 内容递归 / 订单结果\n");
+    CHECK(root != NULL);
+    if (root == NULL)
+        return;
+
+    CHECK_INT(protocol_parse_state_update(root, &state, NULL), PROTO_OK);
+    CHECK_INT(state.has_round_time, 1);
+    CHECK_DBL(state.round_time_left, 42.0);
+    CHECK_DBL(state.round_time_limit, 120.0);
+
+    CHECK_INT(state.chef_count, 1);
+    CHECK_INT(state.chefs[0].holding_content_count, 2);
+    CHECK_STR(state.chefs[0].holding_contents[0], "Rice");
+    CHECK_STR(state.chefs[0].holding_contents[1], "cooked:BurritoChoppedChicken");
+
+    CHECK_INT(state.order_count, 1);
+    CHECK_INT(state.orders[0].has_score, 1);
+    CHECK_INT(state.orders[0].score, 80);
+
+    CHECK_INT(state.order_result_count, 2);
+    CHECK_INT(state.order_results[0].seq, 7);
+    CHECK_STR(state.order_results[0].outcome, "delivered");
+    CHECK_INT(state.order_results[0].has_score, 1);
+    CHECK_INT(state.order_results[0].score, 80);
+    CHECK_INT(state.order_results[0].game_time_ms, 4900);
+    CHECK_INT(state.order_results[1].seq, 8);
+    CHECK_STR(state.order_results[1].outcome, "expired");
+    CHECK_INT(state.order_results[1].has_score, 0);
+
+    pot = find_resource(&state, "pot_4");
+    counter = find_resource(&state, "counter_0");
+    carried = find_resource(&state, "carried_2");
+    container = find_resource(&state, "container_3");
+    mystery = find_resource(&state, "mystery");
+    CHECK(pot != NULL && counter != NULL && carried != NULL && container != NULL
+          && mystery != NULL);
+    if (pot != NULL) {
+        CHECK_INT(pot->kind, PROTO_RES_POT);
+        CHECK_INT(pot->index, 4);
+        CHECK_STR(pot->kind_name, "cooker");
+        CHECK_INT(pot->has_pos, 1);
+        CHECK_DBL(pot->x, 6.6);
+        CHECK_DBL(pot->y, -6.0);
+        CHECK_STR(pot->item, "utensil_pot_01");
+        CHECK_STR(pot->step, "Pot");
+        CHECK_INT(pot->content_count, 1);
+        CHECK_STR(pot->contents[0], "Rice");
+        CHECK_STR(pot->content, "Rice");
+        CHECK_INT(pot->has_progress, 1);
+        CHECK_INT(pot->has_time_left, 1);
+    }
+    if (counter != NULL) {
+        CHECK_INT(counter->kind, PROTO_RES_COUNTER);
+        CHECK_INT(counter->index, 0);
+        CHECK_INT(counter->content_count, 2);
+        CHECK_STR(counter->contents[0], "cooked:BurritoChoppedChicken");
+        CHECK_STR(counter->item, "Tortilla");
+    }
+    if (carried != NULL) {
+        CHECK_INT(carried->kind, PROTO_RES_CARRIED);
+        CHECK_INT(carried->index, 2); /* carried_<chef_id> */
+        CHECK_INT(carried->has_chef_id, 1);
+        CHECK_INT(carried->chef_id, 2);
+        CHECK_STR(carried->state, "carried");
+    }
+    if (container != NULL) {
+        CHECK_INT(container->kind, PROTO_RES_CONTAINER);
+        CHECK_INT(container->index, 3);
+        CHECK_INT(container->content_count, 0); /* 明确的空数组，不是"少了字段" */
+    }
+    if (mystery != NULL) {
+        CHECK_INT(mystery->kind, PROTO_RES_UNKNOWN); /* 认不出也要原样保留 */
+        CHECK_INT(mystery->index, -1);
+        CHECK_INT(mystery->has_pos, 0);
+    }
+
+    json_free(root);
+}
+
+/* 坏输入：半个位置是发送端 bug，必须拒绝整条消息；超量数组只丢超出部分。 */
+static void test_state_field_errors(void)
+{
+    static const char bad_pos[] =
+        "{\"type\":\"state_update\",\"game_time_ms\":1,"
+        "\"resources\":{\"pot_0\":{\"pos\":{\"x\":1}}}}";
+    static const char many[] =
+        "{\"type\":\"state_update\",\"game_time_ms\":1,"
+        "\"order_results\":[{\"id\":\"order_009\",\"outcome\":\"expired\"}],"
+        "\"resources\":{\"counter_0\":{\"contents\":"
+        "[\"a\",\"b\",\"c\",\"d\",\"e\",\"f\",\"g\",\"h\",\"i\"]}}}";
+    json_value *root;
+    proto_state_update state;
+    proto_diag diag;
+
+    printf("[test_protocol] 任务 09 状态字段：坏位置 / 超量内容\n");
+
+    root = parse_ok(bad_pos, sizeof bad_pos - 1);
+    CHECK(root != NULL);
+    if (root != NULL) {
+        CHECK_INT(protocol_parse_state_update(root, &state, NULL), PROTO_ERR_RANGE);
+        json_free(root);
+    }
+
+    root = parse_ok(many, sizeof many - 1);
+    CHECK(root != NULL);
+    if (root != NULL) {
+        memset(&diag, 0, sizeof diag);
+        CHECK_INT(protocol_parse_state_update(root, &state, &diag), PROTO_OK);
+        CHECK_INT(state.resource_count, 1);
+        CHECK_INT(state.resources[0].content_count, PROTO_MAX_CONTENTS);
+        CHECK(diag.dropped_items >= 1);
+        /* 缺 seq 的结果条目单独丢弃，不连累整条消息 */
+        CHECK_INT(state.order_result_count, 0);
+        CHECK(diag.dropped_items >= 2);
+        json_free(root);
+    }
 }
 
 static void test_heartbeat(void)
@@ -1016,6 +1175,8 @@ int main(void)
     test_state_update_sample();
     test_state_new_fields();
     test_dynamic_resources();
+    test_state_audit_fields();
+    test_state_field_errors();
     test_heartbeat();
     test_hello();
     test_ack();
