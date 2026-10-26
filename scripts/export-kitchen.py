@@ -42,6 +42,7 @@ KINDS = [
     ("dispenser", ["ClientPickupItemSpawner"]),   # 料箱（DispenserCrate）
     ("bin", ["ClientRubbishBin"]),                # 垃圾桶：挑工位必须排除
     ("cooker", ["ClientCookingStation"]),         # 锅/灶
+    ("board", ["ClientWorkstation"]),             # 砧板（chopping 台面）
     ("mixer", ["ClientMixingStation"]),           # 搅拌台
     ("sink", ["ClientWashingStation"]),           # 洗盘台
     ("heater", ["ClientHeatedStation"]),          # 加热台
@@ -50,17 +51,20 @@ KINDS = [
     ("plate_stack", ["ClientPlate"]),             # 盘子本体（通常在盘子堆/台面上）
     ("conveyor", ["ClientConveyorStation"]),      # 传送带（挑关卡时排除）
     ("switch", ["ClientSwitchStation"]),          # 开关（挑关卡时排除）
-    # 以下只是"这个物体能装东西"，单独出现时归 container
+    # 以下只是"这个物体能装东西"，单独出现时归 container。
+    # 锅具（ClientCookableContainer：煮锅/平底锅/炸篮）不在这里：它们不是独立工位，
+    # 只作为所在 cooker 的属性（`step`）导出。
     ("container", [
         "ClientIngredientContainer",
-        "ClientCookableContainer",
         "ClientCookablePreparationContainer",
         "ClientTrayIngredientContainer",
     ]),
 ]
 KIND_ORDER = [kind for kind, _ in KINDS]
 TYPE_TO_KIND = {t: kind for kind, types in KINDS for t in types}
-CONTAINER_TYPES = set(dict(KINDS)["container"])
+
+# 锅具组件：和 cooker 同格、同位置的独立物体。导出时跳过它本身，只把 step 交给 cooker。
+UTENSIL_TYPES = {"ClientCookableContainer"}
 
 POS_TOLERANCE = 0.15  # 同一物体上的组件坐标应当一致；差得比这多就当成两个物体，别硬合并
 
@@ -125,18 +129,40 @@ def snap_near_grid(value, origin, step):
     return round(aligned if abs(value - aligned) <= 0.02 else value, 2)
 
 
+def is_chopping_board(name):
+    """与插件 `Kitchen.IsChoppingBoard` 同一条规则：名字里有 Chop/Cut 才算砧板。"""
+    lower = (name or "").lower()
+    return "chop" in lower or "cut" in lower
+
+
 def build_stations(raw, grid_step, grid_origin):
     merged = []
     unknown = []
+    step_sources = []
     for group in group_stations(raw):
-        kind = kind_of(group["types"])
-        for station_type in group["types"]:
+        # 锅具（煮锅/平底锅/炸篮）是摆在同一格 cooker 上的独立物体，不是工位：
+        # 只记下它的烹饪类型，稍后交给 cooker。导出的 kitchen.json 里不该再出现 container-N。
+        if UTENSIL_TYPES.intersection(group["types"]):
+            if group.get("step"):
+                step_sources.append((group["pos"], group["step"]))
+            continue
+
+        types = [t for t in group["types"]
+                 if t != "ClientWorkstation" or is_chopping_board(group["name"])]
+        if not types:
+            continue
+        group["types"] = types
+        if group.get("step"):
+            step_sources.append((group["pos"], group["step"]))
+
+        kind = kind_of(types)
+        for station_type in types:
             if station_type not in TYPE_TO_KIND and station_type not in unknown:
                 unknown.append(station_type)
         station = {
             "kind": kind,
             "name": group["name"],
-            "types": group["types"],
+            "types": types,
             "pos": [snap_near_grid(group["pos"][0], grid_origin[0], grid_step),
                     snap_near_grid(group["pos"][1], grid_origin[1], grid_step)],
             "height": round(float(group["height"]), 2),
@@ -159,11 +185,10 @@ def build_stations(raw, grid_step, grid_origin):
     for station in merged:
         if station["kind"] != "cooker" or station.get("step"):
             continue
-        for other in merged:
-            if other.get("step") and other is not station and \
-                    abs(other["pos"][0] - station["pos"][0]) <= POS_TOLERANCE and \
-                    abs(other["pos"][1] - station["pos"][1]) <= POS_TOLERANCE:
-                station["step"] = other["step"]
+        for pos, step in step_sources:
+            if abs(pos[0] - station["pos"][0]) <= POS_TOLERANCE and \
+                    abs(pos[1] - station["pos"][1]) <= POS_TOLERANCE:
+                station["step"] = step
                 break
     merged.sort(key=lambda s: (KIND_ORDER.index(s["kind"]) if s["kind"] in KIND_ORDER else 99,
                                s["pos"][0], s["pos"][1], s["name"]))

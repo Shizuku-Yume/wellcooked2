@@ -52,6 +52,8 @@ class CookerStepTests(unittest.TestCase):
         cookers = {tuple(s["pos"]): s.get("step") for s in stations if s["kind"] == "cooker"}
         self.assertEqual(cookers, {(-3.0, -3.6): "DeepFatFryer", (6.6, -6.0): "Pot",
                                    (1.8, -6.0): None})
+        self.assertEqual([s["kind"] for s in stations].count("cooker"), 3)
+        self.assertNotIn("container", [s["kind"] for s in stations])
 
     def test_cook_node_carries_required_step(self):
         menu = {"dishes": [{"dish": "Rice", "steps": [{
@@ -62,6 +64,50 @@ class CookerStepTests(unittest.TestCase):
         self.assertEqual(steps["cook:BoiledRice"], "Pot")
         self.assertIsNone(steps["fetch:Rice"])
 
+
+
+class BoardStationTests(unittest.TestCase):
+    RAW = [
+        {"type": "ClientWorkstation", "name": "ChoppingCounter", "pos": [6.6, -1.2]},
+        {"type": "ClientWorkstation", "name": "ChoppingCounter", "pos": [3.0, -1.2]},
+        {"type": "ClientWorkstation", "name": "FryingStation", "pos": [1.0, 0.0]},
+    ]
+
+    def test_boards_exported_sorted_by_position(self):
+        stations, _ = EXPORT.build_stations(self.RAW, 0.6, (None, None))
+        boards = [s for s in stations if s["kind"] == "board"]
+        self.assertEqual([s["id"] for s in boards], ["board-0", "board-1"])
+        self.assertEqual([s["pos"] for s in boards], [[3.0, -1.2], [6.6, -1.2]])
+        self.assertTrue(all("ClientWorkstation" in s["types"] for s in boards))
+
+    def test_non_chopping_workstation_is_not_a_board(self):
+        stations, unknown = EXPORT.build_stations(self.RAW, 0.6, (None, None))
+        self.assertFalse(any(s["name"] == "FryingStation" for s in stations))
+        self.assertNotIn("ClientWorkstation", unknown)
+
+
+class UtensilTests(unittest.TestCase):
+    COOKER = {"type": "ClientCookingStation", "name": "workstation_cooker_01",
+              "pos": [6.6, -6.0]}
+    UTENSIL = {"type": "ClientCookableContainer", "name": "utensil_pot_01",
+               "pos": [6.6, -6.0], "step": "Pot",
+               "contents": [{"name": "Rice"}]}
+    UTENSIL_BODY = {"type": "ClientIngredientContainer", "name": "utensil_pot_01",
+                    "pos": [6.6, -6.0], "contents": [{"name": "Rice"}]}
+
+    def test_utensil_is_attribute_not_station(self):
+        stations, _ = EXPORT.build_stations(
+            [self.COOKER, self.UTENSIL_BODY, self.UTENSIL], 0.6, (None, None))
+        self.assertEqual([s["kind"] for s in stations], ["cooker"])
+        self.assertEqual(stations[0]["id"], "cooker-0")
+        self.assertEqual(stations[0]["step"], "Pot")
+
+    def test_plain_ingredient_container_still_exported(self):
+        tray = {"type": "ClientIngredientContainer", "name": "TortillaTray",
+                "pos": [1.8, 1.8]}
+        stations, _ = EXPORT.build_stations([tray], 0.6, (None, None))
+        self.assertEqual([s["kind"] for s in stations], ["container"])
+        self.assertEqual(stations[0]["id"], "container-0")
 
 
 if __name__ == "__main__":

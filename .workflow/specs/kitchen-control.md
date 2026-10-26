@@ -455,14 +455,19 @@ C 部分是 `cd bridge && make test` 的单元检查；多进程行为用 `tools
   `container-N` 映射成 `cutting_board_N`。
 
 解决方案：
-1. **先手动打一遍，记下真实步骤。** 进 `_3`（`work=manual` 或不接管），每道菜由人从料箱做到上菜，
-   插件日志开 press/手持记录，逐步写下：拿什么、在哪个工位、按哪个键（interact/切菜键）、
-   之后手上/工位上变成什么物体名。产出一张"每道菜的动作表"，写进本节，作为后面一切的对照。
+1. **先手动打一遍，记下真实步骤。** 进 `_3`，每道菜由人从料箱做到上菜，插件日志开
+   `manual_log=true`（`slots=none` + `work=auto` + `bridge=off`；插件没有 `work=manual`，
+   `work=off` 仍会用"来回走 + 周期按交互"驱动已占的位，必须一个位都不占），逐步写下：
+   拿什么、在哪个工位、按哪个键（interact/切菜键）、之后手上/工位上变成什么物体名。
+   产出一张"每道菜的动作表"，写进本节，作为后面一切的对照。
    重点确认 4 件事：鱼和鸡切完的 prefab 名；虾在 `Sushi_PlainPrawn` 里要切还是要煮；卷饼的
    组合顺序（卷饼放盘上、两口锅倒进卷饼，还是别的）；装盘后是否还要额外一步。
 2. **导出补砧板。** `export-kitchen.py` 的工位表加 `ClientWorkstation`（kind `board`），`kitchen.json`
    里出现 `board-N`；锅具 utensil 不再当 `container`，改成挂在 cooker 上的属性（已有 `step`），
    `macro.c` 的映射对应改成 `board-N → cutting_board_N`、`cooker-N → pot_N`。
+   （2026-10-26 离线已完成：插件地图快照导出 `ClientWorkstation`，与 `cutting_board_N` 共用
+   "名字含 Chop/Cut"的规则并按 x、z、name 排序编号；utensil 组跳过，只把 `step` 交给同格 cooker；
+   `config/maps/*/kitchen.json` 的重导要等手动局，checked-in 导出尚未改。）
 3. **`build_recipes` 按 prefab 生成工序，不再按菜单树直译。** 料箱 prefab 有 `WorkableItem` 且订单
    要的是切后的料 → 插 `cut` 节点（资源 `board`）；有 `CookableProperties` 且菜单是
    `CookedCompositeOrderNode` → `cook`；`Composite` 的组合点由第 1 步的动作表决定：寿司是

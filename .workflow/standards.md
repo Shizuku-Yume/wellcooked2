@@ -78,8 +78,9 @@ bash scripts/dev-cycle.sh 20 s_sushi_1_1   # 第二参数是要进的关卡（�
 ```sh
 printf 'work=auto\nslots=1,2\ndiag=true\n' > "$GAME_DIR/BepInEx/wellcooked-takeover.txt"
 # work=auto   工序模式：按订单自动做菜（默认关；关着是"来回走 + 周期按交互"的最小策略）
-# slots=1,2   要占的玩家位（1 基）
+# slots=1,2   要占的玩家位（1 基）；slots=none 一个位都不占，厨师全交给本地输入（手动打一局用）
 # diag=true   过程行（每帧/每 2 秒的位置、路点、手柄状态、寻路记下的边）——默认关，只留结果行
+# manual_log=true  手动局观察行：A/X 按下与松开、手持物、工位内容变化——默认关
 # frontend_press=true  虚拟手柄在前端也按 A（进关卡要用；它会抢菜单导航，所以默认关）
 # bridge=127.0.0.1:14455  连 Bridge 上报世界状态（默认就开着；写 bridge=off 关掉）
 # state_ms=0  上报间隔毫秒；0 = 每帧（默认，协议与 spec 要求每帧）
@@ -90,8 +91,10 @@ printf 'work=auto\nslots=1,2\ndiag=true\n' > "$GAME_DIR/BepInEx/wellcooked-takeo
 3 秒 connect 等待（日志里有重试次数）。`state_ms` 这一版不做范围钳制：`0` 每帧、正数就是毫秒间隔。桥侧用 `bash tools/run-bridge-scenarios.sh` 不用游戏就能验协议，
 进关卡验真机用 `bash tools/run-real-game.sh`（它自己起 Bridge 并判定 hello/state_update 条数）。
 
-`diag` 是任务 10 收敛出来的唯一诊断开关（`plugin/Diag.cs`）：**结果行**（工序每步的开始/结果、失败原因、
+`diag` 是过程行的唯一开关（`plugin/Diag.cs`）：**结果行**（工序每步的开始/结果、失败原因、
 指令执行）不受它管；**过程行**默认不打 —— 收敛前"每帧一行"的代码散在三处、各判各的标志。
+手动打一局另开 `manual_log`（`plugin/ManualLog.cs`）：它只打 A/X 边沿、手持物与工位内容变化，
+属于结果型的观察行，不跟 `diag` 的每帧过程行走同一个开关。
 
 进关卡与调试（游戏跑起来后，往 `$GAME_DIR/BepInEx/wellcooked-command.txt` 写一行，1 秒内执行并删文件）：
 

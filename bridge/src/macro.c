@@ -302,7 +302,9 @@ static int station_ordinal(const char *id)
 
 /*
  * 工位 → 世界状态资源键。插件用 pot_0/cutting_board_0/sink_0，kitchen.json 用
- * cooker-0/container-0/sink-0；先认精确/归一化名，再按同类工位序号找。
+ * cooker-0/board-0/sink-0；先认精确/归一化名，再按同类工位序号找。
+ * cooker-N 只认 pot_N、board-N 只认 cutting_board_N：编号规则与插件 StateFrame /
+ * Kitchen.ChoppingBoards 的排序一致（任务 09 P0）。
  */
 static const kos_resource *find_station_resource(const kos_kitchen *kitchen,
                                                  const kos_macro_step *step,
@@ -343,22 +345,10 @@ static const kos_resource *find_station_resource(const kos_kitchen *kitchen,
                 return &world->resources[i];
             }
         }
-        snprintf(name, sizeof name, "cooker_%d", ordinal);
-        for (i = 0; i < (int)world->resource_count; i++) {
-            if (strcmp(world->resources[i].name, name) == 0) {
-                return &world->resources[i];
-            }
-        }
-    } else if (strcmp(station->kind, "container") == 0) {
+    } else if (strcmp(station->kind, "board") == 0) {
         char name[KOS_SHM_NAME_MAX];
 
         snprintf(name, sizeof name, "cutting_board_%d", ordinal);
-        for (i = 0; i < (int)world->resource_count; i++) {
-            if (strcmp(world->resources[i].name, name) == 0) {
-                return &world->resources[i];
-            }
-        }
-        snprintf(name, sizeof name, "container_%d", ordinal);
         for (i = 0; i < (int)world->resource_count; i++) {
             if (strcmp(world->resources[i].name, name) == 0) {
                 return &world->resources[i];

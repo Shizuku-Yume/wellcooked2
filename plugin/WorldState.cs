@@ -308,6 +308,9 @@ namespace WellCooked
             "ClientDirtyPlateStack", "ClientConveyorStation", "ClientSwitchStation",
             "ClientCookingStation", "ClientPlate", "ClientCookableContainer",
             "ClientCookablePreparationContainer", "ClientTrayIngredientContainer",
+            // 砧板（任务 09 P0）：`ClientWorkstation` 是 chopping 台面的同步组件，
+            // 之前不在工位表里，导出的 kitchen.json 没有 board-N。
+            "ClientWorkstation",
             // 料箱：DispenserCrate 上的这个组件给出它发的是哪种料
             "ClientPickupItemSpawner",
             // 垃圾桶：挑工位时必须排除（实测把鱼扔进去过），导出给 OS 侧的厨房模型用
@@ -336,6 +339,13 @@ namespace WellCooked
                 {
                     var unity = component as Component;
                     if (unity == null)
+                    {
+                        continue;
+                    }
+
+                    // `cutting_board_<N>` 只认砧板（与 Kitchen.ChoppingBoards 同一条规则）；
+                    // 别的 Workstation 不进 kitchen.json，否则 board-N 的序号两边对不上。
+                    if (typeName == "ClientWorkstation" && !Kitchen.IsChoppingBoard(unity.gameObject.name))
                     {
                         continue;
                     }

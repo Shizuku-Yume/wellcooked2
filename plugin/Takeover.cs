@@ -118,6 +118,22 @@ namespace WellCooked
                     var value = trimmed.Substring(equals + 1).Trim();
                     if (key == "slots")
                     {
+                        if (value == "none" || value == "off" || value == "0")
+                        {
+                            // 手动局（任务 09 P0 第 1 步）：一个位都不占，厨师全交给本地输入。
+                            // 已经挂上的虚拟手柄没法在运行中解绑，所以改这一项要重开游戏。
+                            if (Slots.Count > 0)
+                            {
+                                Slots.Clear();
+                                _log.LogInfo("takeover: 占位改成 none（不占位，全部玩家位交给本地输入）");
+                                if (OwnedPads.Count > 0 || PendingPads.Count > 0)
+                                {
+                                    _log.LogWarning("takeover: 已有虚拟手柄不会在运行中释放，重开游戏后才完全不占位");
+                                }
+                            }
+                            continue;
+                        }
+
                         var parsed = new List<int>();
                         foreach (var part in value.Split(','))
                         {
@@ -158,6 +174,17 @@ namespace WellCooked
                         {
                             Diag.Set(on);
                             _log.LogInfo("takeover: 诊断输出 " + (on ? "开" : "关"));
+                        }
+                    }
+                    else if (key == "manual_log")
+                    {
+                        // 人手动打一局时的观察记录（任务 09 P0 第 1 步）：按 A/X、手持物、工位内容。
+                        // 与 diag 分开：diag 是每帧过程行，手动局只要这几类结果行。
+                        bool on = value == "true" || value == "1" || value == "yes";
+                        if (on != ManualLog.Enabled)
+                        {
+                            ManualLog.Set(on);
+                            _log.LogInfo("takeover: 手动记录 " + (on ? "开" : "关"));
                         }
                     }
                     else if (key == "frontend_press")
@@ -348,6 +375,7 @@ namespace WellCooked
             Commands.Tick();
             WorldState.Tick(now);
             LinkRunner.Tick(now);
+            ManualLog.Tick(now);
 
             // 驱动必须**每帧**给方向：原来整个 Step 被 0.5 秒的检查间隔卡住，
             // 一秒只决策 2 次，而路点间隔 0.6 米、厨师一秒能走 3 米——一帧就冲过路点，

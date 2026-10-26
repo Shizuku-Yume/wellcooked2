@@ -35,6 +35,7 @@ namespace WellCooked
             WorldState.Install(_log);
             GridAlign.Install(_log);
             Diag.Install(_log);
+            ManualLog.Install(_log);
             LinkRunner.Install(_log);
             ActionDriver.Install(_log);
             LogicalInput.Install(_log);

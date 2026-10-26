@@ -129,3 +129,4 @@ must not substitute the station center for that cell.
 | `Navigation.cs` | 0.6 米格上的 A*、路点跟随、卡住处理 |
 | `VirtualPad.cs` / `LogicalInput.cs` | 设备层虚拟手柄 / 逻辑层注入 |
 | `Commands.cs` / `Diag.cs` / `Fallbacks.cs` | 调试指令通道 / 诊断开关 / 兜底集中处 |
+| `ManualLog.cs` | 手动局的观察记录（`manual_log=true`）：A/X 按下与松开、手持物与内容、砧板/锅/盘子/盘堆变化 |

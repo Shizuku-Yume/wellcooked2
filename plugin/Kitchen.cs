@@ -83,6 +83,22 @@ namespace WellCooked
                 });
             }
 
+            // 编号必须与 export-kitchen.py 的 `board-<N>` 一致（kind, x, z, name 排序），
+            // 否则 `cutting_board_2` 在 state_update 与 face.target_object 里会指不同的板。
+            result.Sort(delegate(Station a, Station b)
+            {
+                int byX = a.Position.x.CompareTo(b.Position.x);
+                if (byX != 0)
+                {
+                    return byX;
+                }
+                int byZ = a.Position.y.CompareTo(b.Position.y);
+                if (byZ != 0)
+                {
+                    return byZ;
+                }
+                return string.CompareOrdinal(a.Name, b.Name);
+            });
             return result;
         }
 

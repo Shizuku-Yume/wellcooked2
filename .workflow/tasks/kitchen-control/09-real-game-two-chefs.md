@@ -163,3 +163,101 @@ Steam 云存档提示（0/4 pad、停在 StartScreen，不是插件问题）；�
 - run `20261026-165847-_3-fix7`（score -300，0 单）：亲和生效，cook/assemble 都派给了取料的厨师。新的根因：`cook:BoiledRice` 派到 `cooker-0`（FryingStation，炸锅），厨师拿着米按 3 次 interact 游戏都不收。游戏规则见 `CookableContainer.AllowItemPlacement`：料 prefab 的 `CookableProperties.AllowedCookingSteps` 必须含锅的 `CookingHandler.m_cookingType`；`pick_cooker_station` 只按 kind 挑灶台，不看锅的类型。其余：`assemble:Sushi_PlainPrawn` 在盘堆 `drop wait=empty-hand timeout`，`fetch:SushiFish` `pickup wait=holding timeout`，`goto arrived+face` 6–10 s 超时。
 - 锅类型匹配：插件 `WorldState.cs` 给 `ClientCookableContainer` 工位导出 `step`（`GetCookingHandler().AccessCookingType` 的资源名），料箱导出 `cook_steps`（`AllowedCookingSteps`），菜单的 `CookedCompositeOrderNode` 导出 `cook`（`m_cookingStep`）。`export-kitchen.py` 让 cooker 继承同一格上那口锅的 `step`，cook 节点带 `step`。`kos_station.step` / `kos_recipe_node.step` 由 `kitchen.c` / `recipes.c` 读入，`pick_cooker_station` 只挑 step 相同的灶台（任一方为空则不限）。重导 `_3`：cooker-0/1 = DeepFatFryer、2/3 = FryingPan、4/5 = Pot；`cook:BoiledRice` = Pot、`cook:FriedChicken` = FryingPan。`test_export_kitchen.py` 新增 2 个用例，7/7 OK；`make -C bridge test` 16 套件 0 失败。
 - run `20261026-172424-_3-fix8`（score -300，0 单）：锅类型匹配生效，`cook:BoiledRice` → `cooker-4`（Pot）、`cook:FriedChicken` → `cooker-2`（FryingPan）。新的根因：`start_cook` 报 `wait=pot=cooking no-station-resource`，`state_update` 里根本没有 `pot_<N>`（每帧 `resources=4`：砧板/盘堆/脏盘/水槽）。原因见反编译 `ServerCookableContainer.StartSynchronising`：它把自己的 `ServerCookingHandler.enabled` 设成 false，`OnContentsChanged` 只在锅里有料时才打开；`ServerCookingHandler` 只在 `OnEnable` 时进静态表 `s_cookingHandlers`，所以 `GetCookingHandlers()` 只列出有料的锅，空锅一口都不报（局末 `wellcooked-state.json` 的 `cooking[]` 只有一口烧糊的锅）。其余：`cook:FriedChicken` 首次放料 `drop wait=empty-hand timeout` 2 次（之后一次放进去了）；`assemble:Sushi_PlainPrawn` 盘堆 `drop` 超时、`fetch:SushiFish` `pickup` 超时仍在。剩余工作与修法写进 spec `kitchen-control.md` 的"W11 实机遗留（2026-10-26 交接）"。
+
+**2026-10-26 P0 第 1、2 步离线准备（未验收；等人工打一局）：**
+
+- 手动局观察：新增 `plugin/ManualLog.cs`（开关 `manual_log=true`）。每帧读 `PlayerControls.ControlScheme`
+  的 A（`PickupAndDrop`）与 X（`WorkstationInteract`），按下/松开各一行，带手持物（盘子内容全列）、
+  面前的占位物体与坐标、厨师的游戏格四邻；每 0.25 秒给砧板（料 + 进度）、锅（料 + 烹饪秒数）、
+  有内容的容器/盘子、干净盘堆拍快照，变化才打。前缀固定 `manual:`，不影响游戏输入
+  （只调 `IsDown()`，不碰 `JustPressed()` 的按键事件）。
+- 手动局不接管：新增 `slots=none`。原来 `work=off` 仍会用"来回走 + 周期按交互"驱动逻辑层玩家，
+  而 `work=manual` 根本不存在；`slots=none` + `work=auto` 才真正一个位都不占。运行中改这一项不会
+  解绑已挂的虚拟手柄，必须启动前写好。
+- 砧板导出：插件 `WorldState.StationTypes` 加 `ClientWorkstation`，只认名字含 Chop/Cut
+  （与 `Kitchen.IsChoppingBoard` 同一规则）；`Kitchen.ChoppingBoards` 改成按 x、z、name 排序，
+  使 `cutting_board_N` 与 `kitchen.json` 的 `board-N` 同序。`export-kitchen.py` 新增 kind `board`；
+  `ClientCookableContainer` 锅具组不再进 `stations`，只把 `step` 交给同格 cooker；`container`
+  保留给真正的容器（`ClientIngredientContainer` 等）。
+- `macro.c`：`find_station_resource` 改为 `board-N → cutting_board_N`、`cooker-N → pot_N`，
+  删除 `container-N → cutting_board_N` 以及 `cooker_N`/`container_N` 旧别名。
+- `tools/fake_plugin.py`：WorldSim 的资源键按协议生成（`pot_N`/`cutting_board_N`/`sink_N`），
+  macro 场景的切菜工位改成 `board-0` + `cutting_board_0`。
+- 文档：`.workflow/standards.md` 开关表、spec W11 P0 第 1/2 步、`plugin/README.md` 文件表。
+
+测试（kc-A 本树；改动前基线 `make test` 也是 16 套件 0 失败）：
+- `cd bridge && make test` → `=== 16 test suites, 0 failed ===`
+- `cd bridge && make test-san` → `=== 16 test suites, 0 failed ===`（78 s）
+- `python3 scripts/test_export_kitchen.py` → `Ran 11 tests ... OK`
+- `bash tools/run-bridge-scenarios.sh --only macro,os-loop,nav-stuck,nav-ring` →
+  `合计: 4 个场景, 通过 4, 失败 0, 跳过 0`（macro 35 s、os-loop 10 s、nav-stuck 10 s、nav-ring 11 s）
+- 双向证明：用 `HEAD` 的旧 `scripts/export-kitchen.py` 跑新测试 → `FAILED (failures=4)`；
+  用 `HEAD` 的旧 `bridge/src/macro.c` 编译新 `test_macro` → `检查 85 项，失败 9 项`
+  （含 `board-0 映射到 cutting_board_0 并按 work`、`container-0 不再映射到 cutting_board_0`）。
+- 插件 `WellCooked.Smoke.csproj` Release 编译 0 警告 0 错误；已部署到游戏目录
+  （无游戏/Proton 进程且 `/tmp/wellcooked-game.lock` 不存在时取锁→拷贝→释放），
+  sha256 `be280c2d010cd5da4f3cdf821eab89ed273d4fb30a5cd5348d8c3687a10895b6` 与构建产物一致；
+  未启动游戏。
+
+未做：
+- P0 第 3/4 步（按 prefab 与动作表重建 recipes、离线校验工序图）要先有人的动作表。
+- `config/maps/*/kitchen.json` 没有重导：导出文件不能手改，等手动局里 `menu=1` + 导出脚本。
+- P1–P3 未开始。`config/kitchen.example.json` 是旧导出（没有 board）；`test_macro` 用测试内克隆
+  补 `board-0` 来跑新映射，不是改导出文件。
+
+人工手动局指令（原样可粘贴；一个人，手柄或键盘；三道菜各做一次并上菜）：
+
+```sh
+cd /home/shizuku/Project/overcooked-schedule-wt/kc-A
+export GAME_DIR="${GAME_DIR:-/run/media/shizuku/File/Steam/steamapps/common/Overcooked! 2}"
+
+# 1) 启动游戏前写配置：一个位都不占，不接 Bridge，只开手动记录
+cp "$GAME_DIR/BepInEx/wellcooked-takeover.txt" /tmp/kc09-takeover.before-manual 2>/dev/null || true
+cat > "$GAME_DIR/BepInEx/wellcooked-takeover.txt" <<'EOF'
+slots=none
+work=auto
+bridge=off
+frontend_press=false
+diag=false
+manual_log=true
+EOF
+
+# 2) 固定三单：Sushi_PlainFish → Sushi_PlainPrawn → Chicken_Burrito
+cat > "$GAME_DIR/BepInEx/wellcooked-orders.json" <<'EOF'
+{"seed":12345,"level":"s_wellcooked_demo_3","menu":[{"recipes":["Sushi_PlainFish","Sushi_PlainPrawn","Chicken_Burrito"]}]}
+EOF
+
+# 3) 起游戏（Steam 要先开着）；在前端按手柄 A / 键盘回车加入 1 号玩家
+bash scripts/run-game.sh
+
+# 4) 看到 1 个玩家位后进 _3（等关卡完全加载、厨师出现）
+printf 'load=s_wellcooked_demo_3\n' > "$GAME_DIR/BepInEx/wellcooked-command.txt"
+
+# 5) 用这一个人把三道菜各做一次：拿料 → 切/煮 → 组合/装盘 → 上菜。
+#    每次按 A/X 都会打 manual: 行；砧板/锅/盘子有变化也会打。做菜时不用管日志。
+
+# 6) 仍在关卡里：导出这一关的菜单与工位（会写 config/maps/s_wellcooked_demo_3/）
+printf 'menu=1\n' > "$GAME_DIR/BepInEx/wellcooked-command.txt"
+sleep 2
+python3 scripts/export-kitchen.py --map-dir config/maps
+
+# 7) 保存日志、核对有记录、恢复现场
+mkdir -p logs
+cp "$GAME_DIR/BepInEx/LogOutput.log" "logs/manual-$(date +%Y%m%d-%H%M%S)-demo3.log"
+grep -c 'manual:' "$GAME_DIR/BepInEx/LogOutput.log"
+rm -f "$GAME_DIR/BepInEx/wellcooked-orders.json" "$GAME_DIR/BepInEx/wellcooked-command.txt"
+cp /tmp/kc09-takeover.before-manual "$GAME_DIR/BepInEx/wellcooked-takeover.txt" 2>/dev/null || true
+# 8) 关闭游戏窗口；确认没有 Overcooked2/Proton 进程
+```
+
+下一步（新会话从这里继续）：
+1. 读上一步保存的 `logs/manual-*-demo3.log` 里的 `manual:` 行，整理"每道菜的动作表"写进 spec
+   W11 P0 第 1 步；重点回答鱼/鸡切完的 prefab 名、虾要切还是要煮、卷饼组合顺序、装盘后是否还有一步。
+2. 用该动作表做 P0 第 3 步（`build_recipes` 按 prefab 重建，去掉不可能成功的 `assemble`/盘堆动作），
+   再做第 4 步（`test_export_kitchen.py` 锁住三道菜节点序列、Scheduler 的 `recipe_infeasible`）。
+3. 重导后的 `config/maps/s_wellcooked_demo_3/` 与任务 Check 一起复核；P0 验收仍是
+   `_3` 一个厨师、`Sushi_PlainFish`、系统控制完成一单且得分 > 0。
+
+Review boundary: 无（本轮未开 flow-verify；离线改动待实机动作表后随 P0 一起复核）。
+分支/工作树：`kitchen-control/09-real-game-two-chefs` / `~/Project/overcooked-schedule-wt/kc-A`；
+本条目随本轮提交，工作树无未提交改动（`plugin/bin` 与 `logs/` 不入库）。

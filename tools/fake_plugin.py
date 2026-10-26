@@ -3111,13 +3111,26 @@ class WorldSim(NavSim):
         self.resources = {name: dict(payload)
                           for name, payload in (resources or {}).items()}
         self.resources.setdefault("plate_stack", {"count": 0})
+        # 资源键必须与插件 StateFrame 一致：cooker → pot_N、board → cutting_board_N、
+        # sink → sink_N，按位置排序编号（与 kitchen.json 的 cooker-N/board-N 同一规则）。
+        self.resource_keys = {}
+        for kind, prefix in (("cooker", "pot"), ("board", "cutting_board"),
+                             ("sink", "sink"), ("mixer", "mixer")):
+            ordered = sorted(
+                (s for s in self.stations.values() if s.get("kind") == kind),
+                key=lambda s: (s.get("pos", [0.0, 0.0])[0],
+                               s.get("pos", [0.0, 0.0])[1], s.get("name", "")))
+            for index, station in enumerate(ordered):
+                self.resource_keys[station["id"]] = "%s_%d" % (prefix, index)
+        for sid in self.stations:
+            self.resource_keys.setdefault(sid, sid)
         for station in self.stations.values():
             kind = station.get("kind", "")
-            sid = station["id"]
-            if kind in ("cooker", "container", "mixer"):
-                self.resources.setdefault(sid, {"state": "free"})
+            key = self.resource_keys[station["id"]]
+            if kind in ("cooker", "container", "board", "mixer"):
+                self.resources.setdefault(key, {"state": "free"})
             elif kind == "sink":
-                self.resources.setdefault(sid, {"state": "free", "count": 0,
+                self.resources.setdefault(key, {"state": "free", "count": 0,
                                                 "progress": 0.0})
         self.orders = [dict(order) for order in (orders or [])]
         self.holdings = [None] * len(positions)
@@ -3134,6 +3147,9 @@ class WorldSim(NavSim):
         if name not in self.resources:
             self.resources[name] = dict(default) if default is not None else {"state": "free"}
         return self.resources[name]
+
+    def station_resource(self, station):
+        return self.resource(self.resource_keys.get(station["id"], station["id"]))
 
     def resources_message(self):
         return {name: dict(payload) for name, payload in self.resources.items()}
@@ -3212,8 +3228,8 @@ class WorldSim(NavSim):
             self._schedule(game_ms, chef, take, station["id"], cooldown=True)
             return
 
-        resource = self.resource(station["id"])
-        if kind in ("container", "mixer"):
+        resource = self.station_resource(station)
+        if kind in ("container", "board", "mixer"):
             if holding is not None:
                 def put():
                     resource["content"] = holding
@@ -3294,7 +3310,7 @@ class WorldSim(NavSim):
     def _work(self, chef, station, game_ms):
         if chef in self.busy:
             return
-        resource = self.resource(station["id"])
+        resource = self.station_resource(station)
         if float(resource.get("progress") or 0.0) >= 0.999:
             return
         kind = station.get("kind", "")
@@ -3759,7 +3775,7 @@ def macro_configs(directory):
     stations = []
     for sid, kind, gives, x in (
             ("dispenser-0", "dispenser", "Tomato", 0.0),
-            ("container-0", "container", "", 1.2),
+            ("board-0", "board", "", 1.2),
             ("cooker-0", "cooker", "", 2.4),
             ("plate_stack-0", "plate_stack", "", 3.6),
             ("serving-0", "serving", "", 4.8),
@@ -3783,7 +3799,7 @@ def macro_configs(directory):
         {"id": "fetch:Tomato", "op": "fetch", "label": "Tomato",
          "resource": "dispenser", "ingredient": "Tomato", "duration": 5.0},
         {"id": "cut:ChoppedTomato", "op": "cut", "label": "ChoppedTomato",
-         "resource": "container", "duration": 5.0},
+         "resource": "board", "duration": 5.0},
         {"id": "cook:CookedTomato", "op": "cook", "label": "CookedTomato",
          "resource": "cooker", "duration": 5.0},
         {"id": "plate:TomatoDish", "op": "plate", "label": "TomatoDish",
@@ -3817,7 +3833,7 @@ def macro_configs(directory):
         path = directory / name
         path.write_text(json.dumps(payload, ensure_ascii=False))
         paths[name] = str(path)
-    products = {"container-0": "ChoppedTomato", "cooker-0": "TomatoDish"}
+    products = {"board-0": "ChoppedTomato", "cooker-0": "TomatoDish"}
     return paths, cells, stations, products
 
 

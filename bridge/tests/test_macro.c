@@ -131,7 +131,63 @@ static int build(kos_macro *macro, const kos_kitchen *kitchen, const char *op,
     return 0;
 }
 
-/* 第一次 advance 发 face，第二次面对准后 goto 完成；返回 advance 的返回值。 */
+/* 复制一个已有工位的坐标与站位格，给测试补一个 exporter 现在才会产出的工位类型
+ * （config/kitchen.example.json 是旧导出，没有 board）。 */
+static int add_station_clone(kos_kitchen *kitchen, const char *source_id,
+                             const char *new_id, const char *new_kind)
+{
+    int source = kos_kitchen_station_index(kitchen, source_id);
+    int index = kitchen->station_count;
+
+    if (source < 0 || index >= KOS_KITCHEN_MAX_STATIONS) {
+        return -1;
+    }
+    kitchen->stations[index] = kitchen->stations[source];
+    snprintf(kitchen->stations[index].id, sizeof kitchen->stations[index].id, "%s", new_id);
+    snprintf(kitchen->stations[index].kind, sizeof kitchen->stations[index].kind, "%s",
+             new_kind);
+    kitchen->stand.station[index] = kitchen->stand.station[source];
+    kitchen->station_count++;
+    return index;
+}
+
+/* 最小厨房：一格地、一个工位。只给"工位 → 世界状态资源键"的映射测试用。 */
+static void one_station_kitchen(kos_kitchen *kitchen, const char *id, const char *kind)
+{
+    memset(kitchen, 0, sizeof *kitchen);
+    snprintf(kitchen->scene, sizeof kitchen->scene, "%s", "synthetic");
+    kitchen->step = 0.6f;
+    kitchen->cell_count = 1;
+    kitchen->cells[0].x = 0.0f;
+    kitchen->cells[0].z = 0.0f;
+    kitchen->cells[0].mask = 0;
+    kitchen->station_count = 1;
+    snprintf(kitchen->stations[0].id, sizeof kitchen->stations[0].id, "%s", id);
+    snprintf(kitchen->stations[0].kind, sizeof kitchen->stations[0].kind, "%s", kind);
+    kitchen->stations[0].x = 0.0f;
+    kitchen->stations[0].z = 0.0f;
+    kitchen->stand.station[0].count = 0;
+}
+
+/* 厨师站在工位上（朝向恰好对准）：goto 直接发 face，第二次 advance 就完成。 */
+static kos_chef *place_chef_on_station(kos_world_state *world, const char *holding)
+{
+    kos_chef *chef;
+
+    world->chef_count = 1;
+    chef = &world->chefs[0];
+    memset(chef, 0, sizeof *chef);
+    chef->id = 0;
+    chef->x = 0.0f;
+    chef->y = 0.0f;
+    chef->facing = 0.0f;
+    if (holding != NULL) {
+        snprintf(chef->holding, sizeof chef->holding, "%s", holding);
+    }
+    return chef;
+}
+
+
 static int finish_goto(kos_macro *macro, const kos_kitchen *kitchen,
                        const kos_world_state *world, int64_t *game_ms,
                        kos_macro_output *out)
@@ -149,6 +205,7 @@ static int finish_goto(kos_macro *macro, const kos_kitchen *kitchen,
 static void test_expansions(const kos_kitchen *kitchen)
 {
     const char *dispenser = station_of_kind(kitchen, "dispenser");
+    const char *board = station_of_kind(kitchen, "board");
     const char *container = station_of_kind(kitchen, "container");
     const char *cooker = station_of_kind(kitchen, "cooker");
     const char *plate = station_of_kind(kitchen, "plate_stack");
@@ -158,9 +215,9 @@ static void test_expansions(const kos_kitchen *kitchen)
     kos_error err;
 
     printf("test_expansions\n");
-    expect(dispenser != NULL && container != NULL && cooker != NULL && plate != NULL &&
-               serving != NULL && sink != NULL,
-           "kitchen.example.json 六类工位齐全");
+    expect(dispenser != NULL && board != NULL && container != NULL && cooker != NULL &&
+               plate != NULL && serving != NULL && sink != NULL,
+           "测试厨房七类工位齐全（board 由测试补进旧导出）");
 
     kos_error_clear(&err);
     expect(kos_macro_plan_build(kitchen, "fetch", "fetch:Carrot", dispenser, "o1", 1000,
@@ -169,7 +226,7 @@ static void test_expansions(const kos_kitchen *kitchen)
                plan.steps[1].kind == KOS_MACRO_PICKUP &&
                strcmp(plan.steps[1].item, "Carrot") == 0,
            "fetch = goto + pickup(Carrot)");
-    expect(kos_macro_plan_build(kitchen, "cut", "cut:ChoppedCarrot", container, "o1",
+    expect(kos_macro_plan_build(kitchen, "cut", "cut:ChoppedCarrot", board, "o1",
                                 1000, &plan, &err) == KOS_OK &&
                plan.step_count == 4 && plan.steps[1].kind == KOS_MACRO_DROP &&
                plan.steps[2].kind == KOS_MACRO_CHOP && plan.steps[3].kind == KOS_MACRO_PICKUP,
@@ -247,7 +304,7 @@ static void test_fetch(const kos_kitchen *kitchen, const char *dispenser)
     expect(rc == 1, "holding 变成 Carrot 后整道 fetch 完成");
 }
 
-static void test_cut(const kos_kitchen *kitchen, const char *container)
+static void test_cut(const kos_kitchen *kitchen, const char *board_id)
 {
     kos_world_state world;
     kos_macro macro;
@@ -259,11 +316,11 @@ static void test_cut(const kos_kitchen *kitchen, const char *container)
 
     printf("test_cut\n");
     base_world(&world);
-    chef = chef_at_station(&world, kitchen, container);
+    chef = chef_at_station(&world, kitchen, board_id);
     snprintf(chef->holding, sizeof chef->holding, "Carrot");
-    board = add_resource(&world, container);
+    board = add_resource(&world, "cutting_board_0");
     board->content[0] = '\0';
-    expect(build(&macro, kitchen, "cut", "cut:ChoppedCarrot", container, "o1", 1000) == 0,
+    expect(build(&macro, kitchen, "cut", "cut:ChoppedCarrot", board_id, "o1", 1000) == 0,
            "cut 计划建成");
     rc = finish_goto(&macro, kitchen, &world, &game_ms, &out);
     expect(rc == 0 && macro.step_index == 1, "cut goto 完成进入 drop");
@@ -298,12 +355,12 @@ static void test_cut(const kos_kitchen *kitchen, const char *container)
 
     /* 完成条件被打破：砧板上的料被别人拿走，应在超时前立即失败。 */
     base_world(&world);
-    chef = chef_at_station(&world, kitchen, container);
+    chef = chef_at_station(&world, kitchen, board_id);
     chef->holding[0] = '\0';
-    board = add_resource(&world, container);
+    board = add_resource(&world, "cutting_board_0");
     snprintf(board->content, sizeof board->content, "Carrot");
     board->progress = 0.2f;
-    expect(build(&macro, kitchen, "cut", "cut:ChoppedCarrot", container, "o1", 1000) == 0,
+    expect(build(&macro, kitchen, "cut", "cut:ChoppedCarrot", board_id, "o1", 1000) == 0,
            "broken 场景计划建成");
     (void)finish_goto(&macro, kitchen, &world, &game_ms, &out);
     game_ms += 16;
@@ -332,7 +389,7 @@ static void test_cook(const kos_kitchen *kitchen, const char *cooker)
     base_world(&world);
     chef = chef_at_station(&world, kitchen, cooker);
     snprintf(chef->holding, sizeof chef->holding, "ChoppedCarrot");
-    pot = add_resource(&world, cooker);
+    pot = add_resource(&world, "pot_0");
     snprintf(pot->state, sizeof pot->state, "free");
     expect(build(&macro, kitchen, "cook", "cook:CookedCarrot", cooker, "o1", 1000) == 0,
            "cook 计划建成");
@@ -375,7 +432,7 @@ static void test_plate(const kos_kitchen *kitchen, const char *cooker, const cha
     chef = chef_at_station(&world, kitchen, plate_stack);
     chef->holding[0] = '\0';
     (void)add_resource(&world, plate_stack);
-    pot = add_resource(&world, cooker);
+    pot = add_resource(&world, "pot_0");
     snprintf(pot->state, sizeof pot->state, "cooking");
     snprintf(pot->content, sizeof pot->content, "Dish");
     kos_error_clear(&err);
@@ -501,7 +558,7 @@ static void test_wash(const kos_kitchen *kitchen, const char *sink)
 }
 
 static void test_timeouts(const kos_kitchen *kitchen, const char *dispenser,
-                          const char *container)
+                          const char *board_id)
 {
     kos_world_state world;
     kos_macro macro;
@@ -562,11 +619,11 @@ static void test_timeouts(const kos_kitchen *kitchen, const char *dispenser,
 
     /* chop 的工时超时：工时 1 s + 3 s。 */
     base_world(&world);
-    chef = chef_at_station(&world, kitchen, container);
+    chef = chef_at_station(&world, kitchen, board_id);
     chef->holding[0] = '\0';
-    board = add_resource(&world, container);
+    board = add_resource(&world, "cutting_board_0");
     snprintf(board->content, sizeof board->content, "Carrot");
-    expect(build(&macro, kitchen, "cut", "cut:ChoppedCarrot", container, "o1", 1000) == 0,
+    expect(build(&macro, kitchen, "cut", "cut:ChoppedCarrot", board_id, "o1", 1000) == 0,
            "chop 超时场景计划建成");
     game_ms = 3000;
     (void)finish_goto(&macro, kitchen, &world, &game_ms, &out);
@@ -581,10 +638,123 @@ static void test_timeouts(const kos_kitchen *kitchen, const char *dispenser,
            "chop 工时 + 3 s 后超时失败");
 }
 
+
+static void test_station_resource_mapping(void)
+{
+    kos_kitchen kitchen;
+    kos_world_state world;
+    kos_macro macro;
+    kos_macro_output out;
+    kos_resource *resource;
+    kos_chef *chef;
+    int64_t game_ms;
+    int rc;
+
+    printf("test_station_resource_mapping\n");
+
+    /* 正例：kitchen.json 的 board-0 ↔ state_update 的 cutting_board_0。 */
+    one_station_kitchen(&kitchen, "board-0", "board");
+    base_world(&world);
+    chef = place_chef_on_station(&world, "Carrot");
+    resource = add_resource(&world, "cutting_board_0");
+    snprintf(resource->content, sizeof resource->content, "Carrot");
+    resource->progress = 0.2f;
+    game_ms = 1000;
+    expect(build(&macro, &kitchen, "cut", "cut:ChoppedCarrot", "board-0", "o1", 1000) == 0,
+           "board-0 的 cut 计划建成");
+    rc = kos_macro_advance(&macro, &kitchen, &world, 0, 1, game_ms, &out);
+    expect(rc == 0 && out.action == KOS_MACRO_ACT_FACE, "board 到站先发 face");
+    game_ms += 16;
+    rc = kos_macro_advance(&macro, &kitchen, &world, 0, 1, game_ms, &out);
+    expect(rc == 0 && macro.step_index == 1, "board face 完成后进入 drop");
+    game_ms += 16;
+    rc = kos_macro_advance(&macro, &kitchen, &world, 0, 0, game_ms, &out);
+    expect(rc == 0 && out.action == KOS_MACRO_ACT_INTERACT, "board drop 发 interact");
+    chef->holding[0] = '\0';
+    game_ms += 16;
+    rc = kos_macro_advance(&macro, &kitchen, &world, 0, 0, game_ms, &out);
+    expect(rc == 0 && macro.step_index == 2, "放手后进入 chop");
+    game_ms += 16;
+    rc = kos_macro_advance(&macro, &kitchen, &world, 0, 0, game_ms, &out);
+    expect(rc == 0 && out.action == KOS_MACRO_ACT_WORK,
+           "board-0 映射到 cutting_board_0 并按 work");
+    resource->progress = 1.0f;
+    game_ms += 16;
+    rc = kos_macro_advance(&macro, &kitchen, &world, 0, 0, game_ms, &out);
+    expect(rc == 0 && macro.step_index == 3, "切好后进入 pickup");
+
+    /* 反例：container 不再是砧板，不能用 cutting_board_0 的资源。 */
+    one_station_kitchen(&kitchen, "container-0", "container");
+    base_world(&world);
+    chef = place_chef_on_station(&world, "Carrot");
+    resource = add_resource(&world, "cutting_board_0");
+    snprintf(resource->content, sizeof resource->content, "Carrot");
+    game_ms = 1000;
+    expect(build(&macro, &kitchen, "cut", "cut:ChoppedCarrot", "container-0", "o1", 1000) == 0,
+           "旧 container-0 的 cut 计划仍能建成（映射由执行器判定）");
+    (void)kos_macro_advance(&macro, &kitchen, &world, 0, 1, game_ms, &out);
+    game_ms += 16;
+    (void)kos_macro_advance(&macro, &kitchen, &world, 0, 1, game_ms, &out);
+    game_ms += 16;
+    (void)kos_macro_advance(&macro, &kitchen, &world, 0, 0, game_ms, &out);
+    chef->holding[0] = '\0';
+    game_ms += 16;
+    (void)kos_macro_advance(&macro, &kitchen, &world, 0, 0, game_ms, &out);
+    game_ms += 16;
+    rc = kos_macro_advance(&macro, &kitchen, &world, 0, 0, game_ms, &out);
+    expect(rc == -1 && strstr(kos_macro_fail_detail(&macro), "no-station-resource") != NULL,
+           "container-0 不再映射到 cutting_board_0");
+
+    /* 正例：kitchen.json 的 cooker-0 ↔ state_update 的 pot_0。 */
+    one_station_kitchen(&kitchen, "cooker-0", "cooker");
+    base_world(&world);
+    chef = place_chef_on_station(&world, "Rice");
+    resource = add_resource(&world, "pot_0");
+    snprintf(resource->state, sizeof resource->state, "free");
+    game_ms = 1000;
+    expect(build(&macro, &kitchen, "cook", "cook:BoiledRice", "cooker-0", "o1", 1000) == 0,
+           "cooker-0 的 cook 计划建成");
+    (void)kos_macro_advance(&macro, &kitchen, &world, 0, 1, game_ms, &out);
+    game_ms += 16;
+    (void)kos_macro_advance(&macro, &kitchen, &world, 0, 1, game_ms, &out);
+    game_ms += 16;
+    (void)kos_macro_advance(&macro, &kitchen, &world, 0, 0, game_ms, &out);
+    chef->holding[0] = '\0';
+    game_ms += 16;
+    (void)kos_macro_advance(&macro, &kitchen, &world, 0, 0, game_ms, &out);
+    game_ms += 16;
+    rc = kos_macro_advance(&macro, &kitchen, &world, 0, 0, game_ms, &out);
+    expect(rc == 0 && out.action == KOS_MACRO_ACT_INTERACT,
+           "cooker-0 映射到 pot_0 并开始下锅");
+
+    /* 反例：另一口锅的 pot_1 不能被 cooker-0 借用（序号必须对上）。 */
+    one_station_kitchen(&kitchen, "cooker-0", "cooker");
+    base_world(&world);
+    chef = place_chef_on_station(&world, "Rice");
+    resource = add_resource(&world, "pot_1");
+    snprintf(resource->state, sizeof resource->state, "free");
+    game_ms = 1000;
+    expect(build(&macro, &kitchen, "cook", "cook:BoiledRice", "cooker-0", "o1", 1000) == 0,
+           "只报 pot_1 时 cook 计划仍能建成");
+    (void)kos_macro_advance(&macro, &kitchen, &world, 0, 1, game_ms, &out);
+    game_ms += 16;
+    (void)kos_macro_advance(&macro, &kitchen, &world, 0, 1, game_ms, &out);
+    game_ms += 16;
+    (void)kos_macro_advance(&macro, &kitchen, &world, 0, 0, game_ms, &out);
+    chef->holding[0] = '\0';
+    game_ms += 16;
+    (void)kos_macro_advance(&macro, &kitchen, &world, 0, 0, game_ms, &out);
+    game_ms += 16;
+    rc = kos_macro_advance(&macro, &kitchen, &world, 0, 0, game_ms, &out);
+    expect(rc == -1 && strstr(kos_macro_fail_detail(&macro), "no-station-resource") != NULL,
+           "cooker-0 不借用 pot_1，序号必须一致");
+}
+
 int main(void)
 {
     kos_kitchen kitchen;
     const char *dispenser;
+    const char *board;
     const char *container;
     const char *cooker;
     const char *plate_stack;
@@ -596,6 +766,14 @@ int main(void)
     }
     dispenser = station_of_kind(&kitchen, "dispenser");
     container = station_of_kind(&kitchen, "container");
+    /* kitchen.example.json 是砧板还没导出时的旧快照；测试按 exporter 现在的输出补一块
+     * board-0（坐标与站位格沿用 container），让 cut 走真实的 board-N ↔ cutting_board_N。 */
+    if (container == NULL ||
+        add_station_clone(&kitchen, container, "board-0", "board") < 0) {
+        printf("FAIL cannot synthesize board-0 in config/kitchen.example.json\n");
+        return 1;
+    }
+    board = station_of_kind(&kitchen, "board");
     cooker = station_of_kind(&kitchen, "cooker");
     serving = station_of_kind(&kitchen, "serving");
     plate_stack = station_of_kind(&kitchen, "plate_stack");
@@ -603,12 +781,13 @@ int main(void)
 
     test_expansions(&kitchen);
     test_fetch(&kitchen, dispenser);
-    test_cut(&kitchen, container);
+    test_cut(&kitchen, board);
     test_cook(&kitchen, cooker);
     test_plate(&kitchen, cooker, plate_stack);
     test_deliver(&kitchen, serving);
     test_wash(&kitchen, sink);
-    test_timeouts(&kitchen, dispenser, container);
+    test_timeouts(&kitchen, dispenser, board);
+    test_station_resource_mapping();
 
     printf("[test_macro] 检查 %d 项，失败 %d 项\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;
