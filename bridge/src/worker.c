@@ -32,6 +32,9 @@
 #include <unistd.h>
 
 #define WORKER_LOOP_MS 5
+/* 步骤切换后 STOP 的最短驻留时间：Bridge 每帧（~16.7 ms @60fps）才读一次输入槽，
+ * 否则 STOP 会被下一次 INTERACT 覆盖，插件把两次同目标按键当成一次连按。 */
+#define WORKER_STOP_HOLD_MS 40
 #define WORKER_NAV_STALE_MS 500
 #define WORKER_INTERACT_WINDOW_MS KOS_WORKER_INTERACT_WINDOW_MS
 
@@ -53,6 +56,10 @@ typedef struct {
     int stale_logged;
     int64_t interact_until_game_ms;
     int interact_window_step;
+    /* 步骤切换时先把 STOP 留在槽里至少这么久：Bridge 每帧才读一次槽，
+     * 5 ms 工作循环 + 10 ms 槽周期会把 STOP 盖掉，插件收不到"上一个动作结束"，
+     * 同一个目标上的下一次 interact 就被当成连按而不再触发（plate 取盘踩过）。 */
+    int64_t stop_hold_until_ms;
     kos_navtab *nav;
     int64_t next_nav_attach_ms;
     int nav_wait_logged;
@@ -379,6 +386,7 @@ static int start_task(worker *w, const kos_mq_msg *msg)
     w->stale_logged = 0;
     w->interact_until_game_ms = 0;
     w->interact_window_step = -1;
+    w->stop_hold_until_ms = 0;
     w->have_task = 1;
     write_target(w, 1, 0);
     kos_log_info(w->rt.log, "task_received",
@@ -648,6 +656,7 @@ static int worker_main(worker *w, const kos_child_opts *opts)
 
         {
             int slot_due = now >= w->next_slot_ms;
+            int publish_allowed = now >= w->stop_hold_until_ms;
             int task_ended = 0;
             kos_macro_output out;
 
@@ -675,6 +684,8 @@ static int worker_main(worker *w, const kos_child_opts *opts)
                         task_ended = 1;
                     } else if (adv == 1) {
                         force_publish = 1;
+                        /* 让 STOP 至少活过两帧 Bridge（16.7 ms/帧 @60fps）。 */
+                        w->stop_hold_until_ms = now + WORKER_STOP_HOLD_MS;
                     }
                 }
             }
@@ -683,14 +694,14 @@ static int worker_main(worker *w, const kos_child_opts *opts)
                 publish_stop(w);
             } else if (w->have_task) {
                 if (have_world) {
-                    if (slot_due || force_publish) {
+                    if (force_publish || (slot_due && publish_allowed)) {
                         publish_macro_action(w, &out, game_ms, &plan, plan_fresh,
                                              plan_matches);
                     }
-                } else if (slot_due) {
+                } else if (slot_due && publish_allowed) {
                     publish_stop(w);
                 }
-            } else if (slot_due || force_publish) {
+            } else if (force_publish || (slot_due && publish_allowed)) {
                 /* 没任务的人也可能被 navd 规划着让路。 */
                 if (plan_ok && plan_fresh && plan.status == KOS_NAV_MOVING &&
                     plan.waypoint_count > 0) {
@@ -699,7 +710,7 @@ static int worker_main(worker *w, const kos_child_opts *opts)
                     publish_stop(w);
                 }
             }
-            if (slot_due || force_publish || task_ended) {
+            if (force_publish || (slot_due && publish_allowed) || task_ended) {
                 w->next_slot_ms = now + w->rt.opts.slot_interval_ms;
             }
         }

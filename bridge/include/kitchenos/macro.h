@@ -107,6 +107,9 @@ typedef struct {
      * 分数上涨是交付，下降是过期；不变说明整局分数没有上报（离线模拟器）。 */
     int64_t score_base;
     int score_base_valid;
+    /* DELIVER 步手变空的时刻：盘子交付时先消失、订单结果晚几百毫秒才到，
+     * 先等结果/订单消失，超过 grace 才判 holding-lost。 */
+    int64_t empty_hand_since_ms;
     char fail_detail[KOS_MACRO_DETAIL_MAX];
 } kos_macro;
 

@@ -743,12 +743,19 @@ static const char *chef_holding(const kos_world_state *world, int chef)
     return NULL;
 }
 
-/* 消费手上物品的工序：先把料放下/开火/端去交付，手上必须是同一件东西。 */
+/*
+ * 消费手上物品的工序：先把料放下/开火/端去交付，手上必须是同一件东西。
+ * plate（把手里整份菜放到盘堆）与 place（把玉米饼放到台面当容器）都是"手上有东西
+ * 才能做"的工序；漏掉它们，厨师切完/拿到玉米饼后再也接不到下一道工序（G11 的死角，
+ * 实机 demo3 的 sushi/burrito 链都卡在这里）。pour 不在此列：pour 的宏先端锅，
+ * 派工时厨师必须是空手。
+ */
 static int op_consumes_holding(const char *op)
 {
     return op != NULL && (strcmp(op, "cook") == 0 || strcmp(op, "cut") == 0 ||
                           strcmp(op, "mix") == 0 || strcmp(op, "assemble") == 0 ||
-                          strcmp(op, "deliver") == 0);
+                          strcmp(op, "deliver") == 0 || strcmp(op, "plate") == 0 ||
+                          strcmp(op, "place") == 0);
 }
 
 /*

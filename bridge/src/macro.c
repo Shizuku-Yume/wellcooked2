@@ -29,6 +29,9 @@
 #define MACRO_CHOP_MARGIN_MS 3000
 #define MACRO_WASH_MARGIN_MS 3000
 #define MACRO_POUR_MARGIN_MS 3000
+/* 交付时盘子先消失、游戏的订单结果（order_results）与 m_activeOrders 移除都要晚
+ * 几百毫秒；手空后等这么久还没有结果才判 holding-lost。 */
+#define MACRO_DELIVER_LOST_GRACE_MS 1000
 /* 四人同场时 PIBT 让路、反复重规划，实机 `_3` 里 goto 在快到站时（剩 0~1 个路点）
  * 被 3 s 余量判超时；6 s 覆盖一次让路往返。 */
 #define MACRO_GOTO_MARGIN_MS 6000
@@ -549,6 +552,24 @@ static int clean_plate_count(const kos_world_state *world, int32_t *out)
     return 0;
 }
 
+/* 订单最近的游戏结果（插件按 seq 递增重发整个环形快照）。同一 id 只留最新一条。 */
+static const kos_order_result *order_result_for(const kos_world_state *world,
+                                                const char *order_id)
+{
+    const kos_order_result *best = NULL;
+    int i;
+
+    if (order_id == NULL || order_id[0] == '\0') {
+        return NULL;
+    }
+    for (i = 0; i < (int)world->order_result_count; i++) {
+        if (strcmp(world->order_results[i].id, order_id) == 0) {
+            best = &world->order_results[i];
+        }
+    }
+    return best;
+}
+
 static int order_present(const kos_world_state *world, const char *order_id)
 {
     int i;
@@ -627,6 +648,7 @@ static int step_init(kos_macro *macro, const kos_kitchen *kitchen,
     macro->entry_holding[0] = '\0';
     macro->clean_baseline_valid = 0;
     macro->clean_baseline = 0;
+    macro->empty_hand_since_ms = 0;
     if (step->kind == KOS_MACRO_DROP && chef != NULL) {
         /* 后面 start_cook/chop 要核对锅/板上放的是不是这一份料。DROP 之后厨师
          * 手就空了，所以只能在这里记。 */
@@ -976,6 +998,24 @@ static int run_deliver(kos_macro *macro, const kos_world_state *world,
                        const kos_chef *chef, const kos_macro_step *step,
                        int64_t game_ms, kos_macro_output *out)
 {
+    /* G9：游戏自己的订单结果比"从 m_activeOrders 消失"更早也更准。交付瞬间盘子
+     * 就消失、手先空，订单却可能晚一两帧才移除；只按手空判失败会把成功交付记成
+     * holding-lost。delivered 直接算完成，expired/failed 直接失败。 */
+    const kos_order_result *result = order_result_for(world, macro->plan.order_id);
+
+    if (result != NULL) {
+        if (strcmp(result->outcome, "delivered") == 0) {
+            return next_step(macro, out) == 1 ? 1 : 0;
+        }
+        if (strcmp(result->outcome, "expired") == 0) {
+            fail_step(macro, game_ms, "order-gone", "expired");
+            return -1;
+        }
+        if (strcmp(result->outcome, "failed") == 0) {
+            fail_step(macro, game_ms, "order-gone", "delivery-failed");
+            return -1;
+        }
+    }
     if (!order_present(world, macro->plan.order_id)) {
         /* 订单消失有两种：交付成功（分数上涨）或到期（分数下降/不变）。以前只看
          * "订单不在了"，过期也被当成交付，W11 实机把扣分记成过完成（G9）。 */
@@ -989,10 +1029,18 @@ static int run_deliver(kos_macro *macro, const kos_world_state *world,
         }
         return next_step(macro, out) == 1 ? 1 : 0;
     }
-    /* 手上本来拿着菜，等订单消失时菜先没了：这是完成条件被打破，不必等到超时。 */
+    /* 手上本来拿着菜，等订单消失时菜先没了：可能是交付成功（盘子先消失、结果晚到），
+     * 也可能是菜掉了。先等 grace，结果/订单消失会先返回；一直没有才判 holding-lost。 */
     if (chef != NULL && macro->entry_holding[0] != '\0' && chef->holding[0] == '\0') {
-        fail_step(macro, game_ms, "order-gone", "holding-lost");
-        return -1;
+        if (macro->empty_hand_since_ms == 0) {
+            macro->empty_hand_since_ms = game_ms;
+        }
+        if (game_ms - macro->empty_hand_since_ms >= MACRO_DELIVER_LOST_GRACE_MS) {
+            fail_step(macro, game_ms, "order-gone", "holding-lost");
+            return -1;
+        }
+    } else {
+        macro->empty_hand_since_ms = 0;
     }
     if (game_ms >= macro->deadline_ms) {
         fail_step(macro, game_ms, "order-gone", "timeout");

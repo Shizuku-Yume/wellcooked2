@@ -811,8 +811,12 @@ static void test_deliver(const kos_kitchen *kitchen, const char *serving)
     chef->holding[0] = '\0';
     game_ms += 16;
     rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    expect(rc == 0 && macro.step_index == 1,
+           "deliver 手空：先等订单结果（交付时盘子先消失）");
+    game_ms += 1000;
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
     expect(rc == -1 && strstr(kos_macro_fail_detail(&macro), "holding-lost") != NULL,
-           "deliver 手上东西没了立即失败");
+           "deliver 手空且没有订单结果：grace 后失败");
 
     /* G9：订单消失 + 分数下降 = 过期，不能记成交付。 */
     base_world(&world);
