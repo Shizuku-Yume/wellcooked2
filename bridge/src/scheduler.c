@@ -2390,6 +2390,60 @@ static int world_station_busy(const scheduler *s, const char *station_id)
            strcmp(resource->state, "occupied") == 0;
 }
 
+/* 砧板/搅拌台按运行中的工序占用；产出的料被拿走（任务 DONE）就空出来。 */
+static int board_station_reserved(const scheduler *s, const char *station_id)
+{
+    int i;
+    int j;
+
+    for (i = 0; i < s->order_count; i++) {
+        const sched_order *order = &s->orders[i];
+
+        for (j = 0; j < order->task_count; j++) {
+            const sched_task *task = &order->tasks[j];
+            const kos_recipe_node *node = &s->recipes.nodes[task->node_index];
+
+            if ((strcmp(node->op, "cut") == 0 || strcmp(node->op, "mix") == 0) &&
+                task->station_id[0] != '\0' &&
+                strcmp(task->station_id, station_id) == 0 &&
+                task->state == TASK_RUNNING) {
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
+static int pick_board_station(const scheduler *s, const char *kind, unsigned salt,
+                              int *index)
+{
+    int candidates[KOS_KITCHEN_MAX_STATIONS];
+    int count = 0;
+    int i;
+    int offset;
+
+    for (i = 0; i < s->kitchen.station_count; i++) {
+        if (strcmp(s->kitchen.stations[i].kind, kind) == 0) {
+            candidates[count++] = i;
+        }
+    }
+    if (count == 0) {
+        return KOS_ERR_MISSING;
+    }
+    for (offset = 0; offset < count; offset++) {
+        int candidate = candidates[(salt + (unsigned)offset) % (unsigned)count];
+        const kos_station *station = &s->kitchen.stations[candidate];
+
+        if (board_station_reserved(s, station->id) ||
+            world_station_busy(s, station->id)) {
+            continue;
+        }
+        *index = candidate;
+        return KOS_OK;
+    }
+    return KOS_ERR_EMPTY;
+}
+
 static int cooker_station_reserved(const scheduler *s, const char *station_id)
 {
     int i;
@@ -2842,6 +2896,13 @@ static int task_station_index(const scheduler *s, int order_index, int task_inde
                                    (unsigned)(order_index * KOS_RECIPE_MAX_DISH_NODES +
                                               task_index),
                                    station_out);
+    }
+    if (strcmp(node->op, "cut") == 0 || strcmp(node->op, "mix") == 0) {
+        /* 砧板/搅拌台和灶一样要占住：同一轮里两条 cut 不能都挑 board-1。 */
+        return pick_board_station(s, node->resource,
+                                  (unsigned)(order_index * KOS_RECIPE_MAX_DISH_NODES +
+                                             task_index),
+                                  station_out);
     }
     if (strcmp(node->op, "plate") == 0 &&
         kos_kitchen_count_kind(&s->kitchen, node->resource) == 0) {
@@ -3816,12 +3877,20 @@ static void dispatch_ready(scheduler *s, int64_t now)
             priority = SCHED_WASH_PRIORITY;
         }
         station = &s->kitchen.stations[cand->station_index];
-        if (node != NULL && strcmp(node->op, "cook") == 0) {
+        if (node != NULL &&
+            (strcmp(node->op, "cook") == 0 || strcmp(node->op, "cut") == 0 ||
+             strcmp(node->op, "mix") == 0)) {
             unsigned salt = (unsigned)(cand->order_index * KOS_RECIPE_MAX_DISH_NODES +
                                        cand->task_index);
             int repick = -1;
-            int repick_rc = pick_cooker_station(s, node->resource, node->step, salt,
+            int repick_rc;
+
+            if (strcmp(node->op, "cook") == 0) {
+                repick_rc = pick_cooker_station(s, node->resource, node->step, salt,
                                                 &repick);
+            } else {
+                repick_rc = pick_board_station(s, node->resource, salt, &repick);
+            }
             if (repick_rc == KOS_ERR_EMPTY) {
                 continue;
             }
@@ -3855,7 +3924,8 @@ static void dispatch_ready(scheduler *s, int64_t now)
                      order->tasks[cook_task_index].station_id);
         }
         if (node != NULL &&
-            (strcmp(node->op, "cook") == 0 || strcmp(node->op, "place") == 0)) {
+            (strcmp(node->op, "cook") == 0 || strcmp(node->op, "place") == 0 ||
+             strcmp(node->op, "cut") == 0 || strcmp(node->op, "mix") == 0)) {
             /* cook 留锅要它；place 的台面是 pour/pickup 的容器位置，必须跟着任务走。 */
             copy_str(task->station_id, sizeof task->station_id, station->id);
         }

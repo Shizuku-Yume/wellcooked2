@@ -1309,6 +1309,46 @@ static void test_pour_waits_for_cooked(void)
     cleanup_run(&run, &shm, &events, 1);
 }
 
+/* 同一轮两条 cut 不能挑同一块砧板。 */
+static void test_board_station_exclusive(void)
+{
+    ksfx_run run;
+    kos_shm *shm = NULL;
+    kos_world_state world;
+    mqd_t events = (mqd_t)-1;
+    mqd_t taskss[KOS_SHM_MAX_CHEFS];
+    got_task got[4];
+    int n;
+
+    printf("[test_sched_flow] 17. 同一轮两条 cut 不能挑同一块砧板\n");
+    ksfx_scene_override = "s_wellcooked_demo_3";
+    if (ksfx_init_ex(&run, 0) != 0 || write_orders(&run) != 0) {
+        expect(0, "board_fixture_init");
+        ksfx_cleanup(&run);
+        ksfx_scene_override = NULL;
+        return;
+    }
+    ksfx_scene_override = NULL;
+    /* fixture 只改 cooker/mixer 等 kind；砧板仍是 "board"。 */
+    (void)write_recipe_node(&run, "CutOnly", "cut", "cut:C", "C", "board");
+    kos_world_state_reset(&world);
+    put_chef(&world, &run.kitchen, 0, 0, "Fish", "board");
+    put_chef(&world, &run.kitchen, 1, 1, "Fish", "board");
+    put_order(&world, "w1", "CutOnly", 80);
+    put_order(&world, "w2", "CutOnly", 80);
+    if (start_run(&run, &shm, &events, taskss, 2, &world) != 0) {
+        expect(0, "board_scheduler_started");
+        cleanup_run(&run, &shm, &events, 2);
+        return;
+    }
+    n = collect_tasks(taskss, 2, got, 2, 3000);
+    expect(n == 2 && strcmp(got[0].op, "cut") == 0 && strcmp(got[1].op, "cut") == 0,
+           "board_two_cuts_dispatched");
+    expect(n == 2 && strcmp(got[0].station, got[1].station) != 0,
+           "same_round_cuts_get_distinct_boards");
+    cleanup_run(&run, &shm, &events, 2);
+}
+
 int main(void)
 {
     printf("[test_sched_flow] 开始：派工看手持、失败分流、订单结果闭环\n");
@@ -1326,6 +1366,7 @@ int main(void)
     test_cooker_station_exclusive();
     test_cooker_occupied_from_world();
     test_pour_waits_for_cooked();
+    test_board_station_exclusive();
     printf("[test_sched_flow] 检查 %d 项，失败 %d 项\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;
 }
