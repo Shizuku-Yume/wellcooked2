@@ -35,7 +35,7 @@
 #define NAVD_LOOP_MS 10
 #define NAVD_STUCK_MS 2000
 #define NAVD_STUCK_LIMIT 3
-#define NAVD_ARRIVE_EPS 0.3f
+#include "navd_plan.h"
 #define NAVD_MOVE_EPS 0.02f
 #define NAVD_PLAN_H KOS_NAV_MAX_PLAN
 #define NAVD_ATTACH_LOG_MS 2000
@@ -81,6 +81,11 @@ typedef struct {
     int blocked_latched;
     uint32_t blocked_seq;
 
+    uint32_t paths;
+    float heading_accum_deg;
+    float last_facing;
+    int have_facing;
+    int arrived_latched;
     uint32_t plan_seq; /* 上一次写进计划槽的序号 */
     int have_written;
     kos_nav_plan last_plan;
@@ -110,7 +115,7 @@ typedef struct {
     int chef_count;
 } navd;
 
-static int player_at_goal(navd *n, const nav_agent *agent);
+static int player_at_goal(navd *n, nav_agent *agent);
 
 static int64_t now_ms(void)
 {
@@ -244,6 +249,16 @@ static void write_nav_metrics(navd *n)
         json_writer_int(&writer, (long long)agent->replans);
         json_writer_key(&writer, "stuck");
         json_writer_int(&writer, (long long)agent->stuck_events);
+        json_writer_key(&writer, "paths");
+        json_writer_int(&writer, (long long)agent->paths);
+        {
+            float seconds = n->game_ms > 0 ? (float)n->game_ms / 1000.0f : 0.0f;
+            float paths_per_s = seconds > 0.0f ? (float)agent->paths / seconds : 0.0f;
+            json_writer_key(&writer, "paths_per_s");
+            json_writer_double(&writer, (double)paths_per_s);
+        }
+        json_writer_key(&writer, "heading_delta_deg");
+        json_writer_double(&writer, (double)agent->heading_accum_deg);
         json_writer_object_end(&writer);
         total_steps += agent->moves;
         total_waits += agent->waits;
@@ -353,6 +368,7 @@ static void reset_plans(navd *n)
         agent->executed = 0;
         agent->released = 0;
         memset(agent->plan_wait, 0, sizeof agent->plan_wait);
+        agent->arrived_latched = 0;
     }
 }
 
@@ -687,22 +703,42 @@ static void release_plans(navd *n)
     }
 }
 
-static int player_at_goal(navd *n, const nav_agent *agent)
+static int player_at_goal(navd *n, nav_agent *agent)
 {
-    int cell;
     float dx;
     float dz;
+    float min_dist_sq = 1e9f;
+    const kos_station_stands *stands;
+    int i;
 
     if (!agent->has_target || agent->station_index < 0) {
+        agent->arrived_latched = 0;
         return 0;
     }
-    cell = agent->actual_cell;
-    if (!in_stands(&n->kitchen, agent->station_index, cell)) {
-        return 0;
+    stands = kos_stand_cells(&n->kitchen, agent->station_index);
+    if (stands != NULL && stands->count > 0) {
+        for (i = 0; i < stands->count; i++) {
+            int cell = stands->cells[i].cell;
+            dx = n->kitchen.cells[cell].x - agent->x;
+            dz = n->kitchen.cells[cell].z - agent->z;
+            float d2 = dx * dx + dz * dz;
+            if (d2 < min_dist_sq) {
+                min_dist_sq = d2;
+            }
+        }
+    } else {
+        int cell = agent->actual_cell;
+        if (cell >= 0 && cell < n->kitchen.cell_count) {
+            dx = n->kitchen.cells[cell].x - agent->x;
+            dz = n->kitchen.cells[cell].z - agent->z;
+            min_dist_sq = dx * dx + dz * dz;
+        }
     }
-    dx = n->kitchen.cells[cell].x - agent->x;
-    dz = n->kitchen.cells[cell].z - agent->z;
-    return dx * dx + dz * dz <= NAVD_ARRIVE_EPS * NAVD_ARRIVE_EPS;
+    {
+        float min_dist = sqrtf(min_dist_sq);
+        agent->arrived_latched = kos_nav_goal_hysteresis(agent->arrived_latched, min_dist);
+        return agent->arrived_latched;
+    }
 }
 
 static int plan_content_equal(const kos_nav_plan *a, const kos_nav_plan *b)
@@ -750,16 +786,22 @@ static void write_plan(navd *n, nav_agent *agent, int status)
     }
     plan.plan_seq = agent->plan_seq;
     {
-        int changed = !agent->have_written || !plan_content_equal(&plan, &agent->last_plan);
+        int is_new_route = !agent->have_written ||
+                           !kos_nav_plan_is_continuation(&agent->last_plan, &plan);
+        int content_changed = !agent->have_written ||
+                              !plan_content_equal(&plan, &agent->last_plan);
 
-        if (changed) {
+        if (is_new_route) {
             plan.plan_seq = agent->plan_seq + 1;
             agent->plan_seq = plan.plan_seq;
+        }
+        if (content_changed) {
+            agent->paths++;
         }
         agent->last_plan = plan;
         agent->have_written = 1;
         (void)kos_navtab_write_plan(n->tab, agent->chef_id, &plan);
-        if (changed) {
+        if (content_changed) {
             /* 实机验收要把 Worker 的 macro goto 和 navd 放行的 path 对上（任务 09）。 */
             kos_log_info(n->rt.log, "nav_plan",
                          "chef=%d seq=%u status=%s waypoints=%d released=%d target_seq=%u",
@@ -846,6 +888,14 @@ static int update_agents(navd *n, const kos_world_state *world)
             agent->z = world->chefs[found].y;
             agent->actual_cell =
                 kos_kitchen_nearest_cell(&n->kitchen, agent->x, agent->z);
+            if (agent->have_facing) {
+                float diff = world->chefs[found].facing - agent->last_facing;
+                while (diff > 3.14159265f) diff -= 2.0f * 3.14159265f;
+                while (diff <= -3.14159265f) diff += 2.0f * 3.14159265f;
+                agent->heading_accum_deg += fabsf(diff) * (180.0f / 3.14159265f);
+            }
+            agent->last_facing = world->chefs[found].facing;
+            agent->have_facing = 1;
         } else {
             agent->actual_cell = -1; /* 还没上报：这一版不规划，免得两个"0"撞格 */
             missing = 1;
