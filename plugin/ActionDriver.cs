@@ -34,6 +34,9 @@ namespace WellCooked
         private const float PathEndpointTolerance = 0.3f; // nav waypoint must be reached within 0.3 m
         private const float PathCornerTolerance = 0.15f; // turn corners may be skipped within 0.15 m
         private const float FaceAngleTolerance = 15f;    // 朝向误差 < 15°
+        private const float FaceStickMagnitude = 0.35f;  // 转身脉冲幅度：避免平移冲出 0.3m 站位
+        private const float FacePulseDuration = 0.06f;   // 每次转身脉冲时长
+        private const float FacePulseInterval = 0.25f;   // 转身脉冲间隔
         private const float PulseSeconds = 0.25f;     // 按键按下去多久（游戏只认边沿）
         private const float PulseInterval = 0.6f;     // 一次动作没做出效果时，隔多久再按一次
         private const int KeyPulses = 2;              // 按键类按几次算"做过了"（游戏只认边沿，按一次可能被吃掉）
@@ -220,60 +223,114 @@ namespace WellCooked
                 }
 
                 Owned.Add(m.chef_id);
+                var newWps = new List<Vector2>(m.waypoints.Length);
+                for (int i = 0; i < m.waypoints.Length; i++)
+                {
+                    newWps.Add(new Vector2(m.waypoints[i].x, m.waypoints[i].y));
+                }
+
+                PlayerControls chef;
+                Vector2 pos = Vector2.zero;
+                bool hasPos = Takeover.TryChefOf(m.chef_id, out chef) && chef != null;
+                if (hasPos)
+                {
+                    pos = new Vector2(chef.transform.position.x, chef.transform.position.z);
+                }
+
                 Command previous;
                 if (Commands.TryGetValue(m.chef_id, out previous) && previous.Kind == "path" && previous.Seq == m.seq)
                 {
                     if (previous.Waypoints != null)
                     {
                         int existingCount = previous.Waypoints.Count;
-                        for (int i = existingCount; i < m.waypoints.Length; i++)
+                        int matchIndex = -1;
+                        if (previous.WaypointIndex >= 0 && previous.WaypointIndex < previous.Waypoints.Count)
                         {
-                            previous.Waypoints.Add(new Vector2(m.waypoints[i].x, m.waypoints[i].y));
+                            Vector2 prevTarget = previous.Waypoints[previous.WaypointIndex];
+                            for (int i = 0; i < newWps.Count; i++)
+                            {
+                                if (Vector2.Distance(newWps[i], prevTarget) <= 0.01f)
+                                {
+                                    matchIndex = i;
+                                    break;
+                                }
+                            }
                         }
-                        if (m.waypoints.Length > existingCount)
+
+                        if (matchIndex < 0)
                         {
-                            // 同一 seq 只追加：新路点接在队尾，已走过的索引不动。deadline 按
-                            // 剩余路点重新给，否则在旧超时之后到达的追加会立刻被判超时。
-                            previous.Done = false;
-                            int remaining = previous.Waypoints.Count - previous.WaypointIndex;
-                            previous.Deadline = now + Math.Max(MoveTimeout, remaining * 2.0f);
+                            matchIndex = 0;
+                            if (hasPos)
+                            {
+                                while (matchIndex < newWps.Count - 1 &&
+                                       Vector2.Distance(pos, newWps[matchIndex]) <= PathCornerTolerance)
+                                {
+                                    matchIndex++;
+                                }
+                            }
+                        }
+                        else if (hasPos)
+                        {
+                            while (matchIndex < newWps.Count - 1 &&
+                                   Vector2.Distance(pos, newWps[matchIndex]) <= PathCornerTolerance)
+                            {
+                                matchIndex++;
+                            }
+                        }
+
+                        previous.Waypoints = newWps;
+                        previous.WaypointIndex = matchIndex;
+                        previous.Done = false;
+                        int remaining = previous.Waypoints.Count - previous.WaypointIndex;
+                        previous.Deadline = now + Math.Max(MoveTimeout, remaining * 2.0f);
+                        if (newWps.Count != existingCount)
+                        {
                             _log.LogInfo("action: 厨师位 " + (m.chef_id + 1) + " path seq="
-                                         + m.seq + " 追加路点 " + existingCount + "→"
-                                         + previous.Waypoints.Count);
+                                         + m.seq + " 更新路点 " + existingCount + "→"
+                                         + newWps.Count + " idx=" + matchIndex);
                         }
                     }
                     return null;
                 }
 
-                var wps = new List<Vector2>();
-                for (int i = 0; i < m.waypoints.Length; i++)
+                int startIdx = 0;
+                if (hasPos)
                 {
-                    wps.Add(new Vector2(m.waypoints[i].x, m.waypoints[i].y));
+                    while (startIdx < newWps.Count - 1 &&
+                           Vector2.Distance(pos, newWps[startIdx]) <= PathCornerTolerance)
+                    {
+                        startIdx++;
+                    }
                 }
 
                 Commands[m.chef_id] = new Command
                 {
                     Kind = "path",
                     Seq = m.seq,
-                    Waypoints = wps,
-                    WaypointIndex = 0,
+                    Waypoints = newWps,
+                    WaypointIndex = startIdx,
                     StartedAt = now,
-                    Deadline = now + Math.Max(MoveTimeout, wps.Count * 2.0f)
+                    Deadline = now + Math.Max(MoveTimeout, newWps.Count * 2.0f)
                 };
-                _log.LogInfo("action: 厨师位 " + (m.chef_id + 1) + " path seq=" + m.seq + " 路点数=" + wps.Count);
+                _log.LogInfo("action: 厨师位 " + (m.chef_id + 1) + " path seq=" + m.seq + " 路点数=" + newWps.Count);
                 return null;
             }
 
             if (kind == "face")
             {
-                // 桥每帧重发同一条 face。先用上一次解析出的目标物短路，避免每帧
-                // 重新扫一遍场景里的锅和砧板；完成之后也不再回重复的结局 ack。
                 Command previous;
                 bool hasPrevious = Commands.TryGetValue(m.chef_id, out previous);
                 if (!string.IsNullOrEmpty(m.target_object)
                     && hasPrevious && previous.Kind == "face"
                     && previous.TargetObject == m.target_object)
                 {
+                    if (previous.Done)
+                    {
+                        previous.Done = false;
+                        previous.StartedAt = now;
+                        previous.Deadline = now + 4f;
+                        previous.NextPulseAt = 0f;
+                    }
                     return null;
                 }
 
@@ -281,9 +338,6 @@ namespace WellCooked
                 bool hasTarget = false;
                 if (!string.IsNullOrEmpty(m.target_object))
                 {
-                    // target_object 是资源键（cutting_board_0 / pot_1 / …），不是
-                    // GameObject 名字；编号与 state_update 共用 Kitchen 里的顺序。
-                    // 两个字段都给时以 target_object 为准（protocol/protocol.md §3.6）。
                     Vector2 station;
                     if (Kitchen.TryStationPosition(m.target_object, out station))
                     {
@@ -291,7 +345,7 @@ namespace WellCooked
                         hasTarget = true;
                     }
                 }
-                else if (m.target != null)
+                if (!hasTarget && m.target != null)
                 {
                     target = new Vector2(m.target.x, m.target.y);
                     hasTarget = true;
@@ -310,6 +364,13 @@ namespace WellCooked
                 if (hasPrevious && previous.Kind == "face"
                     && Vector2.Distance(previous.Target, target) <= 0.01f)
                 {
+                    if (previous.Done)
+                    {
+                        previous.Done = false;
+                        previous.StartedAt = now;
+                        previous.Deadline = now + 4f;
+                        previous.NextPulseAt = 0f;
+                    }
                     return null;
                 }
 
@@ -374,6 +435,27 @@ namespace WellCooked
             }
 
             Command command;
+            if (Commands.TryGetValue(slot, out command) && command.Kind == "face" && command.Done)
+            {
+                PlayerControls chefObj;
+                if (Takeover.TryChefOf(slot, out chefObj) && chefObj != null)
+                {
+                    Vector2 d = command.Target - position;
+                    if (d.sqrMagnitude > 0.0001f)
+                    {
+                        Vector2 fwd = new Vector2(chefObj.transform.forward.x, chefObj.transform.forward.z).normalized;
+                        float curAngle = Vector2.Angle(fwd, d.normalized);
+                        if (curAngle >= FaceAngleTolerance)
+                        {
+                            command.Done = false;
+                            command.StartedAt = now;
+                            command.Deadline = now + 4f;
+                            command.NextPulseAt = 0f;
+                        }
+                    }
+                }
+            }
+
             if (!Commands.TryGetValue(slot, out command) || command.Done)
             {
                 // 归属还在、当前没有活着的命令：站住不动（stop/到达/超时之后就是这个状态）
@@ -533,15 +615,14 @@ namespace WellCooked
                     return true;
                 }
 
-                // 转身要短促：一直喂方向会让厨师朝目标走过去并沿工位滑开
-                // （`WorkOrder` 在真机上量到滑出 2.6 米）。这里每 0.35 秒点 0.1 秒。
+                // 转身要短促：用较小摇杆幅度与短脉冲，避免平移冲出 0.3m 站位。
                 if (now >= command.NextPulseAt)
                 {
-                    command.NextPulseAt = now + 0.35f;
-                    command.PulseUntil = now + 0.1f;
+                    command.NextPulseAt = now + FacePulseInterval;
+                    command.PulseUntil = now + FacePulseDuration;
                 }
                 bool pulsing = hasChef && now < command.PulseUntil;
-                Feed(slot, pad, pulsing ? dir : Vector2.zero, false, false, false);
+                Feed(slot, pad, pulsing ? (dir * FaceStickMagnitude) : Vector2.zero, false, false, false);
                 return true;
             }
 
