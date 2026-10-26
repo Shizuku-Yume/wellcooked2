@@ -5,7 +5,7 @@
 **Base commit:** b0129232ece42cb481a5821c2688a86a0a631d7e
 **Base branch:** kitchen-control/05-ring-and-pa-baseline
 **Started:** 2026-10-25T16:50:00+08:00
-**Status:** paused
+**Status:** blocked
 
 **Delivers:** 插件 `work=auto` 关掉 `WorkOrder.cs` 的替身逻辑后，`s_wellcooked_demo_2` 上两个
 厨师完全由 Linux 侧控制，无手动输入完成至少一单；`_1`（没有干净盘堆）上洗盘让盘子循环起来。
@@ -116,4 +116,10 @@ The failed `_2` Supervisor tree owned by this task was stopped via PID 1416010; 
 
 离线收尾已验证：`bridge && make test` 16 套件、0 失败；`bridge && make test-san` 16 套件、0 失败；`bash tools/run-bridge-scenarios.sh --only nav-stuck,os-loop,nav-ring,macro` 4/4 PASS；`python3 scripts/test_export_kitchen.py` 3/3 OK；`bash -n tools/run-real-game.sh` OK。PathArrival 边界测试产物存在但本机无 dotnet/runtime，直接运行报 `You must install .NET`，未伪称通过。`git diff --check` clean。当前 dirty paths 保持任务本身既有改动，未触碰外部游戏树。
 
-仍未完成：真实 `_2` 必须有 score>0、`order_completed`、两个 worker 完整宏链、navd path、无手动输入；随后真实 `_1` wash/cook priority 且无订单超时。未移动 done archive、未创建完成 PR；本任务暂停而非完成。
+仍未完成：真实 `_2` 必须有 score>0、`order_completed`、两个 worker 完整宏链、navd path、无手动输入；随后真实 `_1` wash/cook priority 且无订单超时。未移动 done archive、未创建完成 PR；任务因地图/关卡契约矛盾 blocked，非验收通过。
+
+## Blocked
+
+任务计划假设 `_2` 的两个厨师能从实际出生位置完成至少一单，但 fresh 实机证据证明两个厨师均在 lower 175-cell component；Rice/Tortilla/cooker-0 属于 upper component，且当前地图没有 Portal/Bridge 等跨区机制。Scheduler 的 `task_station_unreachable` 是正确行为，不能靠改 mask、加连接墙或放宽距离场修复。
+
+恢复条件：level owner 必须提供并验证真实的双带出生/菜单配置、支持的跨带交接语义，或重新导出与 bundle 一致的可达地图；随后重新运行 `_2` 严格验收，再继续 `_1`。fresh 证据保留在 `logs/real-game/20261026-110357-_2-finalfresh`。
