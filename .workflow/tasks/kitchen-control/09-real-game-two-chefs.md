@@ -136,3 +136,14 @@ The failed `_2` Supervisor tree owned by this task was stopped via PID 1416010; 
 下一步：`SCENE=s_wellcooked_demo_3 CHEFS=4 REAL_GAME=1 bash tools/run-real-game.sh` 实机验收。
 2 人时的 `_2` fresh 证据保留在 `logs/real-game/20261026-110357-_2-finalfresh`，作为“只占 2 位时
 上带无人”的对照。
+
+**2026-10-26T12:14 `_3` 四人首跑（未通过）：** `logs/real-game/20261026-121357-_3-4chefs`。第一次启动卡在
+Steam 云存档提示（0/4 pad、停在 StartScreen，不是插件问题）；重跑后 4 个虚拟 pad 都由游戏自己加入
+（pad 0..3 ↔ 配置位 4..1），`_3` 以 4 名厨师加载，Supervisor 起 4 个 Worker。结果 `score=-300`、
+没有 `order_completed`：navd 第一轮给 4 人都下了路径，插件对每条 `path` 都 ack，但约 2 秒后 4 人同时
+`nav_replan reason=stuck`，随后 `status=blocked`；worker-0/1 的 `fetch` 全是 `goto wait=arrived+face`
+约 5 s 超时，worker-2/3 是 `navd blocked: dispenser-0/1`；插件报 `path 超时，距第 1 个路点还差 0.6 米`。
+局末 `wellcooked-state.json` 里 4 人位置 (1.8,-3.6)/(4.2,-3.6)/(6.0,-3.6)/(7.8,-3.6) 正好是
+`layout_3.tsv` 的 4 个出生格 ×0.6 m，也就是整局没离开出生点：输入没有变成移动，不是 PIBT 互堵。
+下一步：`diag=true` 重跑，看 `trace 玩家位=` 的方向与手柄状态，确认 4 个虚拟 pad 的摇杆有没有喂进游戏
+（2 人时同一链路能走动）。游戏已关、配置已还原、锁已释放。
