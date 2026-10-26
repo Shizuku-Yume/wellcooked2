@@ -86,6 +86,14 @@ typedef struct {
 /* 读整个文件并解析；失败时 err 带文件名/字段。 */
 int kos_kitchen_load(const char *path, kos_kitchen *out, kos_error *err);
 
+/*
+ * kos_kitchen_load + 同目录 zones.json 里的 handoff 台面（counter_handoff_*）。
+ * Worker 的放下工序按工位 id 建宏计划，工位不在 kitchen 里会 macro-map 失败；
+ * Scheduler 在 zoned 模式已经注册，Worker 也必须看到同一个工位。
+ * zones 文件缺失或坏掉不影响地图加载（返回 KOS_OK）。
+ */
+int kos_kitchen_load_with_zones(const char *path, kos_kitchen *out, kos_error *err);
+
 /* 坐标 → 网格下标（容差 1e-3）；不在网格上返回 -1。 */
 int kos_kitchen_cell_index(const kos_kitchen *kitchen, float x, float z);
 

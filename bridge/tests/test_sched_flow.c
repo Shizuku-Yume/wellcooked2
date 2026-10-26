@@ -1068,6 +1068,45 @@ static void test_recovery_adopts_holding(void)
     cleanup_run(&run, &shm, &events, 1);
 }
 
+/*
+ * Worker 侧的 kitchen 加载必须和 Scheduler 一样注册 zones 的 handoff 台面，
+ * 否则放下工序的 station_id=counter_handoff_0 在 Worker 的 kitchen 里不存在，
+ * 宏计划建不出来（macro-map 失败）。
+ */
+static void test_worker_handoff_registration(void)
+{
+    ksfx_run run;
+    kos_kitchen plain;
+    kos_kitchen with_zones;
+    kos_macro_plan plan;
+    kos_error err;
+
+    printf("[test_sched_flow] 13. Worker 加载 kitchen 时注册 handoff 台面\n");
+    if (ksfx_init_ex(&run, 0) != 0) {
+        expect(0, "handoff_fixture_init");
+        ksfx_cleanup(&run);
+        return;
+    }
+    memset(&plain, 0, sizeof plain);
+    kos_error_clear(&err);
+    expect(kos_kitchen_load(run.kitchen_path, &plain, &err) == KOS_OK,
+           "handoff_plain_kitchen_loaded");
+    expect(kos_kitchen_station_index(&plain, "counter_handoff_0") < 0,
+           "plain_load_does_not_know_the_handoff_station");
+    memset(&with_zones, 0, sizeof with_zones);
+    kos_error_clear(&err);
+    expect(kos_kitchen_load_with_zones(run.kitchen_path, &with_zones, &err) == KOS_OK,
+           "handoff_kitchen_loaded_with_zones");
+    expect(kos_kitchen_station_index(&with_zones, "counter_handoff_0") >= 0,
+           "worker_load_registers_the_handoff_station");
+    kos_error_clear(&err);
+    expect(kos_macro_plan_build(&with_zones, "assemble", "drop:X", "counter_handoff_0",
+                                "putdown", 1500, &plan, &err) == KOS_OK &&
+               plan.step_count == 2 && plan.steps[1].kind == KOS_MACRO_DROP,
+           "putdown_plan_builds_with_worker_kitchen");
+    ksfx_cleanup(&run);
+}
+
 int main(void)
 {
     printf("[test_sched_flow] 开始：派工看手持、失败分流、订单结果闭环\n");
@@ -1081,6 +1120,7 @@ int main(void)
     test_score_fallback();
     test_holding_lost();
     test_recovery_adopts_holding();
+    test_worker_handoff_registration();
     printf("[test_sched_flow] 检查 %d 项，失败 %d 项\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;
 }

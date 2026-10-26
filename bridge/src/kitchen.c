@@ -11,6 +11,7 @@
 #endif
 
 #include <kitchenos/kitchen.h>
+#include <kitchenos/zones.h>
 
 #include <ctype.h>
 #include <errno.h>
@@ -261,6 +262,23 @@ out:
         memset(out, 0, sizeof *out);
     }
     return rc;
+}
+
+int kos_kitchen_load_with_zones(const char *path, kos_kitchen *out, kos_error *err)
+{
+    kos_zones zones;
+    kos_error zone_err;
+    int rc;
+
+    rc = kos_kitchen_load(path, out, err);
+    if (rc != KOS_OK) {
+        return rc;
+    }
+    kos_error_clear(&zone_err);
+    if (kos_zones_for_kitchen(path, &zones, &zone_err) == KOS_OK && zones.from_file) {
+        (void)kos_zones_register_handoff(&zones, out, &zone_err);
+    }
+    return KOS_OK;
 }
 
 int kos_kitchen_cell_index(const kos_kitchen *kitchen, float x, float z)
