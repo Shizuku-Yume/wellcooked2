@@ -745,6 +745,24 @@ static const kos_resource *find_carried_resource(const kos_world_state *world, i
     return NULL;
 }
 
+/* "cooked:BurritoChicken" / "pour:BurritoChicken" → 冒号后的名字。
+ * 状态里的内容带 proto 的类型前缀，工序 id 带 op 前缀，比名字前先剥掉。 */
+static const char *content_name(const char *text)
+{
+    const char *colon;
+
+    if (text == NULL) {
+        return "";
+    }
+    colon = strrchr(text, ':');
+    return colon == NULL ? text : colon + 1;
+}
+
+static int poured_content_matches(const char *node_id, const char *content)
+{
+    return kos_kitchen_name_matches(content_name(node_id), content_name(content));
+}
+
 /*
  * 倒料：手上端着锅/容器，对着台面容器按 interact，直到锅里的料进到台面上。
  *
@@ -767,6 +785,12 @@ static int run_pour(kos_macro *macro, const kos_kitchen *kitchen, const kos_worl
 
     if (carried != NULL) {
         if (carried->content[0] != '\0') {
+            /* 手里这口锅装的必须是这道工序要的料：派错锅/没熟就倒会把别的东西
+             * 倒进玉米饼，而且倒完内容变空，只按"变空"判完成会当成成功。 */
+            if (!poured_content_matches(step->item, carried->content)) {
+                fail_step(macro, game_ms, "content", "wrong-item");
+                return -1;
+            }
             macro->saw_content = 1;
         } else if (macro->saw_content) {
             done = 1;
