@@ -142,6 +142,7 @@ typedef struct {
     int chef_id;
     uint64_t task_id;
     int64_t ready_ms;
+    int64_t started_ms;
     char item[KOS_SHM_NAME_MAX];
     int station_index;
 } sched_putdown;
@@ -2078,13 +2079,6 @@ static void handle_worker_event(scheduler *s, const kos_mq_msg *msg)
             if (strcmp(op, "plate") == 0) {
                 release_plate_source(s, order, &s->recipes.nodes[node]);
             }
-            if (order->status != KOS_ORDER_ACTIVE) {
-                /* 订单已经过期/失败，这道工序的产物还可能在手上：能给别人就给别人。 */
-                if (op_leaves_item_in_hand(op)) {
-                    salvage_chef_holding(s, msg->chef_id, "order-closed", now);
-                }
-                return;
-            }
             if (strcmp(op, "deliver") == 0) {
                 const kos_world_state *world = scheduler_world(s, now);
 
@@ -3504,6 +3498,7 @@ static void dispatch_ready(scheduler *s, int64_t now)
             s->putdown.state = 2;
             s->putdown.chef_id = chef;
             s->putdown.task_id = msg.task_id;
+            s->putdown.started_ms = now;
         } else {
             s->wash.state = 2;
             s->wash.chef_id = chef;
@@ -4071,7 +4066,7 @@ static int scheduler_main(scheduler *s, const kos_child_opts *opts)
             memset(&s->wash, 0, sizeof s->wash);
         }
         if (s->putdown.state == 2 &&
-            now - s->putdown.ready_ms > SCHED_PUTDOWN_MS + SCHED_TASK_TIMEOUT_MS) {
+            now - s->putdown.started_ms > SCHED_PUTDOWN_MS + SCHED_TASK_TIMEOUT_MS) {
             uint64_t task_id = s->putdown.task_id;
             int chef = s->putdown.chef_id;
 

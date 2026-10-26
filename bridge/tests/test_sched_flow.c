@@ -61,17 +61,17 @@ typedef struct {
     char order_id[KOS_SHM_NAME_MAX];
 } got_task;
 
-static int open_queue(int chef, int events, mqd_t *out)
+static int open_queue(int instance, int chef, int events, mqd_t *out)
 {
     char name[KOS_MQ_NAME_MAX];
     kos_error err;
     int waited = 0;
 
     if (events) {
-        if (kos_mq_events_name(KOS_INSTANCE_NONE, name, sizeof name) != KOS_OK) {
+        if (kos_mq_events_name(instance, name, sizeof name) != KOS_OK) {
             return -1;
         }
-    } else if (kos_mq_task_name(chef, KOS_INSTANCE_NONE, name, sizeof name) != KOS_OK) {
+    } else if (kos_mq_task_name(chef, instance, name, sizeof name) != KOS_OK) {
         return -1;
     }
     while (waited <= 3000) {
@@ -391,11 +391,11 @@ static int start_run_ex(ksfx_run *run, kos_shm **shm, mqd_t *events, mqd_t *task
         ksfx_dump_logs(run);
         return -1;
     }
-    if (open_queue(0, 1, events) != 0) {
+    if (open_queue(run->instance, 0, 1, events) != 0) {
         return -1;
     }
     for (i = 0; i < chefs; i++) {
-        if (open_queue(i, 0, &taskss[i]) != 0) {
+        if (open_queue(run->instance, i, 0, &taskss[i]) != 0) {
             return -1;
         }
     }

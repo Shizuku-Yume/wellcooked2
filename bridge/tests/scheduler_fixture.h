@@ -51,6 +51,7 @@ typedef struct {
     pid_t pid;
     int chefs; /* 0 = 旧默认 2；测试在 spawn 前改 */
     int verbose; /* 1 = 给 Scheduler 加 --verbose（调试用） */
+    int instance; /* 每个测试进程一个实例号：资源信号量与 mq 名不撞同机并发跑的套件 */
 } ksfx_run;
 
 __attribute__((unused)) static void ksfx_copy(char *dst, size_t cap, const char *src)
@@ -253,6 +254,7 @@ __attribute__((unused)) static int ksfx_init_ex(ksfx_run *r, int with_orders)
     }
     snprintf(r->state_name, sizeof r->state_name, "/kos_fx_state_%ld", (long)getpid());
     snprintf(r->sem_name, sizeof r->sem_name, "/kos_fx_sem_%ld", (long)getpid());
+    r->instance = (int)(getpid() % 900) + 1;
     snprintf(suffix, sizeof suffix, "%ld", (long)getpid());
 
     snprintf(relative, sizeof relative, "maps/%s/kitchen.json", KSFX_SCENE);
@@ -366,7 +368,7 @@ __attribute__((unused)) static int ksfx_init_ex(ksfx_run *r, int with_orders)
         }
     }
     kos_error_clear(&err);
-    if (kos_resources_create(&r->kitchen, KOS_INSTANCE_NONE, &err) != KOS_OK) {
+    if (kos_resources_create(&r->kitchen, r->instance, &err) != KOS_OK) {
         return -1;
     }
     return 0;
@@ -385,6 +387,7 @@ __attribute__((unused)) static int ksfx_spawn_ex(ksfx_run *r, const char *strate
     char err_path[KSFX_PATH_MAX];
     char chefs[16];
     char tick[16];
+    char instance[16];
     char *slash;
     char *argv[40];
     ssize_t n;
@@ -426,6 +429,9 @@ __attribute__((unused)) static int ksfx_spawn_ex(ksfx_run *r, const char *strate
     argv[ac++] = chefs;
     argv[ac++] = (char *)"--tick-ms";
     argv[ac++] = tick;
+    snprintf(instance, sizeof instance, "%d", r->instance);
+    argv[ac++] = (char *)"--instance";
+    argv[ac++] = instance;
     if (r->verbose) {
         argv[ac++] = (char *)"--verbose";
     }
@@ -660,7 +666,7 @@ __attribute__((unused)) static void ksfx_cleanup(ksfx_run *r)
         (void)ksfx_stop(r);
     }
     kos_error_clear(&err);
-    (void)kos_resources_unlink(&r->kitchen, KOS_INSTANCE_NONE, &err);
+    (void)kos_resources_unlink(&r->kitchen, r->instance, &err);
     /* 调试用：KSFX_KEEP=1 保留临时地图与日志（默认仍然删干净）。 */
     if (r->dir[0] != '\0' && getenv("KSFX_KEEP") == NULL) {
         (void)ksfx_remove_tree(r->dir);
