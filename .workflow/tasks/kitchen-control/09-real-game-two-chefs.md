@@ -123,6 +123,56 @@ The failed `_2` Supervisor tree owned by this task was stopped via PID 1416010; 
 
 仍未完成：真实 `_2` 必须有 score>0、`order_completed`、两个 worker 完整宏链、navd path、无手动输入；随后真实 `_1` wash/cook priority 且无订单超时。未移动 done archive、未创建完成 PR；任务因地图/关卡契约矛盾 blocked，非验收通过。
 
+**2026-10-27 离线实现 P0 第 3/4 步（卷饼流程，未进游戏）：** 按 spec P0 第 1 步的动作表把宏、
+调度、导出三处改齐，进游戏只差重导。改动：
+
+- `bridge/src/macro.c`：新增 `pour`（goto 源灶 → 拿锅 → goto 容器 → interact 到源锅里那味料从
+  世界状态消失 → 回灶放锅；完成判据看锅内容不看手空，整段看不到源锅时 800 ms 兜底）；`plate` 改成
+  "放下手里整份菜 → 取盘"（删掉 cooker source、`wait_ready` 与取料）；`cut` 的收尾 pickup 与新增的
+  `pickup`（台面容器取成品）都按"拿到任意物品"判；新增 `place`（goto + drop）。`KOS_MACRO_WAIT_READY`
+  删除，kind 表里换成 `pour`。
+- `bridge/src/scheduler.c`：删 `plate_cook_task`/`release_plate_source`/`cook_has_plate_successor`/
+  `plate_ambiguous_cooker`；cook DONE 只在直接后继真有 `pour` 时留锅，pour DONE 释放；派工时 pour 的
+  `source_station_id` 取源 cook 任务的灶；`place/pour/pickup` 的容器工位沿 `pour` 往上一层取
+  （pickup 的父工序是 pour，不是 place——只认直接父工序会挑到随机台面），可行性检查同样按祖先找；
+  启动与 SIGHUP 重读时 `recipe_feasibility_check`，不可行的菜在 `add_order` 直接置 FAILED 并写
+  `order_rejected`（events.jsonl 打开之前的单延后补写）。
+- `plugin/WorldState.cs` + `plugin/Kitchen.cs`：`StationTypes` 加 `ClientAttachStation`，`AppendMap` 用
+  `Kitchen.IsPlainCounter`（名字含 `countertop` 且不是砧板）筛普通台面。**组件选择是 [INFERENCE]**：
+  与砧板同款（砧板的 `m_item` 也从 AttachStation 读），还没在关卡里导出确认过对象名。
+- `scripts/export-kitchen.py`：`KINDS` 加 `counter`；`build_recipes` 按动作表生成寿司
+  （`fetch → cut → plate → deliver`）与卷饼（玉米饼 `fetch → place`；每份熟料 `fetch → [cut] → cook →
+  pour`；`pickup → plate → deliver`），共享中间产物只建一个节点（`cook:BoiledRice`/`pour:Rice`/
+  `place:Tortilla`），`pickup` 按菜区分；工时 100/1700/12100/100/100/100/500 ms；`notes` 写来源与
+  "已熟后 16.1 s 未烧焦"；不再写消费者不解析的 `workable`（G10 的另一条路：删字段而不是加解析）。
+- 夹具与测试：`scripts/fixtures/s_wellcooked_demo_3/{menu,state}.json` 是**离线推导**的（坐标/料名/
+  菜单来自 `levels/wellcooked_demo/layout_3.tsv` 与动作表，Burrito 结构照导出的 Chicken 树，
+  `FriedMeat`/`FriedMushroom` 两个熟料名在游戏 resources.assets 里核对过）；`scripts/
+  test_export_kitchen.py` 28 项断言锁住 5 道菜的节点序列、共享节点、工时、station 归并与旧形状
+  fallback；`bridge/tests/test_map_configs.c` 加 op 白名单与 `cut → board`、`place/pour/pickup →
+  counter`；`macro.h` 工位上限 64→128（`kos_kitchen` 不进共享内存，不改段布局；`_3` 重导后约 65 个
+  工位）。
+- `tools/fake_plugin.py`：盘堆在手持物品时先"放菜"，空手再"取盘"（宏的 plate 已是 DROP+PICKUP），
+  `scenario_macro` 的 kinds 集合去掉 `wait_ready`，cook 只断言到 `start_cook`。这一处是 sim 的
+  文件，只改到宏场景能过的最小范围。
+
+离线预览：`/tmp/manual-flow/recipes.demo3.preview.json`（34 节点/34 边/5 菜，未写入 `config/maps`）。
+用 C 侧的 `kos_recipes_load` + `kos_recipes_dish_index` 验过 5 个菜名都能解析（无 unknown dish）、
+`cook` 的 `step`/`resource` 与工时解析正确；临时拼的 kitchen 因为格点与最新 layout 不一致没跑起
+Scheduler（夹具问题，不是配置问题）。
+
+验证：`cd bridge && make test` 16 套件 0 失败；`python3 scripts/test_export_kitchen.py` 28/28 OK；
+`bash tools/run-bridge-scenarios.sh` 19 个场景 17 PASS，2 FAIL——`os-loop` 首次因重启窗口抖动失败
+（单跑重跑 PASS），`os-resources` 的 5 项（无 release/wait/cooker 争用 + 别的 agent 留下的 shm 信号量）
+在改动前的 16:37 日志里就是同样 5 项；插件 Release 编译 0 警告 0 错误（本机 `plugin/Libs2017` 是指向
+主仓 `plugin/Libs` 的软链，`plugin/Libs*/` 已 ignore）。
+
+剩余（要游戏）：进关卡（不是 StartScreen）后 `printf 'menu=1\n' > "$GAME_DIR/BepInEx/wellcooked-command.txt"`，
+再 `python3 scripts/export-kitchen.py --map-dir config/maps`，核对：① 普通台面的对象名确实含
+`countertop`（否则 counter 一张也不会导出，卷饼全判不可行）；② 5 个菜名与订单的 `recipe` 一致；
+③ 42 张台面都在可走格旁（`kos_kitchen_load` 遇到没有站位的工位会拒绝整张图）；④ 台面由 hash 挑，
+可能选中离灶远的台面（走位变长，不影响正确性）。
+
 ## Replanned 2026-10-26
 
 原 `## Blocked` 记的是“两个厨师都出生在下带、上带工位不可达，需要 level owner 改图”。根因是计划
@@ -295,3 +345,60 @@ cp /tmp/kc09-takeover.before-manual "$GAME_DIR/BepInEx/wellcooked-takeover.txt"
 Review boundary: 无（本轮未开 flow-verify；离线改动待实机动作表后随 P0 一起复核）。
 分支/工作树：`kitchen-control/09-real-game-two-chefs` / `~/Project/overcooked-schedule-wt/kc-A`；
 本条目随本轮提交，工作树无未提交改动（`plugin/bin` 与 `logs/` 不入库）。
+
+**2026-10-27 手动局动作表 + P0 第 3 步可行性审计（按用户要求停在决定点）**
+
+Dirty at start: `plugin/README.md`、`plugin/SmokePlugin.cs`、`plugin/Takeover.cs`（已改）、
+`plugin/L3Tuning.cs`（未跟踪）。本轮没碰它们，也没有提交任何东西。
+
+已完成：
+- 读 `logs/manual/20261027-022317/manual.log`（单局，切点 L4 / t=30.04），把 5 道菜的实测动作表写进
+  spec W11 P0 第 1 步（含四个待核实问题的答案、逐项工时、对 `build_recipes` 的约束）。
+  关键实测：切 = 8 格 / 1.6–1.75 s；煮与煎 = 12.07–12.15 s 到"已熟"；装盘 ≤0.1 s；交付约 0.5 s；
+  烧焦未知（16.10 s 仍未烧焦）。切完的名字：`ChoppedSushiFish`、`ChoppedSushiPrawn`、
+  `BurritoChoppedChicken`、`DicedMeat`、`ChoppedMushroom`。虾只切不煮。
+- Check before：`cd bridge && make test` = 16 个套件、0 失败、26.44 s。
+
+停下的原因（用户指示：schema 表达不了就先停下报告）。卷饼的正则流程有两步现有消费者表达不了：
+- **`pour` 不存在。** `macro.c:kos_macro_plan_build_with_source`（fetch 151 / cut 158 / cook 167 /
+  plate 171 / deliver 187 / wash 190 / mix 194 / assemble 204）没有"端着锅倒进容器"；
+  `run_drop`（macro.c:625）只在**手空**时判完成，而实测倒完料锅还在手上；`cook`（167）把锅留在灶上、
+  厨师空手走开，所以 `assemble` 的 goto+drop 要么没东西可倒、要么真倒时超时。
+- **`counter` 工位类型不存在。** `plugin/WorldState.cs:StationTypes`（302–321）只导组件表里的物体，
+  普通台面（`countertop_01_standard_wood`）不在其中，所以 state/kitchen.json 里没有它；
+  `scripts/export-kitchen.py` 的 `KINDS` 也没有 counter。现有 kind =
+  serving/dispenser/cooker/sink/clean_plate_stack/plate_stack/container。
+  `bridge/tests/test_map_configs.c` 断言"每个工序的 resource 都有工位"，所以直接写 `counter`
+  或 `board` 会让 `make test` 变红（board 只差重导，counter 还要插件导）。
+- **`plate` 语义不对。** macro.c:171–186 是"先取盘 →（有 source 时）去灶上取料"；
+  `scheduler.c` 的 `plate_cook_task`/`release_plate_source`/`cook_has_plate_successor` 把 source
+  定为祖先 `cook` 的灶。实测是"把手里整份菜放到盘堆上 → 取盘"，卷饼的菜在台面的玉米饼里、不在灶上。
+  寿司这条碰巧能跑通（`run_pickup` 的 `holding_is` 走 `kos_kitchen_name_matches` 双向子串，
+  "Plate" 能匹配 `equipment_plate_01`；第一次 interact 会先把鱼放下），但卷饼的 source 指向灶，
+  必然卡在 pickup。
+- **数据缺一截。** `$GAME_DIR/BepInEx/wellcooked-menu.json` 还是 2026-10-26 17:21 的旧关卡（3 道菜），
+  现在的 `_3` 是 5 道（`levels/wellcooked_demo/layout_3.tsv` 的 `# menu:` 行；游戏日志菜谱下标 0–4
+  与之一致）。重导需要进关卡后发一次：
+  `printf 'menu=1\n' > "$GAME_DIR/BepInEx/wellcooked-command.txt"`；脚本读
+  `$GAME_DIR/BepInEx/{wellcooked-state.json,wellcooked-terrain.json,wellcooked-menu.json}`，
+  跑 `python3 scripts/export-kitchen.py --map-dir config/maps`。不用重开游戏，只要这三个文件是新导出的
+  （state 里还要有砧板；当前 state 是 StartScreen，0 个工位）。
+
+最小改动清单（等用户拍板，本轮未动手）：
+1. `bridge/src/macro.c`：新增 `pour`（goto 灶 → 拿锅 → goto 容器 → interact 到源锅内容为空 →
+   goto 灶 → 放回锅）；`plate` 改成"放下手里的整份菜 → 取盘"，去掉 source/取料。
+2. `bridge/src/scheduler.c`：撤掉 plate 的 cooker source 与锅租约转移（`plate_cook_task`、
+   `release_plate_source`、`cook_has_plate_successor`、`plate_ambiguous_cooker`）。
+3. `plugin/WorldState.cs` `StationTypes` 导普通台面（`countertop_*`，用 `ClientAttachStation`），
+   排除已属于别的工位的格子；`scripts/export-kitchen.py` `KINDS` 加 `counter`。
+4. `scripts/export-kitchen.py` `build_recipes`：按 spec 第 1 步的表生成 5 道菜（cut/board、pour/counter、
+   合并装盘），工时用实测值，`notes` 写来源（`logs/manual/20261027-022317`、调参 chop 2 阶段 ×8、
+   容量 1）与"烧焦未知，≥16.1 s"。
+5. `tests/test_export_kitchen.py`（新）+ `bridge/tests/test_map_configs.c`（resource 断言认 counter）
+   + `test_macro.c` 的 plate 用例。
+6. 重导 `config/maps/s_wellcooked_demo_3/{kitchen,recipes}.json`（要上面那份新 state/menu）。
+
+未做：`recipes.json` 与 `export-kitchen.py` 都没改——现在改只会生成消费者解析不了、或必然超时的图，
+或者让 `make test` 变红。
+
+下一步：用户决定第 1–3 项这类 schema 扩展是否要做；批了我就按第 4–6 项一次做完再验。
