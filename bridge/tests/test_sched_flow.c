@@ -1349,6 +1349,104 @@ static void test_board_station_exclusive(void)
     cleanup_run(&run, &shm, &events, 2);
 }
 
+/* 灶被占用挡下来的候选要进 resources[cooker].waits（resource_wait 事件）。 */
+static void test_cooker_gate_counts_wait(void)
+{
+    ksfx_run run;
+    kos_shm *shm = NULL;
+    kos_world_state world;
+    mqd_t events = (mqd_t)-1;
+    mqd_t taskss[KOS_SHM_MAX_CHEFS];
+    got_task got[4];
+    char kind[64];
+    char needle[128];
+    int n;
+
+    printf("[test_sched_flow] 18. 灶占用等待进 resource_wait 统计\n");
+    ksfx_scene_override = "s_wellcooked_demo_3";
+    if (ksfx_init_ex(&run, 0) != 0 || write_orders(&run) != 0) {
+        expect(0, "gate_fixture_init");
+        ksfx_cleanup(&run);
+        ksfx_scene_override = NULL;
+        return;
+    }
+    ksfx_scene_override = NULL;
+    snprintf(kind, sizeof kind, "zz%ld_cooker", (long)getpid());
+    (void)write_recipe_node(&run, "CookOnly", "cook", "cook:C", "C", kind);
+    kos_world_state_reset(&world);
+    put_chef(&world, &run.kitchen, 0, 0, "Rice", "cooker");
+    put_chef(&world, &run.kitchen, 1, 1, "Rice", "cooker");
+    put_order(&world, "w1", "CookOnly", 80);
+    put_order(&world, "w2", "CookOnly", 80);
+    {
+        int i;
+        for (i = 1; i < 6; i++) {
+            char name[KOS_SHM_NAME_MAX];
+            snprintf(name, sizeof name, "pot_%d", i);
+            put_station_resource(&world, name, "cooking", "Rice");
+        }
+    }
+    if (start_run(&run, &shm, &events, taskss, 2, &world) != 0) {
+        expect(0, "gate_scheduler_started");
+        cleanup_run(&run, &shm, &events, 2);
+        return;
+    }
+    n = collect_tasks(taskss, 2, got, 2, 3000);
+    expect(n == 1 && strcmp(got[0].op, "cook") == 0, "gate_one_cook_dispatched");
+    snprintf(needle, sizeof needle, "\"event\":\"resource_wait\",\"kind\":\"%s\"", kind);
+    expect(ksfx_wait_events(&run, needle, 2000, NULL, 0) == 0,
+           "cooker_gate_records_resource_wait");
+    cleanup_run(&run, &shm, &events, 2);
+}
+
+/* 订单失败/不可行时释放所有工位保留并解绑厨师，闲置厨师接新单任务。 */
+static void test_failed_order_releases_and_unbinds(void)
+{
+    ksfx_run run;
+    kos_shm *shm = NULL;
+    kos_world_state world;
+    mqd_t events = (mqd_t)-1;
+    mqd_t taskss[KOS_SHM_MAX_CHEFS];
+    got_task got[4];
+    int n;
+
+    printf("[test_sched_flow] 19. 订单失败释放保留并解绑厨师\n");
+    ksfx_scene_override = "s_wellcooked_demo_3";
+    if (ksfx_init_ex(&run, 0) != 0 || write_orders(&run) != 0) {
+        expect(0, "unbind_fixture_init");
+        ksfx_cleanup(&run);
+        ksfx_scene_override = NULL;
+        return;
+    }
+    ksfx_scene_override = NULL;
+    (void)write_recipe_node(&run, "CutOnly", "cut", "cut:C", "C", "board");
+    kos_world_state_reset(&world);
+    put_chef(&world, &run.kitchen, 0, 0, "Fish", "board");
+    put_order(&world, "w1", "CutOnly", 80);
+    put_order(&world, "w2", "CutOnly", 80);
+    if (start_run(&run, &shm, &events, taskss, 1, &world) != 0) {
+        expect(0, "unbind_scheduler_started");
+        cleanup_run(&run, &shm, &events, 1);
+        return;
+    }
+    n = collect_tasks(taskss, 1, got, 1, 3000);
+    expect(n == 1 && strcmp(got[0].op, "cut") == 0 && strcmp(got[0].order_id, "w1") == 0,
+           "first_order_cut_dispatched");
+    /* 模拟任务失败导致订单不可行 */
+    expect(send_event(events, got[0].task_id, 0, KOS_EVT_FAILED,
+                      "macro=chop wait=progress=1 timeout") == 0,
+           "task_failure_sent");
+    expect(ksfx_wait_events(&run, "\"event\":\"order_failed\"", 2000, NULL, 0) == 0,
+           "order_failed_recorded");
+    /* 厨师手持在下一轮派发前被采纳或允许接下一单任务 */
+    world.chefs[0].holding[0] = '\0';
+    expect(world_write(shm, &world) == 0, "chef_empty_handed");
+    n = collect_tasks(taskss, 1, got, 1, 3000);
+    expect(n == 1 && strcmp(got[0].order_id, "w2") == 0,
+           "idle_chef_takes_next_order_task");
+    cleanup_run(&run, &shm, &events, 1);
+}
+
 int main(void)
 {
     printf("[test_sched_flow] 开始：派工看手持、失败分流、订单结果闭环\n");
@@ -1367,6 +1465,8 @@ int main(void)
     test_cooker_occupied_from_world();
     test_pour_waits_for_cooked();
     test_board_station_exclusive();
+    test_cooker_gate_counts_wait();
+    test_failed_order_releases_and_unbinds();
     printf("[test_sched_flow] 检查 %d 项，失败 %d 项\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;
 }

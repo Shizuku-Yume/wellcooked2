@@ -226,6 +226,7 @@ static int pour_source_cook_task(const scheduler *s, const sched_order *order, i
 static int sink_station_index(const kos_kitchen *kitchen);
 static int plate_count(const kos_world_state *world, const char *name);
 static void finish_order_if_done(scheduler *s, int order_index);
+static void salvage_expired_holdings(scheduler *s, const sched_order *order, int64_t now);
 static int cooker_step_matches(const kos_station *station, const char *step);
 static void recipe_feasibility_check(scheduler *s);
 
@@ -524,7 +525,9 @@ static void mark_resource_wait(scheduler *s, int chef, const sched_order *order,
     if (task->wait_logged) {
         return;
     }
-    s->wanted_kind[chef] = kos_resources_index(&s->resources, kind);
+    if (chef >= 0 && chef < KOS_SHM_MAX_CHEFS) {
+        s->wanted_kind[chef] = kos_resources_index(&s->resources, kind);
+    }
     task->wait_started_ms = now_ms();
     stat = stat_find(s, kind);
     if (stat != NULL) {
@@ -1444,6 +1447,7 @@ static void finish_order_with_outcome(scheduler *s, int order_index, int status,
     }
     release_order_cook_reservations(s, order);
     for (i = 0; i < order->task_count; i++) {
+        order->tasks[i].station_id[0] = '\0';
         if (order->tasks[i].state == TASK_PENDING) {
             order->tasks[i].state = TASK_FAILED;
         }
@@ -2202,18 +2206,21 @@ static void handle_worker_event(scheduler *s, const kos_mq_msg *msg)
                                            msg->detail);
                     finish_order_with_outcome(s, order_index, KOS_ORDER_FAILED,
                                               "macro-retries-exhausted", now);
+                    salvage_expired_holdings(s, order, now);
                 }
             } else if (disposition == SCHED_FAIL_INFEASIBLE) {
                 task->state = TASK_FAILED;
                 emit_recipe_infeasible(s, order, task, "game-refused", msg->detail);
                 finish_order_with_outcome(s, order_index, KOS_ORDER_FAILED,
                                           "recipe-infeasible", now);
+                salvage_expired_holdings(s, order, now);
             } else {
                 task->state = TASK_FAILED;
                 kos_log_warn(s->rt.log, "task_failed", "order=%s node=%s detail=%s",
                              order->id, s->recipes.nodes[node].id, msg->detail);
                 finish_order_with_outcome(s, order_index, KOS_ORDER_FAILED, "macro-error",
                                           now);
+                salvage_expired_holdings(s, order, now);
             }
         } else {
             (void)release_lease_for_task(s, msg->task_id, "resource_reclaimed",
@@ -3307,6 +3314,9 @@ static int build_candidates(scheduler *s, int64_t now, const int *chef_cells,
             {
                 int station_rc = task_station_index(s, i, j, &station);
                 if (station_rc == KOS_ERR_EMPTY) {
+                    /* 灶/板都被占着：这也是资源竞争，要进 waits 统计（OS 课设证据）。 */
+                    mark_resource_wait(s, -1, order, task,
+                                       &s->recipes.nodes[task->node_index]);
                     kos_log_debug(s->rt.log, "cooker_station_wait", "order=%s node=%s",
                                   order->id, s->recipes.nodes[task->node_index].id);
                     continue;
@@ -3892,6 +3902,7 @@ static void dispatch_ready(scheduler *s, int64_t now)
                 repick_rc = pick_board_station(s, node->resource, salt, &repick);
             }
             if (repick_rc == KOS_ERR_EMPTY) {
+                mark_resource_wait(s, chef, order, task, node);
                 continue;
             }
             if (repick_rc == KOS_OK) {
