@@ -36,6 +36,7 @@
 
 #include <kitchenos/kitchen.h>
 #include <kitchenos/shm.h>
+#include <kitchenos/log.h>
 
 #define KOS_MACRO_MAX_STEPS 8
 #define KOS_MACRO_DETAIL_MAX 96
@@ -98,6 +99,7 @@ typedef struct {
     int clean_baseline_valid;
     int32_t clean_baseline;
     char fail_detail[KOS_MACRO_DETAIL_MAX];
+    kos_log *log;                      /* 模块 logger，NULL 时不输出 */
 } kos_macro;
 
 const char *kos_macro_kind_name(int kind);

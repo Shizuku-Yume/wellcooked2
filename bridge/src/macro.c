@@ -798,39 +798,58 @@ static const char *content_name(const char *text)
 }
 
 /*
+ * 计算 a 与 b 忽略大小写的最长公共后缀长度。
+ */
+static int common_suffix_length(const char *a, size_t len_a, const char *b, size_t len_b)
+{
+    size_t match = 0;
+
+    while (len_a > 0 && len_b > 0) {
+        char ca = a[len_a - 1];
+        char cb = b[len_b - 1];
+
+        if (ca >= 'A' && ca <= 'Z') ca = (char)(ca - 'A' + 'a');
+        if (cb >= 'A' && cb <= 'Z') cb = (char)(cb - 'A' + 'a');
+        if (ca != cb) break;
+        match++;
+        len_a--;
+        len_b--;
+    }
+    return (int)match;
+}
+
+/*
  * 比较倒料目标原料与锅内内容是否匹配。
  * [推断] 实机在开局时所有锅内 contents=[]（见 /tmp/kc-fixtures/demo3/wellcooked-state.json），
- * 实机锅内上报的究竟是熟料名（FriedChicken / FriedBurritoMeat / FriedMushrooms / BoiledRice）、
- * 切块 prefab 名（BurritoChoppedChicken / DicedMeat / ChoppedMushroom）还是生料名
- * （BurritoChicken / BurritoMeat / Mushroom / Rice）尚无实机真值。
- * 故在此按源烹饪工序的输入原料进行容差匹配（而非对 content 做硬编码或全字精确匹配）：
- * 1. 子串包含（kos_kitchen_name_matches）：覆盖已含原料名的形式（如 BurritoMeat ↔ FriedBurritoMeat、
+ * 锅内内容可能以熟料名（FriedChicken / FriedBurritoMeat 等）、切块 prefab 名
+ * （BurritoChoppedChicken / DicedMeat 等）或生料名（BurritoChicken 等）上报。
+ * 这里不硬编码任何固定原料列表，而是动态推导两者共享的原料词根（shared stem）：
+ * 1. 子串包含（kos_kitchen_name_matches）：覆盖名称互为子串的情形（如 BurritoMeat ↔ FriedBurritoMeat、
  *    Rice ↔ BoiledRice、Mushroom ↔ FriedMushrooms）；
- * 2. 核心原料词根匹配：覆盖前缀不同但核心原料一致的情况（如 BurritoChicken ↔ FriedChicken，
- *    两者均包含核心原料 "chicken"；BurritoMeat ↔ DicedMeat 均包含 "meat"）。
- * 只要锅内内容与倒料步骤的目标物品同属一种核心原料（不区分大小写），即判定匹配；
- * 若内容属于无关原料（如倒鸡肉时锅里是米饭），则判定为 wrong-item 予以拦截。
+ * 2. 动态词尾原料词根：游戏工序名按 PascalCase 命名，前缀为工序/料理修饰语（Burrito/Fried/Diced/Boiled），
+ *    词尾为核心原料名词（Chicken/Meat/Rice/Beef/Cheese 等）。计算两者忽略大小写且去除末尾复数 's' 后的
+ *    最长公共后缀，若长度 ≥ 3 字符，即视为同一种原料的合法流转。新菜品无需修改 C 代码。
+ * 若内容属于其他无关原料（如倒鸡肉时锅里是米饭），公共后缀长度 < 3，判定为 wrong-item。
  */
 static int poured_content_matches(const char *node_id, const char *content)
 {
-    static const char *const STEMS[] = {
-        "chicken", "meat", "mushroom", "rice", "fish", "prawn",
-        "cheese", "tomato", "onion", "potato", "carrot", "pasta"
-    };
     const char *name_a = content_name(node_id);
     const char *name_b = content_name(content);
-    size_t i;
+    size_t len_a;
+    size_t len_b;
 
     if (kos_kitchen_name_matches(name_a, name_b)) {
         return 1;
     }
-    for (i = 0; i < sizeof(STEMS) / sizeof(STEMS[0]); i++) {
-        const char *stem = STEMS[i];
-        if (kos_kitchen_name_matches(stem, name_a) && kos_kitchen_name_matches(stem, name_b)) {
-            return 1;
-        }
+    len_a = strlen(name_a);
+    len_b = strlen(name_b);
+    if (len_a > 0 && (name_a[len_a - 1] == 's' || name_a[len_a - 1] == 'S')) {
+        len_a--;
     }
-    return 0;
+    if (len_b > 0 && (name_b[len_b - 1] == 's' || name_b[len_b - 1] == 'S')) {
+        len_b--;
+    }
+    return common_suffix_length(name_a, len_a, name_b, len_b) >= 3;
 }
 
 /*
@@ -856,9 +875,9 @@ static int run_pour(kos_macro *macro, const kos_kitchen *kitchen, const kos_worl
     if (carried != NULL) {
         if (carried->content[0] != '\0') {
             if (!macro->saw_content) {
-                fprintf(stderr, "[macro:pour] chef=%d item=%s source=%s carried_content='%s'\n",
-                        chef_id, step->item, macro->plan.steps[0].station_id, carried->content);
-                fflush(stderr);
+                kos_log_info(macro->log, "macro_pour_source",
+                             "chef=%d item=%s source=%s carried_content=%s",
+                             chef_id, step->item, macro->plan.steps[0].station_id, carried->content);
             }
             /* 手里这口锅装的必须是这道工序要的料：派错锅/没熟就倒会把别的东西
              * 倒进玉米饼，而且倒完内容变空，只按"变空"判完成会当成成功。 */
@@ -882,10 +901,10 @@ static int run_pour(kos_macro *macro, const kos_kitchen *kitchen, const kos_worl
             }
             if (poured_content_matches(step->item, resource->content)) {
                 if (!macro->saw_content) {
-                    fprintf(stderr, "[macro:pour] chef=%d item=%s source=%s pot=%s pot_content='%s'\n",
-                            chef_id, step->item, macro->plan.steps[0].station_id,
-                            resource->name, resource->content);
-                    fflush(stderr);
+                    kos_log_info(macro->log, "macro_pour_source",
+                                 "chef=%d item=%s source=%s pot=%s pot_content=%s",
+                                 chef_id, step->item, macro->plan.steps[0].station_id,
+                                 resource->name, resource->content);
                 }
                 found = 1;
                 break;

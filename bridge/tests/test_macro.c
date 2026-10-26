@@ -590,16 +590,16 @@ static void test_pour(const kos_kitchen *kitchen, const char *cooker, const char
 
 /* 把 pour 宏推进到"面向容器、准备倒料"那一步。carried_content 非 NULL 时挂一只
  * `carried_0`（G1/G5 的手持锅），内容按 proto 的编码（"cooked:<name>"）。 */
-static void drive_to_pour(const kos_kitchen *kitchen, kos_world_state *world, kos_macro *macro,
-                          const char *cooker, const char *container,
-                          const char *carried_content, int64_t *game_ms, kos_macro_output *out)
+static void drive_to_pour_item(const kos_kitchen *kitchen, kos_world_state *world, kos_macro *macro,
+                               const char *cooker, const char *container, const char *node_id,
+                               const char *carried_content, int64_t *game_ms, kos_macro_output *out)
 {
     kos_macro_plan plan;
     kos_error err;
     kos_chef *chef;
 
     kos_error_clear(&err);
-    expect(kos_macro_plan_build_with_source(kitchen, "pour", "pour:BurritoChicken", container,
+    expect(kos_macro_plan_build_with_source(kitchen, "pour", node_id, container,
                                             cooker, "o1", 100, &plan, &err) == KOS_OK,
            "carried 夹具：pour 计划建成");
     kos_macro_begin(macro, &plan);
@@ -623,6 +623,14 @@ static void drive_to_pour(const kos_kitchen *kitchen, kos_world_state *world, ko
     (void)kos_macro_advance(macro, kitchen, world, 0, 1, *game_ms, out);
     *game_ms += 16;
     (void)kos_macro_advance(macro, kitchen, world, 0, 1, *game_ms, out);
+}
+
+static void drive_to_pour(const kos_kitchen *kitchen, kos_world_state *world, kos_macro *macro,
+                          const char *cooker, const char *container,
+                          const char *carried_content, int64_t *game_ms, kos_macro_output *out)
+{
+    drive_to_pour_item(kitchen, world, macro, cooker, container, "pour:BurritoChicken",
+                       carried_content, game_ms, out);
 }
 
 /*
@@ -735,6 +743,31 @@ static void test_pour_tolerant_matching(const kos_kitchen *kitchen, const char *
     rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
     expect(rc == 0 && macro.step_index == 3 && out.action == KOS_MACRO_ACT_INTERACT,
            "tolerant：切块 prefab 名通过原料校验并发送 interact");
+
+    /* 3. 动态词根推导：测试不在任何旧根词列表中的生料/熟料组合（TacoBeef ↔ CookedBeef） */
+    base_world(&world);
+    (void)chef_at_station(&world, kitchen, cooker);
+    game_ms = 1000;
+    drive_to_pour_item(kitchen, &world, &macro, cooker, container, "pour:TacoBeef",
+                       "cooked:CookedBeef", &game_ms, &out);
+    carried = resource_by_name(&world, "carried_0");
+    expect(macro.step_index == 3 && carried != NULL,
+           "tolerant：未在预设列表的 Beef 词根进入倒料");
+    game_ms += 16;
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    expect(rc == 0 && macro.step_index == 3 && out.action == KOS_MACRO_ACT_INTERACT,
+           "tolerant：未在预设列表的 Beef 动态推导词根通过并发送 interact");
+
+    /* 4. 无关原料（TacoBeef 装入 BoiledRice）拦截测试 */
+    base_world(&world);
+    (void)chef_at_station(&world, kitchen, cooker);
+    game_ms = 1000;
+    drive_to_pour_item(kitchen, &world, &macro, cooker, container, "pour:TacoBeef",
+                       "cooked:BoiledRice", &game_ms, &out);
+    game_ms += 16;
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    expect(rc < 0 && macro.step_index == 3 && strstr(macro.fail_detail, "wrong-item") != NULL,
+           "tolerant：未在预设列表的 Beef 装入 Rice 判定 wrong-item 失败");
 }
 
 /* 插件还没填 carried 内容（一帧都没见过非空）时按兜底推进，别卡到 3 s 超时。 */
