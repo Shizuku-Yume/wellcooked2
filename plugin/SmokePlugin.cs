@@ -36,6 +36,9 @@ namespace WellCooked
             GridAlign.Install(_log);
             Diag.Install(_log);
             ManualLog.Install(_log);
+            // Takeover 先读配置：`slots=none` 时 LogicalInput 不装注入补丁，
+            // 游戏拿到的 GetValue/GetButton 就是原生对象（手动局不能有任何逻辑层覆盖）。
+            Takeover.Install(_log);
             LinkRunner.Install(_log);
             ActionDriver.Install(_log);
             LogicalInput.Install(_log);
@@ -43,7 +46,6 @@ namespace WellCooked
             Commands.Install(_log);
             WorkOrder.Install(_log);
             Orders.Install(_log);
-            Takeover.Install(_log);
             DumpGameInventory();
         }
 

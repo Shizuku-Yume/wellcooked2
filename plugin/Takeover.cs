@@ -70,6 +70,12 @@ namespace WellCooked
         private static readonly List<PlayerInputLookup.Player> LogicalPlayers = new List<PlayerInputLookup.Player>();
         private static bool _frontendPress;
 
+        /// <summary>`slots=none`：不占位、不注入。手动局（任务 09 P0 第 1 步）用它把输入全部交给本地设备。</summary>
+        public static bool OccupiesNoSlots
+        {
+            get { return Slots.Count == 0; }
+        }
+
         private sealed class Owned
         {
             public string ChefName = "?";
@@ -366,7 +372,8 @@ namespace WellCooked
             var postfix = new HarmonyMethod(typeof(Takeover).GetMethod(
                 nameof(Tick), BindingFlags.Static | BindingFlags.NonPublic));
             new Harmony("wellcooked.takeover").Patch(update, postfix: postfix);
-            _log.LogInfo("takeover: 每帧检查已挂上，占位 " + string.Join(",", Slots.ConvertAll(x => (x + 1).ToString()).ToArray()));
+            _log.LogInfo("takeover: 每帧检查已挂上，占位 "
+                         + (Slots.Count == 0 ? "none" : string.Join(",", Slots.ConvertAll(x => (x + 1).ToString()).ToArray())));
         }
 
         private static void Tick()

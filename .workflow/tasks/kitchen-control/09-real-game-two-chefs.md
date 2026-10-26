@@ -205,49 +205,83 @@ Steam 云存档提示（0/4 pad、停在 StartScreen，不是插件问题）；�
 - P1–P3 未开始。`config/kitchen.example.json` 是旧导出（没有 board）；`test_macro` 用测试内克隆
   补 `board-0` 来跑新映射，不是改导出文件。
 
-人工手动局指令（原样可粘贴；一个人，手柄或键盘；三道菜各做一次并上菜）：
+**2026-10-26 手动局注入审计与现场准备（游戏未启动）：**
 
-```sh
-cd /home/shizuku/Project/overcooked-schedule-wt/kc-A
-export GAME_DIR="${GAME_DIR:-/run/media/shizuku/File/Steam/steamapps/common/Overcooked! 2}"
+审计结论（takeover 文件同时满足 `slots=none`、`work=auto`、`bridge=off`、`frontend_press=false`、
+`diag=false`、`manual_log=true`）：
+- `Takeover.EnsurePads`（`plugin/Takeover.cs:488`）只遍历 `Slots`；`slots=none` 在
+  `Takeover.Install` 的首次读配置里清空它，`InputManager.AttachDevice`（:498）不会执行，
+  `ResolvePendingPads`（:539）也因 `PendingPads` 为空直接返回。启动前写好配置这一点已做到。
+- `Takeover.PressForJoin`（:461）只在 `_frontendPress` 为真且没在驱动时走；本次为 false，且
+  没有虚拟手柄可写。前端不会由插件按任何键。
+- `Takeover.Drive`（:879）在 `work=auto` 下只进 `DriveSystem`（:1000），后者只遍历
+  `OwnedPads`；为空 → 不写设备层、不写逻辑层。`WorkOrder.Tick`（:1064）只在
+  `DriveWorkOrder`（`work=local`）里，`ActionDriver.Drive` 只对收到过 Bridge 动作的槽生效。
+- `ActionDriver`/`LinkRunner`：`bridge=off` 时不建链路（`_link == null`），没有动作来源；
+  `ActionDriver.Feed` 不会执行。`Commands` 只在 `wellcooked-command.txt` 存在时执行显式命令，
+  本次已删旧文件，后续只会写 `load=`/`menu=1`。`engage=`/`continue=` 不会自动运行。
+- `LogicalInput`：原来无条件给四个玩家套 `ILogicalValue/ILogicalButton` 包装；现在
+  `Takeover.OccupiesNoSlots` 时在 `LogicalInput.Install` 直接跳过补丁（启动日志
+  `logical: slots=none，不安装逻辑层注入`），`GetValue/GetButton` 返回游戏原生对象。
+  另外修了包装器 `ClaimPressEvent/ClaimReleaseEvent` 在未驱动时没有转发给原生按钮的问题。
+- `VirtualPad` 只在 `EnsurePads` 里 new；本次无实例，故没有虚拟设备注册到 `InputManager`。
+- 保留但不动输入的：`Orders` 的 `GetNextRecipe/InitialiseRound` 补丁（固定三单需要）、
+  `GridAlign.Apply`（修 `_3` 网格原点，不改输入）、`SmokePlugin.ApplySmokePatches`（只计数日志）、
+  `WorldState`/`ManualLog`（只读/写状态文件与日志）。
+- 仍会改游戏全局行为、但不写输入/不占位的：`Application.runInBackground = true`、
+  失焦不暂停、`Application.isFocused` 恒真（`plugin/SmokePlugin.cs:31-34,111-161`）；
+  窗口配置未写（`window`/`window_pos` 都没有），`ApplyWindow` 直接返回，不改分辨率。
 
-# 1) 启动游戏前写配置：一个位都不占，不接 Bridge，只开手动记录
-cp "$GAME_DIR/BepInEx/wellcooked-takeover.txt" /tmp/kc09-takeover.before-manual 2>/dev/null || true
-cat > "$GAME_DIR/BepInEx/wellcooked-takeover.txt" <<'EOF'
+代码改动：`plugin/Takeover.cs` 增加 `OccupiesNoSlots` 并把安装日志写成 `占位 none`；
+`plugin/SmokePlugin.cs` 把 `Takeover.Install` 挪到 `LogicalInput.Install` 之前（先读配置）；
+`plugin/LogicalInput.cs` 在 `slots=none` 时完全不装补丁，并补齐未驱动时的 claim 转发。
+`cd bridge && make test` 仍为 16 套件 0 失败；插件 Release 编译 0 警告 0 错误。
+当前部署 sha256 = `eb69fc6a437316c2c4ed601011241c4e9970e4fef5b8f11353b22e1c5474f2fb`
+（游戏目录与 `plugin/bin/Release/net35` 一致）。现场已写好：
+
+takeover（备份在 `/tmp/kc09-takeover.before-manual`）：
+```ini
 slots=none
 work=auto
 bridge=off
 frontend_press=false
 diag=false
 manual_log=true
-EOF
-
-# 2) 固定三单：Sushi_PlainFish → Sushi_PlainPrawn → Chicken_Burrito
-cat > "$GAME_DIR/BepInEx/wellcooked-orders.json" <<'EOF'
+```
+orders（旧文件备份在 `/tmp/kc09-orders.before-manual`，如存在）：
+```json
 {"seed":12345,"level":"s_wellcooked_demo_3","menu":[{"recipes":["Sushi_PlainFish","Sushi_PlainPrawn","Chicken_Burrito"]}]}
-EOF
+```
 
-# 3) 起游戏（Steam 要先开着）；在前端按手柄 A / 键盘回车加入 1 号玩家
+**用户现在只需要（配置已写好，不要再改 takeover/orders）：**
+```sh
+cd /home/shizuku/Project/overcooked-schedule-wt/kc-A
+export GAME_DIR="${GAME_DIR:-/run/media/shizuku/File/Steam/steamapps/common/Overcooked! 2}"
+
+# 1) 起游戏（Steam 要先开着）
 bash scripts/run-game.sh
 
-# 4) 看到 1 个玩家位后进 _3（等关卡完全加载、厨师出现）
+# 2) 在前端按手柄 A / 键盘回车加入 1 号玩家
+
+# 3) 看到 1 个玩家位后进 _3，等关卡完全加载、厨师出现
 printf 'load=s_wellcooked_demo_3\n' > "$GAME_DIR/BepInEx/wellcooked-command.txt"
 
-# 5) 用这一个人把三道菜各做一次：拿料 → 切/煮 → 组合/装盘 → 上菜。
-#    每次按 A/X 都会打 manual: 行；砧板/锅/盘子有变化也会打。做菜时不用管日志。
+# 4) 用这一个人把三道菜各做一次：拿料 → 切/煮 → 组合/装盘 → 上菜
 
-# 6) 仍在关卡里：导出这一关的菜单与工位（会写 config/maps/s_wellcooked_demo_3/）
+# 5) 仍在关卡里：导出菜单与工位（写 config/maps/s_wellcooked_demo_3/）
 printf 'menu=1\n' > "$GAME_DIR/BepInEx/wellcooked-command.txt"
 sleep 2
 python3 scripts/export-kitchen.py --map-dir config/maps
 
-# 7) 保存日志、核对有记录、恢复现场
+# 6) 保存日志
 mkdir -p logs
 cp "$GAME_DIR/BepInEx/LogOutput.log" "logs/manual-$(date +%Y%m%d-%H%M%S)-demo3.log"
 grep -c 'manual:' "$GAME_DIR/BepInEx/LogOutput.log"
+
+# 7) 恢复现场并关游戏
 rm -f "$GAME_DIR/BepInEx/wellcooked-orders.json" "$GAME_DIR/BepInEx/wellcooked-command.txt"
-cp /tmp/kc09-takeover.before-manual "$GAME_DIR/BepInEx/wellcooked-takeover.txt" 2>/dev/null || true
-# 8) 关闭游戏窗口；确认没有 Overcooked2/Proton 进程
+cp /tmp/kc09-takeover.before-manual "$GAME_DIR/BepInEx/wellcooked-takeover.txt"
+# 关闭游戏窗口；确认没有 Overcooked2/Proton 进程
 ```
 
 下一步（新会话从这里继续）：
