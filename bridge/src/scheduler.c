@@ -223,6 +223,10 @@ static int cook_has_pour_successor(const scheduler *s, int cook_node);
 static void release_pour_source(scheduler *s, sched_order *order,
                                 const kos_recipe_node *pour_node);
 static int pour_source_cook_task(const scheduler *s, const sched_order *order, int pour_node);
+static int cook_has_plate_successor(const scheduler *s, int cook_node);
+static void release_plate_source(scheduler *s, sched_order *order,
+                                 const kos_recipe_node *plate_node);
+static int plate_cook_task(const scheduler *s, const sched_order *order, int plate_node);
 static int sink_station_index(const kos_kitchen *kitchen);
 static int plate_count(const kos_world_state *world, const char *name);
 static int cooker_step_matches(const kos_station *station, const char *step);
@@ -2119,7 +2123,8 @@ static void handle_worker_event(scheduler *s, const kos_mq_msg *msg)
         if (msg->event == KOS_EVT_DONE) {
             if (order->status == KOS_ORDER_ACTIVE &&
                 strcmp(op, "cook") == 0 &&
-                cook_has_pour_successor(s, node)) {
+                (cook_has_pour_successor(s, node) ||
+                 cook_has_plate_successor(s, node))) {
                 task->cooker_reserved = detach_lease_keep_token(s, msg->task_id);
                 if (!task->cooker_reserved) {
                     (void)release_lease_for_task(s, msg->task_id, "resource_reclaimed",
@@ -2138,6 +2143,9 @@ static void handle_worker_event(scheduler *s, const kos_mq_msg *msg)
             task->not_before_ms = 0;
             if (strcmp(op, "pour") == 0) {
                 release_pour_source(s, order, &s->recipes.nodes[node]);
+            }
+            if (strcmp(op, "plate") == 0) {
+                release_plate_source(s, order, &s->recipes.nodes[node]);
             }
             if (strcmp(op, "deliver") == 0) {
                 const kos_world_state *world = scheduler_world(s, now);
@@ -2354,6 +2362,97 @@ static int pick_cooker_station(const scheduler *s, const char *kind, const char 
     }
     return matching > 0 ? KOS_ERR_EMPTY : KOS_ERR_MISSING;
 }
+static void release_plate_source(scheduler *s, sched_order *order,
+                                 const kos_recipe_node *plate_node)
+{
+    int cook_task_index = plate_cook_task(s, order,
+                                          (int)(plate_node - s->recipes.nodes));
+    sched_task *cook_task;
+
+    if (cook_task_index < 0) {
+        return;
+    }
+    cook_task = &order->tasks[cook_task_index];
+    if (cook_task->cooker_reserved) {
+        (void)kos_resource_release(&s->resources, "cooker");
+        cook_task->cooker_reserved = 0;
+        cook_task->station_id[0] = '\0';
+    }
+}
+
+static int cook_has_plate_successor(const scheduler *s, int cook_node)
+{
+    int pending[KOS_RECIPE_MAX_NODES];
+    unsigned char seen[KOS_RECIPE_MAX_NODES] = {0};
+    int count = 0;
+
+    pending[count++] = cook_node;
+    seen[cook_node] = 1;
+    while (count > 0) {
+        int current = pending[--count];
+        int edge;
+
+        for (edge = 0; edge < s->recipes.edge_count; edge++) {
+            int parent = s->recipes.edges[edge].to;
+
+            if (s->recipes.edges[edge].from != current || parent < 0 ||
+                parent >= s->recipes.node_count || seen[parent]) {
+                continue;
+            }
+            if (strcmp(s->recipes.nodes[parent].op, "plate") == 0) {
+                return 1;
+            }
+            seen[parent] = 1;
+            if (count < KOS_RECIPE_MAX_NODES) {
+                pending[count++] = parent;
+            }
+        }
+    }
+    return 0;
+}
+
+/* Find the unique reserved cook ancestor of a plate node; -1 means a cold plate. */
+static int plate_cook_task(const scheduler *s, const sched_order *order, int plate_node)
+{
+    int pending[KOS_RECIPE_MAX_NODES];
+    unsigned char seen[KOS_RECIPE_MAX_NODES] = {0};
+    int count = 0;
+    int found = -1;
+
+    pending[count++] = plate_node;
+    while (count > 0) {
+        int current = pending[--count];
+        int edge;
+
+        for (edge = 0; edge < s->recipes.edge_count; edge++) {
+            const kos_recipe_edge *recipe_edge = &s->recipes.edges[edge];
+            int task_index;
+            int ancestor;
+
+            if (recipe_edge->to != current || recipe_edge->from < 0 ||
+                recipe_edge->from >= s->recipes.node_count || seen[recipe_edge->from]) {
+                continue;
+            }
+            seen[recipe_edge->from] = 1;
+            task_index = order_task_by_node(order, recipe_edge->from);
+            if (task_index < 0) {
+                continue;
+            }
+            ancestor = order->tasks[task_index].node_index;
+            if (strcmp(s->recipes.nodes[ancestor].op, "cook") == 0 &&
+                order->tasks[task_index].cooker_reserved) {
+                if (found >= 0 && found != task_index) {
+                    return -2;
+                }
+                found = task_index;
+            } else if (count < KOS_RECIPE_MAX_NODES) {
+                pending[count++] = ancestor;
+            }
+        }
+    }
+    return found;
+}
+
 
 /*
  * cook 做完后把"锅"留住（令牌不还），留给倒料工序端走；倒料完成再还。

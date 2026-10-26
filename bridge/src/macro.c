@@ -29,6 +29,9 @@
 #define MACRO_CHOP_MARGIN_MS 3000
 #define MACRO_WASH_MARGIN_MS 3000
 #define MACRO_POUR_MARGIN_MS 3000
+/* 倒料时看不到源锅（旧插件没上报那只锅）时的兜底交互窗口：一次 interact 就够把料倒过去，
+ * 800 ms 只用来覆盖按键与状态上报的往返。 */
+#define MACRO_POUR_FALLBACK_MS 800
 /* 交付时盘子先消失、游戏的订单结果（order_results）与 m_activeOrders 移除都要晚
  * 几百毫秒；手空后等这么久还没有结果才判 holding-lost。 */
 #define MACRO_DELIVER_LOST_GRACE_MS 1000
@@ -944,8 +947,8 @@ static int resource_has_item(const kos_resource *resource, const char *item)
  *   2. 资源块是 0.25 s 重建的，端起→倒完整段可能落在两个资源帧之间，carried_ 一次
  *      都没出现过。这时看**目的台面**：玉米饼里多出这一味料（contents[] 命中
  *      step->item）就是完成——它比"锅空了"更直接，也不会被同一张台面上别的锅骗到。
- * 源槽位在锅被端走后没有内容可看，所以不再扫描 pot_*；800 ms 兜底随之删除：
- * 3 s 余量内两个信号至少有一个会出现，看不见就让它明确超时。
+ * 源槽位在锅被端走后没有内容可看；旧状态没有 carried_ 时退回扫描 pot_* 与 800 ms 兜底，
+ * 保证与 legacy 路径兼容。
  */
 static int run_pour(kos_macro *macro, const kos_kitchen *kitchen, const kos_world_state *world,
                     int chef_id, int64_t game_ms, kos_macro_output *out)
@@ -955,19 +958,50 @@ static int run_pour(kos_macro *macro, const kos_kitchen *kitchen, const kos_worl
     const kos_resource *counter = find_station_resource(kitchen, step, world);
     int done = 0;
 
-    if (carried != NULL && (carried->content[0] != '\0' || carried->content_count > 0)) {
-        /* 手里这口锅装的必须是这道工序要的料：派错锅/没熟就倒会把别的东西
-         * 倒进玉米饼，而且倒完内容变空，只按"变空"判完成会当成成功。 */
-        if (carried->content[0] != '\0' &&
-            !poured_content_matches(step->item, carried->content)) {
-            fail_step(macro, game_ms, "content", "wrong-item");
-            return -1;
+    if (carried != NULL) {
+        if (carried->content[0] != '\0' || carried->content_count > 0) {
+            /* 手里这口锅装的必须是这道工序要的料：派错锅/没熟就倒会把别的东西
+             * 倒进玉米饼，而且倒完内容变空，只按"变空"判完成会当成成功。 */
+            if (carried->content[0] != '\0' &&
+                !poured_content_matches(step->item, carried->content)) {
+                fail_step(macro, game_ms, "content", "wrong-item");
+                return -1;
+            }
+            macro->saw_content = 1;
+        } else if (macro->saw_content) {
+            done = 1;
+        } else if (resource_has_item(counter, step->item)) {
+            done = 1;
         }
-        macro->saw_content = 1;
-    } else if (carried != NULL && macro->saw_content) {
-        done = 1;
     } else if (resource_has_item(counter, step->item)) {
         done = 1;
+    } else {
+        int found = 0;
+        int i;
+
+        for (i = 0; i < (int)world->resource_count; i++) {
+            const kos_resource *resource = &world->resources[i];
+
+            if (strncmp(resource->name, "pot_", 4) != 0 || resource->content[0] == '\0') {
+                continue;
+            }
+            if (poured_content_matches(step->item, resource->content)) {
+                found = 1;
+                break;
+            }
+        }
+        if (counter != NULL && counter->content[0] != '\0') {
+            found = 1;
+        }
+        if (found) {
+            macro->saw_content = 1;
+        } else if (macro->saw_content) {
+            done = 1;
+        }
+        if (!done && !macro->saw_content &&
+            game_ms - macro->step_start_ms >= MACRO_POUR_FALLBACK_MS) {
+            done = 1;
+        }
     }
     if (done) {
         return next_step(macro, out) == 1 ? 1 : 0;
