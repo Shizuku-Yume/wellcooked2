@@ -47,6 +47,8 @@ public static class BuildWellCookedDemo
     // shell x -8..20 and the ring of level 3 uses x 0..18, z -10..0. With the fixed values
     // their wall-mounted stations (serving window, sink) counted as "inside the room" and
     // were rotated to the island yaw instead of the wall yaw.
+    // Spawn cells collected while placing the layout; applied to the template Players afterwards.
+    static readonly List<Vector3> pendingSpawns = new List<Vector3>();
     static float RoomX0 = RoomX0Default, RoomX1 = RoomX1Default;
     static float RoomZ0 = RoomZ0Default, RoomZ1 = RoomZ1Default;
 
@@ -56,14 +58,43 @@ public static class BuildWellCookedDemo
         "wellcooked_demo_2",
         "wellcooked_demo_3",
         "wellcooked_demo_4",
+        // 四个"素材展示关"：每个主题一个，把该主题所有素材摆成画廊
+        "wellcooked_show_sushi",
+        "wellcooked_show_beach",
+        "wellcooked_show_summer",
+        "wellcooked_show_city",
     };
+
+    // 关卡名 -> layout 文件名（玩法关用 layout_1..4，展示关用 layout_show_*）
+    static readonly Dictionary<string, string> LayoutFiles = new Dictionary<string, string>
+    {
+        { "wellcooked_demo_1", "layout_1.tsv" },
+        { "wellcooked_demo_2", "layout_2.tsv" },
+        { "wellcooked_demo_3", "layout_3.tsv" },
+        { "wellcooked_demo_4", "layout_4.tsv" },
+        { "wellcooked_show_sushi", "layout_show_sushi.tsv" },
+        { "wellcooked_show_beach", "layout_show_beach.tsv" },
+        { "wellcooked_show_summer", "layout_show_summer.tsv" },
+        { "wellcooked_show_city", "layout_show_city.tsv" },
+    };
+
+    static string LayoutPathOf(string level)
+    {
+        string file;
+        if (LayoutFiles.TryGetValue(level, out file)) return Path.Combine(SetDir, file);
+        return Path.Combine(SetDir, "layout_" + level.Substring(level.Length - 1) + ".tsv");
+    }
 
     static readonly Dictionary<string, string> LevelDisplayNames = new Dictionary<string, string>
     {
-        { "wellcooked_demo_1", "WellCooked Demo 1 - Basic Kitchen" },
-        { "wellcooked_demo_2", "WellCooked Demo 2 - Twin Lines" },
-        { "wellcooked_demo_3", "WellCooked Demo 3 - Ring Bar" },
-        { "wellcooked_demo_4", "WellCooked Demo 4 - Big Kitchen" },
+        { "wellcooked_demo_1", "WellCooked Demo 1 - Sushi Street" },
+        { "wellcooked_demo_2", "WellCooked Demo 2 - Beach Resort" },
+        { "wellcooked_demo_3", "WellCooked Demo 3 - Summer Festival" },
+        { "wellcooked_demo_4", "WellCooked Demo 4 - Old Town" },
+        { "wellcooked_show_sushi", "Gallery - Sushi Street (city_sushi)" },
+        { "wellcooked_show_beach", "Gallery - Beach (dlc02_beach)" },
+        { "wellcooked_show_summer", "Gallery - Summer Festival (dlc11_summer)" },
+        { "wellcooked_show_city", "Gallery - Old Town (city)" },
     };
 
     // Layout files may carry a menu line:  # menu: RecipeA_SO, RecipeB_SO
@@ -109,7 +140,7 @@ public static class BuildWellCookedDemo
 
     static string ScenePathOf(string level) { return SetDir + "/scenes/s_" + level + ".unity"; }
     static string DataDirOf(string level) { return SetDir + "/data/" + level; }
-    static string LayoutAssetOf(string level) { return SetDir + "/layout_" + level.Substring(level.Length - 1) + ".tsv"; }
+    static string LayoutAssetOf(string level) { return LayoutPathOf(level); }
 
     [MenuItem("Tools/WellCooked/Build Level Set And Scenes")]
     public static void Build()
@@ -129,7 +160,9 @@ public static class BuildWellCookedDemo
             PseudoPrefabManager.Instance.DeInit();
             PseudoPrefabManager.Instance.Init();
 
+            pendingSpawns.Clear();
             PlaceFromLayout(scene, level);
+            ApplySpawnPositions(scene, pendingSpawns, level);
             AttachLevelInfo(scene, info);
 
             // TargetSceneSaveValidator.CheckPrepareForBuilding requires this flag to be true;
@@ -216,16 +249,28 @@ public static class BuildWellCookedDemo
         info.levelName = level;
         info.levelNameZH = LevelDisplayNames.ContainsKey(level) ? LevelDisplayNames[level] : level;
         info.sceneName = "s_" + level;
-        var menuOverride = ParseMenuLine(Path.Combine(SetDir, "layout_" + level.Substring(level.Length - 1) + ".tsv"));
+        var menuOverride = ParseMenuLine(LayoutPathOf(level));
             info.recipes = ((menuOverride != null) ? menuOverride : (LevelRecipes.ContainsKey(level) ? LevelRecipes[level] : Recipes)).Select(AssetDatabase.LoadAssetAtPath<ScriptableObject>).ToArray();
         info.debugRecipeCount = 0;
         info.disableDynamicParenting = true;
 
         // 1..4 player configs copied from the templates, then tuned by player count.
-        info.config_1p = CopyConfig(level, 1, 90, 6, 22);
-        info.config_2p = CopyConfig(level, 2, 100, 6, 30);
-        info.config_3p = CopyConfig(level, 3, 100, 6, 34);
-        info.config_4p = CopyConfig(level, 4, 100, 6, 40);
+        // wellcooked_demo_3 is the tuned level: a 2-minute round, and every order stays open
+        // for the whole round (120 s) so a slow dish can still be finished after it appears.
+        int round1 = 90, round24 = 100, life1 = 22, life2 = 30, life3 = 34, life4 = 40;
+        if (level == "wellcooked_demo_3")
+        {
+            round1 = 120;
+            round24 = 120;
+            life1 = 120;
+            life2 = 120;
+            life3 = 120;
+            life4 = 120;
+        }
+        info.config_1p = CopyConfig(level, 1, round1, 6, life1);
+        info.config_2p = CopyConfig(level, 2, round24, 6, life2);
+        info.config_3p = CopyConfig(level, 3, round24, 6, life3);
+        info.config_4p = CopyConfig(level, 4, round24, 6, life4);
         EditorUtility.SetDirty(info);
         return info;
     }
@@ -350,7 +395,9 @@ public static class BuildWellCookedDemo
                 continue;
             }
             string[] f = line.Split('\t');
-            if (f.Length < 6 || f[0] == "kind" || f[0] == "spawn")
+            // spawn 不占地；art 是纯背景（可能放在房间外很远的地方），两者都不能参与
+            // 房间边界计算，否则墙边工位的朝向（wall yaw）会被背景道具带偏。
+            if (f.Length < 6 || f[0] == "kind" || f[0] == "spawn" || f[0] == "art")
             {
                 continue;
             }
@@ -404,9 +451,12 @@ public static class BuildWellCookedDemo
         int placed = 0;
         int duplicates = 0;
         int badSpawns = 0;
+        int spawnIndex = 0;
+
         int overlaps = 0;
         int standaloneUtensils = 0;
         int plateBases = 0;
+        int artPlaced = 0;
         // cell -> kind of the station occupying it (utensils are mounted, not occupying)
         var occupied = new Dictionary<string, string>();
         // cell -> station GameObject a utensil / plate stack can be attached to
@@ -469,8 +519,26 @@ public static class BuildWellCookedDemo
                                    + occupied[cellKey] + ": " + cellKey);
                     badSpawns++;
                 }
-                PlaceSpawn(Group(scene, "Design"), x, z);
+                PlaceSpawn(Group(scene, "Design"), x, z, spawnIndex++);
+                pendingSpawns.Add(new Vector3(x, 0.2f, z));
                 placed++;
+                continue;
+            }
+
+            // Environment art (walls, floors, decorations, NPCs). Exactly like the official
+            // example project: the scene only carries a placeholder, PseudoPrefab.ResetChild()
+            // swaps in the real model from the game bundle at runtime, so the layout stores
+            // nothing but position / rotation. Art is pure decoration and therefore does not
+            // take part in the gameplay self-checks (it may overlap counters, never blocks a
+            // cell, and does not widen the room bounds).
+            //   art <theme> <prefabName> <yOffset> <gx> <gz> <note> <dir>
+            if (kind == "art")
+            {
+                if (PlaceArt(scene, level, f, x, z))
+                {
+                    artPlaced++;
+                    placed++;
+                }
                 continue;
             }
 
@@ -555,10 +623,11 @@ public static class BuildWellCookedDemo
                 }
                 else
                 {
-                    GameObject basePrefab = AssetDatabase.LoadAssetAtPath<GameObject>(CounterPrefabPath);
-                    if (basePrefab != null)
+                    GameObject counterBase = AssetDatabase.LoadAssetAtPath<GameObject>(CounterPrefabPath);
+                    GameObject counter = null;
+                    if (counterBase != null)
                     {
-                        var counter = (GameObject)PrefabUtility.InstantiatePrefab(basePrefab, scene);
+                        counter = (GameObject)PrefabUtility.InstantiatePrefab(counterBase, scene);
                         counter.transform.SetParent(Group(scene, "Design/Counters"), false);
                         counter.transform.position = new Vector3(x, 0f, z);
                         counter.transform.localRotation = Quaternion.Euler(0f, yaw, 0f);
@@ -566,32 +635,37 @@ public static class BuildWellCookedDemo
                         PrefabUtility.RecordPrefabInstancePropertyModifications(counter);
                         counter.name = "counter_base_" + f[4] + "_" + f[5];
                         SetStubSo(counter, CounterSoPath);
-                        placedByCell[cellKey] = counter;
-                        plateBases++;
                     }
                     else
                     {
                         Debug.LogError("[wellcooked_demo] cannot find " + CounterPrefabPath);
                     }
+                    if (counter != null)
+                    {
+                        placedByCell[cellKey] = counter;
+                        plateBases++;
+                    }
                 }
             }
 
-            GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(prefabPath);
-            if (prefab == null)
+            // Instantiate the placeholder PREFAB, not a bare GameObject. The prefab already
+            // carries the specialised stub component together with its serialised prefabTag.
+            // A hand-made "GameObject + PseudoPrefabStub + specialised stub" leaves that tag
+            // empty, and the DIY runtime then throws InvalidCastException inside
+            // PseudoPrefabServingStation.LateSetup -> PseudoPrefabManager.ResetAllPseudoPrefabs,
+            // which wedges the whole level on the loading screen (bar full, never enters).
+            GameObject placeholderPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(prefabPath);
+            if (placeholderPrefab == null)
             {
                 Debug.LogError("[wellcooked_demo] cannot find prefab " + prefabPath);
                 continue;
             }
-            var go = (GameObject)PrefabUtility.InstantiatePrefab(prefab, scene);
+            var go = (GameObject)PrefabUtility.InstantiatePrefab(placeholderPrefab, scene);
             go.transform.SetParent(Group(scene, IsUtensilKind(kind) ? "Design/Utensils" : "Design/Counters"), false);
             go.transform.position = new Vector3(x, 0f, z);
-            // Rotation has to be recorded explicitly: EditorUtility.SetDirty alone does not
-            // write m_LocalRotation into the scene's prefab modification list (measured:
-            // 0 m_LocalRotation entries before, 408 after).
             go.transform.localRotation = Quaternion.Euler(0f, yaw, 0f);
-            EditorUtility.SetDirty(go);
-            PrefabUtility.RecordPrefabInstancePropertyModifications(go);
             go.name = kind + "_" + soName + "_" + f[4] + "_" + f[5];
+            SetStubSo(go, soPath);
 
             // A utensil / plate stack is attached through its cell:
             //   - if that cell already holds a cooker/frying/counter, the object is placed on
@@ -622,27 +696,43 @@ public static class BuildWellCookedDemo
                 placedByCell[cellKey] = go;
             }
 
-            var stub = go.GetComponentInChildren<PseudoPrefabStub>();
-            if (stub != null && soPath != null)
+            // The specialised stub comes with the placeholder prefab, so it must be fetched,
+            // never added again: a second stub would sit on the same object with an empty
+            // pseudoPrefabSO / prefabTag and the runtime would rebuild nothing useful.
+            if (kind == "dispenser")
             {
-                stub.pseudoPrefabSO = AssetDatabase.LoadAssetAtPath<PseudoPrefabSO>(soPath);
+                var dispenser = go.GetComponentInChildren<PseudoPrefabDispenserStub>();
+                if (dispenser != null && ingredient.Length > 0)
+                {
+                    var itemSo = AssetDatabase.LoadAssetAtPath<PseudoPrefabSO>("Assets/common01/food/Ingredients/" + ingredient + ".asset");
+                    if (itemSo != null)
+                    {
+                        dispenser.spawnerItemPrefabSO = itemSo;
+                        EditorUtility.SetDirty(dispenser);
+                        PrefabUtility.RecordPrefabInstancePropertyModifications(dispenser);
+                    }
+                }
             }
-            var dispenser = go.GetComponentInChildren<PseudoPrefabDispenserStub>();
-            if (dispenser != null && ingredient.Length > 0)
+            else if (kind == "plate_stack")
             {
-                dispenser.spawnerItemPrefabSO = AssetDatabase.LoadAssetAtPath<PseudoPrefabSO>("Assets/common01/food/Ingredients/" + ingredient + ".asset");
+                var plates = go.GetComponentInChildren<PseudoPrefabCleanPlateStackStub>();
+                if (plates != null)
+                {
+                    plates.plateCount = 12;
+                    EditorUtility.SetDirty(plates);
+                    PrefabUtility.RecordPrefabInstancePropertyModifications(plates);
+                }
             }
-            var plates = go.GetComponentInChildren<PseudoPrefabCleanPlateStackStub>();
-            if (plates != null)
-            {
-                plates.plateCount = 12;
-            }
-            if (kind == "utensil")
+            else if (kind == "utensil")
             {
                 var utensil = go.GetComponentInChildren<PseudoPrefabCookingUtensilStub>();
                 if (utensil != null)
                 {
-                    utensil.capacity = 4;
+                    // wellcooked_demo_3: every cooking utensil holds exactly one ingredient at a
+                    // time (one dish per pot / pan / fryer). Other levels keep the game default.
+                    utensil.capacity = (level == "wellcooked_demo_3") ? 1 : 4;
+                    EditorUtility.SetDirty(utensil);
+                    PrefabUtility.RecordPrefabInstancePropertyModifications(utensil);
                 }
             }
             placed++;
@@ -654,7 +744,7 @@ public static class BuildWellCookedDemo
                   + "; duplicates=" + duplicates + " badSpawns=" + badSpawns
                   + " overlaps=" + overlaps);
         Debug.Log("[wellcooked_demo] " + level + " plate stack counter bases=" + plateBases
-                  + " standaloneUtensils=" + standaloneUtensils);
+                  + " standaloneUtensils=" + standaloneUtensils + " art=" + artPlaced);
         if (duplicates > 0 || badSpawns > 0 || overlaps > 0)
         {
             throw new System.Exception("[wellcooked_demo] " + level
@@ -708,6 +798,11 @@ public static class BuildWellCookedDemo
         if (so != null)
         {
             stub.pseudoPrefabSO = so;
+            // Without the explicit record the value never reaches the saved scene and the DIY
+            // runtime plugin sees an empty pseudoPrefabSO, so it cannot rebuild the object as a
+            // real, interactive kitchen piece (this is why nothing used to highlight in game).
+            EditorUtility.SetDirty(stub);
+            PrefabUtility.RecordPrefabInstancePropertyModifications(stub);
         }
     }
 
@@ -756,16 +851,156 @@ public static class BuildWellCookedDemo
         return current;
     }
 
-    static void PlaceSpawn(Transform parent, float x, float z)
+    // The vanilla / example levels place chefs by having "Chefs/Player 1..4" objects that carry
+    // a PseudoPrefab pointing at common01/pseudo_prefab_so/PlayerSO.asset. A plain empty named
+    // "spawn" is ignored by the game, which is why chefs used to appear near the world origin.
+    const string PlayerSoPath = "Assets/common01/pseudo_prefab_so/PlayerSO.asset";
+
+    // The template scene ships "Chefs/Player 1..4" prefab instances at fixed positions; the game
+    // spawns chefs on THOSE (a plain "spawn" empty is ignored - verified via the plugin state stream).
+    // So instead of creating new player objects we just move the template ones onto the layout cells.
+    static void ApplySpawnPositions(Scene scene, List<Vector3> positions, string level)
     {
+        if (positions.Count == 0) return;
+        Transform chefs = null;
+        foreach (GameObject root in scene.GetRootGameObjects())
+        {
+            if (root.name == "Chefs") { chefs = root.transform; break; }
+        }
+        if (chefs == null)
+        {
+            Debug.LogWarning("[wellcooked_demo] " + level + ": no Chefs group in the template scene");
+            return;
+        }
+        var players = new List<Transform>();
+        for (int i = 0; i < chefs.childCount; i++)
+        {
+            Transform child = chefs.GetChild(i);
+            if (child.name.StartsWith("Player")) players.Add(child);
+        }
+        players.Sort((a, b) => string.CompareOrdinal(a.name, b.name));
+        for (int i = 0; i < players.Count; i++)
+        {
+            // 多出来的玩家挤到最后一个出生点上，避免留在模板的老位置
+            Vector3 p = positions[Mathf.Min(i, positions.Count - 1)];
+            players[i].position = p;
+            players[i].localRotation = Quaternion.identity;
+            EditorUtility.SetDirty(players[i].gameObject);
+        }
+        Debug.Log("[wellcooked_demo] " + level + " spawn positions applied: players=" + players.Count
+                  + " layoutSpawns=" + positions.Count);
+    }
+
+    // The template scene already ships "Chefs/Player 1..4" at fixed positions; the game uses those
+    // (and ignores a plain "spawn" empty), so they must be removed before our own are created.
+    static void ClearTemplatePlayers(Scene scene)
+    {
+        foreach (GameObject root in scene.GetRootGameObjects())
+        {
+            if (root.name != "Chefs") continue;
+            for (int i = root.transform.childCount - 1; i >= 0; i--)
+            {
+                Object.DestroyImmediate(root.transform.GetChild(i).gameObject);
+            }
+            return;
+        }
+    }
+
+    static void PlaceSpawn(Transform parent, float x, float z, int index)
+    {
+        // Keep the plain empty: an empty named "spawn" is what the generator has always produced.
+        // (The template scene's own "Chefs/Player 1..4" objects are what actually place chefs in
+        // game; wiring our own player stubs made the game NRE in PlayerSwitchingManager, so that
+        // experiment was reverted. See BACKGROUND.md for the open issue.)
         var go = new GameObject("spawn");
         go.transform.SetParent(parent, false);
-        go.transform.position = new Vector3(x, 0f, z);
+        go.transform.position = new Vector3(x, 0f, z);   // x,z 已是米
+        go.transform.localRotation = Quaternion.identity;
+        EditorUtility.SetDirty(go);
     }
 
     static bool IsUtensilKind(string kind)
     {
         return kind == "utensil" || kind == "plate_stack";
+    }
+
+    // Whether a prefab instance can be resolved in any of the imported common bundles.
+    static bool ArtPaths(string theme, string prefabName, out string prefabPath, out string soPath)
+    {
+        string[] roots = { "common01", "common02", "common03" };
+        foreach (string root in roots)
+        {
+            string p = "Assets/" + root + "/prefabs/art/" + theme + "/" + prefabName + ".prefab";
+            if (AssetDatabase.LoadAssetAtPath<GameObject>(p) != null)
+            {
+                prefabPath = p;
+                soPath = "Assets/" + root + "/pseudo_prefab_so/art/" + theme + "/" + prefabName + ".asset";
+                return true;
+            }
+        }
+        prefabPath = null;
+        soPath = null;
+        return false;
+    }
+
+    static bool PlaceArt(Scene scene, string level, string[] f, float x, float z)
+    {
+        string theme = f[1];
+        string prefabName = f[2];
+        float y = 0f;
+        if (f.Length > 3 && !string.IsNullOrEmpty(f[3]))
+        {
+            float.TryParse(f[3], NumberStyles.Float, CultureInfo.InvariantCulture, out y);
+        }
+        float yaw = 0f;
+        if (f.Length > 7 && !string.IsNullOrEmpty(f[7]))
+        {
+            float.TryParse(f[7], NumberStyles.Float, CultureInfo.InvariantCulture, out yaw);
+        }
+
+        string prefabPath, soPath;
+        if (!ArtPaths(theme, prefabName, out prefabPath, out soPath))
+        {
+            Debug.LogError("[wellcooked_demo] " + level + " cannot find art prefab "
+                           + theme + "/" + prefabName);
+            return false;
+        }
+
+        Transform artGroup = Group(scene, "Art");
+        var go = Placeholder(artGroup,
+                             "art_" + prefabName + "_" + f[4] + "_" + f[5],
+                             soPath,
+                             new Vector3(x, y, z), yaw);
+        if (go == null)
+        {
+            Debug.LogError("[wellcooked_demo] " + level + " cannot find art so "
+                           + theme + "/" + prefabName);
+            return false;
+        }
+        return true;
+    }
+
+    // A DIY placeholder is a bare GameObject plus its stub pair: PseudoPrefabStub carries the
+    // PseudoPrefabSO (which asset to build) and PseudoPrefab rebuilds the real prefab from the
+    // game bundles at runtime. Instantiating the visual prefab into the scene instead (what this
+    // generator did before) produces a fully visible but completely inert object in game: it can
+    // never be highlighted or used, which is exactly the reported symptom.
+    static GameObject Placeholder(Transform parent, string name, string soPath, Vector3 position, float yaw)
+    {
+        var so = AssetDatabase.LoadAssetAtPath<PseudoPrefabSO>(soPath);
+        if (so == null)
+        {
+            return null;
+        }
+        var go = new GameObject(name);
+        go.transform.SetParent(parent, false);
+        go.transform.position = position;
+        go.transform.localRotation = Quaternion.Euler(0f, yaw, 0f);
+        var stub = go.AddComponent<PseudoPrefabStub>();
+        stub.pseudoPrefabSO = so;
+        go.AddComponent<PseudoPrefab>();
+        EditorUtility.SetDirty(go);
+        return go;
     }
 
     static string PrefabPathFor(string kind, string prefabName)
