@@ -381,6 +381,7 @@ static int start_task(worker *w, const kos_mq_msg *msg)
         return -1;
     }
     kos_macro_begin(&w->macro, &plan);
+    w->macro.log = w->rt.log;
     w->target_seq++;
     w->pinned = 0;
     w->stale_logged = 0;
@@ -470,6 +471,7 @@ static int advance_macro(worker *w, const kos_world_state *world, int64_t game_m
         return 0;
     }
 
+    w->macro.log = w->rt.log;
     rc = kos_macro_advance(&w->macro, &w->kitchen, world, w->rt.opts.chef_id,
                            nav_arrived, game_ms, out);
 

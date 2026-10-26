@@ -675,6 +675,7 @@ static int step_init(kos_macro *macro, const kos_kitchen *kitchen,
          * 手就空了，所以只能在这里记。 */
         copy_str(macro->dropped_item, sizeof macro->dropped_item, chef->holding);
     }
+    macro->counter_baseline[0] = '\0';
 
     if (step->kind == KOS_MACRO_GOTO) {
         macro->deadline_ms = game_ms + goto_timeout_ms(kitchen, step, chef);
@@ -702,6 +703,12 @@ static int step_init(kos_macro *macro, const kos_kitchen *kitchen,
     }
     if (step->kind == KOS_MACRO_WASH) {
         macro->clean_baseline_valid = clean_plate_count(world, &macro->clean_baseline);
+    }
+    if (step->kind == KOS_MACRO_POUR) {
+        const kos_resource *counter = find_station_resource(kitchen, step, world);
+        if (counter != NULL && counter->content[0] != '\0') {
+            copy_str(macro->counter_baseline, sizeof macro->counter_baseline, counter->content);
+        }
     }
     return 0;
 }
@@ -914,9 +921,83 @@ static const char *content_name(const char *text)
     return colon == NULL ? text : colon + 1;
 }
 
+/*
+ * 计算 a 与 b 忽略大小写的最长公共后缀长度。
+ */
+static int common_suffix_length(const char *a, size_t len_a, const char *b, size_t len_b)
+{
+    size_t match = 0;
+
+    while (len_a > 0 && len_b > 0) {
+        char ca = a[len_a - 1];
+        char cb = b[len_b - 1];
+
+        if (ca >= 'A' && ca <= 'Z') ca = (char)(ca - 'A' + 'a');
+        if (cb >= 'A' && cb <= 'Z') cb = (char)(cb - 'A' + 'a');
+        if (ca != cb) break;
+        match++;
+        len_a--;
+        len_b--;
+    }
+    return (int)match;
+}
+
+/*
+ * 比较倒料目标原料与锅内内容是否匹配。
+ * [推断] 实机在开局时所有锅内 contents=[]（见 /tmp/kc-fixtures/demo3/wellcooked-state.json），
+ * 锅内内容可能以熟料名（FriedChicken / FriedBurritoMeat 等）、切块 prefab 名
+ * （BurritoChoppedChicken / DicedMeat 等）或生料名（BurritoChicken 等）上报。
+ * 这里不硬编码任何固定原料列表，而是动态推导两者共享的原料词根（shared stem）：
+ * 1. 子串包含（kos_kitchen_name_matches）：覆盖名称互为子串的情形（如 BurritoMeat ↔ FriedBurritoMeat、
+ *    Rice ↔ BoiledRice、Mushroom ↔ FriedMushrooms）；
+ * 2. 动态词尾原料词根：游戏工序名按 PascalCase 命名，前缀为工序/料理修饰语（Burrito/Fried/Diced/Boiled），
+ *    词尾为核心原料名词（Chicken/Meat/Rice/Beef/Cheese 等）。计算两者忽略大小写且去除末尾复数 's' 后的
+ *    最长公共后缀，若长度 ≥ 3 字符，即视为同一种原料的合法流转。新菜品无需修改 C 代码。
+ * 若内容属于其他无关原料（如倒鸡肉时锅里是米饭），公共后缀长度 < 3，判定为 wrong-item。
+ */
 static int poured_content_matches(const char *node_id, const char *content)
 {
-    return kos_kitchen_name_matches(content_name(node_id), content_name(content));
+    const char *name_a = content_name(node_id);
+    const char *name_b = content_name(content);
+    size_t len_a;
+    size_t len_b;
+
+    if (kos_kitchen_name_matches(name_a, name_b)) {
+        return 1;
+    }
+    len_a = strlen(name_a);
+    len_b = strlen(name_b);
+    if (len_a > 0 && (name_a[len_a - 1] == 's' || name_a[len_a - 1] == 'S')) {
+        len_a--;
+    }
+    if (len_b > 0 && (name_b[len_b - 1] == 's' || name_b[len_b - 1] == 'S')) {
+        len_b--;
+    }
+    return common_suffix_length(name_a, len_a, name_b, len_b) >= 3;
+}
+
+static int counter_has_content(const char *counter_content, const char *item)
+{
+    char buf[KOS_SHM_NAME_MAX];
+    char *token;
+    char *saveptr = NULL;
+
+    if (counter_content == NULL || counter_content[0] == '\0' ||
+        item == NULL || item[0] == '\0') {
+        return 0;
+    }
+    if (poured_content_matches(item, counter_content)) {
+        return 1;
+    }
+    copy_str(buf, sizeof buf, counter_content);
+    token = strtok_r(buf, "+,", &saveptr);
+    while (token != NULL) {
+        if (poured_content_matches(item, token)) {
+            return 1;
+        }
+        token = strtok_r(NULL, "+,", &saveptr);
+    }
+    return 0;
 }
 
 /*
@@ -965,6 +1046,11 @@ static int run_pour(kos_macro *macro, const kos_kitchen *kitchen, const kos_worl
 
     if (carried != NULL) {
         if (carried->content[0] != '\0' || carried->content_count > 0) {
+            if (!macro->saw_content) {
+                kos_log_info(macro->log, "macro_pour_source",
+                             "chef=%d item=%s source=%s carried_content=%s",
+                             chef_id, step->item, macro->plan.steps[0].station_id, carried->content);
+            }
             /* 手里这口锅装的必须是这道工序要的料：派错锅/没熟就倒会把别的东西
              * 倒进玉米饼，而且倒完内容变空，只按"变空"判完成会当成成功。 */
             if (carried->content[0] != '\0' &&
@@ -991,17 +1077,32 @@ static int run_pour(kos_macro *macro, const kos_kitchen *kitchen, const kos_worl
                 continue;
             }
             if (poured_content_matches(step->item, resource->content)) {
+                if (!macro->saw_content) {
+                    kos_log_info(macro->log, "macro_pour_source",
+                                 "chef=%d item=%s source=%s pot=%s pot_content=%s",
+                                 chef_id, step->item, macro->plan.steps[0].station_id,
+                                 resource->name, resource->content);
+                }
                 found = 1;
                 break;
             }
         }
-        if (counter != NULL && counter->content[0] != '\0') {
-            found = 1;
-        }
+
         if (found) {
             macro->saw_content = 1;
         } else if (macro->saw_content) {
             done = 1;
+        }
+        /* 台面容器信号：在没有 carried_ 的旧状态里，台面内容新增了当前工序原料可判完成。
+         * 注意：台面已有内容绝不能置 found=1（found 专指源锅仍有料）；
+         * 否则同一张台面连续两次倒料（如卷饼先倒肉再倒米）时，台面在第二步开始就非空，
+         * 会导致 found 恒为 1，永远无法判完成，并禁用兜底超时。 */
+        if (!done && counter != NULL && counter->content[0] != '\0') {
+            int baseline_had = counter_has_content(macro->counter_baseline, step->item);
+            int now_has = counter_has_content(counter->content, step->item);
+            if (now_has && !baseline_had) {
+                done = 1;
+            }
         }
         if (!done && !macro->saw_content &&
             game_ms - macro->step_start_ms >= MACRO_POUR_FALLBACK_MS) {

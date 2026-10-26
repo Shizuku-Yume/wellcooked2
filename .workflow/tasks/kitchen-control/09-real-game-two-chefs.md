@@ -408,3 +408,15 @@ Dirty at start: `plugin/README.md`、`plugin/SmokePlugin.cs`、`plugin/Takeover.
 或者让 `make test` 变红。
 
 下一步：用户决定第 1–3 项这类 schema 扩展是否要做；批了我就按第 4–6 项一次做完再验。
+
+**2026-10-27 倒料工序命名决策与容差匹配（[推断] 待实机日志确认）**
+
+- 倒料节点命名与实测对齐：`/tmp/kc-fixtures/demo3`（实机新关卡导出）中 `recipes.json` 的 pour 节点以生料名标注（`pour:BurritoChicken` / `pour:BurritoMeat` / `pour:Mushroom` / `pour:Rice`），烹饪节点为熟料名（`cook:FriedChicken` / `cook:FriedBurritoMeat` / `cook:FriedMushrooms` / `cook:BoiledRice`）。
+- 开局状态 `wellcooked-state.json` 中锅具 `contents=[]`，实机运行中熟料在锅内上报的名字究竟是熟料名（`FriedChicken`）、切块 prefab 名（`BurritoChoppedChicken`）还是生料名（`BurritoChicken`）属于 [推断]。
+- 决策：C 侧 `macro.c` 的 `run_pour` 采用动态公共后缀词根推导（common suffix stem matching，无硬编码词根列表），避免全字严格匹配将同源熟料 `FriedChicken` 误拦截为 `wrong-item`；同时保留对完全不同原料（如鸡肉倒米饭）的校验。倒料执行时通过 `kos_log_info(macro->log, "macro_pour_source", ...)` 输出项目日志到 `worker-*.log`，待下次真机运行直接确认实机真实命名（检索模式：`grep -E '\bmacro_pour_source\b' logs/worker-*.log`）。
+- 检查锁住：`bridge/tests/test_macro.c` 补充 `test_pour_tolerant_matching` 单测（含不在任何列表中的 `TacoBeef` ↔ `CookedBeef` 测试）；`python3 scripts/test_export_kitchen.py` 与 `cd bridge && make && make test && make test-san` 全绿。
+
+**2026-10-27 模拟器工位与 kitchen.json 匹配及切菜动作路径核对**
+
+- 工位位置完全由 `kitchen.json` 驱动：`tools/demo3_sim.py` 移除了对 `counter-0` 等工位坐标的硬编码篡改（原代码曾将 `counter-0` 覆写为 `(0.6, -6.0)`，实际 `kitchen.json` 中 `counter-0` 位于 `(-3.0, -7.2)`，`counter-13` 位于 `(0.6, -6.0)`）。所有工位坐标均直接从 `kitchen.json` 加载，同时补充 `compute_stands_from_kitchen` 动态推导站位格（`STANDS` 为厨师站在过道交互时的可走格坐标，如 `cooker-5` 灶台在 `(7.8, -6.0)`，对应站位格为 `(7.8, -7.2)`）。在 `Demo3World` 初始化时断言所有工位位置与 `kitchen.json` 的偏移不超过 `MACRO_STATION_POS_TOL = 0.30`，无例外跳过。
+- 砧板切菜动作路径核对：切菜推进必须使用 `action="work"`（Ctrl/X 加工键，由 `macro.c:run_chop` 对应下发 `KOS_MACRO_ACT_WORK`），并在面前角度小于 `WORK_CONE_DEG`（45°）时按住推进（合计 1.7 s 完成并更名 prefab）；`action="interact"`（A/空格 交互键）在砧板上仅判定放下手持物或端起成品，绝不会推进切菜进度。背对砧板时发送 `work` 亦不推进。

@@ -646,16 +646,16 @@ static void test_pour(const kos_kitchen *kitchen, const char *cooker, const char
 
 /* 把 pour 宏推进到"面向容器、准备倒料"那一步。carried_content 非 NULL 时挂一只
  * `carried_0`（G1/G5 的手持锅），内容按 proto 的编码（"cooked:<name>"）。 */
-static void drive_to_pour(const kos_kitchen *kitchen, kos_world_state *world, kos_macro *macro,
-                          const char *cooker, const char *container,
-                          const char *carried_content, int64_t *game_ms, kos_macro_output *out)
+static void drive_to_pour_item(const kos_kitchen *kitchen, kos_world_state *world, kos_macro *macro,
+                               const char *cooker, const char *container, const char *node_id,
+                               const char *carried_content, int64_t *game_ms, kos_macro_output *out)
 {
     kos_macro_plan plan;
     kos_error err;
     kos_chef *chef;
 
     kos_error_clear(&err);
-    expect(kos_macro_plan_build_with_source(kitchen, "pour", "pour:BurritoChicken", container,
+    expect(kos_macro_plan_build_with_source(kitchen, "pour", node_id, container,
                                             cooker, "o1", 100, &plan, &err) == KOS_OK,
            "carried 夹具：pour 计划建成");
     kos_macro_begin(macro, &plan);
@@ -679,6 +679,14 @@ static void drive_to_pour(const kos_kitchen *kitchen, kos_world_state *world, ko
     (void)kos_macro_advance(macro, kitchen, world, 0, 1, *game_ms, out);
     *game_ms += 16;
     (void)kos_macro_advance(macro, kitchen, world, 0, 1, *game_ms, out);
+}
+
+static void drive_to_pour(const kos_kitchen *kitchen, kos_world_state *world, kos_macro *macro,
+                          const char *cooker, const char *container,
+                          const char *carried_content, int64_t *game_ms, kos_macro_output *out)
+{
+    drive_to_pour_item(kitchen, world, macro, cooker, container, "pour:BurritoChicken",
+                       carried_content, game_ms, out);
 }
 
 /*
@@ -719,7 +727,7 @@ static void test_pour_by_carried(const kos_kitchen *kitchen, const char *cooker,
     expect(rc == 0 && macro.step_index == 4, "carried：锅内容清空后回灶");
 }
 
-/* 手里的锅装错了料：不能按"内容变空"判成功，要在倒之前就失败（G13 的内容身份）。 */
+/* 手里的锅装错了料（如鸡肉工序装了米饭）：不能按"内容变空"判成功，要在倒之前就失败（G13 的内容身份）。 */
 static void test_pour_wrong_content(const kos_kitchen *kitchen, const char *cooker,
                                     const char *container)
 {
@@ -732,7 +740,7 @@ static void test_pour_wrong_content(const kos_kitchen *kitchen, const char *cook
     printf("test_pour_wrong_content\n");
     base_world(&world);
     (void)chef_at_station(&world, kitchen, cooker);
-    drive_to_pour(kitchen, &world, &macro, cooker, container, "cooked:FriedChicken", &game_ms,
+    drive_to_pour(kitchen, &world, &macro, cooker, container, "cooked:BoiledRice", &game_ms,
                   &out);
     expect(macro.step_index == 3, "wrong-content：进入倒料");
     game_ms += 16;
@@ -742,6 +750,80 @@ static void test_pour_wrong_content(const kos_kitchen *kitchen, const char *cook
     expect(strstr(macro.fail_detail, "macro=pour") != NULL &&
                strstr(macro.fail_detail, "wrong-item") != NULL,
            "wrong-content：失败原因写明 pour 与 wrong-item");
+}
+
+/*
+ * 容差匹配：pour 节点按生料名命名（pour:BurritoChicken），锅内上报熟料名
+ * （cooked:FriedChicken）或切块 prefab 名（cooked:BurritoChoppedChicken）均能
+ * 正常推进倒料，而不是报 wrong-item 失败。
+ */
+static void test_pour_tolerant_matching(const kos_kitchen *kitchen, const char *cooker,
+                                        const char *container)
+{
+    kos_world_state world;
+    kos_macro macro;
+    kos_macro_output out;
+    kos_resource *carried;
+    int64_t game_ms = 1000;
+    int rc;
+
+    printf("test_pour_tolerant_matching\n");
+
+    /* 1. 熟料名 cooked:FriedChicken 匹配 pour:BurritoChicken */
+    base_world(&world);
+    (void)chef_at_station(&world, kitchen, cooker);
+    drive_to_pour(kitchen, &world, &macro, cooker, container, "cooked:FriedChicken", &game_ms,
+                  &out);
+    carried = resource_by_name(&world, "carried_0");
+    expect(macro.step_index == 3 && carried != NULL,
+           "tolerant：熟料名 FriedChicken 进入倒料");
+    game_ms += 16;
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    expect(rc == 0 && macro.step_index == 3 && out.action == KOS_MACRO_ACT_INTERACT,
+           "tolerant：熟料名 FriedChicken 通过原料校验并发送 interact");
+    carried->content[0] = '\0';
+    game_ms += 16;
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    expect(rc == 0 && macro.step_index == 4, "tolerant：倒料完成后回灶");
+
+    /* 2. 切块 prefab 名 cooked:BurritoChoppedChicken 匹配 pour:BurritoChicken */
+    base_world(&world);
+    (void)chef_at_station(&world, kitchen, cooker);
+    game_ms = 1000;
+    drive_to_pour(kitchen, &world, &macro, cooker, container, "cooked:BurritoChoppedChicken",
+                  &game_ms, &out);
+    carried = resource_by_name(&world, "carried_0");
+    expect(macro.step_index == 3 && carried != NULL,
+           "tolerant：切块 prefab 名 BurritoChoppedChicken 进入倒料");
+    game_ms += 16;
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    expect(rc == 0 && macro.step_index == 3 && out.action == KOS_MACRO_ACT_INTERACT,
+           "tolerant：切块 prefab 名通过原料校验并发送 interact");
+
+    /* 3. 动态词根推导：测试不在任何旧根词列表中的生料/熟料组合（TacoBeef ↔ CookedBeef） */
+    base_world(&world);
+    (void)chef_at_station(&world, kitchen, cooker);
+    game_ms = 1000;
+    drive_to_pour_item(kitchen, &world, &macro, cooker, container, "pour:TacoBeef",
+                       "cooked:CookedBeef", &game_ms, &out);
+    carried = resource_by_name(&world, "carried_0");
+    expect(macro.step_index == 3 && carried != NULL,
+           "tolerant：未在预设列表的 Beef 词根进入倒料");
+    game_ms += 16;
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    expect(rc == 0 && macro.step_index == 3 && out.action == KOS_MACRO_ACT_INTERACT,
+           "tolerant：未在预设列表的 Beef 动态推导词根通过并发送 interact");
+
+    /* 4. 无关原料（TacoBeef 装入 BoiledRice）拦截测试 */
+    base_world(&world);
+    (void)chef_at_station(&world, kitchen, cooker);
+    game_ms = 1000;
+    drive_to_pour_item(kitchen, &world, &macro, cooker, container, "pour:TacoBeef",
+                       "cooked:BoiledRice", &game_ms, &out);
+    game_ms += 16;
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    expect(rc < 0 && macro.step_index == 3 && strstr(macro.fail_detail, "wrong-item") != NULL,
+           "tolerant：未在预设列表的 Beef 装入 Rice 判定 wrong-item 失败");
 }
 
 /* 没有任何信号（carried_ 空、台面也没多料）时不再有 800 ms 兜底：一直按到步超时，
@@ -770,6 +852,124 @@ static void test_pour_carried_without_contents(const kos_kitchen *kitchen, const
     game_ms = macro.deadline_ms + 1;
     rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
     expect(rc == -1, "carried 空且台面无料：超时失败");
+}
+
+/*
+ * 旧状态（无 carried_ 资源）：同一张台面上连续两次倒料（如卷饼先倒肉再倒米）。
+ * 第 2 次倒料开始时台面内容已非空（已有肉），不能把台面非空当成"源锅仍有料 (found=1)"，
+ * 否则会导致倒完后由于 found 恒为 1 而无法推进，并禁用兜底最终超时。
+ */
+static void test_pour_legacy_two_in_a_row(const kos_kitchen *kitchen, const char *cooker1,
+                                          const char *cooker2, const char *container)
+{
+    kos_world_state world;
+    kos_macro macro;
+    kos_macro_plan plan;
+    kos_macro_output out;
+    kos_error err;
+    kos_chef *chef;
+    kos_resource *pot1;
+    kos_resource *pot2;
+    kos_resource *counter;
+    int station_idx;
+    int64_t game_ms = 1000;
+    int rc;
+
+    printf("test_pour_legacy_two_in_a_row\n");
+    base_world(&world);
+    chef = chef_at_station(&world, kitchen, cooker1);
+
+    pot1 = add_resource(&world, "pot_0");
+    snprintf(pot1->state, sizeof pot1->state, "cooked");
+    snprintf(pot1->content, sizeof pot1->content, "BurritoChicken");
+
+    pot2 = add_resource(&world, "pot_1");
+    snprintf(pot2->state, sizeof pot2->state, "cooked");
+    snprintf(pot2->content, sizeof pot2->content, "Rice");
+
+    counter = add_resource(&world, "counter_0");
+    station_idx = kos_kitchen_station_index(kitchen, container);
+    if (station_idx >= 0) {
+        counter->has_pos = 1;
+        counter->pos_x = kitchen->stations[station_idx].x;
+        counter->pos_y = kitchen->stations[station_idx].z;
+    }
+    counter->content[0] = '\0';
+
+    /* --- 第 1 单倒料：从 cooker1 倒 BurritoChicken 到 container --- */
+    kos_error_clear(&err);
+    expect(kos_macro_plan_build_with_source(kitchen, "pour", "pour:BurritoChicken", container,
+                                            cooker1, "o1", 100, &plan, &err) == KOS_OK,
+           "legacy 连续倒料：第 1 单 pour 计划建成");
+    kos_macro_begin(&macro, &plan);
+    (void)finish_goto(&macro, kitchen, &world, &game_ms, &out);
+    game_ms += 16;
+    (void)kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    snprintf(chef->holding, sizeof chef->holding, "utensil_frying_pan_01");
+    game_ms += 16;
+    (void)kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    move_chef_to(&world, kitchen, container);
+    (void)kos_macro_advance(&macro, kitchen, &world, 0, 1, game_ms, &out);
+    game_ms += 16;
+    (void)kos_macro_advance(&macro, kitchen, &world, 0, 1, game_ms, &out);
+    expect(macro.step_index == 3, "第 1 单：面向容器进入倒料");
+
+    game_ms += 16;
+    (void)kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    pot1->content[0] = '\0';
+    snprintf(counter->content, sizeof counter->content, "BurritoChicken");
+    game_ms += 16;
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    expect(rc == 0 && macro.step_index == 4, "第 1 单：源锅清空且台面有肉后回灶");
+
+    move_chef_to(&world, kitchen, cooker1);
+    (void)kos_macro_advance(&macro, kitchen, &world, 0, 1, game_ms, &out);
+    game_ms += 16;
+    (void)kos_macro_advance(&macro, kitchen, &world, 0, 1, game_ms, &out);
+    game_ms += 16;
+    (void)kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    chef->holding[0] = '\0';
+    game_ms += 16;
+    expect(kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out) == 1,
+           "第 1 单：放回锅完成");
+
+    /* --- 第 2 单倒料：从 cooker2 倒 Rice 到同一张台面（此时台面已有肉） --- */
+    expect(kos_macro_plan_build_with_source(kitchen, "pour", "pour:Rice", container,
+                                            cooker2, "o1", 100, &plan, &err) == KOS_OK,
+           "legacy 连续倒料：第 2 单 pour 计划建成");
+    kos_macro_begin(&macro, &plan);
+    move_chef_to(&world, kitchen, cooker2);
+    (void)finish_goto(&macro, kitchen, &world, &game_ms, &out);
+    game_ms += 16;
+    (void)kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    snprintf(chef->holding, sizeof chef->holding, "utensil_pot_01");
+    game_ms += 16;
+    (void)kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    move_chef_to(&world, kitchen, container);
+    (void)kos_macro_advance(&macro, kitchen, &world, 0, 1, game_ms, &out);
+    game_ms += 16;
+    (void)kos_macro_advance(&macro, kitchen, &world, 0, 1, game_ms, &out);
+    expect(macro.step_index == 3, "第 2 单：台面已有料时进入倒料");
+
+    game_ms += 16;
+    (void)kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    pot2->content[0] = '\0';
+    snprintf(counter->content, sizeof counter->content, "BurritoChicken+Rice");
+    game_ms += 16;
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    expect(rc == 0 && macro.step_index == 4,
+           "第 2 单：同一台面第 2 次倒料正确完成并回灶");
+
+    move_chef_to(&world, kitchen, cooker2);
+    (void)kos_macro_advance(&macro, kitchen, &world, 0, 1, game_ms, &out);
+    game_ms += 16;
+    (void)kos_macro_advance(&macro, kitchen, &world, 0, 1, game_ms, &out);
+    game_ms += 16;
+    (void)kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    chef->holding[0] = '\0';
+    game_ms += 16;
+    expect(kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out) == 1,
+           "第 2 单：放回锅完成");
 }
 
 static void test_deliver(const kos_kitchen *kitchen, const char *serving)
@@ -1146,7 +1346,9 @@ int main(void)
     test_pour(&kitchen, cooker, container);
     test_pour_by_carried(&kitchen, cooker, container);
     test_pour_wrong_content(&kitchen, cooker, container);
+    test_pour_tolerant_matching(&kitchen, cooker, container);
     test_pour_carried_without_contents(&kitchen, cooker, container);
+    test_pour_legacy_two_in_a_row(&kitchen, cooker, "cooker-1", container);
     test_deliver(&kitchen, serving);
     test_wash(&kitchen, sink);
     test_timeouts(&kitchen, dispenser, board);

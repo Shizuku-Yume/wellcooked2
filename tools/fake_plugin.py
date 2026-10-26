@@ -5722,9 +5722,9 @@ def scenario_demo3_regress_empty_pots(ctx, checks):
     result = _demo3_run(ctx, checks, "pots-fixed", chefs=1, kitchen=kitchen,
                         recipes=recipes, order_spec=order_spec, duration=16.0,
                         rules=fixed, positions=positions,
-                        stop_when=lambda world:
-                        world.cooker_state["cooker-1"]["state"] == "cooking"
-                        or world.game_ms >= 14000)
+                        stop_when=_demo3_stop_after(
+                            lambda world: world.cooker_state["cooker-1"]["state"] == "cooking",
+                            800, 16000))
     world = result["world"]
     rows = result["rows"]
     resources = world.resources()
@@ -5856,8 +5856,9 @@ def scenario_demo3_regress_cooker_type(ctx, checks):
     result = _demo3_run(ctx, checks, "type-fixed", chefs=1, kitchen=kitchen,
                         recipes=_demo3_cook_recipe(step="Pot"), order_spec=order_spec,
                         duration=18.0, rules=fixed, positions=positions,
-                        stop_when=lambda world: world.cooker_state["cooker-1"]["state"]
-                        == "cooking" or world.game_ms >= 16000)
+                        stop_when=_demo3_stop_after(
+                            lambda world: world.cooker_state["cooker-1"]["state"] == "cooking",
+                            800, 16000))
     world = result["world"]
     rows = result["rows"]
     events = result["events"]
