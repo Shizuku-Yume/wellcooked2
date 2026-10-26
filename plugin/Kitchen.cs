@@ -59,6 +59,18 @@ namespace WellCooked
         }
 
         /// <summary>
+        /// 普通台面（卷饼当容器的地方）：名字是 `countertop_*` 且不是砧板。
+        /// 与 `scripts/export-kitchen.py` 的 `is_plain_counter` 同一条规则；组件用
+        /// `ClientAttachStation`（实测砧板上也是它，所以必须靠名字再筛一次）。
+        /// </summary>
+        public static bool IsPlainCounter(string name)
+        {
+            return !string.IsNullOrEmpty(name)
+                   && name.IndexOf("countertop", StringComparison.OrdinalIgnoreCase) >= 0
+                   && !IsChoppingBoard(name);
+        }
+
+        /// <summary>
         /// 场上所有砧板，顺序就是 `cutting_board_&lt;N&gt;` 的编号顺序（`FindAll` 的返回顺序）。
         /// 动作目标的 `cutting_board_N` 与状态上报必须指向同一块板。
         /// </summary>
