@@ -17,6 +17,7 @@
 
 #include <kitchenos/nav.h>
 #include <kitchenos/stand.h>
+#include <kitchenos/navtab.h>
 
 #define MACRO_PI 3.14159265358979323846f
 #define MACRO_PROGRESS_DONE 0.999f
@@ -29,13 +30,20 @@
 #define MACRO_CHOP_MARGIN_MS 3000
 #define MACRO_WASH_MARGIN_MS 3000
 #define MACRO_POUR_MARGIN_MS 3000
-/* 倒料时看不到源锅（插件没上报那只锅）时的兜底交互窗口：一次 interact 就够把料倒过去，
+/* 倒料时看不到源锅（旧插件没上报那只锅）时的兜底交互窗口：一次 interact 就够把料倒过去，
  * 800 ms 只用来覆盖按键与状态上报的往返。 */
 #define MACRO_POUR_FALLBACK_MS 800
+/* 交付时盘子先消失、游戏的订单结果（order_results）与 m_activeOrders 移除都要晚
+ * 几百毫秒；手空后等这么久还没有结果才判 holding-lost。 */
+#define MACRO_DELIVER_LOST_GRACE_MS 1000
 /* 四人同场时 PIBT 让路、反复重规划，实机 `_3` 里 goto 在快到站时（剩 0~1 个路点）
- * 被 3 s 余量判超时；6 s 覆盖一次让路往返。 */
-#define MACRO_GOTO_MARGIN_MS 6000
-#define MACRO_GOTO_NO_DISTANCE_MS 30000
+ * 被 3 s 余量判超时；覆盖一次让路往返与完整卡死判定窗口。 */
+#define MACRO_GOTO_MARGIN_MS KOS_NAV_BLOCKED_WINDOW_MS
+/* goto 的默认超时必须覆盖 navd 判定 BLOCKED 所需的完整窗口（3 次卡住 = 6 s），
+ * 再加 2 s 余量（总计 8 s，即 6~8 s 有界超时）。决不能等于或短于 6 s，
+ * 否则 Worker 会在 navd 报告第 3 次重规划与 BLOCKED 之前超时失败。 */
+#define MACRO_GOTO_BLOCKED_MARGIN_MS 2000
+#define MACRO_GOTO_DEFAULT_TIMEOUT_MS (KOS_NAV_BLOCKED_WINDOW_MS + MACRO_GOTO_BLOCKED_MARGIN_MS)
 
 static void copy_str(char *dst, size_t cap, const char *src)
 {
@@ -552,6 +560,24 @@ static int clean_plate_count(const kos_world_state *world, int32_t *out)
     return 0;
 }
 
+/* 订单最近的游戏结果（插件按 seq 递增重发整个环形快照）。同一 id 只留最新一条。 */
+static const kos_order_result *order_result_for(const kos_world_state *world,
+                                                const char *order_id)
+{
+    const kos_order_result *best = NULL;
+    int i;
+
+    if (order_id == NULL || order_id[0] == '\0') {
+        return NULL;
+    }
+    for (i = 0; i < (int)world->order_result_count; i++) {
+        if (strcmp(world->order_results[i].id, order_id) == 0) {
+            best = &world->order_results[i];
+        }
+    }
+    return best;
+}
+
 static int order_present(const kos_world_state *world, const char *order_id)
 {
     int i;
@@ -574,21 +600,34 @@ static int64_t goto_timeout_ms(const kos_kitchen *kitchen, const kos_macro_step 
     int cell;
     uint16_t distance;
 
-    if (station_index < 0) {
-        return MACRO_GOTO_NO_DISTANCE_MS;
-    }
-    if (chef == NULL) {
-        return MACRO_GOTO_NO_DISTANCE_MS;
+    if (station_index < 0 || chef == NULL) {
+        return MACRO_GOTO_DEFAULT_TIMEOUT_MS;
     }
     cell = kos_kitchen_nearest_cell(kitchen, chef->x, chef->y);
-    if (cell < 0) {
-        return MACRO_GOTO_NO_DISTANCE_MS;
+    if (cell >= 0) {
+        distance = kos_stand_distance(kitchen, station_index, cell);
+        if (distance != KOS_STAND_UNREACHABLE) {
+            return (int64_t)distance * KOS_MACRO_CELL_MS * 2 + MACRO_GOTO_MARGIN_MS;
+        }
     }
-    distance = kos_stand_distance(kitchen, station_index, cell);
-    if (distance == KOS_STAND_UNREACHABLE) {
-        return MACRO_GOTO_NO_DISTANCE_MS;
+    /* 站位格距离未知或不可达：从世界状态估算有效欧氏距离，短兜底，决不放大到 30 s */
+    if (station_index < kitchen->station_count) {
+        float dx = kitchen->stations[station_index].x - chef->x;
+        float dz = kitchen->stations[station_index].z - chef->y;
+        float dist_m = sqrtf(dx * dx + dz * dz);
+        if (dist_m >= 0.0f && dist_m <= 15.0f) {
+            int est_cells = (int)ceilf(dist_m / 0.6f);
+            int64_t est_ms = (int64_t)est_cells * KOS_MACRO_CELL_MS * 2 + MACRO_GOTO_MARGIN_MS;
+            if (est_ms < MACRO_GOTO_DEFAULT_TIMEOUT_MS) {
+                est_ms = MACRO_GOTO_DEFAULT_TIMEOUT_MS;
+            }
+            if (est_ms > MACRO_GOTO_MARGIN_MS + 2000) {
+                est_ms = MACRO_GOTO_MARGIN_MS + 2000;
+            }
+            return est_ms;
+        }
     }
-    return (int64_t)distance * KOS_MACRO_CELL_MS * 2 + MACRO_GOTO_MARGIN_MS;
+    return MACRO_GOTO_DEFAULT_TIMEOUT_MS;
 }
 
 static void fail_step(kos_macro *macro, int64_t game_ms, const char *condition,
@@ -626,14 +665,17 @@ static int step_init(kos_macro *macro, const kos_kitchen *kitchen,
     macro->face_sent = 0;
     macro->face_sent_ms = 0;
     macro->saw_content = 0;
+    macro->content_checked = 0;
     macro->entry_holding[0] = '\0';
     macro->clean_baseline_valid = 0;
     macro->clean_baseline = 0;
+    macro->empty_hand_since_ms = 0;
     if (step->kind == KOS_MACRO_DROP && chef != NULL) {
         /* 后面 start_cook/chop 要核对锅/板上放的是不是这一份料。DROP 之后厨师
          * 手就空了，所以只能在这里记。 */
         copy_str(macro->dropped_item, sizeof macro->dropped_item, chef->holding);
     }
+    macro->counter_baseline[0] = '\0';
 
     if (step->kind == KOS_MACRO_GOTO) {
         macro->deadline_ms = game_ms + goto_timeout_ms(kitchen, step, chef);
@@ -661,6 +703,12 @@ static int step_init(kos_macro *macro, const kos_kitchen *kitchen,
     }
     if (step->kind == KOS_MACRO_WASH) {
         macro->clean_baseline_valid = clean_plate_count(world, &macro->clean_baseline);
+    }
+    if (step->kind == KOS_MACRO_POUR) {
+        const kos_resource *counter = find_station_resource(kitchen, step, world);
+        if (counter != NULL && counter->content[0] != '\0') {
+            copy_str(macro->counter_baseline, sizeof macro->counter_baseline, counter->content);
+        }
     }
     return 0;
 }
@@ -765,10 +813,14 @@ static int run_chop(kos_macro *macro, const kos_kitchen *kitchen,
     if (resource->content[0] != '\0') {
         macro->saw_content = 1;
         /* G13：板上不是这一步该放的东西（放错料/别人占着砧板）就立刻判工序不可行，
-         * 不要等 progress 超时后把坏菜送到装盘才暴露。 */
-        if (!content_is_expected(resource, macro, step)) {
-            fail_step(macro, game_ms, "progress=1", "content-mismatch");
-            return -1;
+         * 不要等 progress 超时后把坏菜送到装盘才暴露。只核对第一次看到的内容：
+         * 切完游戏会把板上物体换成 Chopped…/Diced…，那正是本步的产物。 */
+        if (!macro->content_checked) {
+            if (!content_is_expected(resource, macro, step)) {
+                fail_step(macro, game_ms, "progress=1", "content-mismatch");
+                return -1;
+            }
+            macro->content_checked = 1;
         }
     } else if (macro->saw_content) {
         fail_step(macro, game_ms, "progress=1", "content-gone");
@@ -869,22 +921,120 @@ static const char *content_name(const char *text)
     return colon == NULL ? text : colon + 1;
 }
 
+/*
+ * 计算 a 与 b 忽略大小写的最长公共后缀长度。
+ */
+static int common_suffix_length(const char *a, size_t len_a, const char *b, size_t len_b)
+{
+    size_t match = 0;
+
+    while (len_a > 0 && len_b > 0) {
+        char ca = a[len_a - 1];
+        char cb = b[len_b - 1];
+
+        if (ca >= 'A' && ca <= 'Z') ca = (char)(ca - 'A' + 'a');
+        if (cb >= 'A' && cb <= 'Z') cb = (char)(cb - 'A' + 'a');
+        if (ca != cb) break;
+        match++;
+        len_a--;
+        len_b--;
+    }
+    return (int)match;
+}
+
+/*
+ * 比较倒料目标原料与锅内内容是否匹配。
+ * [推断] 实机在开局时所有锅内 contents=[]（见 /tmp/kc-fixtures/demo3/wellcooked-state.json），
+ * 锅内内容可能以熟料名（FriedChicken / FriedBurritoMeat 等）、切块 prefab 名
+ * （BurritoChoppedChicken / DicedMeat 等）或生料名（BurritoChicken 等）上报。
+ * 这里不硬编码任何固定原料列表，而是动态推导两者共享的原料词根（shared stem）：
+ * 1. 子串包含（kos_kitchen_name_matches）：覆盖名称互为子串的情形（如 BurritoMeat ↔ FriedBurritoMeat、
+ *    Rice ↔ BoiledRice、Mushroom ↔ FriedMushrooms）；
+ * 2. 动态词尾原料词根：游戏工序名按 PascalCase 命名，前缀为工序/料理修饰语（Burrito/Fried/Diced/Boiled），
+ *    词尾为核心原料名词（Chicken/Meat/Rice/Beef/Cheese 等）。计算两者忽略大小写且去除末尾复数 's' 后的
+ *    最长公共后缀，若长度 ≥ 3 字符，即视为同一种原料的合法流转。新菜品无需修改 C 代码。
+ * 若内容属于其他无关原料（如倒鸡肉时锅里是米饭），公共后缀长度 < 3，判定为 wrong-item。
+ */
 static int poured_content_matches(const char *node_id, const char *content)
 {
-    return kos_kitchen_name_matches(content_name(node_id), content_name(content));
+    const char *name_a = content_name(node_id);
+    const char *name_b = content_name(content);
+    size_t len_a;
+    size_t len_b;
+
+    if (kos_kitchen_name_matches(name_a, name_b)) {
+        return 1;
+    }
+    len_a = strlen(name_a);
+    len_b = strlen(name_b);
+    if (len_a > 0 && (name_a[len_a - 1] == 's' || name_a[len_a - 1] == 'S')) {
+        len_a--;
+    }
+    if (len_b > 0 && (name_b[len_b - 1] == 's' || name_b[len_b - 1] == 'S')) {
+        len_b--;
+    }
+    return common_suffix_length(name_a, len_a, name_b, len_b) >= 3;
+}
+
+static int counter_has_content(const char *counter_content, const char *item)
+{
+    char buf[KOS_SHM_NAME_MAX];
+    char *token;
+    char *saveptr = NULL;
+
+    if (counter_content == NULL || counter_content[0] == '\0' ||
+        item == NULL || item[0] == '\0') {
+        return 0;
+    }
+    if (poured_content_matches(item, counter_content)) {
+        return 1;
+    }
+    copy_str(buf, sizeof buf, counter_content);
+    token = strtok_r(buf, "+,", &saveptr);
+    while (token != NULL) {
+        if (poured_content_matches(item, token)) {
+            return 1;
+        }
+        token = strtok_r(NULL, "+,", &saveptr);
+    }
+    return 0;
+}
+
+/*
+ * 台面上/容器里是否已经有这一味料。`contents[]` 是递归叶子（烹饪节点写成
+ * cooked:<name>），所以用双向子串匹配：pour:BurritoChicken 命中
+ * cooked:BurritoChoppedChicken；`content` 是同一份内容的兼容拼串。
+ */
+static int resource_has_item(const kos_resource *resource, const char *item)
+{
+    int i;
+
+    if (resource == NULL || item == NULL || item[0] == '\0') {
+        return 0;
+    }
+    if (poured_content_matches(item, resource->content)) {
+        return 1;
+    }
+    for (i = 0; i < (int)resource->content_count && i < KOS_SHM_MAX_CONTENTS; i++) {
+        if (poured_content_matches(item, resource->contents[i])) {
+            return 1;
+        }
+    }
+    return 0;
 }
 
 /*
  * 倒料：手上端着锅/容器，对着台面容器按 interact，直到锅里的料进到台面上。
  *
- * 完成判据取世界状态的"内容"，不按资源编号（锅跟着人走，pot_N 是灶台槽位、不是锅）：
- *   1. 插件报了 `carried_<chefId>`：先看到它的 content 非空（锅里确实有料），随后变空
- *      = 倒完了。一帧都没见过内容（插件的 contents 还没接上）不算完成，走兜底；
- *   2. 没有 carried_（旧插件）：退回"源锅里那味料从 pot_* 里消失"；
- *   3. 整段都没有可用信号时按 MACRO_POUR_FALLBACK_MS 兜底，别把一次成功的倒料拖成超时。
- * 目的台面（容器）的位置由 kitchen.json 的 station_id 给出，状态侧由 proto 的
- * find_station_resource 按位置找；只有"没有 carried_ 的旧状态"才拿它的内容当第二信号
- * （新状态里 carried_ 是权威：同一张台面可能被两单共用，内容分不清是谁的）。
+ * 完成判据只看内容，不看编号（锅跟着人走；G1 起 pot_N 是灶台槽位，锅在手上时
+ * 那个槽位是 empty，锅本身以 carried_<chefId> 出现）：
+ *   1. `carried_<chefId>` 的内容从非空变空 = 倒完了。这是权威信号：端起来的时候
+ *      锅里的料就在 carried_ 上，倒完同一项变空。
+ *   2. 资源块是 0.25 s 重建的，端起→倒完整段可能落在两个资源帧之间，carried_ 一次
+ *      都没出现过。这时看**目的台面**：玉米饼里多出这一味料（contents[] 命中
+ *      step->item）就是完成——它比"锅空了"更直接，也不会被同一张台面上别的锅骗到。
+ * 源槽位在锅被端走后没有内容可看；旧状态没有 carried_ 时退回扫描 pot_* 与 800 ms 兜底，
+ * 保证与 legacy 路径兼容。
  */
 static int run_pour(kos_macro *macro, const kos_kitchen *kitchen, const kos_world_state *world,
                     int chef_id, int64_t game_ms, kos_macro_output *out)
@@ -895,17 +1045,27 @@ static int run_pour(kos_macro *macro, const kos_kitchen *kitchen, const kos_worl
     int done = 0;
 
     if (carried != NULL) {
-        if (carried->content[0] != '\0') {
+        if (carried->content[0] != '\0' || carried->content_count > 0) {
+            if (!macro->saw_content) {
+                kos_log_info(macro->log, "macro_pour_source",
+                             "chef=%d item=%s source=%s carried_content=%s",
+                             chef_id, step->item, macro->plan.steps[0].station_id, carried->content);
+            }
             /* 手里这口锅装的必须是这道工序要的料：派错锅/没熟就倒会把别的东西
              * 倒进玉米饼，而且倒完内容变空，只按"变空"判完成会当成成功。 */
-            if (!poured_content_matches(step->item, carried->content)) {
+            if (carried->content[0] != '\0' &&
+                !poured_content_matches(step->item, carried->content)) {
                 fail_step(macro, game_ms, "content", "wrong-item");
                 return -1;
             }
             macro->saw_content = 1;
         } else if (macro->saw_content) {
             done = 1;
+        } else if (resource_has_item(counter, step->item)) {
+            done = 1;
         }
+    } else if (resource_has_item(counter, step->item)) {
+        done = 1;
     } else {
         int found = 0;
         int i;
@@ -916,25 +1076,38 @@ static int run_pour(kos_macro *macro, const kos_kitchen *kitchen, const kos_worl
             if (strncmp(resource->name, "pot_", 4) != 0 || resource->content[0] == '\0') {
                 continue;
             }
-            if (kos_kitchen_name_matches(step->item, resource->content)) {
+            if (poured_content_matches(step->item, resource->content)) {
+                if (!macro->saw_content) {
+                    kos_log_info(macro->log, "macro_pour_source",
+                                 "chef=%d item=%s source=%s pot=%s pot_content=%s",
+                                 chef_id, step->item, macro->plan.steps[0].station_id,
+                                 resource->name, resource->content);
+                }
                 found = 1;
                 break;
             }
         }
-        /* 台面容器上有内容（contents[] 里有料）说明这一步的料已经倒进去了；
-         * 台面资源由 proto 的 find_station_resource 按位置找，旧世界状态里没有这一项。 */
-        if (counter != NULL && counter->content[0] != '\0') {
-            found = 1;
-        }
+
         if (found) {
             macro->saw_content = 1;
         } else if (macro->saw_content) {
             done = 1;
         }
-    }
-    if (!done && !macro->saw_content &&
-        game_ms - macro->step_start_ms >= MACRO_POUR_FALLBACK_MS) {
-        done = 1;
+        /* 台面容器信号：在没有 carried_ 的旧状态里，台面内容新增了当前工序原料可判完成。
+         * 注意：台面已有内容绝不能置 found=1（found 专指源锅仍有料）；
+         * 否则同一张台面连续两次倒料（如卷饼先倒肉再倒米）时，台面在第二步开始就非空，
+         * 会导致 found 恒为 1，永远无法判完成，并禁用兜底超时。 */
+        if (!done && counter != NULL && counter->content[0] != '\0') {
+            int baseline_had = counter_has_content(macro->counter_baseline, step->item);
+            int now_has = counter_has_content(counter->content, step->item);
+            if (now_has && !baseline_had) {
+                done = 1;
+            }
+        }
+        if (!done && !macro->saw_content &&
+            game_ms - macro->step_start_ms >= MACRO_POUR_FALLBACK_MS) {
+            done = 1;
+        }
     }
     if (done) {
         return next_step(macro, out) == 1 ? 1 : 0;
@@ -978,6 +1151,24 @@ static int run_deliver(kos_macro *macro, const kos_world_state *world,
                        const kos_chef *chef, const kos_macro_step *step,
                        int64_t game_ms, kos_macro_output *out)
 {
+    /* G9：游戏自己的订单结果比"从 m_activeOrders 消失"更早也更准。交付瞬间盘子
+     * 就消失、手先空，订单却可能晚一两帧才移除；只按手空判失败会把成功交付记成
+     * holding-lost。delivered 直接算完成，expired/failed 直接失败。 */
+    const kos_order_result *result = order_result_for(world, macro->plan.order_id);
+
+    if (result != NULL) {
+        if (strcmp(result->outcome, "delivered") == 0) {
+            return next_step(macro, out) == 1 ? 1 : 0;
+        }
+        if (strcmp(result->outcome, "expired") == 0) {
+            fail_step(macro, game_ms, "order-gone", "expired");
+            return -1;
+        }
+        if (strcmp(result->outcome, "failed") == 0) {
+            fail_step(macro, game_ms, "order-gone", "delivery-failed");
+            return -1;
+        }
+    }
     if (!order_present(world, macro->plan.order_id)) {
         /* 订单消失有两种：交付成功（分数上涨）或到期（分数下降/不变）。以前只看
          * "订单不在了"，过期也被当成交付，W11 实机把扣分记成过完成（G9）。 */
@@ -991,10 +1182,18 @@ static int run_deliver(kos_macro *macro, const kos_world_state *world,
         }
         return next_step(macro, out) == 1 ? 1 : 0;
     }
-    /* 手上本来拿着菜，等订单消失时菜先没了：这是完成条件被打破，不必等到超时。 */
+    /* 手上本来拿着菜，等订单消失时菜先没了：可能是交付成功（盘子先消失、结果晚到），
+     * 也可能是菜掉了。先等 grace，结果/订单消失会先返回；一直没有才判 holding-lost。 */
     if (chef != NULL && macro->entry_holding[0] != '\0' && chef->holding[0] == '\0') {
-        fail_step(macro, game_ms, "order-gone", "holding-lost");
-        return -1;
+        if (macro->empty_hand_since_ms == 0) {
+            macro->empty_hand_since_ms = game_ms;
+        }
+        if (game_ms - macro->empty_hand_since_ms >= MACRO_DELIVER_LOST_GRACE_MS) {
+            fail_step(macro, game_ms, "order-gone", "holding-lost");
+            return -1;
+        }
+    } else {
+        macro->empty_hand_since_ms = 0;
     }
     if (game_ms >= macro->deadline_ms) {
         fail_step(macro, game_ms, "order-gone", "timeout");

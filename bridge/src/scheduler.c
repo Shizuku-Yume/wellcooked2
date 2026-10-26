@@ -111,6 +111,7 @@ typedef struct {
     int open_seq;  /* 开工顺序，交付必须按它来 */
     int64_t finished_ms;
     int64_t lateness_ms;
+    int reject_event_pending; /* 启动期被拒的单，events.jsonl 还没打开，等打开后补写 */
     /* G9：完成/过期以游戏结果为准。world 订单的 DAG 走完只说明动作做完；
      * 分数增量为正才算交付，为负或动作没做完订单就消失则算过期。 */
     int outcome;
@@ -119,7 +120,6 @@ typedef struct {
     int seen_in_world;       /* 至少有一帧在世界状态里见过；防止启动空帧误判过期 */
     int outcome_pending_logged;
     int64_t outcome_check_ms; /* 交付动作 DONE 后等游戏记分的截止 */
-    int reject_event_pending; /* 启动期被拒的单，events.jsonl 还没打开，等打开后补写 */
     int task_count;
     sched_task tasks[SCHED_MAX_TASKS];
 } sched_order;
@@ -223,12 +223,16 @@ static int cook_has_pour_successor(const scheduler *s, int cook_node);
 static void release_pour_source(scheduler *s, sched_order *order,
                                 const kos_recipe_node *pour_node);
 static int pour_source_cook_task(const scheduler *s, const sched_order *order, int pour_node);
+static int cook_has_plate_successor(const scheduler *s, int cook_node);
+static void release_plate_source(scheduler *s, sched_order *order,
+                                 const kos_recipe_node *plate_node);
+static int plate_cook_task(const scheduler *s, const sched_order *order, int plate_node);
 static int sink_station_index(const kos_kitchen *kitchen);
 static int plate_count(const kos_world_state *world, const char *name);
-static void finish_order_if_done(scheduler *s, int order_index);
 static void salvage_expired_holdings(scheduler *s, const sched_order *order, int64_t now);
 static int cooker_step_matches(const kos_station *station, const char *step);
 static void recipe_feasibility_check(scheduler *s);
+static void finish_order_if_done(scheduler *s, int order_index);
 
 static int64_t now_ms(void)
 {
@@ -747,12 +751,19 @@ static const char *chef_holding(const kos_world_state *world, int chef)
     return NULL;
 }
 
-/* 消费手上物品的工序：先把料放下/开火/端去交付，手上必须是同一件东西。 */
+/*
+ * 消费手上物品的工序：先把料放下/开火/端去交付，手上必须是同一件东西。
+ * plate（把手里整份菜放到盘堆）与 place（把玉米饼放到台面当容器）都是"手上有东西
+ * 才能做"的工序；漏掉它们，厨师切完/拿到玉米饼后再也接不到下一道工序（G11 的死角，
+ * 实机 demo3 的 sushi/burrito 链都卡在这里）。pour 不在此列：pour 的宏先端锅，
+ * 派工时厨师必须是空手。
+ */
 static int op_consumes_holding(const char *op)
 {
     return op != NULL && (strcmp(op, "cook") == 0 || strcmp(op, "cut") == 0 ||
                           strcmp(op, "mix") == 0 || strcmp(op, "assemble") == 0 ||
-                          strcmp(op, "plate") == 0 || strcmp(op, "deliver") == 0);
+                          strcmp(op, "deliver") == 0 || strcmp(op, "plate") == 0 ||
+                          strcmp(op, "place") == 0);
 }
 
 /*
@@ -775,7 +786,16 @@ static int chef_can_take_task(const kos_world_state *world, int chef, const char
         if (holder >= 0 || bound) {
             return 0;
         }
+        /* 煮/煎类热菜在锅里（holder < 0），装盘需要空手去盘堆拿盘；
+         * 切好/做好的冷菜在手上（holder >= 0），由上面的 holder 判定锁定制作者。 */
+        if (strcmp(op, "plate") == 0) {
+            return 1;
+        }
         return !op_consumes_holding(op);
+    }
+    /* 热菜装盘原料在灶上（holder < 0），手上拿着别的东西的厨师不能接装盘 */
+    if (holder < 0 && strcmp(op, "plate") == 0) {
+        return 0;
     }
     /* holder < 0 说明图上没有唯一持有者（deliver 只有盘子、或两个子工序在两个人手里）：
      * 这时允许手上有东西的厨师去试，内容核对会把放错的料判成 content-mismatch。 */
@@ -2117,7 +2137,8 @@ static void handle_worker_event(scheduler *s, const kos_mq_msg *msg)
         if (msg->event == KOS_EVT_DONE) {
             if (order->status == KOS_ORDER_ACTIVE &&
                 strcmp(op, "cook") == 0 &&
-                cook_has_pour_successor(s, node)) {
+                (cook_has_pour_successor(s, node) ||
+                 cook_has_plate_successor(s, node))) {
                 task->cooker_reserved = detach_lease_keep_token(s, msg->task_id);
                 if (!task->cooker_reserved) {
                     (void)release_lease_for_task(s, msg->task_id, "resource_reclaimed",
@@ -2136,6 +2157,9 @@ static void handle_worker_event(scheduler *s, const kos_mq_msg *msg)
             task->not_before_ms = 0;
             if (strcmp(op, "pour") == 0 || strcmp(op, "plate") == 0) {
                 release_pour_source(s, order, &s->recipes.nodes[node]);
+            }
+            if (strcmp(op, "plate") == 0) {
+                release_plate_source(s, order, &s->recipes.nodes[node]);
             }
             if (strcmp(op, "deliver") == 0) {
                 const kos_world_state *world = scheduler_world(s, now);
@@ -2535,6 +2559,97 @@ static int pick_cooker_station(const scheduler *s, const char *kind, const char 
     }
     return matching > 0 ? KOS_ERR_EMPTY : KOS_ERR_MISSING;
 }
+static void release_plate_source(scheduler *s, sched_order *order,
+                                 const kos_recipe_node *plate_node)
+{
+    int cook_task_index = plate_cook_task(s, order,
+                                          (int)(plate_node - s->recipes.nodes));
+    sched_task *cook_task;
+
+    if (cook_task_index < 0) {
+        return;
+    }
+    cook_task = &order->tasks[cook_task_index];
+    if (cook_task->cooker_reserved) {
+        (void)kos_resource_release(&s->resources, "cooker");
+        cook_task->cooker_reserved = 0;
+        cook_task->station_id[0] = '\0';
+    }
+}
+
+static int cook_has_plate_successor(const scheduler *s, int cook_node)
+{
+    int pending[KOS_RECIPE_MAX_NODES];
+    unsigned char seen[KOS_RECIPE_MAX_NODES] = {0};
+    int count = 0;
+
+    pending[count++] = cook_node;
+    seen[cook_node] = 1;
+    while (count > 0) {
+        int current = pending[--count];
+        int edge;
+
+        for (edge = 0; edge < s->recipes.edge_count; edge++) {
+            int parent = s->recipes.edges[edge].to;
+
+            if (s->recipes.edges[edge].from != current || parent < 0 ||
+                parent >= s->recipes.node_count || seen[parent]) {
+                continue;
+            }
+            if (strcmp(s->recipes.nodes[parent].op, "plate") == 0) {
+                return 1;
+            }
+            seen[parent] = 1;
+            if (count < KOS_RECIPE_MAX_NODES) {
+                pending[count++] = parent;
+            }
+        }
+    }
+    return 0;
+}
+
+/* Find the unique reserved cook ancestor of a plate node; -1 means a cold plate. */
+static int plate_cook_task(const scheduler *s, const sched_order *order, int plate_node)
+{
+    int pending[KOS_RECIPE_MAX_NODES];
+    unsigned char seen[KOS_RECIPE_MAX_NODES] = {0};
+    int count = 0;
+    int found = -1;
+
+    pending[count++] = plate_node;
+    while (count > 0) {
+        int current = pending[--count];
+        int edge;
+
+        for (edge = 0; edge < s->recipes.edge_count; edge++) {
+            const kos_recipe_edge *recipe_edge = &s->recipes.edges[edge];
+            int task_index;
+            int ancestor;
+
+            if (recipe_edge->to != current || recipe_edge->from < 0 ||
+                recipe_edge->from >= s->recipes.node_count || seen[recipe_edge->from]) {
+                continue;
+            }
+            seen[recipe_edge->from] = 1;
+            task_index = order_task_by_node(order, recipe_edge->from);
+            if (task_index < 0) {
+                continue;
+            }
+            ancestor = order->tasks[task_index].node_index;
+            if (strcmp(s->recipes.nodes[ancestor].op, "cook") == 0 &&
+                order->tasks[task_index].cooker_reserved) {
+                if (found >= 0 && found != task_index) {
+                    return -2;
+                }
+                found = task_index;
+            } else if (count < KOS_RECIPE_MAX_NODES) {
+                pending[count++] = ancestor;
+            }
+        }
+    }
+    return found;
+}
+
 
 /*
  * cook 做完后把"锅"留住（令牌不还），留给倒料工序端走；倒料完成再还。

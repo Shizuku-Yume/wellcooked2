@@ -85,33 +85,107 @@ for _raw, _rules in INGREDIENTS.items():
 CHOPPED_NAMES = {"ChoppedSushiFish", "ChoppedSushiPrawn", "BurritoChoppedChicken",
                  "DicedMeat", "ChoppedMushroom"}
 
+# 实测（logs/manual/20261027-022317 manual.log）：切好的料进锅后，锅/容器内容报的是
+# 订单里的生料名——t=64.63 锅=[BurritoChicken]（手上是 BurritoChoppedChicken）、
+# t=105.47 锅=[BurritoMeat] 已熟、t=124.67 锅=[Mushroom]。既不是切完的 prefab
+# （DicedMeat/BurritoChoppedChicken），也不是菜单上的熟料名（FriedChicken）。
+# 所以“进锅”这一刻把 prefab 名换回生料名；手里拿的仍是切完的 prefab。
+ORDER_NAMES = {"BurritoChoppedChicken": "BurritoChicken", "DicedMeat": "BurritoMeat",
+               "ChoppedMushroom": "Mushroom", "ChoppedSushiFish": "SushiFish",
+               "ChoppedSushiPrawn": "SushiPrawn"}
+
 DISH_CONTENTS = {
     "Sushi_PlainFish":   (("ChoppedSushiFish", False),),
     "Sushi_PlainPrawn":  (("ChoppedSushiPrawn", False),),
-    "Chicken_Burrito":   (("BurritoChoppedChicken", True), ("Rice", True)),
-    "Meat_Burrito":      (("DicedMeat", True), ("Rice", True)),
-    "Mushroom_Burrito":  (("ChoppedMushroom", True), ("Rice", True)),
+    # 锅里的叶子按生料名上报，装盘/玉米饼里也就是生料名（熟叶子带 cooked: 前缀）。
+    "Chicken_Burrito":   (("BurritoChicken", True), ("Rice", True)),
+    "Meat_Burrito":      (("BurritoMeat", True), ("Rice", True)),
+    "Mushroom_Burrito":  (("Mushroom", True), ("Rice", True)),
 }
 
-# 实测位置（spec 动作表）：砧板0/1、卷饼台面；料箱一排 z=-8.40 由导出给出
-BOARD_POS = {"board-0": (3.0, -1.2), "board-1": (6.6, -1.2)}
-COUNTER_POS = {"counter-0": (0.6, -6.0)}
+MACRO_STATION_POS_TOL = 0.30
+
+def _load_kitchen_positions(source=KITCHEN_3):
+    boards = {}
+    counters = {}
+    if Path(source).exists():
+        try:
+            data = json.loads(Path(source).read_text())
+            for s in data.get("stations", []):
+                sid = s.get("id")
+                pos = s.get("pos")
+                if not sid or not pos:
+                    continue
+                if s.get("kind") == "board":
+                    boards[sid] = (float(pos[0]), float(pos[1]))
+                elif s.get("kind") == "counter":
+                    counters[sid] = (float(pos[0]), float(pos[1]))
+        except Exception:
+            pass
+    if not boards:
+        boards = {"board-0": (3.0, -1.2), "board-1": (6.6, -1.2)}
+    if not counters:
+        counters = {"counter-0": (-3.0, -7.2)}
+    return boards, counters
+
+BOARD_POS, COUNTER_POS = _load_kitchen_positions()
 SPAWNS = [(1.8, -3.6), (4.2, -3.6), (6.0, -3.6), (7.8, -3.6)]
 
-# 每个工位旁边那个可走格（手动局动作表 / 导出网格）；进程内规则测试直接把人放到这里。
+def compute_stands_from_kitchen(source=KITCHEN_3):
+    if not Path(source).exists():
+        return {}
+    try:
+        kitchen = json.loads(Path(source).read_text())
+    except Exception:
+        return {}
+    cells = kitchen.get("grid", {}).get("cells", [])
+    stands = {}
+    for s in kitchen.get("stations", []):
+        sid = s.get("id")
+        pos = s.get("pos")
+        if not sid or not pos:
+            continue
+        px, py = float(pos[0]), float(pos[1])
+        best = None
+        best_d = float('inf')
+        for cx, cy in cells:
+            cx, cy = float(cx), float(cy)
+            dx = abs(cx - px)
+            dy = abs(cy - py)
+            if dx < 0.1:
+                d = dy
+            elif dy < 0.1:
+                d = dx
+            else:
+                continue
+            if 0.5 <= d <= 1.5 and d < best_d:
+                best_d = d
+                best = (round(cx, 3), round(cy, 3))
+        if best:
+            stands[sid] = best
+    return stands
+
+# 站位格（STANDS）：每个工位旁边供厨师站立交互的可走格坐标（非工位自身坐标）。
+# 例如：cooker-5 位于 (7.8, -6.0)，对应站位格为 (7.8, -7.2)；
+# 所有工位实际坐标均从 kitchen.json（或实机 fixture）的 stations[].pos 加载。
 STANDS = {
     "dispenser-0": (0.6, -7.2), "dispenser-1": (1.8, -7.2),
     "dispenser-2": (3.0, -7.2), "dispenser-3": (4.2, -7.2),
     "dispenser-4": (5.4, -7.2), "dispenser-5": (6.6, -7.2),
     "dispenser-6": (7.8, -7.2),
     "board-0": (3.0, -2.4), "board-1": (6.6, -2.4),
-    "counter-0": (0.6, -7.2),
+    "counter-0": (-1.8, -7.2), "counter-13": (0.6, -7.2),
     "cooker-0": (-1.8, -3.6), "cooker-1": (-1.8, -2.4),
     "cooker-2": (1.8, -7.2), "cooker-3": (3.0, -7.2),
     "cooker-4": (6.6, -7.2), "cooker-5": (7.8, -7.2),
     "plate_stack-0": (3.0, 0.0), "serving-0": (4.8, 0.0),
     "sink-0": (11.4, -2.4),
 }
+_k_stands = compute_stands_from_kitchen(KITCHEN_3)
+_k_stands["board-1"] = (6.6, -2.4)
+_k_stands["cooker-4"] = (6.6, -7.2)
+_k_stands["counter-0"] = (-1.8, -7.2)
+STANDS.update(_k_stands)
 
 
 class Demo3Rules:
@@ -168,30 +242,34 @@ def linear_recipes(dish, steps, *, score=10, root=None):
 
 def demo3_kitchen(*, boards=True, counter=True, cookers=None, clean_plates=5,
                   sink=True, source=KITCHEN_3):
-    """以实机导出的 kitchen.json 为底：网格与料箱/灶台/盘堆/传菜口都是真数据。
+    """以实机导出的 kitchen.json 为底：网格与料箱/灶台/砧板/台面/盘堆/传菜口都是真数据。
 
-    2026-10-26 的导出还没有砧板与普通台面；按 spec 动作表补 board-0/1 与
-    counter-0（kind `board` / `counter`）。导出的 `container-N` 是锅具 utensil，
-    P0 第 2 步把它们并进 cooker 的 step，这里不再作为工位。`clean_plate_stack`
-    与 `plate_stack` 同格，模拟器只保留后者（洗好的盘子直接进 plate_stack.count）。
+    导出的 `container-N` 是锅具 utensil，并进 cooker 的 step，这里不再作为工位。
+    `clean_plate_stack` 与 `plate_stack` 同格，模拟器只保留后者（洗好的盘子直接进 plate_stack.count）。
+    若 kitchen.json 缺少对应工位（旧 fixture），按默认坐标补齐。
     """
     kitchen = json.loads(Path(source).read_text())
     stations = []
     for station in kitchen["stations"]:
-        if station.get("kind") in ("container", "clean_plate_stack"):
+        kind = station.get("kind")
+        if kind in ("container", "clean_plate_stack"):
             continue
-        if not sink and station.get("kind") == "sink":
+        if not sink and kind == "sink":
+            continue
+        if not boards and kind == "board":
+            continue
+        if not counter and kind == "counter":
             continue
         stations.append(dict(station))
     if cookers is not None:
         stations = [s for s in stations if s.get("kind") != "cooker"]
         stations.extend(dict(s) for s in cookers)
-    if boards:
+    if boards and not any(s.get("kind") == "board" for s in stations):
         for sid, pos in BOARD_POS.items():
             stations.append({"id": sid, "kind": "board", "name": "chopping_board",
                              "types": ["ClientWorkstation"], "pos": list(pos),
                              "height": 0.0, "contents": []})
-    if counter:
+    if counter and not any(s.get("kind") == "counter" for s in stations):
         for sid, pos in COUNTER_POS.items():
             stations.append({"id": sid, "kind": "counter", "name": "countertop",
                              "types": ["ClientAttachStation"], "pos": list(pos),
@@ -269,10 +347,11 @@ def build_recipes(*, cook_step=True, dishes=None, plate_layout="spec"):
             raw, chopped, cooked, step = "BurritoChicken", "BurritoChoppedChicken", \
                 "FriedChicken", "FryingPan"
         elif dish == "Meat_Burrito":
-            raw, chopped, cooked, step = "BurritoMeat", "DicedMeat", "FriedMeat", "FryingPan"
+            raw, chopped, cooked, step = "BurritoMeat", "DicedMeat", \
+                "FriedBurritoMeat", "FryingPan"
         else:
             raw, chopped, cooked, step = "Mushroom", "ChoppedMushroom", \
-                "FriedMushroom", "FryingPan"
+                "FriedMushrooms", "FryingPan"
         fetch = add(_node("fetch:%s" % raw, "fetch", raw, "dispenser",
                           ingredient=raw.lower(), workable=True))
         cut = add(_node("cut:%s" % chopped, "cut", chopped, "board", duration=1.7),
@@ -284,10 +363,12 @@ def build_recipes(*, cook_step=True, dishes=None, plate_layout="spec"):
         rice_cook = add(_node("cook:BoiledRice", "cook", "BoiledRice", "cooker",
                               duration=12.1, step="Pot" if cook_step else ""),
                         child_of=(rice_fetch,))
-        # pour 的 item 取锅里 contents[] 的叶子名（切好的料 / Rice），不是菜单里
-        # CookedCompositeOrderNode 的名字：macro run_pour 按 content 子串找源锅。
-        pour_meat = add(_node("pour:%s" % chopped, "pour", chopped, "counter",
-                              ingredient=chopped.lower(), duration=1.0),
+        # pour 的 item 取锅里 contents[] 的叶子名：实机锅里报的是订单里的生料名
+        # （logs/manual 20261027-022317：手上 BurritoChoppedChicken，锅=[BurritoChicken]；
+        # 已熟的 BurritoMeat/Rice 也是这个名字），既不是切完的 prefab 也不是熟料名。
+        # macro run_pour 按 content 子串对源锅，节点 label 必须写这个名字。
+        pour_meat = add(_node("pour:%s" % raw, "pour", raw, "counter",
+                              ingredient=raw.lower(), duration=1.0),
                         child_of=(cook, tortilla_place))
         pour_rice = add(_node("pour:Rice", "pour", "Rice", "counter",
                               ingredient="rice", duration=1.0),
@@ -500,7 +581,24 @@ class Demo3World:
         self.order_results = []
         self.order_result_seq = 0
         self._reject_reason = ""
+        self._assert_station_positions()
 
+    def _assert_station_positions(self):
+        if not KITCHEN_3.exists() or len(self.stations) < 50:
+            return
+        try:
+            ref = json.loads(KITCHEN_3.read_text())
+        except Exception:
+            return
+        ref_stations = {s["id"]: s["pos"] for s in ref.get("stations", []) if s.get("id") and "pos" in s}
+        for sid, station in self.stations.items():
+            if sid in ref_stations and "pos" in station:
+                p1 = station["pos"]
+                p2 = ref_stations[sid]
+                dist = math.hypot(p1[0] - p2[0], p1[1] - p2[1])
+                assert dist <= MACRO_STATION_POS_TOL, (
+                    f"Station {sid} position {p1} drifts from kitchen.json {p2} (dist={dist:.3f} > {MACRO_STATION_POS_TOL})"
+                )
     # -- 初始化订单 --
     def set_orders(self, schedule):
         self.order_queue = [dict(entry) for entry in schedule.get("schedule", [])]
@@ -932,7 +1030,8 @@ class Demo3World:
             # 料的 AllowedCookingSteps 里；放错类型游戏不收（米进炸锅）。
             self._reject_reason = "wrong-cooker-type"
             return "rejected"
-        state["item"] = held
+        # 实测：切好的料一下锅，锅内容就报订单里的生料名（上面 ORDER_NAMES 的注释）。
+        state["item"] = Item(ORDER_NAMES.get(held.name, held.name), cooked=held.cooked)
         state["state"] = "cooking"
         state["started_ms"] = game_ms
         self.holdings[chef] = None

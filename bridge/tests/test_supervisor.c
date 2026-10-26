@@ -132,6 +132,17 @@ static int wait_log(const char *path, const char *needle, int timeout_ms)
     return log_contains(path, needle);
 }
 
+static int wait_file_exists(const char *path, int timeout_ms)
+{
+    int64_t deadline = now_ms() + timeout_ms;
+    while (now_ms() < deadline) {
+        if (access(path, F_OK) == 0) {
+            return 1;
+        }
+        sleep_ms(10);
+    }
+    return access(path, F_OK) == 0;
+}
 static int json_long(const char *start, const char *key, long *out)
 {
     char needle[48];
@@ -686,8 +697,8 @@ static void test_lifecycle(void)
            "second_worker_running");
 
     object_paths(r.state, r.sem, state_path, sizeof state_path, sem_path, sizeof sem_path);
-    expect(access(state_path, F_OK) == 0, "bridge_creates_shm_segment");
-    expect(access(sem_path, F_OK) == 0, "bridge_creates_ready_semaphore");
+    expect(wait_file_exists(state_path, 2000), "bridge_creates_shm_segment");
+    expect(wait_file_exists(sem_path, 2000), "bridge_creates_ready_semaphore");
     expect(wait_log(supervisor_log, "health_tick", 2000), "health_tick_logged");
     expect(log_contains(scheduler_log, "shm_attached"), "scheduler_attaches_shm");
     expect(log_contains(scheduler_log, "world_snapshot"), "scheduler_reads_world_state");

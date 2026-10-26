@@ -31,6 +31,13 @@
 #define KOS_NAV_DEFAULT_NAME "/kitchenos_nav"
 #define KOS_NAV_DEFAULT_SEM_NAME "/kitchenos_nav_lock"
 #define KOS_NAV_READ_ATTEMPTS 64
+/* 卡住与重规划判定窗口：navd 发现位置未变化达到该时长则触发一次重规划；
+ * 连续达到次数上限后置 KOS_NAV_BLOCKED 供 Worker 上报 Scheduler 改派。
+ * 共享此常量以确保宏动作层（macro.c）的超时计算严格覆盖判定窗口。 */
+#define KOS_NAV_STUCK_MS 2000
+#define KOS_NAV_STUCK_LIMIT 3
+#define KOS_NAV_BLOCKED_WINDOW_MS ((int64_t)KOS_NAV_STUCK_LIMIT * KOS_NAV_STUCK_MS)
+
 
 /* 计划槽状态。数值写进共享内存，增删要同时改 navd 与 Worker。 */
 typedef enum {

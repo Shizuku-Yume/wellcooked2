@@ -36,6 +36,7 @@
 
 #include <kitchenos/kitchen.h>
 #include <kitchenos/shm.h>
+#include <kitchenos/log.h>
 
 #define KOS_MACRO_MAX_STEPS 8
 #define KOS_MACRO_DETAIL_MAX 96
@@ -94,6 +95,9 @@ typedef struct {
     int face_sent;
     int64_t face_sent_ms;
     int saw_content;                   /* chop/start_cook 曾看到工位上有料 */
+    /* chop：第一次看到板上内容时核对过"是不是这一份料"。切完游戏会把物体换成
+     * Chopped…/Diced… 名字，之后不能再按原始料名核对（G13 只抓放错料）。 */
+    int content_checked;
     char entry_holding[KOS_SHM_NAME_MAX];
     int clean_baseline_valid;
     int32_t clean_baseline;
@@ -104,7 +108,12 @@ typedef struct {
      * 分数上涨是交付，下降是过期；不变说明整局分数没有上报（离线模拟器）。 */
     int64_t score_base;
     int score_base_valid;
+    /* DELIVER 步手变空的时刻：盘子交付时先消失、订单结果晚几百毫秒才到，
+     * 先等结果/订单消失，超过 grace 才判 holding-lost。 */
+    int64_t empty_hand_since_ms;
+    char counter_baseline[KOS_SHM_NAME_MAX];
     char fail_detail[KOS_MACRO_DETAIL_MAX];
+    kos_log *log;                      /* 模块 logger，NULL 时不输出 */
 } kos_macro;
 
 const char *kos_macro_kind_name(int kind);

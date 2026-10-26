@@ -62,7 +62,8 @@ namespace WellCooked
             object flow = WorldState.Flow();
             object team = WorldState.Team();
 
-            var b = new JsonBuilder(2048);
+            // 满帧约 7–9 KB（递归 contents）；一次分配到位，别每帧让 StringBuilder 翻倍扩容。
+            var b = new JsonBuilder(8192);
             b.Obj();
             b.Field("type", MsgType.StateUpdate);
             b.FieldInt("timestamp", TcpLink.UnixSeconds());
@@ -110,13 +111,10 @@ namespace WellCooked
         {
             var timer = flow == null ? null : WorldState.Get(flow, "RoundTimer");
             var left = timer == null ? null : WorldState.Get(timer, "m_timeLeft");
-            // 上限先读 flow（`wellcooked-state.json` 的 timer.limit 一直用这个来源），
-            // 再退回 ServerRoundTimer.m_timeLimit。
-            var limit = flow == null ? null : WorldState.Get(flow, "m_timeLimit");
-            if (limit == null && timer != null)
-            {
-                limit = WorldState.Get(timer, "m_timeLimit");
-            }
+            // 上限在 ServerRoundTimer.m_timeLimit（字段）；flow 上的 m_timeLimit **不存在**
+            // （实机 LogOutput: ServerCampaignFlowController.m_timeLimit 属性/字段/方法三连
+            // 未找到），去问它只会多一行反射未命中。
+            var limit = timer == null ? null : WorldState.Get(timer, "m_timeLimit");
             if (left == null || limit == null || ToDouble(limit) <= 0.0)
             {
                 return; // 未初始化/读不到就不报，别给调度侧一个 0 秒的局
@@ -258,7 +256,7 @@ namespace WellCooked
             _resourcesAt = now;
             _resourceCount = 0;
 
-            var b = new JsonBuilder(4096);
+            var b = new JsonBuilder(8192);
             b.Obj();
             // 先报"工位"，再报"工位上/手里的东西"；covered 里是已经报过的物体，
             // 后面的 container_<N> 只捡剩下的（掉在地上、没人拿的容器）。
@@ -456,16 +454,15 @@ namespace WellCooked
                         var itemGo = item.gameObject;
                         var contents = Kitchen.ItemContents(itemGo);
                         b.Field("item", itemGo.name);
-                        var workableItem = itemGo.GetComponent("ClientWorkableItem");
-                        if (workableItem != null)
+                        // 实机这一版没有 `ClientWorkableItem.GetProgress()`（LogOutput 里
+                        // 属性/字段都没找到，Invoke 吞掉异常返回 null，进度永远缺字段，
+                        // run_chop 就一直等到超时）。按 m_progress / (m_stages-1) 读，
+                        // 与 Kitchen.WorkState 共用同一份实现。
+                        bool finished;
+                        double progress = Kitchen.WorkableProgress(itemGo, out finished);
+                        if (progress >= 0.0)
                         {
-                            // 游戏自己的 `GetProgress()` 就是 `m_progress / (m_stages - 1)`
-                            // （ClientWorkableItem.GetProgress），不必再猜字段类型。
-                            var progressValue = WorldState.Invoke(workableItem, "GetProgress");
-                            if (progressValue != null)
-                            {
-                                b.FieldNum("progress", Clamp01(ToDouble(progressValue)));
-                            }
+                            b.FieldNum("progress", progress);
                         }
                         WriteContents(b, "contents", contents);
                         WriteContentCompat(b, contents);
@@ -609,7 +606,8 @@ namespace WellCooked
         /// <summary>
         /// 台面（G5）：只报**上面有东西**的普通工位。空台面是静态的，位置在
         /// `kitchen.json` 里；运行时帧里没有 `counter_N` 就等于空闲。
-        /// 灶台/砧板/水槽/盘堆上的东西已经由各自的键报过，这里跳过。
+        /// 哪些算普通台面由 `Kitchen.IsPlainCounter` 一条规则决定——`WorldState`
+        /// 导出 kitchen.json 用的也是它，两处规则必须同源。
         /// </summary>
         private static void AppendCounters(JsonBuilder b, HashSet<int> covered)
         {
@@ -617,7 +615,7 @@ namespace WellCooked
             foreach (var found in WorldState.FindAll("ClientAttachStation"))
             {
                 var unity = found as Component;
-                if (unity == null || IsDedicatedStation(unity.gameObject))
+                if (unity == null || !Kitchen.IsPlainCounter(unity.gameObject.name))
                 {
                     continue;
                 }
