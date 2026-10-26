@@ -60,8 +60,12 @@ namespace WellCooked
 
         /// <summary>
         /// 普通台面（卷饼当容器的地方）：名字是 `countertop_*` 且不是砧板。
-        /// 与 `scripts/export-kitchen.py` 的 `is_plain_counter` 同一条规则；组件用
-        /// `ClientAttachStation`（实测砧板上也是它，所以必须靠名字再筛一次）。
+        /// 与 `scripts/export-kitchen.py` 的 `is_plain_counter` 同一条规则。
+        /// 组件是 `ClientAttachStation`：游戏 `MultiplayerController` 给每个带
+        /// `AttachStation` 的物体加一对 `ServerAttachStation`/`ClientAttachStation`
+        /// （`AddSynchronisedType(typeof(AttachStation), ...)`），`AttachStation` 就是
+        /// "能放东西的表面"。实机对象名见 `logs/manual/20261027-022317/manual.log`
+        /// （`面前=「countertop_01_standard_wood」`，玉米饼放在 (0.60,-6.00) 那张）。
         /// </summary>
         public static bool IsPlainCounter(string name)
         {

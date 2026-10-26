@@ -1,108 +1,612 @@
 {
+  "t": 35.32,
   "scene": "s_wellcooked_demo_3",
-  "t": 0,
-  "_derived": "离线夹具（不是游戏导出）：坐标/料名/菜单取自 levels/wellcooked_demo/layout_3.tsv （格坐标 ×0.6 m，料名在 ingredient 列）与 spec W11 P0 第 1 步的实测动作表；组件类型按反编译的 StationTypes 生成，只保留 export-kitchen.py 会读的字段。等实机 `menu=1` 的 wellcooked-{state,menu,terrain}.json 导出后用它替换。",
-  "stations": [
+  "chefs": [
     {
-      "type": "ClientAttachStation",
-      "name": "countertop_01_standard_wood",
-      "pos": [
-        -3.0,
-        -8.4
-      ],
-      "height": 1.0
-    },
-    {
-      "type": "ClientAttachStation",
-      "name": "countertop_01_standard_wood",
-      "pos": [
-        -1.8,
-        -8.4
-      ],
-      "height": 1.0
-    },
-    {
-      "type": "ClientAttachStation",
-      "name": "countertop_01_standard_wood",
-      "pos": [
-        -0.6,
-        -8.4
-      ],
-      "height": 1.0
-    },
-    {
-      "type": "ClientPickupItemSpawner",
-      "name": "dispenser_crate_01",
-      "pos": [
-        0.6,
-        -8.4
-      ],
-      "height": 0.0,
-      "gives": "SushiPrawn",
-      "prefab_components": [
-        "WorkableItem"
-      ]
-    },
-    {
-      "type": "ClientPickupItemSpawner",
-      "name": "dispenser_crate_01",
-      "pos": [
-        1.8,
-        -8.4
-      ],
-      "height": 0.0,
-      "gives": "Tortilla",
-      "prefab_components": []
-    },
-    {
-      "type": "ClientPickupItemSpawner",
-      "name": "dispenser_crate_01",
-      "pos": [
-        3.0,
-        -8.4
-      ],
-      "height": 0.0,
-      "gives": "Rice",
-      "prefab_components": []
-    },
-    {
-      "type": "ClientPickupItemSpawner",
-      "name": "dispenser_crate_01",
+      "player": "One",
+      "local": true,
       "pos": [
         4.2,
-        -8.4
+        -3.6
       ],
       "height": 0.0,
-      "gives": "BurritoChicken",
-      "prefab_components": [
-        "WorkableItem"
-      ]
+      "facing": [
+        0.0,
+        1.0
+      ],
+      "held": ""
     },
     {
-      "type": "ClientPickupItemSpawner",
-      "name": "dispenser_crate_01",
+      "player": "One",
+      "local": true,
       "pos": [
-        5.4,
-        -8.4
+        1.8,
+        -3.6
       ],
       "height": 0.0,
-      "gives": "BurritoMeat",
-      "prefab_components": [
-        "WorkableItem"
+      "facing": [
+        0.0,
+        1.0
+      ],
+      "held": ""
+    }
+  ],
+  "score": 0,
+  "orders": [
+    {
+      "id": "1",
+      "remaining": 112.843,
+      "lifetime": 120.0
+    },
+    {
+      "id": "2",
+      "remaining": 112.86,
+      "lifetime": 120.0
+    },
+    {
+      "id": "3",
+      "remaining": 118.864,
+      "lifetime": 120.0
+    }
+  ],
+  "recipes": [
+    {
+      "dish": "Sushi_PlainFish",
+      "score": 20,
+      "steps": [
+        {
+          "node": "Sushi_PlainFish",
+          "type": "CompositeOrderNode",
+          "children": [
+            {
+              "node": "SushiFish",
+              "type": "IngredientOrderNode",
+              "plate": "Plate"
+            }
+          ]
+        }
       ]
     },
     {
-      "type": "ClientPickupItemSpawner",
-      "name": "dispenser_crate_01",
+      "dish": "Sushi_PlainPrawn",
+      "score": 20,
+      "steps": [
+        {
+          "node": "Sushi_PlainPrawn",
+          "type": "CompositeOrderNode",
+          "children": [
+            {
+              "node": "SushiPrawn",
+              "type": "IngredientOrderNode",
+              "plate": "Plate"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "dish": "Chicken_Burrito",
+      "score": 80,
+      "steps": [
+        {
+          "node": "Chicken_Burrito",
+          "type": "CompositeOrderNode",
+          "children": [
+            {
+              "node": "Tortilla",
+              "type": "IngredientOrderNode",
+              "plate": "Plate"
+            },
+            {
+              "node": "BoiledRice",
+              "type": "CookedCompositeOrderNode",
+              "cook": "Pot",
+              "children": [
+                {
+                  "node": "Rice",
+                  "type": "IngredientOrderNode"
+                }
+              ]
+            },
+            {
+              "node": "FriedChicken",
+              "type": "CookedCompositeOrderNode",
+              "cook": "FryingPan",
+              "children": [
+                {
+                  "node": "BurritoChicken",
+                  "type": "IngredientOrderNode"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "timer": {
+    "elapsed": 7.168,
+    "round": 7.168,
+    "left": 113.0,
+    "limit": null
+  },
+  "cooking": [],
+  "stations": [
+    {
+      "type": "ClientIngredientContainer",
+      "name": "equipment_plate_01",
+      "pos": [
+        3.0,
+        1.2
+      ],
+      "height": 1.6,
+      "contents": []
+    },
+    {
+      "type": "ClientIngredientContainer",
+      "name": "equipment_plate_01",
+      "pos": [
+        3.0,
+        1.2
+      ],
+      "height": 1.5,
+      "contents": []
+    },
+    {
+      "type": "ClientIngredientContainer",
+      "name": "equipment_plate_01",
+      "pos": [
+        3.0,
+        1.2
+      ],
+      "height": 1.4,
+      "contents": []
+    },
+    {
+      "type": "ClientIngredientContainer",
+      "name": "equipment_plate_01",
+      "pos": [
+        3.0,
+        1.2
+      ],
+      "height": 1.3,
+      "contents": []
+    },
+    {
+      "type": "ClientIngredientContainer",
+      "name": "equipment_plate_01",
+      "pos": [
+        3.0,
+        1.2
+      ],
+      "height": 1.2,
+      "contents": []
+    },
+    {
+      "type": "ClientIngredientContainer",
+      "name": "equipment_plate_01",
+      "pos": [
+        3.0,
+        1.2
+      ],
+      "height": 1.1,
+      "contents": []
+    },
+    {
+      "type": "ClientIngredientContainer",
+      "name": "equipment_plate_01",
+      "pos": [
+        3.0,
+        1.2
+      ],
+      "height": 1.0,
+      "contents": []
+    },
+    {
+      "type": "ClientIngredientContainer",
+      "name": "equipment_plate_01",
+      "pos": [
+        3.0,
+        1.2
+      ],
+      "height": 0.9,
+      "contents": []
+    },
+    {
+      "type": "ClientIngredientContainer",
+      "name": "equipment_plate_01",
+      "pos": [
+        3.0,
+        1.2
+      ],
+      "height": 0.8,
+      "contents": []
+    },
+    {
+      "type": "ClientIngredientContainer",
+      "name": "equipment_plate_01",
+      "pos": [
+        3.0,
+        1.2
+      ],
+      "height": 0.7,
+      "contents": []
+    },
+    {
+      "type": "ClientIngredientContainer",
+      "name": "equipment_plate_01",
+      "pos": [
+        3.0,
+        1.2
+      ],
+      "height": 0.6,
+      "contents": []
+    },
+    {
+      "type": "ClientIngredientContainer",
+      "name": "equipment_plate_01",
+      "pos": [
+        3.0,
+        1.2
+      ],
+      "height": 0.5,
+      "contents": []
+    },
+    {
+      "type": "ClientIngredientContainer",
+      "name": "FrierBasket",
+      "pos": [
+        -3.0,
+        -2.4
+      ],
+      "height": 0.27,
+      "contents": []
+    },
+    {
+      "type": "ClientIngredientContainer",
+      "name": "FrierBasket",
+      "pos": [
+        -3.0,
+        -3.6
+      ],
+      "height": 0.27,
+      "contents": []
+    },
+    {
+      "type": "ClientIngredientContainer",
+      "name": "utensil_pot_01",
+      "pos": [
+        7.8,
+        -6.0
+      ],
+      "height": 0.6,
+      "contents": []
+    },
+    {
+      "type": "ClientIngredientContainer",
+      "name": "utensil_pot_01",
       "pos": [
         6.6,
-        -8.4
+        -6.0
+      ],
+      "height": 0.6,
+      "contents": []
+    },
+    {
+      "type": "ClientIngredientContainer",
+      "name": "utensil_frying_pan_01",
+      "pos": [
+        3.0,
+        -6.0
+      ],
+      "height": 0.6,
+      "contents": []
+    },
+    {
+      "type": "ClientIngredientContainer",
+      "name": "utensil_frying_pan_01",
+      "pos": [
+        1.8,
+        -6.0
+      ],
+      "height": 0.6,
+      "contents": []
+    },
+    {
+      "type": "ClientPlateStation",
+      "name": "workstation_plate_station",
+      "pos": [
+        4.8,
+        1.2
       ],
       "height": 0.0,
-      "gives": "Mushroom",
-      "prefab_components": [
-        "WorkableItem"
-      ]
+      "contents": []
+    },
+    {
+      "type": "ClientWashingStation",
+      "name": "WashingPart",
+      "pos": [
+        12.6,
+        -2.39
+      ],
+      "height": 0.0,
+      "contents": []
+    },
+    {
+      "type": "ClientCleanPlateStack",
+      "name": "CleanPlateStack",
+      "pos": [
+        3.0,
+        1.2
+      ],
+      "height": 0.5,
+      "contents": []
+    },
+    {
+      "type": "ClientCookingStation",
+      "name": "FryingStation",
+      "pos": [
+        -3.0,
+        -2.4
+      ],
+      "height": 0.0,
+      "contents": []
+    },
+    {
+      "type": "ClientCookingStation",
+      "name": "FryingStation",
+      "pos": [
+        -3.0,
+        -3.6
+      ],
+      "height": 0.0,
+      "contents": []
+    },
+    {
+      "type": "ClientCookingStation",
+      "name": "workstation_cooker_01",
+      "pos": [
+        7.8,
+        -6.0
+      ],
+      "height": 0.0,
+      "contents": []
+    },
+    {
+      "type": "ClientCookingStation",
+      "name": "workstation_cooker_01",
+      "pos": [
+        6.6,
+        -6.0
+      ],
+      "height": 0.0,
+      "contents": []
+    },
+    {
+      "type": "ClientCookingStation",
+      "name": "workstation_cooker_01",
+      "pos": [
+        3.0,
+        -6.0
+      ],
+      "height": 0.0,
+      "contents": []
+    },
+    {
+      "type": "ClientCookingStation",
+      "name": "workstation_cooker_01",
+      "pos": [
+        1.8,
+        -6.0
+      ],
+      "height": 0.0,
+      "contents": []
+    },
+    {
+      "type": "ClientPlate",
+      "name": "equipment_plate_01",
+      "pos": [
+        3.0,
+        1.2
+      ],
+      "height": 1.6,
+      "contents": []
+    },
+    {
+      "type": "ClientPlate",
+      "name": "equipment_plate_01",
+      "pos": [
+        3.0,
+        1.2
+      ],
+      "height": 1.5,
+      "contents": []
+    },
+    {
+      "type": "ClientPlate",
+      "name": "equipment_plate_01",
+      "pos": [
+        3.0,
+        1.2
+      ],
+      "height": 1.4,
+      "contents": []
+    },
+    {
+      "type": "ClientPlate",
+      "name": "equipment_plate_01",
+      "pos": [
+        3.0,
+        1.2
+      ],
+      "height": 1.3,
+      "contents": []
+    },
+    {
+      "type": "ClientPlate",
+      "name": "equipment_plate_01",
+      "pos": [
+        3.0,
+        1.2
+      ],
+      "height": 1.2,
+      "contents": []
+    },
+    {
+      "type": "ClientPlate",
+      "name": "equipment_plate_01",
+      "pos": [
+        3.0,
+        1.2
+      ],
+      "height": 1.1,
+      "contents": []
+    },
+    {
+      "type": "ClientPlate",
+      "name": "equipment_plate_01",
+      "pos": [
+        3.0,
+        1.2
+      ],
+      "height": 1.0,
+      "contents": []
+    },
+    {
+      "type": "ClientPlate",
+      "name": "equipment_plate_01",
+      "pos": [
+        3.0,
+        1.2
+      ],
+      "height": 0.9,
+      "contents": []
+    },
+    {
+      "type": "ClientPlate",
+      "name": "equipment_plate_01",
+      "pos": [
+        3.0,
+        1.2
+      ],
+      "height": 0.8,
+      "contents": []
+    },
+    {
+      "type": "ClientPlate",
+      "name": "equipment_plate_01",
+      "pos": [
+        3.0,
+        1.2
+      ],
+      "height": 0.7,
+      "contents": []
+    },
+    {
+      "type": "ClientPlate",
+      "name": "equipment_plate_01",
+      "pos": [
+        3.0,
+        1.2
+      ],
+      "height": 0.6,
+      "contents": []
+    },
+    {
+      "type": "ClientPlate",
+      "name": "equipment_plate_01",
+      "pos": [
+        3.0,
+        1.2
+      ],
+      "height": 0.5,
+      "contents": []
+    },
+    {
+      "type": "ClientCookableContainer",
+      "name": "FrierBasket",
+      "pos": [
+        -3.0,
+        -2.4
+      ],
+      "height": 0.27,
+      "step": "DeepFatFryer",
+      "contents": []
+    },
+    {
+      "type": "ClientCookableContainer",
+      "name": "FrierBasket",
+      "pos": [
+        -3.0,
+        -3.6
+      ],
+      "height": 0.27,
+      "step": "DeepFatFryer",
+      "contents": []
+    },
+    {
+      "type": "ClientCookableContainer",
+      "name": "utensil_pot_01",
+      "pos": [
+        7.8,
+        -6.0
+      ],
+      "height": 0.6,
+      "step": "Pot",
+      "contents": []
+    },
+    {
+      "type": "ClientCookableContainer",
+      "name": "utensil_pot_01",
+      "pos": [
+        6.6,
+        -6.0
+      ],
+      "height": 0.6,
+      "step": "Pot",
+      "contents": []
+    },
+    {
+      "type": "ClientCookableContainer",
+      "name": "utensil_frying_pan_01",
+      "pos": [
+        3.0,
+        -6.0
+      ],
+      "height": 0.6,
+      "step": "FryingPan",
+      "contents": []
+    },
+    {
+      "type": "ClientCookableContainer",
+      "name": "utensil_frying_pan_01",
+      "pos": [
+        1.8,
+        -6.0
+      ],
+      "height": 0.6,
+      "step": "FryingPan",
+      "contents": []
+    },
+    {
+      "type": "ClientWorkstation",
+      "name": "countertop_01_chopping_board_wood_no_edge",
+      "pos": [
+        6.6,
+        -1.2
+      ],
+      "height": 0.0,
+      "contents": []
+    },
+    {
+      "type": "ClientWorkstation",
+      "name": "countertop_01_chopping_board_wood_no_edge",
+      "pos": [
+        3.0,
+        -1.2
+      ],
+      "height": 0.0,
+      "contents": []
     },
     {
       "type": "ClientPickupItemSpawner",
@@ -114,8 +618,249 @@
       "height": 0.0,
       "gives": "SushiFish",
       "prefab_components": [
-        "WorkableItem"
-      ]
+        "Transform",
+        "BoxCollider",
+        "PhysicalAttachment",
+        "CarryableItem",
+        "TeleportableItem",
+        "HandlePickupReferral",
+        "WorkableItem",
+        "PlacementLayerSwapper",
+        "PlacementCollisionSwapper",
+        "IngredientDisposalBehaviour",
+        "AnticipateInteractionHighlight",
+        "ThrowableItem",
+        "CatchableItem",
+        "AttachmentWindReceiver",
+        "LimitedQuantityItem",
+        "LimitedFromOrderComplexity"
+      ],
+      "cook_steps": [],
+      "contents": []
+    },
+    {
+      "type": "ClientPickupItemSpawner",
+      "name": "dispenser_crate_01",
+      "pos": [
+        6.6,
+        -8.4
+      ],
+      "height": 0.0,
+      "gives": "Mushroom",
+      "prefab_components": [
+        "Transform",
+        "SphereCollider",
+        "PhysicalAttachment",
+        "CarryableItem",
+        "TeleportableItem",
+        "HandlePickupReferral",
+        "WorkableItem",
+        "IngredientMeshVisibility",
+        "PlacementLayerSwapper",
+        "PlacementCollisionSwapper",
+        "IngredientDisposalBehaviour",
+        "AnticipateInteractionHighlight",
+        "ThrowableItem",
+        "CatchableItem",
+        "AttachmentWindReceiver",
+        "LimitedQuantityItem",
+        "LimitedFromOrderComplexity"
+      ],
+      "cook_steps": [],
+      "contents": []
+    },
+    {
+      "type": "ClientPickupItemSpawner",
+      "name": "dispenser_crate_01",
+      "pos": [
+        5.4,
+        -8.4
+      ],
+      "height": 0.0,
+      "gives": "BurritoMeat",
+      "prefab_components": [
+        "Transform",
+        "BoxCollider",
+        "PhysicalAttachment",
+        "CarryableItem",
+        "TeleportableItem",
+        "HandlePickupReferral",
+        "WorkableItem",
+        "PlacementLayerSwapper",
+        "PlacementCollisionSwapper",
+        "IngredientDisposalBehaviour",
+        "AnticipateInteractionHighlight",
+        "ThrowableItem",
+        "CatchableItem",
+        "AttachmentWindReceiver",
+        "LimitedQuantityItem",
+        "LimitedFromOrderComplexity"
+      ],
+      "cook_steps": [],
+      "contents": []
+    },
+    {
+      "type": "ClientPickupItemSpawner",
+      "name": "dispenser_crate_01",
+      "pos": [
+        4.2,
+        -8.4
+      ],
+      "height": 0.0,
+      "gives": "BurritoChicken",
+      "prefab_components": [
+        "Transform",
+        "CapsuleCollider",
+        "PhysicalAttachment",
+        "CarryableItem",
+        "TeleportableItem",
+        "HandlePickupReferral",
+        "WorkableItem",
+        "PlacementLayerSwapper",
+        "PlacementCollisionSwapper",
+        "IngredientDisposalBehaviour",
+        "AnticipateInteractionHighlight",
+        "ThrowableItem",
+        "CatchableItem",
+        "AttachmentWindReceiver",
+        "LimitedQuantityItem",
+        "LimitedFromOrderComplexity"
+      ],
+      "cook_steps": [],
+      "contents": []
+    },
+    {
+      "type": "ClientPickupItemSpawner",
+      "name": "dispenser_crate_01",
+      "pos": [
+        3.0,
+        -8.4
+      ],
+      "height": 0.0,
+      "gives": "Rice",
+      "prefab_components": [
+        "Transform",
+        "BoxCollider",
+        "PhysicalAttachment",
+        "CarryableItem",
+        "TeleportableItem",
+        "HandlePickupReferral",
+        "IngredientPropertiesComponent",
+        "PlacementLayerSwapper",
+        "IngredientToContainerBehaviour",
+        "PlacementCollisionSwapper",
+        "IngredientDisposalBehaviour",
+        "IngredientContentGUI",
+        "CookableProperties",
+        "AnticipateInteractionHighlight",
+        "ThrowableItem",
+        "CatchableItem",
+        "AttachmentWindReceiver",
+        "LimitedQuantityItem",
+        "LimitedFromOrderComplexity"
+      ],
+      "cook_steps": [
+        "Pot"
+      ],
+      "contents": []
+    },
+    {
+      "type": "ClientPickupItemSpawner",
+      "name": "dispenser_crate_01",
+      "pos": [
+        1.8,
+        -8.4
+      ],
+      "height": 0.0,
+      "gives": "Tortilla",
+      "prefab_components": [
+        "Transform",
+        "CapsuleCollider",
+        "PhysicalAttachment",
+        "CarryableItem",
+        "TeleportableItem",
+        "HandlePickupReferral",
+        "IngredientMeshVisibility",
+        "PlacementLayerSwapper",
+        "HandlePlacementReferral",
+        "PreparationContainer",
+        "IngredientContainer",
+        "IngredientContentGUI",
+        "PlacementCollisionSwapper",
+        "IngredientDisposalBehaviour",
+        "AnticipateInteractionHighlight",
+        "ThrowableItem",
+        "CatchableItem",
+        "AttachmentWindReceiver",
+        "LimitedQuantityItem",
+        "LimitedFromOrderComplexity"
+      ],
+      "cook_steps": [],
+      "contents": []
+    },
+    {
+      "type": "ClientPickupItemSpawner",
+      "name": "dispenser_crate_01",
+      "pos": [
+        0.6,
+        -8.4
+      ],
+      "height": 0.0,
+      "gives": "SushiPrawn",
+      "prefab_components": [
+        "Transform",
+        "BoxCollider",
+        "PhysicalAttachment",
+        "CarryableItem",
+        "TeleportableItem",
+        "HandlePickupReferral",
+        "PlacementLayerSwapper",
+        "PlacementCollisionSwapper",
+        "IngredientDisposalBehaviour",
+        "CookableProperties",
+        "AnticipateInteractionHighlight",
+        "ThrowableItem",
+        "CatchableItem",
+        "AttachmentWindReceiver",
+        "WorkableItem",
+        "LimitedQuantityItem",
+        "LimitedFromOrderComplexity"
+      ],
+      "cook_steps": [
+        "Pot",
+        "FryingPan"
+      ],
+      "contents": []
+    },
+    {
+      "type": "ClientAttachStation",
+      "name": "countertop_01_standard_wood",
+      "pos": [
+        -3.0,
+        -8.4
+      ],
+      "height": 0.0,
+      "contents": []
+    },
+    {
+      "type": "ClientAttachStation",
+      "name": "countertop_01_standard_wood",
+      "pos": [
+        -1.8,
+        -8.4
+      ],
+      "height": 0.0,
+      "contents": []
+    },
+    {
+      "type": "ClientAttachStation",
+      "name": "countertop_01_standard_wood",
+      "pos": [
+        -0.6,
+        -8.4
+      ],
+      "height": 0.0,
+      "contents": []
     },
     {
       "type": "ClientAttachStation",
@@ -124,7 +869,8 @@
         9.0,
         -8.4
       ],
-      "height": 1.0
+      "height": 0.0,
+      "contents": []
     },
     {
       "type": "ClientAttachStation",
@@ -133,7 +879,8 @@
         10.2,
         -8.4
       ],
-      "height": 1.0
+      "height": 0.0,
+      "contents": []
     },
     {
       "type": "ClientAttachStation",
@@ -142,7 +889,8 @@
         11.4,
         -8.4
       ],
-      "height": 1.0
+      "height": 0.0,
+      "contents": []
     },
     {
       "type": "ClientAttachStation",
@@ -151,7 +899,8 @@
         12.6,
         -8.4
       ],
-      "height": 1.0
+      "height": 0.0,
+      "contents": []
     },
     {
       "type": "ClientAttachStation",
@@ -160,7 +909,8 @@
         -3.0,
         -7.2
       ],
-      "height": 1.0
+      "height": 0.0,
+      "contents": []
     },
     {
       "type": "ClientAttachStation",
@@ -169,7 +919,8 @@
         12.6,
         -7.2
       ],
-      "height": 1.0
+      "height": 0.0,
+      "contents": []
     },
     {
       "type": "ClientAttachStation",
@@ -178,7 +929,8 @@
         -3.0,
         -6.0
       ],
-      "height": 1.0
+      "height": 0.0,
+      "contents": []
     },
     {
       "type": "ClientAttachStation",
@@ -187,7 +939,8 @@
         -0.6,
         -6.0
       ],
-      "height": 1.0
+      "height": 0.0,
+      "contents": []
     },
     {
       "type": "ClientAttachStation",
@@ -196,83 +949,8 @@
         0.6,
         -6.0
       ],
-      "height": 1.0
-    },
-    {
-      "type": "ClientCookingStation",
-      "name": "workstation_cooker_01",
-      "pos": [
-        1.8,
-        -6.0
-      ],
-      "height": 0.0
-    },
-    {
-      "type": "ClientCookableContainer",
-      "name": "utensil_frying_pan_01",
-      "pos": [
-        1.8,
-        -6.0
-      ],
-      "height": 0.6,
-      "step": "FryingPan"
-    },
-    {
-      "type": "ClientCookingStation",
-      "name": "workstation_cooker_01",
-      "pos": [
-        3.0,
-        -6.0
-      ],
-      "height": 0.0
-    },
-    {
-      "type": "ClientCookableContainer",
-      "name": "utensil_frying_pan_01",
-      "pos": [
-        3.0,
-        -6.0
-      ],
-      "height": 0.6,
-      "step": "FryingPan"
-    },
-    {
-      "type": "ClientCookingStation",
-      "name": "workstation_cooker_01",
-      "pos": [
-        6.6,
-        -6.0
-      ],
-      "height": 0.0
-    },
-    {
-      "type": "ClientCookableContainer",
-      "name": "utensil_pot_01",
-      "pos": [
-        6.6,
-        -6.0
-      ],
-      "height": 0.6,
-      "step": "Pot"
-    },
-    {
-      "type": "ClientCookingStation",
-      "name": "workstation_cooker_01",
-      "pos": [
-        7.8,
-        -6.0
-      ],
-      "height": 0.0
-    },
-    {
-      "type": "ClientCookableContainer",
-      "name": "utensil_pot_01",
-      "pos": [
-        7.8,
-        -6.0
-      ],
-      "height": 0.6,
-      "step": "Pot"
+      "height": 0.0,
+      "contents": []
     },
     {
       "type": "ClientAttachStation",
@@ -281,7 +959,8 @@
         9.0,
         -6.0
       ],
-      "height": 1.0
+      "height": 0.0,
+      "contents": []
     },
     {
       "type": "ClientAttachStation",
@@ -290,7 +969,8 @@
         10.2,
         -6.0
       ],
-      "height": 1.0
+      "height": 0.0,
+      "contents": []
     },
     {
       "type": "ClientAttachStation",
@@ -299,7 +979,8 @@
         12.6,
         -6.0
       ],
-      "height": 1.0
+      "height": 0.0,
+      "contents": []
     },
     {
       "type": "ClientAttachStation",
@@ -308,7 +989,8 @@
         -3.0,
         -4.8
       ],
-      "height": 1.0
+      "height": 0.0,
+      "contents": []
     },
     {
       "type": "ClientAttachStation",
@@ -317,7 +999,8 @@
         -0.6,
         -4.8
       ],
-      "height": 1.0
+      "height": 0.0,
+      "contents": []
     },
     {
       "type": "ClientAttachStation",
@@ -326,7 +1009,8 @@
         10.2,
         -4.8
       ],
-      "height": 1.0
+      "height": 0.0,
+      "contents": []
     },
     {
       "type": "ClientAttachStation",
@@ -335,54 +1019,8 @@
         12.6,
         -4.8
       ],
-      "height": 1.0
-    },
-    {
-      "type": "ClientCookingStation",
-      "name": "FryingStation",
-      "pos": [
-        -3.0,
-        -3.6
-      ],
-      "height": 0.0
-    },
-    {
-      "type": "ClientCookableContainer",
-      "name": "FrierBasket",
-      "pos": [
-        -3.0,
-        -3.6
-      ],
-      "height": 0.6,
-      "step": "DeepFatFryer"
-    },
-    {
-      "type": "ClientWashingStation",
-      "name": "WashingPart",
-      "pos": [
-        12.6,
-        -3.0
-      ],
-      "height": 0.0
-    },
-    {
-      "type": "ClientCookingStation",
-      "name": "FryingStation",
-      "pos": [
-        -3.0,
-        -2.4
-      ],
-      "height": 0.0
-    },
-    {
-      "type": "ClientCookableContainer",
-      "name": "FrierBasket",
-      "pos": [
-        -3.0,
-        -2.4
-      ],
-      "height": 0.6,
-      "step": "DeepFatFryer"
+      "height": 0.0,
+      "contents": []
     },
     {
       "type": "ClientAttachStation",
@@ -391,7 +1029,8 @@
         -0.6,
         -2.4
       ],
-      "height": 1.0
+      "height": 0.0,
+      "contents": []
     },
     {
       "type": "ClientAttachStation",
@@ -400,7 +1039,8 @@
         10.2,
         -2.4
       ],
-      "height": 1.0
+      "height": 0.0,
+      "contents": []
     },
     {
       "type": "ClientAttachStation",
@@ -409,7 +1049,8 @@
         -3.0,
         -1.2
       ],
-      "height": 1.0
+      "height": 0.0,
+      "contents": []
     },
     {
       "type": "ClientAttachStation",
@@ -418,7 +1059,8 @@
         -0.6,
         -1.2
       ],
-      "height": 1.0
+      "height": 0.0,
+      "contents": []
     },
     {
       "type": "ClientAttachStation",
@@ -427,7 +1069,8 @@
         0.6,
         -1.2
       ],
-      "height": 1.0
+      "height": 0.0,
+      "contents": []
     },
     {
       "type": "ClientAttachStation",
@@ -436,43 +1079,8 @@
         1.8,
         -1.2
       ],
-      "height": 1.0
-    },
-    {
-      "type": "ClientWorkstation",
-      "name": "countertop_01_chopping_board_wood_no_edge",
-      "pos": [
-        3.0,
-        -1.2
-      ],
-      "height": 1.0
-    },
-    {
-      "type": "ClientAttachStation",
-      "name": "countertop_01_chopping_board_wood_no_edge",
-      "pos": [
-        3.0,
-        -1.2
-      ],
-      "height": 1.0
-    },
-    {
-      "type": "ClientWorkstation",
-      "name": "countertop_01_chopping_board_wood_no_edge",
-      "pos": [
-        6.6,
-        -1.2
-      ],
-      "height": 1.0
-    },
-    {
-      "type": "ClientAttachStation",
-      "name": "countertop_01_chopping_board_wood_no_edge",
-      "pos": [
-        6.6,
-        -1.2
-      ],
-      "height": 1.0
+      "height": 0.0,
+      "contents": []
     },
     {
       "type": "ClientAttachStation",
@@ -481,7 +1089,8 @@
         7.8,
         -1.2
       ],
-      "height": 1.0
+      "height": 0.0,
+      "contents": []
     },
     {
       "type": "ClientAttachStation",
@@ -490,7 +1099,8 @@
         9.0,
         -1.2
       ],
-      "height": 1.0
+      "height": 0.0,
+      "contents": []
     },
     {
       "type": "ClientAttachStation",
@@ -499,7 +1109,8 @@
         10.2,
         -1.2
       ],
-      "height": 1.0
+      "height": 0.0,
+      "contents": []
     },
     {
       "type": "ClientAttachStation",
@@ -508,7 +1119,8 @@
         12.6,
         -1.2
       ],
-      "height": 1.0
+      "height": 0.0,
+      "contents": []
     },
     {
       "type": "ClientAttachStation",
@@ -517,7 +1129,8 @@
         -3.0,
         0.0
       ],
-      "height": 1.0
+      "height": 0.0,
+      "contents": []
     },
     {
       "type": "ClientAttachStation",
@@ -526,7 +1139,8 @@
         12.6,
         0.0
       ],
-      "height": 1.0
+      "height": 0.0,
+      "contents": []
     },
     {
       "type": "ClientAttachStation",
@@ -535,7 +1149,8 @@
         -3.0,
         1.2
       ],
-      "height": 1.0
+      "height": 0.0,
+      "contents": []
     },
     {
       "type": "ClientAttachStation",
@@ -544,7 +1159,8 @@
         -1.8,
         1.2
       ],
-      "height": 1.0
+      "height": 0.0,
+      "contents": []
     },
     {
       "type": "ClientAttachStation",
@@ -553,7 +1169,8 @@
         -0.6,
         1.2
       ],
-      "height": 1.0
+      "height": 0.0,
+      "contents": []
     },
     {
       "type": "ClientAttachStation",
@@ -562,7 +1179,8 @@
         0.6,
         1.2
       ],
-      "height": 1.0
+      "height": 0.0,
+      "contents": []
     },
     {
       "type": "ClientAttachStation",
@@ -571,7 +1189,8 @@
         1.8,
         1.2
       ],
-      "height": 1.0
+      "height": 0.0,
+      "contents": []
     },
     {
       "type": "ClientAttachStation",
@@ -580,43 +1199,8 @@
         3.0,
         1.2
       ],
-      "height": 1.0
-    },
-    {
-      "type": "ClientPlate",
-      "name": "equipment_plate_01",
-      "pos": [
-        3.0,
-        1.2
-      ],
-      "height": 0.5
-    },
-    {
-      "type": "ClientCleanPlateStack",
-      "name": "CleanPlateStack",
-      "pos": [
-        3.0,
-        1.2
-      ],
-      "height": 0.5
-    },
-    {
-      "type": "ClientPlateStation",
-      "name": "ServingStation",
-      "pos": [
-        4.8,
-        1.2
-      ],
-      "height": 0.0
-    },
-    {
-      "type": "ClientDirtyPlateStack",
-      "name": "PlateReturn",
-      "pos": [
-        6.6,
-        1.2
-      ],
-      "height": 0.5
+      "height": 0.0,
+      "contents": []
     },
     {
       "type": "ClientAttachStation",
@@ -625,7 +1209,8 @@
         7.8,
         1.2
       ],
-      "height": 1.0
+      "height": 0.0,
+      "contents": []
     },
     {
       "type": "ClientAttachStation",
@@ -634,7 +1219,8 @@
         9.0,
         1.2
       ],
-      "height": 1.0
+      "height": 0.0,
+      "contents": []
     },
     {
       "type": "ClientAttachStation",
@@ -643,7 +1229,8 @@
         10.2,
         1.2
       ],
-      "height": 1.0
+      "height": 0.0,
+      "contents": []
     },
     {
       "type": "ClientAttachStation",
@@ -652,7 +1239,8 @@
         11.4,
         1.2
       ],
-      "height": 1.0
+      "height": 0.0,
+      "contents": []
     },
     {
       "type": "ClientAttachStation",
@@ -661,7 +1249,30 @@
         12.6,
         1.2
       ],
-      "height": 1.0
+      "height": 0.0,
+      "contents": []
+    },
+    {
+      "type": "ClientAttachStation",
+      "name": "countertop_01_chopping_board_wood_no_edge",
+      "pos": [
+        3.0,
+        -1.2
+      ],
+      "height": 0.0,
+      "contents": []
+    },
+    {
+      "type": "ClientAttachStation",
+      "name": "countertop_01_chopping_board_wood_no_edge",
+      "pos": [
+        6.6,
+        -1.2
+      ],
+      "height": 0.0,
+      "contents": []
     }
-  ]
+  ],
+  "missing": [],
+  "_attach_station_records": "普通台面的 ClientAttachStation 记录。实机 20261027-033435 的 state.json 里没有它们，因为那次跑的是旧插件（DLL 里没有 IsPlainCounter）：游戏里的 Counter prefab 由 MultiplayerController 的 SynchroniserConfig(AttachStation → ClientAttachStation) 在运行时加组件，对象名 countertop_01_standard_wood 由 logs/manual/20261027-022317/manual.log 实测（面前=「…」），坐标取自 levels/wellcooked_demo/layout_3.tsv（格坐标 ×0.6 m）。其余字段是那次实机导出的原样。"
 }

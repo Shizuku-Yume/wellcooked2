@@ -148,6 +148,59 @@ def is_plain_counter(name):
     return "countertop" in lower and not is_chopping_board(name)
 
 
+# 站位格规则与 `bridge/src/stand.c` 逐条对齐：工位坐标在台面中心，厨师站在它最近的
+# 那条过道上。四个方向各取"沿方向最近、垂直偏差不超过半格"的可走格；四向都取不到
+# 就是没有站位——`kos_stand_build` 会拒绝整张 kitchen.json，所以导出时先把它挑出来。
+STAND_PERP_FACTOR = 0.5
+STAND_ALONG_FACTOR = 0.25
+STAND_PERP_EPSILON = 1e-3
+
+
+def stand_cells(pos, cells, step):
+    """工位周围的可站格（下标）。规则与 `stand.c` 的 `find_stand_cell` 相同。"""
+    perp_tolerance = step * STAND_PERP_FACTOR + STAND_PERP_EPSILON
+    min_along = step * STAND_ALONG_FACTOR
+    found = []
+    for axis, sign in ((0, 1), (0, -1), (1, 1), (1, -1)):
+        best = None
+        best_along = 0.0
+        for index, (x, z) in enumerate(cells):
+            dx = x - pos[0]
+            dz = z - pos[1]
+            along = (dx if axis == 0 else dz) * sign
+            perp = abs(dz if axis == 0 else dx)
+            if along <= min_along or perp > perp_tolerance:
+                continue
+            if best is None or along < best_along or (along == best_along and index < best):
+                best = index
+                best_along = along
+        if best is not None and best not in found:
+            found.append(best)
+    return found
+
+
+def drop_stations_without_stand(stations, cells, step):
+    """丢掉周围没有可站格的工位，返回 (留下的, 丢掉的)。
+
+    不丢的话 `kos_stand_build` 会拒绝整张图，所有订单都开不了。`_3` 实测有 4 张
+    台面在被围住的地图角上（`(-3.0,-8.4)`、`(12.6,-8.4)`、`(-3.0,1.2)`、`(12.6,1.2)`），
+    它们谁也走不到，留着只会挡住导出。重编号让 id 不出现空洞。
+    """
+    kept = []
+    dropped = []
+    for station in stations:
+        if stand_cells(station["pos"], cells, step):
+            kept.append(station)
+        else:
+            dropped.append(station)
+    seen = {}
+    for station in kept:
+        index = seen.get(station["kind"], 0)
+        seen[station["kind"]] = index + 1
+        station["id"] = "%s-%d" % (station["kind"], index)
+    return kept, dropped
+
+
 def build_stations(raw, grid_step, grid_origin):
     merged = []
     unknown = []
@@ -587,6 +640,7 @@ def main():
     grid_origin = (min((x for x, _ in cells), default=None),
                    min((z for _, z in cells), default=None))
     stations, unknown = build_stations(state.get("stations") or [], step, grid_origin)
+    stations, dropped = drop_stations_without_stand(stations, cells, step)
     mask = terrain.get("mask") or []
     sizes = areas_of(indices, mask, lookup)
 
@@ -630,6 +684,10 @@ def main():
     print("场景 %s：原始工位 %d → 合并后 %d，可走格 %d，连通区 %d（最大 %d）"
           % (kitchen["scene"], len(state.get("stations") or []), len(stations),
              len(cells), len(sizes), sizes[0] if sizes else 0))
+    for station in dropped:
+        print("  !! 警告：工位 %s（kind=%s）@(%s,%s) 周围没有可站的可走格，未写入 kitchen.json"
+              % (station["id"], station["kind"], station["pos"][0], station["pos"][1]),
+              file=sys.stderr)
     for kind, count in kitchen["kinds"].items():
         print("  %-20s %d" % (kind, count))
     if unknown:
