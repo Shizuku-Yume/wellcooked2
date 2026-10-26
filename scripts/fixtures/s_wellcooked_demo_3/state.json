@@ -1,0 +1,667 @@
+{
+  "scene": "s_wellcooked_demo_3",
+  "t": 0,
+  "_derived": "离线夹具（不是游戏导出）：坐标/料名/菜单取自 levels/wellcooked_demo/layout_3.tsv （格坐标 ×0.6 m，料名在 ingredient 列）与 spec W11 P0 第 1 步的实测动作表；组件类型按反编译的 StationTypes 生成，只保留 export-kitchen.py 会读的字段。等实机 `menu=1` 的 wellcooked-{state,menu,terrain}.json 导出后用它替换。",
+  "stations": [
+    {
+      "type": "ClientAttachStation",
+      "name": "countertop_01_standard_wood",
+      "pos": [
+        -3.0,
+        -8.4
+      ],
+      "height": 1.0
+    },
+    {
+      "type": "ClientAttachStation",
+      "name": "countertop_01_standard_wood",
+      "pos": [
+        -1.8,
+        -8.4
+      ],
+      "height": 1.0
+    },
+    {
+      "type": "ClientAttachStation",
+      "name": "countertop_01_standard_wood",
+      "pos": [
+        -0.6,
+        -8.4
+      ],
+      "height": 1.0
+    },
+    {
+      "type": "ClientPickupItemSpawner",
+      "name": "dispenser_crate_01",
+      "pos": [
+        0.6,
+        -8.4
+      ],
+      "height": 0.0,
+      "gives": "SushiPrawn",
+      "prefab_components": [
+        "WorkableItem"
+      ]
+    },
+    {
+      "type": "ClientPickupItemSpawner",
+      "name": "dispenser_crate_01",
+      "pos": [
+        1.8,
+        -8.4
+      ],
+      "height": 0.0,
+      "gives": "Tortilla",
+      "prefab_components": []
+    },
+    {
+      "type": "ClientPickupItemSpawner",
+      "name": "dispenser_crate_01",
+      "pos": [
+        3.0,
+        -8.4
+      ],
+      "height": 0.0,
+      "gives": "Rice",
+      "prefab_components": []
+    },
+    {
+      "type": "ClientPickupItemSpawner",
+      "name": "dispenser_crate_01",
+      "pos": [
+        4.2,
+        -8.4
+      ],
+      "height": 0.0,
+      "gives": "BurritoChicken",
+      "prefab_components": [
+        "WorkableItem"
+      ]
+    },
+    {
+      "type": "ClientPickupItemSpawner",
+      "name": "dispenser_crate_01",
+      "pos": [
+        5.4,
+        -8.4
+      ],
+      "height": 0.0,
+      "gives": "BurritoMeat",
+      "prefab_components": [
+        "WorkableItem"
+      ]
+    },
+    {
+      "type": "ClientPickupItemSpawner",
+      "name": "dispenser_crate_01",
+      "pos": [
+        6.6,
+        -8.4
+      ],
+      "height": 0.0,
+      "gives": "Mushroom",
+      "prefab_components": [
+        "WorkableItem"
+      ]
+    },
+    {
+      "type": "ClientPickupItemSpawner",
+      "name": "dispenser_crate_01",
+      "pos": [
+        7.8,
+        -8.4
+      ],
+      "height": 0.0,
+      "gives": "SushiFish",
+      "prefab_components": [
+        "WorkableItem"
+      ]
+    },
+    {
+      "type": "ClientAttachStation",
+      "name": "countertop_01_standard_wood",
+      "pos": [
+        9.0,
+        -8.4
+      ],
+      "height": 1.0
+    },
+    {
+      "type": "ClientAttachStation",
+      "name": "countertop_01_standard_wood",
+      "pos": [
+        10.2,
+        -8.4
+      ],
+      "height": 1.0
+    },
+    {
+      "type": "ClientAttachStation",
+      "name": "countertop_01_standard_wood",
+      "pos": [
+        11.4,
+        -8.4
+      ],
+      "height": 1.0
+    },
+    {
+      "type": "ClientAttachStation",
+      "name": "countertop_01_standard_wood",
+      "pos": [
+        12.6,
+        -8.4
+      ],
+      "height": 1.0
+    },
+    {
+      "type": "ClientAttachStation",
+      "name": "countertop_01_standard_wood",
+      "pos": [
+        -3.0,
+        -7.2
+      ],
+      "height": 1.0
+    },
+    {
+      "type": "ClientAttachStation",
+      "name": "countertop_01_standard_wood",
+      "pos": [
+        12.6,
+        -7.2
+      ],
+      "height": 1.0
+    },
+    {
+      "type": "ClientAttachStation",
+      "name": "countertop_01_standard_wood",
+      "pos": [
+        -3.0,
+        -6.0
+      ],
+      "height": 1.0
+    },
+    {
+      "type": "ClientAttachStation",
+      "name": "countertop_01_standard_wood",
+      "pos": [
+        -0.6,
+        -6.0
+      ],
+      "height": 1.0
+    },
+    {
+      "type": "ClientAttachStation",
+      "name": "countertop_01_standard_wood",
+      "pos": [
+        0.6,
+        -6.0
+      ],
+      "height": 1.0
+    },
+    {
+      "type": "ClientCookingStation",
+      "name": "workstation_cooker_01",
+      "pos": [
+        1.8,
+        -6.0
+      ],
+      "height": 0.0
+    },
+    {
+      "type": "ClientCookableContainer",
+      "name": "utensil_frying_pan_01",
+      "pos": [
+        1.8,
+        -6.0
+      ],
+      "height": 0.6,
+      "step": "FryingPan"
+    },
+    {
+      "type": "ClientCookingStation",
+      "name": "workstation_cooker_01",
+      "pos": [
+        3.0,
+        -6.0
+      ],
+      "height": 0.0
+    },
+    {
+      "type": "ClientCookableContainer",
+      "name": "utensil_frying_pan_01",
+      "pos": [
+        3.0,
+        -6.0
+      ],
+      "height": 0.6,
+      "step": "FryingPan"
+    },
+    {
+      "type": "ClientCookingStation",
+      "name": "workstation_cooker_01",
+      "pos": [
+        6.6,
+        -6.0
+      ],
+      "height": 0.0
+    },
+    {
+      "type": "ClientCookableContainer",
+      "name": "utensil_pot_01",
+      "pos": [
+        6.6,
+        -6.0
+      ],
+      "height": 0.6,
+      "step": "Pot"
+    },
+    {
+      "type": "ClientCookingStation",
+      "name": "workstation_cooker_01",
+      "pos": [
+        7.8,
+        -6.0
+      ],
+      "height": 0.0
+    },
+    {
+      "type": "ClientCookableContainer",
+      "name": "utensil_pot_01",
+      "pos": [
+        7.8,
+        -6.0
+      ],
+      "height": 0.6,
+      "step": "Pot"
+    },
+    {
+      "type": "ClientAttachStation",
+      "name": "countertop_01_standard_wood",
+      "pos": [
+        9.0,
+        -6.0
+      ],
+      "height": 1.0
+    },
+    {
+      "type": "ClientAttachStation",
+      "name": "countertop_01_standard_wood",
+      "pos": [
+        10.2,
+        -6.0
+      ],
+      "height": 1.0
+    },
+    {
+      "type": "ClientAttachStation",
+      "name": "countertop_01_standard_wood",
+      "pos": [
+        12.6,
+        -6.0
+      ],
+      "height": 1.0
+    },
+    {
+      "type": "ClientAttachStation",
+      "name": "countertop_01_standard_wood",
+      "pos": [
+        -3.0,
+        -4.8
+      ],
+      "height": 1.0
+    },
+    {
+      "type": "ClientAttachStation",
+      "name": "countertop_01_standard_wood",
+      "pos": [
+        -0.6,
+        -4.8
+      ],
+      "height": 1.0
+    },
+    {
+      "type": "ClientAttachStation",
+      "name": "countertop_01_standard_wood",
+      "pos": [
+        10.2,
+        -4.8
+      ],
+      "height": 1.0
+    },
+    {
+      "type": "ClientAttachStation",
+      "name": "countertop_01_standard_wood",
+      "pos": [
+        12.6,
+        -4.8
+      ],
+      "height": 1.0
+    },
+    {
+      "type": "ClientCookingStation",
+      "name": "FryingStation",
+      "pos": [
+        -3.0,
+        -3.6
+      ],
+      "height": 0.0
+    },
+    {
+      "type": "ClientCookableContainer",
+      "name": "FrierBasket",
+      "pos": [
+        -3.0,
+        -3.6
+      ],
+      "height": 0.6,
+      "step": "DeepFatFryer"
+    },
+    {
+      "type": "ClientWashingStation",
+      "name": "WashingPart",
+      "pos": [
+        12.6,
+        -3.0
+      ],
+      "height": 0.0
+    },
+    {
+      "type": "ClientCookingStation",
+      "name": "FryingStation",
+      "pos": [
+        -3.0,
+        -2.4
+      ],
+      "height": 0.0
+    },
+    {
+      "type": "ClientCookableContainer",
+      "name": "FrierBasket",
+      "pos": [
+        -3.0,
+        -2.4
+      ],
+      "height": 0.6,
+      "step": "DeepFatFryer"
+    },
+    {
+      "type": "ClientAttachStation",
+      "name": "countertop_01_standard_wood",
+      "pos": [
+        -0.6,
+        -2.4
+      ],
+      "height": 1.0
+    },
+    {
+      "type": "ClientAttachStation",
+      "name": "countertop_01_standard_wood",
+      "pos": [
+        10.2,
+        -2.4
+      ],
+      "height": 1.0
+    },
+    {
+      "type": "ClientAttachStation",
+      "name": "countertop_01_standard_wood",
+      "pos": [
+        -3.0,
+        -1.2
+      ],
+      "height": 1.0
+    },
+    {
+      "type": "ClientAttachStation",
+      "name": "countertop_01_standard_wood",
+      "pos": [
+        -0.6,
+        -1.2
+      ],
+      "height": 1.0
+    },
+    {
+      "type": "ClientAttachStation",
+      "name": "countertop_01_standard_wood",
+      "pos": [
+        0.6,
+        -1.2
+      ],
+      "height": 1.0
+    },
+    {
+      "type": "ClientAttachStation",
+      "name": "countertop_01_standard_wood",
+      "pos": [
+        1.8,
+        -1.2
+      ],
+      "height": 1.0
+    },
+    {
+      "type": "ClientWorkstation",
+      "name": "countertop_01_chopping_board_wood_no_edge",
+      "pos": [
+        3.0,
+        -1.2
+      ],
+      "height": 1.0
+    },
+    {
+      "type": "ClientAttachStation",
+      "name": "countertop_01_chopping_board_wood_no_edge",
+      "pos": [
+        3.0,
+        -1.2
+      ],
+      "height": 1.0
+    },
+    {
+      "type": "ClientWorkstation",
+      "name": "countertop_01_chopping_board_wood_no_edge",
+      "pos": [
+        6.6,
+        -1.2
+      ],
+      "height": 1.0
+    },
+    {
+      "type": "ClientAttachStation",
+      "name": "countertop_01_chopping_board_wood_no_edge",
+      "pos": [
+        6.6,
+        -1.2
+      ],
+      "height": 1.0
+    },
+    {
+      "type": "ClientAttachStation",
+      "name": "countertop_01_standard_wood",
+      "pos": [
+        7.8,
+        -1.2
+      ],
+      "height": 1.0
+    },
+    {
+      "type": "ClientAttachStation",
+      "name": "countertop_01_standard_wood",
+      "pos": [
+        9.0,
+        -1.2
+      ],
+      "height": 1.0
+    },
+    {
+      "type": "ClientAttachStation",
+      "name": "countertop_01_standard_wood",
+      "pos": [
+        10.2,
+        -1.2
+      ],
+      "height": 1.0
+    },
+    {
+      "type": "ClientAttachStation",
+      "name": "countertop_01_standard_wood",
+      "pos": [
+        12.6,
+        -1.2
+      ],
+      "height": 1.0
+    },
+    {
+      "type": "ClientAttachStation",
+      "name": "countertop_01_standard_wood",
+      "pos": [
+        -3.0,
+        0.0
+      ],
+      "height": 1.0
+    },
+    {
+      "type": "ClientAttachStation",
+      "name": "countertop_01_standard_wood",
+      "pos": [
+        12.6,
+        0.0
+      ],
+      "height": 1.0
+    },
+    {
+      "type": "ClientAttachStation",
+      "name": "countertop_01_standard_wood",
+      "pos": [
+        -3.0,
+        1.2
+      ],
+      "height": 1.0
+    },
+    {
+      "type": "ClientAttachStation",
+      "name": "countertop_01_standard_wood",
+      "pos": [
+        -1.8,
+        1.2
+      ],
+      "height": 1.0
+    },
+    {
+      "type": "ClientAttachStation",
+      "name": "countertop_01_standard_wood",
+      "pos": [
+        -0.6,
+        1.2
+      ],
+      "height": 1.0
+    },
+    {
+      "type": "ClientAttachStation",
+      "name": "countertop_01_standard_wood",
+      "pos": [
+        0.6,
+        1.2
+      ],
+      "height": 1.0
+    },
+    {
+      "type": "ClientAttachStation",
+      "name": "countertop_01_standard_wood",
+      "pos": [
+        1.8,
+        1.2
+      ],
+      "height": 1.0
+    },
+    {
+      "type": "ClientAttachStation",
+      "name": "countertop_01_standard_wood",
+      "pos": [
+        3.0,
+        1.2
+      ],
+      "height": 1.0
+    },
+    {
+      "type": "ClientPlate",
+      "name": "equipment_plate_01",
+      "pos": [
+        3.0,
+        1.2
+      ],
+      "height": 0.5
+    },
+    {
+      "type": "ClientCleanPlateStack",
+      "name": "CleanPlateStack",
+      "pos": [
+        3.0,
+        1.2
+      ],
+      "height": 0.5
+    },
+    {
+      "type": "ClientPlateStation",
+      "name": "ServingStation",
+      "pos": [
+        4.8,
+        1.2
+      ],
+      "height": 0.0
+    },
+    {
+      "type": "ClientDirtyPlateStack",
+      "name": "PlateReturn",
+      "pos": [
+        6.6,
+        1.2
+      ],
+      "height": 0.5
+    },
+    {
+      "type": "ClientAttachStation",
+      "name": "countertop_01_standard_wood",
+      "pos": [
+        7.8,
+        1.2
+      ],
+      "height": 1.0
+    },
+    {
+      "type": "ClientAttachStation",
+      "name": "countertop_01_standard_wood",
+      "pos": [
+        9.0,
+        1.2
+      ],
+      "height": 1.0
+    },
+    {
+      "type": "ClientAttachStation",
+      "name": "countertop_01_standard_wood",
+      "pos": [
+        10.2,
+        1.2
+      ],
+      "height": 1.0
+    },
+    {
+      "type": "ClientAttachStation",
+      "name": "countertop_01_standard_wood",
+      "pos": [
+        11.4,
+        1.2
+      ],
+      "height": 1.0
+    },
+    {
+      "type": "ClientAttachStation",
+      "name": "countertop_01_standard_wood",
+      "pos": [
+        12.6,
+        1.2
+      ],
+      "height": 1.0
+    }
+  ]
+}

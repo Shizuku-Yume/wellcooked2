@@ -49,6 +49,9 @@ KINDS = [
     ("clean_plate_stack", ["ClientCleanPlateStack"]),
     ("dirty_plate_stack", ["ClientDirtyPlateStack"]),
     ("plate_stack", ["ClientPlate"]),             # 盘子本体（通常在盘子堆/台面上）
+    # 普通台面（`countertop_*`）：卷饼要放在这里当容器，`pour`/`pickup` 也落在这。
+    # `ClientAttachStation` 几乎每个能放东西的表面都有，靠名字再筛一次（见 is_plain_counter）。
+    ("counter", ["ClientAttachStation"]),
     ("conveyor", ["ClientConveyorStation"]),      # 传送带（挑关卡时排除）
     ("switch", ["ClientSwitchStation"]),          # 开关（挑关卡时排除）
     # 以下只是"这个物体能装东西"，单独出现时归 container。
@@ -135,6 +138,16 @@ def is_chopping_board(name):
     return "chop" in lower or "cut" in lower
 
 
+def is_plain_counter(name):
+    """普通台面：名字是 `countertop_*` 且不是砧板（砧板归 board）。
+
+    为什么按名字筛：`ClientAttachStation` 挂在所有能放东西的表面上，光看组件会把
+    砧板、盘堆、料箱都算成台面。名字规则与插件 `Kitchen.IsPlainCounter` 一致。
+    """
+    lower = (name or "").lower()
+    return "countertop" in lower and not is_chopping_board(name)
+
+
 def build_stations(raw, grid_step, grid_origin):
     merged = []
     unknown = []
@@ -149,6 +162,9 @@ def build_stations(raw, grid_step, grid_origin):
 
         types = [t for t in group["types"]
                  if t != "ClientWorkstation" or is_chopping_board(group["name"])]
+        # 只有普通台面的 ClientAttachStation 才算 counter；砧板/盘堆/料箱上的不算。
+        if not is_plain_counter(group["name"]):
+            types = [t for t in types if t != "ClientAttachStation"]
         if not types:
             continue
         group["types"] = types
@@ -261,21 +277,32 @@ OP_BY_NODE_TYPE = {
 }
 
 # 工序 → 用哪种工位（与 kitchen.json 的 `kind` 对齐）
+#   fetch/cook/plate/deliver 是老四样；cut 落砧板（`board`），pour/place/pickup 落
+#   普通台面（`counter`）——卷饼在那里当容器。assemble 只为旧形状的地图保留。
 RESOURCE_BY_OP = {
     "fetch": "dispenser",
+    "cut": "board",
     "cook": "cooker",
+    "pour": "counter",
+    "place": "counter",
+    "pickup": "counter",
     "mix": "mixer",
     "assemble": "container",
     "plate": "plate_stack",
     "deliver": "serving",
 }
 
-# 工时：没有实测值，先给方案 §6.5 的默认值，并在文件里写清来源。
-DURATION_BY_OP = {"fetch": 1.0, "cook": 5.0, "mix": 5.0, "assemble": 1.0, "plate": 2.0, "deliver": 1.0}
-DURATION_SOURCE = "plan-§6.5-default（未实测；任务 12 拿到真实进度后再改）"
+# 工时来自 2026-10-27 的人工局实测（logs/manual/20261027-022317，切 8 格 ≈1.7 s、
+# 煮/煎 12.1 s 到"已熟"、装盘一次 A ≤0.1 s、交付到盘消失 ≈0.5 s），其余单次按键按 0.1 s。
+DURATION_BY_OP = {"fetch": 0.1, "cut": 1.7, "cook": 12.1, "pour": 0.1, "place": 0.1,
+                  "pickup": 0.1, "plate": 0.1, "deliver": 0.5, "mix": 5.0, "assemble": 0.1}
+DURATION_SOURCE = ("logs/manual/20261027-022317（人工局实测；_3 调参 chop 2 阶段 ×8、锅容量 1）："
+                   "切 1.7 s / 煮煎 12.1 s / 装盘 0.1 s / 交付 0.5 s / 拿料·倒料·放置 0.1 s；"
+                   "烧焦时间未知（实测已熟后 16.1 s 仍未烧焦）")
 
 # 工序的先后顺序：只在拓扑排序并列时用来定序（写进文件时便于人读）
-OP_ORDER = ["fetch", "cook", "mix", "assemble", "plate", "deliver"]
+OP_ORDER = ["fetch", "cut", "cook", "place", "pour", "pickup", "plate", "deliver",
+            "mix", "assemble"]
 
 
 def chop_ingredients(state):
@@ -340,10 +367,17 @@ def topo_order(keys, edges, nodes):
 def build_recipes(menu, state, station_kinds=None):
     """菜谱表 → 工序 DAG：节点按"工序 + 游戏里的节点名"去重，所以两道菜共用中间产物时只有一个节点。
 
-    `station_kinds` 是 kitchen.json 里有的工位类型；有 `plate_stack` 时，子节点带装盘步骤
-    （菜单里的 `plate`）的组合工序落在盘堆上：干净盘堆把放置转交给最上面那只盘子
-    （`ServerCleanPlateStack.HandlePlacement`），料直接放进盘里。落到锅类容器上游戏会拒收
-    （实机 `_3`：生虾对着平底锅按 interact 不放手）。"""
+    形状按 2026-10-27 的人工局实测（spec W11 P0 第 1 步的动作表）：
+
+    - 寿司（单份带 `plate` 的叶子）：`fetch` →（料箱的 `WorkableItem` 就 `cut`）→ `plate` → `deliver`。
+      装盘是"把切好的料放到盘堆上、再取盘"，没有独立的 assemble。
+    - 卷饼（`Composite` 里有一份 `Tortilla` + 若干 `Cooked*`）：`fetch:Tortilla` →
+      `place:Tortilla`（普通台面当容器）→ 每份熟料 `fetch`→[`cut`]→`cook`→`pour`（锅倒进玉米饼）→
+      `pickup:Tortilla` → `plate` → `deliver`。
+    - 其它形状（旧地图的菜单）仍按原来的树直译、`assemble` 收口；等那些地图重导时再按实测改。
+
+    `station_kinds` 是 kitchen.json 里有的工位类型，只影响旧形状的 `assemble` 落在盘堆还是容器上。
+    """
     station_kinds = set(station_kinds or ())
     chop_flags = chop_ingredients(state)
     nodes = {}
@@ -373,10 +407,9 @@ def build_recipes(menu, state, station_kinds=None):
         ingredient = match_ingredient(name, chop_flags) if op == "fetch" else None
         extra = {}
         if ingredient:
+            # 料名只用来对料箱（`gives`）。"能不能切"不再写进 recipes.json：
+            # `recipes.c` 不解析 `workable`，切不切由 DAG 里有没有 `cut` 节点决定。
             extra["ingredient"] = ingredient
-            # 能不能加工（`WorkableItem`）是事实；"这道菜要不要切"不是——菜谱树里没有这道工序，
-            # 所以不替游戏做决定（早先按 WorkableItem 自动插 chop 节点会给出多余的工序）。
-            extra["workable"] = bool(chop_flags.get(ingredient))
         if op == "assemble" and "plate_stack" in station_kinds and \
                 any(child.get("plate") for child in raw_children):
             extra["resource"] = "plate_stack"
@@ -388,31 +421,115 @@ def build_recipes(menu, state, station_kinds=None):
             edges.add((child, key))
         return key
 
+    # ---------------- 实测形状（寿司 / 卷饼） ----------------
+
+    def is_plated_leaf(step):
+        """寿司：一个 `Composite`，唯一子节点是带 `plate` 的叶子料（鱼/虾）。"""
+        children = step.get("children") or []
+        return (step.get("type") in ("CompositeOrderNode", "CacheAssembledOrderNode")
+                and len(children) == 1
+                and (children[0].get("type") or "") in OP_BY_NODE_TYPE
+                and OP_BY_NODE_TYPE.get(children[0].get("type")) == "fetch"
+                and bool(children[0].get("plate")))
+
+    def tortilla_child(step):
+        for child in step.get("children") or []:
+            if (child.get("node") or "").lower() == "tortilla":
+                return child
+        return None
+
+    def is_tortilla_composite(step):
+        """卷饼：`Composite` 里有一份 Tortilla，其余都是要加热的 `Cooked*`。"""
+        if step.get("type") not in ("CompositeOrderNode", "CacheAssembledOrderNode"):
+            return False
+        tortilla = tortilla_child(step)
+        if tortilla is None:
+            return False
+        others = [c for c in step.get("children") or [] if c is not tortilla]
+        return bool(others) and all(
+            OP_BY_NODE_TYPE.get(c.get("type") or "", "assemble") == "cook" for c in others)
+
+    def leaf_names(leaf):
+        """菜单叶子的游戏名 + 用来对料箱的料名（小写）。"""
+        name = leaf.get("node") or "?"
+        return name, (match_ingredient(name, chop_flags) or name.lower())
+
+    def chain_to_cook(leaf, cooked):
+        """叶子料 →（`WorkableItem` 就 cut）→ cook；返回 (末端节点, 叶子的游戏名)。
+
+        节点 id 用游戏里的名字（`BurritoChicken`/`Rice`），不转小写：`pour` 的 item 要按
+        这个名字去世界状态的锅内容里找源锅（实测锅里一直是生料名，不会改成熟料名）。
+        """
+        name, ingredient = leaf_names(leaf)
+        key = add_node("fetch", name, ingredient=ingredient)
+        if chop_flags.get(ingredient):
+            cut = add_node("cut", name)
+            edges.add((key, cut))
+            key = cut
+        if cooked is not None:
+            extra = {"step": cooked["cook"]} if cooked.get("cook") else {}
+            cook = add_node("cook", cooked.get("node") or "?", **extra)
+            edges.add((key, cook))
+            key = cook
+        return key, name
+
     for dish in menu.get("dishes") or []:
         dish_name = dish.get("dish") or "?"
-        roots = [walk(node) for node in (dish.get("steps") or [])]
-        # 装盘 → 交付：游戏里必须先装盘再送到出菜口
+        steps = dish.get("steps") or []
+        single = steps[0] if len(steps) == 1 else None
         plate = add_node("plate", dish_name)
         deliver = add_node("deliver", dish_name)
-        for root in roots:
-            edges.add((root, plate))
         edges.add((plate, deliver))
+        pre_plate = None
 
-        # 这道菜要做的工序：从根沿"子 → 父"边往回走，再拓扑排序（并列时按 OP_ORDER）
+        if single is not None and is_plated_leaf(single):
+            last, _ingredient = chain_to_cook(single["children"][0], None)
+            edges.add((last, plate))
+            pre_plate = last
+        elif single is not None and is_tortilla_composite(single):
+            tortilla = tortilla_child(single)
+            tortilla_name, tortilla_ingredient = leaf_names(tortilla)
+            fetch_tortilla = add_node("fetch", tortilla_name, ingredient=tortilla_ingredient)
+            place = add_node("place", tortilla_name)
+            edges.add((fetch_tortilla, place))
+            pours = []
+            for cooked in single.get("children") or []:
+                if cooked is tortilla:
+                    continue
+                children = cooked.get("children") or []
+                if not children:
+                    continue
+                cooked_key, filling = chain_to_cook(children[0], cooked)
+                pour = add_node("pour", filling)
+                edges.add((place, pour))
+                edges.add((cooked_key, pour))
+                pours.append(pour)
+            # 取玉米饼按菜区分：共用一个节点会让每道菜都等齐三份熟料（图上的子工序都算本单的）。
+            pickup = add_node("pickup", dish_name)
+            for pour in pours:
+                edges.add((pour, pickup))
+            edges.add((pickup, plate))
+            pre_plate = pickup
+        else:
+            roots = [walk(node) for node in steps]
+            for root in roots:
+                edges.add((root, plate))
+            pre_plate = roots[0] if roots else None
+
+        # 这道菜要做的工序：从装盘沿"子 → 父"边往回走，再拓扑排序（并列时按 OP_ORDER）
         seen = set()
-        stack = list(roots)
+        stack = [plate]
         while stack:
             key = stack.pop()
             if key in seen or key not in nodes:
                 continue
             seen.add(key)
             stack.extend([child for child, parent in edges if parent == key])
-        seen.add(plate)      # 装盘、交付是根的后续（在边的另一头），别漏
         seen.add(deliver)
         dishes.append({
             "dish": dish_name,
             "score": dish.get("score"),
-            "root": roots[0] if roots else None,
+            "root": pre_plate,
             "nodes": topo_order(seen, edges, nodes),
         })
 
@@ -423,9 +540,11 @@ def build_recipes(menu, state, station_kinds=None):
         "durations": {"source": DURATION_SOURCE, "seconds": DURATION_BY_OP},
         "notes": [
             "节点 id = 工序:游戏里的节点名，两道菜共用同一中间产物时只有一个节点",
-            "工时是方案 §6.5 的默认值，不是实测值",
-            "菜谱树里没有\"切\"这道工序：`fetch` 节点带 `workable`（料箱 prefab 上有没有 WorkableItem）作为事实，",
-            "要不要切由游戏决定，本文件不替它下结论（早先按 WorkableItem 自动插 chop 节点会给出多余的工序）",
+            "工时来自 logs/manual/20261027-022317：切 1.7 s（8 格）、煮/煎 12.1 s、装盘 0.1 s、交付 0.5 s、拿料/倒料/放置 0.1 s",
+            "烧焦时间未知：实测已熟后继续加热到 16.1 s 仍未烧焦",
+            "寿司 = 拿料 → 切 → 放到盘堆上 → 取盘 → 交付（没有独立的 assemble）",
+            "卷饼 = 玉米饼放普通台面当容器 → 每份熟料从锅倒进去（pour）→ 取玉米饼 → 放到盘堆上 → 取盘 → 交付",
+            "其它形状的旧菜单仍按树直译、assemble 收口，等对应地图重导时再按实测改",
         ],
     }
 
