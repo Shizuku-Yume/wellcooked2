@@ -207,10 +207,15 @@ namespace WellCooked
                 return;
             }
 
-            bool cooked = node.GetType().Name == "CookedCompositeAssembledNode";
+            string typeName = node.GetType().Name;
+            bool cooked = typeName == "CookedCompositeAssembledNode";
             string childPrefix = cooked ? prefix + "cooked:" : prefix;
 
-            var children = WorldState.Get(node, "m_composition") as IEnumerable;
+            // 只有组合节点才有 m_composition；叶子（IngredientAssembledNode）上查它会在
+            // WorldState 的反射未命中日志里留一行，白白让人以为名字失效了。
+            var children = typeName.IndexOf("CompositeAssembledNode", StringComparison.Ordinal) >= 0
+                ? WorldState.Get(node, "m_composition") as IEnumerable
+                : null;
             if (children != null)
             {
                 bool any = false;
