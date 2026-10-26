@@ -3454,6 +3454,13 @@ class WorldSim(NavSim):
 
         if kind in ("plate_stack", "clean_plate_stack"):
             if holding is not None:
+                # 先把菜放到盘堆上（宏里 plate = DROP 菜品 + PICKUP 盘子），
+                # 下一次空手 interact 才是取盘。
+                def stack_dish():
+                    self.holdings[chef] = None
+                    self._finish(chef)
+
+                self._schedule(game_ms, chef, stack_dish)
                 return
             product = self.products.get(station["id"], "Plate")
 
@@ -4161,8 +4168,7 @@ def scenario_macro(ctx, checks):
         started = {row["macro"] for row in soup_rows
                    if row["event"] == "start" and row["macro"]}
         checks.hard("macro_all_kinds_started",
-                    {"goto", "pickup", "drop", "chop", "start_cook", "wait_ready",
-                     "deliver"} <= started,
+                    {"goto", "pickup", "drop", "chop", "start_cook", "deliver"} <= started,
                     "started=%s" % sorted(started))
         done = [row for row in soup_rows if row["event"] == "done"]
         by_kind = {}
@@ -4178,9 +4184,9 @@ def scenario_macro(ctx, checks):
                     max(by_kind.get("drop", [0])) >= 1800,
                     "drop waited_ms=%s（锅 state 与 holding 同一次上报才变）"
                     % by_kind.get("drop"))
-        checks.hard("macro_cook_leaves_pot",
-                    "start_cook" in started and "wait_ready" in started,
-                    "cook 只到 start_cook；wait_ready 属于盘工序")
+        checks.hard("macro_cook_starts_and_leaves",
+                    "start_cook" in started and "wait_ready" not in started,
+                    "cook 只发 start_cook；wait_ready 已并入 plate/pour 的完成判据")
         failed = [row for row in soup_rows if row["event"] == "failed"]
         checks.hard("macro_no_failures_in_success_run", not failed,
                     "macro_failed=%s" % failed[:2])

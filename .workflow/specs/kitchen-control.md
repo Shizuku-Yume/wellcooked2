@@ -471,14 +471,131 @@ C 部分是 `cd bridge && make test` 的单元检查；多进程行为用 `tools
 3. **`build_recipes` 按 prefab 生成工序，不再按菜单树直译。** 料箱 prefab 有 `WorkableItem` 且订单
    要的是切后的料 → 插 `cut` 节点（资源 `board`）；有 `CookableProperties` 且菜单是
    `CookedCompositeOrderNode` → `cook`；`Composite` 的组合点由第 1 步的动作表决定：寿司是
-   "拿盘子 → 把切好的鱼放进盘子"一步（删掉独立的 `assemble`），卷饼按实测的容器顺序生成
-   "倒锅"工序（新 op `pour`：端起锅 → 对着盘上的卷饼按 interact）。早先注释说"自动插 chop
-   会给出多余工序"，那是没有按 prefab 判断；这次以动作表为准，每个插入都要能在表里找到。
-4. **离线校验工序图。** `test_export_kitchen.py` 用当前 `_3` 的 state/menu 快照断言三道菜的节点序列
-   与动作表一致；`scheduler` 启动时对每个节点检查"上一步产物能被这一步的工位接受"（用导出的
-   `cook_steps`/`step`/`workable`），不满足就报 `recipe_infeasible` 并拒绝派这道菜，而不是派下去等超时。
+   "把切好的鱼/虾放到盘堆上 → 取盘"一步（删掉独立的 `assemble`；不是"先取盘再放料"），卷饼是
+   "玉米饼放普通台面当容器 → 把锅里的熟料倒进去 → 整只玉米饼上盘"（见下面第 1 步实测表）。
+   早先注释说"自动插 chop 会给出多余工序"，那是没有按 prefab 判断；这次以动作表为准，
+   每个插入都要能在表里找到。
+   数据前提：`wellcooked-menu.json` 必须重新导出——checkout 里那份是 2026-10-26 17:21 的旧关卡
+   （只有 3 道菜），而现在的 `_3` 菜单是 5 道（`layout_3.tsv` 的 `# menu:` 行，游戏日志的菜谱
+   下标 0–4 与之一致）。
+4. **离线校验工序图。** `test_export_kitchen.py` 用 `scripts/fixtures/s_wellcooked_demo_3/` 的
+   state/menu 快照断言五道菜的节点序列与动作表一致（夹具是离线推导的，等实机重导后替换）；
+   `scheduler` 启动时对每个节点检查"上一步产物能被这一步的工位接受"（用导出的 `cook_steps`/`step`/
+   资源类型），不满足就报 `recipe_infeasible` 并拒绝派这道菜，而不是派下去等超时。
+
+#### P0 第 1 步：`_3` 实测动作表（2026-10-27）
+
+数据：`logs/manual/20261027-022317/manual.log`（3954 行，单局；切点 L4，t=30.04；同目录
+`LogOutput.log` 给订单与工位）。`L###` 指 `manual.log` 行号。用户复核过四条：`Sushi_Plain*`
+就是"切好的鱼/虾单料"（没有米、没有海苔）；5 盘全部得分；卷饼以"玉米饼放台面当容器 →
+倒熟料 → 上盘"为正则（"手持玉米饼去锅里舀"的变体不建模）；冲刺、掉落/捡回不算工序。
+
+键位：A = 拿/放/交互，X = 加工键（按住）。工位：砧板0 `(3.00,-1.20)`、砧板1 `(6.60,-1.20)`；
+平底锅灶 `(1.80,-6.00)`、`(3.00,-6.00)`；汤锅灶 `(6.60,-6.00)`；装盘台/干净盘堆 `(3.00,1.20)`；
+传菜口 `(4.80,1.20)`；卷饼容器台面 `(0.60,-6.00)`；料箱一排 `z=-8.40`（x：0.60 虾 / 1.80 玉米饼 /
+3.00 米 / 4.20 鸡 / 5.40 牛肉 / 6.60 蘑菇 / 7.80 鱼）。
+
+**寿司两道（`Sushi_PlainPrawn` 先做先交，`Sushi_PlainFish` 其次）**
+
+| 步骤 | 结果 | 证据（t 段 / 行） |
+|---|---|---|
+| 1 货箱 → A | 手「SushiPrawn」/「SushiFish」 | 41.27–41.28 L72–L74；49.74–49.75 L693–L695 |
+| 2 砧板 → A | 料上台面，子进度 0 | 43.08 L94–L116；51.14 L723–L736（虾用砧板0，鱼用砧板1） |
+| 3 砧板 → X 按住 | 子进度 0→7（8 格）→「ChoppedSushiPrawn」/「ChoppedSushiFish」 | 43.40–45.09 L117–L531；51.34–52.96 L740–L1135 |
+| 4 砧板 → A | 手「Chopped…」 | 45.52–45.57 L617–L619；53.35–53.36 L1136–L1138 |
+| 5 装盘台 → A | 手空；盘 `equipment_plate_01`=[SushiPrawn]/[SushiFish] | 46.51–46.62 L636–L644；54.37–54.48 L1157–L1187 |
+| 6 装盘台 → A | 手盘 | 46.84–46.85 L645–L647；54.73–54.74 L1188–L1190 |
+| 7 传菜口 → A | 手空，盘落台，约 0.5 s 后消失 | 47.23–47.90 L669–L692；55.26–56.01 L1207–L1232 |
+
+**卷饼三道（Chicken / Meat / Mushroom；三者同构，只有料、切完的名字和用哪口锅不同）**
+
+| 步骤 | 结果 | 证据（Chicken / Meat / Mushroom） |
+|---|---|---|
+| 1 货箱 Tortilla → A | 手「Tortilla」 | L1233–L1235 / L2757–L2759 / L3622–L3624 |
+| 2 台面 (0.60,-6.00) → A | 手空，玉米饼成为容器 | L1257–L1259 / L2780–L2783 / L3642–L3644 |
+| 3 货箱料 → A | 手「BurritoChicken」/「BurritoMeat」/「Mushroom」 | L1283–L1285 / L2129–L2131 / L3076–L3078 |
+| 4 砧板0 → A | 料上台面 | L1293–L1295 / L2153–L2155 / L3140–L3142 |
+| 5 砧板0 → X 按住 | 8 格 →「BurritoChoppedChicken」/「DicedMeat」/「ChoppedMushroom」 | L1314–L1700 / L2178–L2582 / L3159–L3477 |
+| 6 砧板0 → A | 手切好的料 | L1778–L1780 / L2662–L2664 / L3513–L3515 |
+| 7 平底锅灶 → A | 锅 [BurritoChicken]/[BurritoMeat]/[Mushroom] | L1809–L1833 / L2679–L2711 / L3534–L3548（蘑菇用另一口锅 `(3.00,-6.00)`） |
+| 8 货箱 Rice → A | 手「Rice」 | L1838–L1840 / L2716–L2718 / L3552–L3554 |
+| 9 汤锅灶 → A | 锅 [Rice] | L1863–L1885 / L2731–L2749 / L3602–L3607 |
+| 10 等熟 → 取锅 | 12.1 s 后"已熟"；手「utensil_frying_pan_01」[料] | L1924–L1929 / L2826–L2830 / L3694–L3697 |
+| 11 台面 → A（手持锅） | 手仍持锅、锅内空；容器「Tortilla」=[Cooked…] | L1946–L1963 / L2847–L2870 / （本轮是变体，见下） |
+| 12 平底锅灶 → A | 空锅回灶，手空 | L1972–L1974 / L2873–L2875 / — |
+| 13 米熟 → 取锅 | 手「utensil_pot_01」[Rice] | L1982–L1988 / L2900–L2903 / L3745–L3803 |
+| 14 台面 → A（手持锅） | 手仍持锅；容器「Tortilla」=[Cooked+Cooked] | L1994–L2008 / L2916–L2929 / L3819–L3843 |
+| 15 汤锅灶 → A | 空锅回灶 | L2009–L2011 / L2991–L2993 / L3844–L3846 |
+| 16 台面 → A | 手「Tortilla」[Cooked+Cooked] | L2031–L2033 / L3009–L3011 / L3864–L3866 |
+| 17 装盘台 → A | 手空；盘=[CompositeAssembledNode] | L2069–L2076 / L3033–L3050 / L3913–L3918 |
+| 18 装盘台 → A | 手盘 | L2084–L2086 / L3054–L3056 / L3924 |
+| 19 传菜口 → A | 盘落台，约 0.5 s 后消失 | L2107–L2128 / L3072–L3075 / L3935–L3954 |
+
+`Mushroom_Burrito` 本轮的第 11 步用的是变体（手持玉米饼在 (-0.60,-6.00) 的锅前把蘑菇吸进玉米饼，
+L3762–L3766），按用户决定不建模；模型统一用 Chicken/Meat 的"料从锅倒进台面上的玉米饼"。
+
+**四个待核实问题的答案**
+
+1. 切完的 prefab 名：`ChoppedSushiFish`、`ChoppedSushiPrawn`、`BurritoChoppedChicken`、
+   `DicedMeat`（牛肉，不是 `BurritoChoppedMeat`）、`ChoppedMushroom`。
+2. 虾在 `Sushi_PlainPrawn` 里**只切不煮**：全程没进任何锅（L72–L692）。
+3. 卷饼的组合顺序是"玉米饼先放普通台面当容器 → 熟料从锅/平底锅倒进去（倒时厨师端着锅，手不空）
+   → 整只玉米饼上盘"。不是"卷饼放盘上"，也不是"料先上盘"。
+4. 装盘之后没有额外一步：上盘 → 取盘 → 传菜口。
+
+**工时（同一局实测，含当前 `_3` 调参：`chop_stages=2`、`chop_multiplier=8`、锅容量 1）**
+
+| 工序 | 实测 | 依据 |
+|---|---|---|
+| 切 | 8 格，每格约 0.20–0.24 s，合计 1.6–1.75 s（X 按住；日志里每 0.5 s 一次的 ≤0.09 s 空档是记录抖动，不是松手） | L117–L531 等五段 |
+| 煮/煎 | 12.07–12.15 s 到"已熟"（米、鸡、牛肉、蘑菇都一样） | L1924、L1982、L2826、L2900、L3694、L3745 |
+| 装盘 | 一次 A，放上去到盘出现 ≤0.1 s | L636–L644 等 |
+| 交付 | 盘落传菜口到消失约 0.5 s | L691–L692 等 |
+| 拿料/取放/倒料 | 各一次 A，约 0.01–0.02 s | 全部 |
+| 烧焦 | 未知；同一口锅在"已熟"后继续加热到 16.10 s 仍未烧焦 | L3745 前后（米第三次） |
+
+**对 `build_recipes` 的约束**（这就是第 3 步要生成的图）
+
+- 5 道菜：`Chicken_Burrito`、`Meat_Burrito`、`Mushroom_Burrito`、`Sushi_PlainFish`、
+  `Sushi_PlainPrawn`（顺序同 `levels/wellcooked_demo/layout_3.tsv` 的 `# menu:`）。
+- 寿司：`fetch → cut → plate → deliver`，没有 `assemble`；`plate` 的语义是"把手里整份菜放到
+  盘堆上，再取盘"，不是"先取盘，再去锅里取料"。
+- 卷饼：`fetch(Tortilla) → place(Tortilla 上普通台面)`；`fetch+cut+cook(料)`、`fetch+cook(米)`；
+  `pour(料锅 → 玉米饼)`、`pour(米锅 → 玉米饼)`；`pickup(玉米饼)`；`plate`；`deliver`。
+- 熟料的 `step` 取游戏菜单树：鸡/牛/蘑菇 `FryingPan`，米 `Pot`；寿司不煮。
+- 切用 `cut`，资源 `board`；玉米饼放到 `counter`；倒料需要"端起锅 → 对着容器按 interact → 锅放回灶"
+  的一步——当前 `macro.c` 没有这个 op（`assemble` 的 drop 以"手空"判完成，而实测倒完料锅还在手上）。
 
 验收：一个厨师、`Sushi_PlainFish` 一道菜、系统控制完成一单，得分 > 0。
+
+#### P0 第 5–7 步：状态上报的三个阻塞项（2026-10-27 审计）
+
+这三步排在第 4 步之后、上面那段 P0 验收之前。完整清单与证据见下面的《状态上报缺口（G1–G14）》；
+P0 验收仍是“一个厨师、`Sushi_PlainFish`、系统控制完成一单、得分 > 0”。
+
+- **P0 第 5 步 — 锅键按灶台位置稳定（G1）。** 按 P3 第 1 条枚举 `ServerCookableContainer`，空锅报
+  `state=free`，按 x、z 排序并与 `kitchen.json` 的 `cooker-N` 一一对应；`_3` 的 6 口锅实机核对坐标。
+  完成信号：`cook:BoiledRice` 派到 `cooker-4` 时帧里有 `pot_4`，`start_cook` 不再出现
+  `no-station-resource`（当前实机 0 ms 失败 3 次，`worker-3.log:20/27/33`）。
+- **P0 第 6 步 — 干净盘数改用 `GetCount`（G2）。** `plugin/Link/StateFrame.cs:350` 的
+  `ClientCleanPlateStack.GetSize()` 改成基类 `ClientPlateStackBase.GetCount()`（任务 02 的
+  `dirty_plates` 已用同一方法）。完成信号：`state_update` 里有 `plate_stack.count`，洗盘判定不再
+  恒 `clean=0`（`LogOutput.log:166-168`、`fix4/scheduler.log:114`）。
+- **P0 第 7 步 — 交付与过期分开（G9）。** `macro.c:run_deliver` 只等订单从 `m_activeOrders` 消失，
+  过期也会消失，可能把扣分当完成 [推断]。拿游戏侧结果：插件在 `OnSuccessfulDelivery`/
+  `OnOrderExpired` 上记结果，或 Scheduler 用交付前后 `world.score` 差判定；`order_completed` 只在
+  真的加分时写。完成信号：交付成功写 `order_completed` 且得分上升；过期只写失败，不写完成。
+
+#### 执行顺序（状态缺口插入后）
+
+1. P0 工序图（第 1/3/4 步）。
+2. 进关重导 `config/maps/s_wellcooked_demo_3/{kitchen,recipes}.json`（5 道菜、砧板、utensil 归位）。
+3. G1 / G2 / G9（上面第 5–7 步）。
+4. P0 验收：一个厨师、`Sushi_PlainFish`、得分 > 0。
+5. 任务 09 的 Check：`_3`、四个厨师、灵活派工。
+6. `_1` 洗盘（W9）。
+7. P1：状态消费与内容身份（G11/G3/G4/G5/G7）与 P1 走位抖动。
+8. 任务 11：权重网格搜索与批跑。
 
 ### P1 走位抖动（偏头乱晃）
 
@@ -497,6 +614,27 @@ PIBT 少放行一格）就 `plan_seq + 1`；插件 `ActionDriver.Handle` 收到�
    已部分做了）。
 4. 指标：`nav_metrics.json` 加每个厨师每秒的 `path` 条数和朝向变化角度累计；验收为单人走一条 10 格
    直线时 `path` ≤ 2 条、朝向反转次数 0。实机录屏或至少看一次画面确认。
+
+### P1 状态消费与内容身份（2026-10-27 审计）
+
+这一节只放 P1 走位抖动之外、审计发现的状态消费缺口。G1/G2/G9 属 P0，不在这里。
+
+1. **Scheduler 看 `holding`（G11）。** `dispatch_ready`/`build_candidates` 只读坐标与任务状态，
+   `kos_chef.holding` 进了 shm 却没有读者；手上拿着盘子/料的厨师会被派去 `fetch`，宏只能等超时
+   （`worker-2.log:19` 的手持状态超时是同类现象 [推断]）。做法：候选过滤或代价里惩罚
+   `holding[0] != '\0'` 的厨师，或给 `fetch` 加“先放下/交接”一步。验收：4 人局里不再因为
+   “手不空”出现 `pickup`/`empty-hand` 超时。
+2. **容器/盘/手持内容递归（G3/G4）。** 复用一套 walker：`CompositeAssembledNode.m_composition`
+   递归，叶子读 `IngredientAssembledNode.m_ingriedientOrderNode.name`；盘优先
+   `ClientPlate.GetOrderComposition()`。`StateFrame` 用它填手持内容与容器内容。验收：
+   `state_update` 里玉米饼显示“米饭+鸡肉”，而不是 `CookedCompositeAssembledNode`；盘能看出是哪道菜。
+   组合节点递归在实机未验证 [推断]，先拿手动局日志 `manual:2353`/`manual:2421` 对照。
+3. **台面物品进帧（G5）。** `AppendContainers` 枚举 `ClientIngredientContainer`，只报有内容的，
+   带 `pos`。这同时补上任务 09 卡住的 `counter` 工位（玉米饼放普通台面）。验收：放进台面的
+   Tortilla 在帧里可见、有坐标和内容；`pour` 能按坐标找到它。
+4. **每单分值进入优先级（G7）。** 插件发 `RecipeListEntry.m_scoreForMeal`（卷饼 80、寿司 20），
+   Scheduler 不再用 fallback 10。先作订单级 tie-break；价值密度是否进 `cost` 留给任务 11 的
+   网格搜索。验收：`order_arrived` 的 `reward` 是 80/20，而不是清一色 10；截止期相同时高分菜先开。
 
 ### P2 反复瞎碰（重试风暴）
 
@@ -534,6 +672,49 @@ fix8 证据：`macro_failed` 里 `drop` 9 次、`pickup` 4 次、`start_cook` 3 
    的 `ContainerJson`/`CollectNodeNames`）。
 3. `GetCookingProgress()` 是秒，不是 0..1（局末一口锅 `progress=24.013`）：`time_left =
    AccessCookingTime − progress`；`cooking` = 有料且未熟。`plugin/README.md` 的"锅"一行同步改。
+
+### 状态上报缺口（G1–G14，2026-10-27 审计）
+
+证据来自代码、`logs/real-game/20261027-015135-_3-record/logs/`、`logs/manual/20261027-022317/`
+与 `Assembly-CSharp.dll` 的成员表（只读元数据）。P3 已解决的锅状态问题不重复；G1/G6 直接引用 P3。
+
+**P0 — 阻塞（不修就完不成一单）**
+
+| # | 缺什么 | 证据 | 阻塞 | 修复位置 |
+|---|---|---|---|---|
+| G1 | `pot_N` 用 `GetCookingHandlers()` 的当前枚举下标，空锅不在列表，键不对应灶台 | `worker-3.log:20/27/33` 三次 `no-station-resource`；`scheduler.log:41/52/59`；`bridge.log:3019→3031`（资源数 3→4，只多一口锅） | 阻塞 | P3 第 1 条；P0 第 5 步 |
+| G2 | 干净盘数读 `ClientCleanPlateStack.GetSize()`，该类没有此成员 → `plate_stack` 从不进帧 | `LogOutput.log:166-168`（属性/字段/方法三连未找到）；`fix4/scheduler.log:114` `clean=0` | 阻塞 | `StateFrame.AppendPlateStack` 改 `GetCount()`；P0 第 6 步 |
+| G9 | 交付成功与订单过期都表现为订单从 `m_activeOrders` 消失 [推断] | `macro.c:753 run_deliver`；`ServerKitchenFlowControllerBase` 有 `OnSuccessfulDelivery`/`OnOrderExpired`（元数据） | 阻塞 | 插件发每单结果，或 Scheduler 用 `world.score` 差；P0 第 7 步 |
+| G10 | `_3` 已 5 道菜，导出 `recipes.json` 仍 3 道、无 `cut`；`workable` 未解析 | `scheduler.log:45` 起 52 次 `order_unknown_dish`；`BepInEx/wellcooked-menu.json` 17:21 只有 3 道；`recipes.h:32` 无 `workable`；`export-kitchen.py:379` 不生成 `cut` | 阻塞（离线部分已修） | P0 第 3 步已改 `build_recipes`，5 道菜与节点序列由 `test_export_kitchen.py` 锁住；`workable` 不是消费者字段，已从生成器移除（`recipes.c` 不解析）。剩余：进关重导 `config/maps/s_wellcooked_demo_3/` |
+
+**P1 — 能跑但会送错/空等（做法见《P1 状态消费与内容身份》）**
+
+| # | 缺什么 | 证据 | 阻塞 | 修复位置 |
+|---|---|---|---|---|
+| G11 | Scheduler 不读 `chef.holding`，手上拿盘的厨师会被派去 `fetch` | `scheduler.c:2193 dispatch_ready`/`:1979 build_candidates` 只读坐标与任务状态；`worker-2.log:19` 手持状态超时 [推断] | 高 | `dispatch_ready`/`build_candidates` 读 `world->chefs[i].holding` |
+| G3 | 容器/盘内容只到 `CookedCompositeAssembledNode`/`CompositeAssembledNode` 类型名，馅料与菜名丢了 | `manual:2353` 玉米饼 `[Cooked…+Cooked…]`；`manual:2421` 盘 `[CompositeAssembledNode]`；组合节点递归在实机未验证 [推断] | 高 | `ManualLog.NodeName` 递归 `CompositeAssembledNode.m_composition`，叶子读 `IngredientAssembledNode.m_ingriedientOrderNode.name`；盘用 `ClientPlate.GetOrderComposition()`；`StateFrame` 上报容器 |
+| G4 | 手持物只发名字，不发内容 | `manual:931` 手持盘有 `[SushiPrawn]`；`manual:2233` 手持锅有 `[BurritoChicken]` | 高 | `StateFrame.AppendChefs` 加 `holding_contents`（同一套递归） |
+| G5 | 台面/地面/容器物品不在帧里 | `manual:3242` 容器有坐标与内容；`ManualLog.cs:158 ObserveStations` 已在枚举 `ClientIngredientContainer` | 高 | `StateFrame` 新增 `AppendContainers`（只报有内容的），协议加 `pos`；`export-kitchen.py` 加 `counter` kind |
+| G7 | 每单分值没发，Scheduler 用 fallback 10；`kos_order_view.reward` 有槽位但没人读 | 游戏 `wellcooked-menu.json`：卷饼 80、寿司 20；`scheduler.log` `reward=10`；`policy.h:43` | 高 | `StateFrame.AppendOrder` 加 `score`；`poll_world_orders` 传值；优先级用法见 P1 节 |
+
+**P2 — 优化/容错**
+
+| # | 缺什么 | 证据 | 阻塞 | 修复位置 |
+|---|---|---|---|---|
+| G6 | 锅 `progress` 不进帧（只发 `time_left`）；烧焦剩余、火没有 | P3 第 3 条已明确 `GetCookingProgress()` 是秒；P0 动作表里“已熟”后 16.10 s 仍未烧焦 | 中 | `StateFrame.AppendPots` 补 `progress`；烧焦/火另立资源 |
+| G8 | 回合剩余时间没发 | `ServerRoundTimer.m_timeLeft/m_timeLimit` 字段存在（元数据），运行时读取未验证 [推断] | 中 | `StateFrame.Build` + 协议/shm |
+| G12 | 订单 `ingredients` 没发 | 协议/shm 有槽位，插件不填；Scheduler 不读 | 低 | 可选 |
+| G13 | 锅/板内容不校验身份，放错料也当成功 | `macro.c:668 run_start_cook` 只判 `content` 非空；`macro.c:640 run_chop` 只看 progress | 中 | `macro.c` 比对 `content` 与节点 `label/ingredient` |
+| G14 | 厨师 `state`（moving/idle）没发 | `StateFrame.AppendChefs` 不填 | 低 | 可选 |
+
+**改动顺序与容量。** 新增字段固定按这个顺序改：`protocol/protocol.md` 与 `protocol/schema/` →
+`bridge/include/kitchenos/protocol.h` 的 `proto_*` 与 `bridge/src/protocol.c` 的 `parse_*` →
+`bridge/include/kitchenos/shm.h`（升 `KOS_SHM_VERSION`）与 `bridge/src/bridge.c:world_from_state_update`
+→ 插件 `plugin/Link/StateFrame.cs`。`tools/fake_plugin.py` 与 `plugin/tools/conformance/` 同一次改，
+否则协议级场景会漏测。`kos_resource.content` 只有 32 字节（`shm.h:60`），资源上限 32
+（`shm.h:54`）；递归内容必须新开 `contents[]`，不能塞进 `content`。`_3` 有 42 个 Counter，
+`AppendContainers` 只报**有内容**的台面/容器，否则会超过 32 个资源上限；要全报就同时升上限与
+`KOS_SHM_VERSION`。
 
 ### P4 工作方法与验收顺序
 

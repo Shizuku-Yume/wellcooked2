@@ -14,11 +14,14 @@
  * 完成条件（与 spec L2 一致）：
  *   goto      计划槽 arrived + 插件转到工位（世界状态 facing 误差 < 15°；插件只在
  *             这个误差内回 ack，ack 本身不下发到 Worker）
- *   pickup    holding 变成目标物品
+ *   pickup    holding 变成目标物品；`item` 为空串表示"拿到任意物品"（切完的 prefab
+ *             名与原料名不一定同源，切菜与端起锅都用这一条，别按名字猜）
  *   drop      holding 变空
  *   chop      工位 progress 到 1
  *   start_cook 锅 state 变成 cooking/cooked
- *   wait_ready 锅 state 变成 cooked
+ *   pour      手上锅/容器（`carried_<chefId>`）的内容从非空变空；旧状态没有 carried_
+ *             时退回"源锅里那味料消失"（按内容找 pot_*，不按槽位号）；整段没有可用
+ *             信号时按 MACRO_POUR_FALLBACK_MS 兜底
  *   wash      水槽 progress 到 1 且干净盘数加一（没有 plate_stack 可读时只认 progress）
  *   deliver   订单从世界状态订单表消失
  */
@@ -50,7 +53,7 @@ typedef enum {
     KOS_MACRO_DROP = 2,
     KOS_MACRO_CHOP = 3,
     KOS_MACRO_START_COOK = 4,
-    KOS_MACRO_WAIT_READY = 5,
+    KOS_MACRO_POUR = 5,
     KOS_MACRO_WASH = 6,
     KOS_MACRO_DELIVER = 7
 } kos_macro_kind;
@@ -100,8 +103,10 @@ typedef struct {
 const char *kos_macro_kind_name(int kind);
 const char *kos_macro_action_name(int action);
 
-/* 把 Scheduler 的 op 展开成宏动作序列。node_id 形如 "fetch:Carrot"；plate 还需要
- * source_station_id 指向本订单 cook 已占用的锅。旧入口保留给非 plate 调用者。 */
+/* 把 Scheduler 的 op 展开成宏动作序列。node_id 形如 "fetch:Carrot"。
+ *
+ * `source_station_id` 只给 `pour` 用：源锅所在的灶台（本订单 cook 已占用），
+ * plate 不再从灶上取料，传进来的值会被忽略。 */
 int kos_macro_plan_build_with_source(const kos_kitchen *kitchen, const char *op,
                                      const char *node_id, const char *station_id,
                                      const char *source_station_id, const char *order_id,

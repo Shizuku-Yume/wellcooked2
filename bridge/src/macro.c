@@ -28,7 +28,10 @@
 #define MACRO_DELIVER_TIMEOUT_MS 1500
 #define MACRO_CHOP_MARGIN_MS 3000
 #define MACRO_WASH_MARGIN_MS 3000
-#define MACRO_READY_MARGIN_MS 5000
+#define MACRO_POUR_MARGIN_MS 3000
+/* 倒料时看不到源锅（插件没上报那只锅）时的兜底交互窗口：一次 interact 就够把料倒过去，
+ * 800 ms 只用来覆盖按键与状态上报的往返。 */
+#define MACRO_POUR_FALLBACK_MS 800
 /* 四人同场时 PIBT 让路、反复重规划，实机 `_3` 里 goto 在快到站时（剩 0~1 个路点）
  * 被 3 s 余量判超时；6 s 覆盖一次让路往返。 */
 #define MACRO_GOTO_MARGIN_MS 6000
@@ -63,8 +66,8 @@ const char *kos_macro_kind_name(int kind)
         return "chop";
     case KOS_MACRO_START_COOK:
         return "start_cook";
-    case KOS_MACRO_WAIT_READY:
-        return "wait_ready";
+    case KOS_MACRO_POUR:
+        return "pour";
     case KOS_MACRO_WASH:
         return "wash";
     case KOS_MACRO_DELIVER:
@@ -162,28 +165,47 @@ int kos_macro_plan_build_with_source(const kos_kitchen *kitchen, const char *op,
             (void)add_step(out, KOS_MACRO_GOTO, station_id, "", duration_ms);
             (void)add_step(out, KOS_MACRO_DROP, station_id, "", duration_ms);
             (void)add_step(out, KOS_MACRO_CHOP, station_id, item, duration_ms);
-            (void)add_step(out, KOS_MACRO_PICKUP, station_id, item, duration_ms);
+            /* 切完的 prefab 名与原料名不一定同源（BurritoMeat → DicedMeat），按"拿到任意物品"判。 */
+            (void)add_step(out, KOS_MACRO_PICKUP, station_id, "", duration_ms);
         }
     } else if (strcmp(op, "cook") == 0) {
         (void)add_step(out, KOS_MACRO_GOTO, station_id, "", duration_ms);
         (void)add_step(out, KOS_MACRO_DROP, station_id, "", duration_ms);
         (void)add_step(out, KOS_MACRO_START_COOK, station_id, "", duration_ms);
+    } else if (strcmp(op, "pour") == 0) {
+        /* 端起源锅 → 到容器前按下 → 源锅里那味料消失 → 锅放回灶上。
+         * 倒的时候锅一直在手上（实测），所以不能用 drop 的"手空"判完成。 */
+        if (item[0] == '\0' || source_station_id == NULL || source_station_id[0] == '\0') {
+            rc = KOS_ERR_INVAL;
+        } else if (kos_kitchen_station_index(kitchen, source_station_id) < 0) {
+            rc = KOS_ERR_MISSING;
+        } else {
+            (void)add_step(out, KOS_MACRO_GOTO, source_station_id, "", duration_ms);
+            (void)add_step(out, KOS_MACRO_PICKUP, source_station_id, "", duration_ms);
+            (void)add_step(out, KOS_MACRO_GOTO, station_id, "", duration_ms);
+            (void)add_step(out, KOS_MACRO_POUR, station_id, item, duration_ms);
+            (void)add_step(out, KOS_MACRO_GOTO, source_station_id, "", duration_ms);
+            (void)add_step(out, KOS_MACRO_DROP, source_station_id, "", duration_ms);
+        }
     } else if (strcmp(op, "plate") == 0) {
+        /* 实测：把手里整份菜放到干净盘堆上，游戏在下面垫一只盘子；再按一次取走那只盘。
+         * 盘上原本放着什么由前一道工序决定（寿司=切好的料，卷饼=玉米饼），这里不再去灶上取料。 */
         if (item[0] == '\0') {
             rc = KOS_ERR_INVAL;
         } else {
             (void)add_step(out, KOS_MACRO_GOTO, station_id, "", duration_ms);
+            (void)add_step(out, KOS_MACRO_DROP, station_id, "", duration_ms);
             (void)add_step(out, KOS_MACRO_PICKUP, station_id, "Plate", duration_ms);
-            if (source_station_id != NULL && source_station_id[0] != '\0') {
-                if (kos_kitchen_station_index(kitchen, source_station_id) < 0) {
-                    rc = KOS_ERR_MISSING;
-                } else {
-                    (void)add_step(out, KOS_MACRO_GOTO, source_station_id, "", duration_ms);
-                    (void)add_step(out, KOS_MACRO_WAIT_READY, source_station_id, "", duration_ms);
-                    (void)add_step(out, KOS_MACRO_PICKUP, source_station_id, item, duration_ms);
-                }
-            }
         }
+    } else if (strcmp(op, "pickup") == 0) {
+        /* 从台面上的容器里拿成品（卷饼）。节点名是成品（菜名），而台面上那个物体叫
+         * Tortilla，所以按"拿到任意物品"判完成，别拿名字去猜。 */
+        (void)add_step(out, KOS_MACRO_GOTO, station_id, "", duration_ms);
+        (void)add_step(out, KOS_MACRO_PICKUP, station_id, "", duration_ms);
+    } else if (strcmp(op, "place") == 0) {
+        /* 把手里容器放到台面（玉米饼当容器）；组合由后续 pour 完成。 */
+        (void)add_step(out, KOS_MACRO_GOTO, station_id, "", duration_ms);
+        (void)add_step(out, KOS_MACRO_DROP, station_id, "", duration_ms);
     } else if (strcmp(op, "deliver") == 0) {
         (void)add_step(out, KOS_MACRO_GOTO, station_id, "", duration_ms);
         (void)add_step(out, KOS_MACRO_DELIVER, station_id, "", duration_ms);
@@ -572,8 +594,8 @@ static int step_init(kos_macro *macro, const kos_kitchen *kitchen,
         macro->deadline_ms = game_ms + MACRO_PICKUP_TIMEOUT_MS;
     } else if (step->kind == KOS_MACRO_CHOP) {
         macro->deadline_ms = game_ms + step->duration_ms + MACRO_CHOP_MARGIN_MS;
-    } else if (step->kind == KOS_MACRO_WAIT_READY) {
-        macro->deadline_ms = game_ms + step->duration_ms + MACRO_READY_MARGIN_MS;
+    } else if (step->kind == KOS_MACRO_POUR) {
+        macro->deadline_ms = game_ms + step->duration_ms + MACRO_POUR_MARGIN_MS;
     } else if (step->kind == KOS_MACRO_WASH) {
         macro->deadline_ms = game_ms + step->duration_ms + MACRO_WASH_MARGIN_MS;
     } else {
@@ -640,8 +662,10 @@ static int run_pickup(kos_macro *macro, const kos_kitchen *kitchen,
     const kos_macro_step *step = &macro->plan.steps[macro->step_index];
     const kos_chef *chef = find_chef(world, chef_id);
     const kos_resource *resource = find_station_resource(kitchen, step, world);
+    /* 空的 item = 拿到任意物品（切完的 prefab 改了名、端起锅时手上是锅）。 */
+    int holding = chef != NULL && chef->holding[0] != '\0';
 
-    if (holding_is(chef, step->item)) {
+    if (step->item[0] == '\0' ? holding : holding_is(chef, step->item)) {
         return next_step(macro, out) == 1 ? 1 : 0;
     }
     if (resource != NULL) {
@@ -737,29 +761,118 @@ static int run_start_cook(kos_macro *macro, const kos_kitchen *kitchen,
     return 0;
 }
 
-static int run_wait_ready(kos_macro *macro, const kos_kitchen *kitchen,
-                          const kos_world_state *world, int64_t game_ms,
-                          kos_macro_output *out)
+/*
+ * 手上的锅/容器（G1/G5）：插件按 `carried_<chefId>` 上报手持的锅/盘，容器内容进
+ * contents[]（content 是拼串兼容形式）。旧插件没有这一项，返回 NULL。
+ * 这个名字由 macro 侧直接认；proto 的 find_station_resource 只负责"按位置找工位上的
+ * 资源"，不覆盖"跟着人走"的锅。
+ */
+static const kos_resource *find_carried_resource(const kos_world_state *world, int chef_id)
+{
+    char name[KOS_SHM_NAME_MAX];
+    int i;
+
+    if (chef_id < 0 || world == NULL) {
+        return NULL;
+    }
+    snprintf(name, sizeof name, "carried_%d", chef_id);
+    for (i = 0; i < (int)world->resource_count; i++) {
+        if (strcmp(world->resources[i].name, name) == 0) {
+            return &world->resources[i];
+        }
+    }
+    return NULL;
+}
+
+/* "cooked:BurritoChicken" / "pour:BurritoChicken" → 冒号后的名字。
+ * 状态里的内容带 proto 的类型前缀，工序 id 带 op 前缀，比名字前先剥掉。 */
+static const char *content_name(const char *text)
+{
+    const char *colon;
+
+    if (text == NULL) {
+        return "";
+    }
+    colon = strrchr(text, ':');
+    return colon == NULL ? text : colon + 1;
+}
+
+static int poured_content_matches(const char *node_id, const char *content)
+{
+    return kos_kitchen_name_matches(content_name(node_id), content_name(content));
+}
+
+/*
+ * 倒料：手上端着锅/容器，对着台面容器按 interact，直到锅里的料进到台面上。
+ *
+ * 完成判据取世界状态的"内容"，不按资源编号（锅跟着人走，pot_N 是灶台槽位、不是锅）：
+ *   1. 插件报了 `carried_<chefId>`：先看到它的 content 非空（锅里确实有料），随后变空
+ *      = 倒完了。一帧都没见过内容（插件的 contents 还没接上）不算完成，走兜底；
+ *   2. 没有 carried_（旧插件）：退回"源锅里那味料从 pot_* 里消失"；
+ *   3. 整段都没有可用信号时按 MACRO_POUR_FALLBACK_MS 兜底，别把一次成功的倒料拖成超时。
+ * 目的台面（容器）的位置由 kitchen.json 的 station_id 给出，状态侧由 proto 的
+ * find_station_resource 按位置找；只有"没有 carried_ 的旧状态"才拿它的内容当第二信号
+ * （新状态里 carried_ 是权威：同一张台面可能被两单共用，内容分不清是谁的）。
+ */
+static int run_pour(kos_macro *macro, const kos_kitchen *kitchen, const kos_world_state *world,
+                    int chef_id, int64_t game_ms, kos_macro_output *out)
 {
     const kos_macro_step *step = &macro->plan.steps[macro->step_index];
-    const kos_resource *resource = find_station_resource(kitchen, step, world);
+    const kos_resource *carried = find_carried_resource(world, chef_id);
+    const kos_resource *counter = find_station_resource(kitchen, step, world);
+    int done = 0;
 
-    /* 盘工序的工位可能只是盘子堆（锅在别处），这时没有可等的锅状态。 */
-    if (resource == NULL || resource->state[0] == '\0') {
-        return next_step(macro, out) == 1 ? 1 : 0;
+    if (carried != NULL) {
+        if (carried->content[0] != '\0') {
+            /* 手里这口锅装的必须是这道工序要的料：派错锅/没熟就倒会把别的东西
+             * 倒进玉米饼，而且倒完内容变空，只按"变空"判完成会当成成功。 */
+            if (!poured_content_matches(step->item, carried->content)) {
+                fail_step(macro, game_ms, "content", "wrong-item");
+                return -1;
+            }
+            macro->saw_content = 1;
+        } else if (macro->saw_content) {
+            done = 1;
+        }
+    } else {
+        int found = 0;
+        int i;
+
+        for (i = 0; i < (int)world->resource_count; i++) {
+            const kos_resource *resource = &world->resources[i];
+
+            if (strncmp(resource->name, "pot_", 4) != 0 || resource->content[0] == '\0') {
+                continue;
+            }
+            if (kos_kitchen_name_matches(step->item, resource->content)) {
+                found = 1;
+                break;
+            }
+        }
+        /* 台面容器上有内容（contents[] 里有料）说明这一步的料已经倒进去了；
+         * 台面资源由 proto 的 find_station_resource 按位置找，旧世界状态里没有这一项。 */
+        if (counter != NULL && counter->content[0] != '\0') {
+            found = 1;
+        }
+        if (found) {
+            macro->saw_content = 1;
+        } else if (macro->saw_content) {
+            done = 1;
+        }
     }
-    if (strcmp(resource->state, "cooked") == 0) {
-        return next_step(macro, out) == 1 ? 1 : 0;
+    if (!done && !macro->saw_content &&
+        game_ms - macro->step_start_ms >= MACRO_POUR_FALLBACK_MS) {
+        done = 1;
     }
-    if (strcmp(resource->state, "burning") == 0) {
-        fail_step(macro, game_ms, "pot=cooked", "burning");
-        return -1;
+    if (done) {
+        return next_step(macro, out) == 1 ? 1 : 0;
     }
     if (game_ms >= macro->deadline_ms) {
-        fail_step(macro, game_ms, "pot=cooked", "timeout");
+        fail_step(macro, game_ms, "source-empty", "timeout");
         return -1;
     }
-    out->action = KOS_MACRO_ACT_STOP;
+    out->action = KOS_MACRO_ACT_INTERACT;
+    copy_str(out->target_object, sizeof out->target_object, step->station_id);
     return 0;
 }
 
@@ -845,8 +958,8 @@ int kos_macro_advance(kos_macro *macro, const kos_kitchen *kitchen,
         return run_chop(macro, kitchen, world, game_ms, out);
     case KOS_MACRO_START_COOK:
         return run_start_cook(macro, kitchen, world, game_ms, out);
-    case KOS_MACRO_WAIT_READY:
-        return run_wait_ready(macro, kitchen, world, game_ms, out);
+    case KOS_MACRO_POUR:
+        return run_pour(macro, kitchen, world, chef_id, game_ms, out);
     case KOS_MACRO_WASH:
         return run_wash(macro, kitchen, world, game_ms, out);
     case KOS_MACRO_DELIVER:
