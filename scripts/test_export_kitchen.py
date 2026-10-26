@@ -236,11 +236,51 @@ class CounterStationTests(unittest.TestCase):
         self.assertEqual([s["kind"] for s in stations], ["dispenser"])
 
 
-class Demo3FixtureTests(unittest.TestCase):
-    """`_3` 的 5 道菜按实测动作表生成，节点序列逐条锁住。
+class StandCellTests(unittest.TestCase):
+    """没有可站格的工位必须被导出丢掉：留着会让 `kos_stand_build` 拒绝整张图。"""
 
-    夹具是离线快照（见 fixtures/s_wellcooked_demo_3/*.json 的 `_derived`）；等游戏里
-    `menu=1` 导出真的 wellcooked-menu.json 后，用真文件替换再核对一次。
+    # 一条 5 格的走廊（z=0），台面摆在走廊端头外侧，只有 -x 侧有格可站。
+    CELLS = [[0.0, 0.0], [0.6, 0.0], [1.2, 0.0], [1.8, 0.0], [2.4, 0.0]]
+
+    def test_stand_cells_follow_the_four_directions(self):
+        # 台面嵌在走廊的空格里（x=1.2 不在 cells 里）：左右两格都正对。
+        cells = [[0.0, 0.0], [1.2, 0.0], [2.4, 0.0]]
+        self.assertEqual(sorted(EXPORT.stand_cells([0.6, 0.0], cells, 0.6)), [0, 1])
+        # 只要有一条格线正对，多远都算站位（C 侧 stand.c 也是取最近的格，不设上限）。
+        self.assertEqual(EXPORT.stand_cells([1.2, 3.0], cells, 0.6), [1])
+        # 横竖两条格线上都没有格才是没有站位（`_3` 地图四角就是这种）。
+        self.assertEqual(EXPORT.stand_cells([4.2, 3.0], cells, 0.6), [])
+
+    def test_counter_without_stand_is_dropped_and_renumbered(self):
+        raw = [
+            {"type": "ClientAttachStation", "name": "countertop_01_standard_wood",
+             "pos": [4.2, 3.0]},   # 横竖都没有格线，没有站位
+            {"type": "ClientAttachStation", "name": "countertop_01_standard_wood",
+             "pos": [0.6, 0.0]},
+            {"type": "ClientAttachStation", "name": "countertop_01_standard_wood",
+             "pos": [1.8, 0.0]},
+        ]
+        stations, _ = EXPORT.build_stations(raw, 0.6, (None, None))
+        kept, dropped = EXPORT.drop_stations_without_stand(stations, self.CELLS, 0.6)
+        self.assertEqual([s["pos"] for s in dropped], [[4.2, 3.0]])
+        self.assertEqual([s["id"] for s in kept], ["counter-0", "counter-1"])
+        self.assertEqual([s["pos"] for s in kept], [[0.6, 0.0], [1.8, 0.0]])
+
+    def test_drop_keeps_a_station_that_has_any_direction(self):
+        stations = [{"kind": "counter", "id": "counter-0", "pos": [0.6, 0.0],
+                     "name": "countertop_01_standard_wood"}]
+        kept, dropped = EXPORT.drop_stations_without_stand(stations, self.CELLS, 0.6)
+        self.assertEqual(dropped, [])
+        self.assertEqual([s["id"] for s in kept], ["counter-0"])
+
+
+class Demo3FixtureTests(unittest.TestCase):
+    """`_3` 的实机夹具：5 道菜、38 张普通台面、每个节点都有工位。
+
+    夹具来自 20261027-033435 那次实机导出（state/menu/terrain 原样）加新插件会发出的
+    42 条 `ClientAttachStation` 记录（对象名见 manual.log，坐标见 layout_3.tsv）。
+    kitchen.json / recipes.json 由 `scripts/export-kitchen.py` 从这三份文件生成，
+    与 Runner 进关后跑的是同一个生成器。
     """
 
     @classmethod
@@ -249,16 +289,73 @@ class Demo3FixtureTests(unittest.TestCase):
             cls.menu = json.load(handle)
         with open(FIXTURES / "state.json", encoding="utf-8") as handle:
             cls.state = json.load(handle)
-        cls.stations, cls.unknown = EXPORT.build_stations(cls.state["stations"], 0.6, (0.0, 0.0))
+        with open(FIXTURES / "terrain.json", encoding="utf-8") as handle:
+            cls.terrain = json.load(handle)
+        cls.step = cls.terrain["step"]
+        cls.cells = [[round(x, 2), round(z, 2)] for x, z in cls.terrain["cells"]]
+        cls.origin = (min(x for x, _ in cls.cells), min(z for _, z in cls.cells))
+        cls.stations, cls.unknown = EXPORT.build_stations(
+            cls.state["stations"], cls.step, cls.origin)
+        cls.stations, cls.dropped = EXPORT.drop_stations_without_stand(
+            cls.stations, cls.cells, cls.step)
         cls.kinds = sorted({s["kind"] for s in cls.stations})
         cls.recipes = EXPORT.build_recipes(cls.menu, cls.state, cls.kinds)
         cls.dishes = {d["dish"]: d for d in cls.recipes["dishes"]}
         cls.nodes = {n["id"]: n for n in cls.recipes["nodes"]}
 
-    def test_station_kinds_cover_the_new_ops(self):
-        for kind in ("board", "counter", "cooker", "dispenser", "plate_stack", "serving"):
-            self.assertIn(kind, self.kinds)
+    def test_checked_in_generated_files_match_the_fixture(self):
+        """test_recipe_stations.c 直接读这两份文件，生成器改了它们必须一起更新。"""
+        with open(FIXTURES / "kitchen.json", encoding="utf-8") as handle:
+            kitchen = json.load(handle)
+        with open(FIXTURES / "recipes.json", encoding="utf-8") as handle:
+            recipes = json.load(handle)
+        self.assertEqual([(s["id"], s["kind"], s["pos"]) for s in kitchen["stations"]],
+                         [(s["id"], s["kind"], s["pos"]) for s in self.stations])
+        self.assertEqual(kitchen["kinds"], {k: sum(1 for s in self.stations if s["kind"] == k)
+                                           for k in dict.fromkeys(s["kind"] for s in self.stations)})
+        self.assertEqual(recipes["dishes"], self.recipes["dishes"])
+        self.assertEqual(recipes["nodes"], self.recipes["nodes"])
+
+    def test_station_counts_match_the_level(self):
+        counts = {}
+        for station in self.stations:
+            counts[station["kind"]] = counts.get(station["kind"], 0) + 1
+        self.assertEqual(counts, {"serving": 1, "dispenser": 7, "cooker": 6, "board": 2,
+                                  "sink": 1, "clean_plate_stack": 1, "plate_stack": 1,
+                                  "counter": 38})
         self.assertEqual(self.unknown, [])
+
+    def test_counters_without_stand_are_dropped(self):
+        # 地图四角各有一张被围住的台面，站位格取不到；留着会让 kos_stand_build 拒绝整张图。
+        self.assertEqual(sorted(tuple(s["pos"]) for s in self.dropped),
+                         [(-3.0, -8.4), (-3.0, 1.2), (12.6, -8.4), (12.6, 1.2)])
+
+    def test_counter_under_plate_stack_is_exported_but_not_free(self):
+        under_stack = [s for s in self.stations
+                       if s["kind"] == "counter" and tuple(s["pos"]) == (3.0, 1.2)]
+        self.assertEqual(len(under_stack), 1)
+        # 同格还有盘堆：Scheduler 的 kos_kitchen_pick_counter 会跳过它。
+        self.assertIn("plate_stack", {s["kind"] for s in self.stations
+                                      if tuple(s["pos"]) == (3.0, 1.2)})
+
+    def test_every_node_of_every_dish_has_a_station(self):
+        kinds = {}
+        for station in self.stations:
+            kinds.setdefault(station["kind"], []).append(station)
+        cookers = kinds.get("cooker", [])
+        for node in self.recipes["nodes"]:
+            resource = node.get("resource")
+            if resource and node["op"] != "drop":
+                self.assertIn(resource, kinds, node["id"])
+            if node["op"] == "cook" and node.get("step"):
+                self.assertTrue(any(st.get("step") in (None, "", node["step"])
+                                    for st in cookers), node["id"])
+        for dish in self.recipes["dishes"]:
+            for node_id in dish["nodes"]:
+                self.assertIn(node_id, self.nodes)
+                node = self.nodes[node_id]
+                if node["op"] == "place":
+                    self.assertEqual(node["resource"], "counter")
 
     def test_chicken_burrito_sequence(self):
         self.assertEqual(self.dishes["Chicken_Burrito"]["nodes"], [
@@ -270,13 +367,13 @@ class Demo3FixtureTests(unittest.TestCase):
     def test_meat_burrito_sequence(self):
         self.assertEqual(self.dishes["Meat_Burrito"]["nodes"], [
             "fetch:BurritoMeat", "fetch:Rice", "fetch:Tortilla", "cut:BurritoMeat",
-            "cook:BoiledRice", "cook:FriedMeat", "place:Tortilla", "pour:BurritoMeat",
+            "cook:BoiledRice", "cook:FriedBurritoMeat", "place:Tortilla", "pour:BurritoMeat",
             "pour:Rice", "pickup:Meat_Burrito", "plate:Meat_Burrito", "deliver:Meat_Burrito"])
 
     def test_mushroom_burrito_sequence(self):
         self.assertEqual(self.dishes["Mushroom_Burrito"]["nodes"], [
             "fetch:Mushroom", "fetch:Rice", "fetch:Tortilla", "cut:Mushroom",
-            "cook:BoiledRice", "cook:FriedMushroom", "place:Tortilla", "pour:Mushroom",
+            "cook:BoiledRice", "cook:FriedMushrooms", "place:Tortilla", "pour:Mushroom",
             "pour:Rice", "pickup:Mushroom_Burrito", "plate:Mushroom_Burrito",
             "deliver:Mushroom_Burrito"])
 
@@ -303,8 +400,8 @@ class Demo3FixtureTests(unittest.TestCase):
         self.assertEqual([n["id"] for n in self.recipes["nodes"] if n["op"] == "assemble"], [])
 
     def test_cook_steps_and_resources(self):
-        for cook, step in (("cook:FriedChicken", "FryingPan"), ("cook:FriedMeat", "FryingPan"),
-                           ("cook:FriedMushroom", "FryingPan"), ("cook:BoiledRice", "Pot")):
+        for cook, step in (("cook:FriedChicken", "FryingPan"), ("cook:FriedBurritoMeat", "FryingPan"),
+                           ("cook:FriedMushrooms", "FryingPan"), ("cook:BoiledRice", "Pot")):
             self.assertEqual(self.nodes[cook]["step"], step)
         self.assertEqual(self.nodes["cut:BurritoMeat"]["resource"], "board")
         self.assertEqual(self.nodes["pour:Mushroom"]["resource"], "counter")
