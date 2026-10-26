@@ -40,8 +40,12 @@ namespace WellCooked
         private static bool _malformedLogged;
         private static bool _oversizeLogged;
 
-        /// <summary>协议 §5 的单条消息上限。</summary>
-        private const int MaxStateBytes = 4096;
+        /// <summary>
+        /// 状态帧的**软预算**（不是协议上限）：超了只在日志里警告一次，仍然发送。
+        /// 递归 `contents[]` 上线后满帧约 7–9 KB，所以从 4 KB 提到 16 KB；
+        /// 协议的单条硬上限是 1 MiB（`TcpLink.MaxFrameBytes`），两边不是一个数。
+        /// </summary>
+        private const int MaxStateBytes = 16384;
 
         /// <summary>桥侧靠这个认人：机器名 + 插件角色（写死一个字面量时两台机器看起来一样）。</summary>
         private static readonly string Instance = SafeMachineName() + "-plugin";
@@ -103,7 +107,7 @@ namespace WellCooked
             bool connected = _link.Connected;
             if (connected && !_wasConnected)
             {
-                _link.Send(Msg.Hello(Instance, "0.2.0", HostActions));
+                _link.Send(Msg.Hello(Instance, "0.3.0", HostActions));
                 _nextStateAt = 0f; // 连上先立刻报一帧，别等下一个间隔
                 _log.LogInfo("link: 已连上 Bridge，" + _host + ":" + _port + "，hello 已发");
             }
@@ -129,12 +133,13 @@ namespace WellCooked
                 }
                 else if (bytes > MaxStateBytes)
                 {
-                    // 协议约定单条 <4KB（`protocol/protocol.md` §5）。超了照样发（对端按
-                    // 容量截断，丢一条会让帧屏障少一帧），但要说出来，别让人以为没这回事。
+                    // 软预算（16 KB）：超了照样发。丢一条会让帧屏障少一帧，不能丢；
+                    // 但对端按自己的固定布局截断，所以还是要说出来，别让人以为没这回事。
                     if (!_oversizeLogged)
                     {
                         _oversizeLogged = true;
-                        _log.LogWarning("link: state_update " + bytes + " 字节，超过 4 KB 约定（已发）");
+                        _log.LogWarning("link: state_update " + bytes + " 字节，超过 "
+                                        + MaxStateBytes + " 字节软预算（已发）");
                     }
                 }
 

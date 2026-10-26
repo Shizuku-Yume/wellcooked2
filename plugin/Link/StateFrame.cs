@@ -62,7 +62,8 @@ namespace WellCooked
             object flow = WorldState.Flow();
             object team = WorldState.Team();
 
-            var b = new JsonBuilder(2048);
+            // 满帧约 7–9 KB（递归 contents）；一次分配到位，别每帧让 StringBuilder 翻倍扩容。
+            var b = new JsonBuilder(8192);
             b.Obj();
             b.Field("type", MsgType.StateUpdate);
             b.FieldInt("timestamp", TcpLink.UnixSeconds());
@@ -258,7 +259,7 @@ namespace WellCooked
             _resourcesAt = now;
             _resourceCount = 0;
 
-            var b = new JsonBuilder(4096);
+            var b = new JsonBuilder(8192);
             b.Obj();
             // 先报"工位"，再报"工位上/手里的东西"；covered 里是已经报过的物体，
             // 后面的 container_<N> 只捡剩下的（掉在地上、没人拿的容器）。
