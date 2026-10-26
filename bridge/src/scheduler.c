@@ -909,6 +909,13 @@ static int reclaim_leases_for_chef(scheduler *s, int chef, const char *reason)
             deactivate_putdown(s, reason);
         } else {
             task_requeue(s, order_index, task_index, reason);
+            if (order_index >= 0 && order_index < s->order_count &&
+                task_index >= 0 && task_index < s->orders[order_index].task_count) {
+                /* 世界状态缓存最多 100 ms 旧：先等一帧，让"料其实已经在他手上"
+                 * 被看到，再由第 12 条用例里的采纳路径接手，而不是重派一次 fetch。 */
+                s->orders[order_index].tasks[task_index].not_before_ms =
+                    now_ms() + SCHED_WORLD_POLL_MS + 50;
+            }
         }
         count++;
     }
@@ -3124,6 +3131,17 @@ static void dispatch_ready(scheduler *s, int64_t now)
         return;
     }
     world = scheduler_world(s, now);
+    /* 手上已经有某个待派工序的产物（上一次宏做完了，DONE/租约在崩溃/丢帧里没了）：
+     * 直接把工序记成 DONE，别再把同一道工序派给他——他手不空，fetch 只会超时。
+     * 这是 Worker 重启后 RECOVERED 重排走不通的那条路（os-loop）。 */
+    if (world != NULL) {
+        for (i = 0; i < s->rt.opts.chefs && i < KOS_ASSIGN_MAX_CHEFS; i++) {
+            if (s->running_by_chef[i] != 0) {
+                continue;
+            }
+            (void)try_adopt_holding(s, i, "holding-matches", now);
+        }
+    }
     for (i = 0; i < s->rt.opts.chefs && i < KOS_ASSIGN_MAX_CHEFS; i++) {
         if (s->blocked_hold[i] && !has_avoid_task(s, i)) {
             /* 被重排的工序已经完成/失败，扣留自然解除，避免这个厨师永远没活。 */

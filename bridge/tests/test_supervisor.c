@@ -449,7 +449,7 @@ static void remove_tree(const char *path)
 
 /* Supervisor 被 SIGKILL 时不会走 unlink_resources；测试自己清掉全局资源信号量，
  * 否则下一次 make test 会在 /dev/shm 里留下 sem.kitchenos_res_*。 */
-static void unlink_resource_sems(void)
+static void unlink_resource_sems_instance(int instance)
 {
     char path[KOS_DAEMON_PATH_MAX];
     kos_kitchen kitchen;
@@ -460,12 +460,32 @@ static void unlink_resource_sems(void)
     }
     kos_error_clear(&err);
     if (kos_kitchen_load(path, &kitchen, &err) == KOS_OK) {
-        (void)kos_resources_unlink(&kitchen, KOS_INSTANCE_NONE, &err);
+        (void)kos_resources_unlink(&kitchen, instance, &err);
     }
+}
+
+/* 自定义 shm 名的运行由 Supervisor 按 pid 派生实例号（见 supervisor_main），
+ * 清理时用同一个公式把带后缀的资源信号量一并删掉。 */
+static int supervisor_instance_for_pid(pid_t pid)
+{
+    if (pid <= 0) {
+        return KOS_INSTANCE_NONE;
+    }
+    return (int)((unsigned long)pid % 65534) + 1;
+}
+
+static void unlink_resource_sems(void)
+{
+    /* 没有 pid 的调用点：默认名与派生名都不知道，只能清默认名；
+     * cleanup_run 会用 supervisor_instance_for_pid(pid) 再清一次。 */
+    unlink_resource_sems_instance(KOS_INSTANCE_NONE);
 }
 
 static void cleanup_run(sup_run *r)
 {
+    if (r->pid > 0) {
+        unlink_resource_sems_instance(supervisor_instance_for_pid(r->pid));
+    }
     if (r->pid > 0 && kill(r->pid, 0) == 0) {
         kill(r->pid, SIGKILL);
         (void)waitpid(r->pid, NULL, 0);
@@ -1028,6 +1048,83 @@ static void resolve_binaries(void)
     snprintf(g_silent_bin, sizeof g_silent_bin, "%s/kitchenos-silent-child", exe);
 }
 
+/* 取出 scheduler.log 里 mq_ready 的事件队列名。 */
+static int read_events_queue(const char *log_path, char *out, size_t cap)
+{
+    char body[32768];
+    const char *hit;
+    size_t len = 0;
+
+    if (read_all(log_path, body, sizeof body) != 0) {
+        return -1;
+    }
+    hit = strstr(body, "mq_ready events=");
+    if (hit == NULL) {
+        return -1;
+    }
+    hit += strlen("mq_ready events=");
+    while (hit[len] != '\0' && hit[len] != ' ' && hit[len] != '\n' && len + 1 < cap) {
+        len++;
+    }
+    memcpy(out, hit, len);
+    out[len] = '\0';
+    return len > 0 ? 0 : -1;
+}
+
+/*
+ * 自定义 shm 名的两棵树（场景 harness 就是这种用法）必须拿到不同的 mq 名；
+ * 否则第二棵树会把第一棵的事件收走，os-loop 的 RECOVERED 就是这样丢的。
+ * 修复前两个 scheduler.log 都写 events=/kitchenos_events。
+ */
+static void test_custom_names_isolate_mq(void)
+{
+    sup_run a;
+    sup_run b;
+    char log_a[KOS_DAEMON_PATH_MAX + 32];
+    char log_b[KOS_DAEMON_PATH_MAX + 32];
+    char queue_a[64];
+    char queue_b[64];
+    int status = 0;
+
+    printf("[test_supervisor] 9. 自定义 shm 名的运行隔离 mq\n");
+    init_run(&a, "mqiso_a");
+    init_run(&b, "mqiso_b");
+    snprintf(log_a, sizeof log_a, "%s/logs/scheduler.log", a.runtime);
+    snprintf(log_b, sizeof log_b, "%s/logs/scheduler.log", b.runtime);
+    a.pid = spawn_supervisor(a.runtime, a.state, a.sem, a.port, 1, NULL, 1, 0, 5,
+                             "0,50,100", 50, 800, 100);
+    b.pid = spawn_supervisor(b.runtime, b.state, b.sem, b.port, 1, NULL, 1, 0, 5,
+                             "0,50,100", 50, 800, 100);
+    expect(a.pid > 0 && b.pid > 0, "two_supervisors_spawned");
+    expect(wait_child_running(a.runtime, "scheduler", 1, STARTUP_TIMEOUT_MS, NULL),
+           "first_scheduler_running");
+    expect(wait_child_running(b.runtime, "scheduler", 1, STARTUP_TIMEOUT_MS, NULL),
+           "second_scheduler_running");
+    expect(wait_log(log_a, "mq_ready events=", 3000), "first_mq_ready_logged");
+    expect(wait_log(log_b, "mq_ready events=", 3000), "second_mq_ready_logged");
+    expect(read_events_queue(log_a, queue_a, sizeof queue_a) == 0 &&
+               read_events_queue(log_b, queue_b, sizeof queue_b) == 0,
+           "event_queue_names_readable");
+    if (queue_a[0] != '\0') {
+        printf("       first events queue: %s\n", queue_a);
+    }
+    if (queue_b[0] != '\0') {
+        printf("       second events queue: %s\n", queue_b);
+    }
+    expect(strcmp(queue_a, "/kitchenos_events") != 0 &&
+               strcmp(queue_b, "/kitchenos_events") != 0,
+           "custom_names_use_a_suffixed_event_queue");
+    expect(strcmp(queue_a, queue_b) != 0, "two_runs_do_not_share_event_queue");
+    (void)kill(a.pid, SIGTERM);
+    (void)kill(b.pid, SIGTERM);
+    expect(wait_exit(a.pid, 3000, &status) && wait_exit(b.pid, 3000, &status),
+           "both_supervisors_stopped");
+    a.pid = -1;
+    b.pid = -1;
+    cleanup_run(&a);
+    cleanup_run(&b);
+}
+
 int main(void)
 {
     printf("[test_supervisor] 开始：Supervisor 守护进程、重启策略、清理\n");
@@ -1041,6 +1138,7 @@ int main(void)
     test_cleanup_without_bridge();
     test_orphans();
     test_runs_dir();
+    test_custom_names_isolate_mq();
 
     printf("[test_supervisor] 检查 %d 项，失败 %d 项\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;
