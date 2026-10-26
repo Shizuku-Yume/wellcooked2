@@ -520,8 +520,8 @@ static void move_chef_to(kos_world_state *world, const kos_kitchen *kitchen,
 }
 
 /*
- * 倒料按"源锅内容消失"判完成：锅跟人走、pot_N 会重排，所以这里连 pot 编号都故意
- * 用 pot_0 之外的名字，确认实现不是按编号找锅。
+ * 倒料完成按"目的台面多出这味料"判（G1：锅端在手上时源槽位是空的，pot_* 里没有
+ * 锅里的内容）。这里不挂 carried_，模拟资源帧跨过"端起→倒完"的那一帧。
  */
 static void test_pour(const kos_kitchen *kitchen, const char *cooker, const char *container)
 {
@@ -532,6 +532,8 @@ static void test_pour(const kos_kitchen *kitchen, const char *cooker, const char
     kos_error err;
     kos_chef *chef;
     kos_resource *pot;
+    kos_resource *counter;
+    const kos_station *target;
     int64_t game_ms = 1000;
     int rc;
 
@@ -541,6 +543,8 @@ static void test_pour(const kos_kitchen *kitchen, const char *cooker, const char
     pot = add_resource(&world, "pot_3");
     snprintf(pot->state, sizeof pot->state, "cooked");
     snprintf(pot->content, sizeof pot->content, "BurritoChicken");
+    target = kos_kitchen_station_by_id(kitchen, container);
+    expect(target != NULL, "pour 目标工位在 kitchen 里");
     kos_error_clear(&err);
     expect(kos_macro_plan_build_with_source(kitchen, "pour", "pour:BurritoChicken", container,
                                             cooker, "o1", 100, &plan, &err) == KOS_OK,
@@ -568,11 +572,22 @@ static void test_pour(const kos_kitchen *kitchen, const char *cooker, const char
            "倒料按容器上的 interact 推进");
     game_ms += 16;
     rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
-    expect(rc == 0 && macro.step_index == 3, "源锅还有料时继续按");
-    pot->content[0] = '\0';
+    expect(rc == 0 && macro.step_index == 3, "台面还没这味料时继续按");
+
+    /* 台面容器里出现这一味料（contents[] 是 cooked:<name>，compat content 是料名） */
+    counter = add_resource(&world, "container_0");
+    snprintf(counter->kind, sizeof counter->kind, "container");
+    snprintf(counter->item, sizeof counter->item, "Tortilla");
+    counter->has_pos = 1;
+    counter->pos_x = target->x;
+    counter->pos_y = target->z;
+    counter->content_count = 1;
+    snprintf(counter->contents[0], sizeof counter->contents[0], "cooked:BurritoChicken");
+    snprintf(counter->content, sizeof counter->content, "BurritoChicken");
     game_ms += 16;
     rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
-    expect(rc == 0 && macro.step_index == 4, "源锅内容消失后回灶");
+    expect(rc == 0 && macro.step_index == 4, "台面出现这味料后回灶");
+
     move_chef_to(&world, kitchen, cooker);
     (void)kos_macro_advance(&macro, kitchen, &world, 0, 1, game_ms, &out);
     game_ms += 16;
@@ -653,17 +668,18 @@ static void test_pour_by_carried(const kos_kitchen *kitchen, const char *cooker,
     expect(rc == 0 && macro.step_index == 3 && out.action == KOS_MACRO_ACT_INTERACT &&
                strcmp(out.target_object, container) == 0,
            "carried：锅里有料时对着容器按");
-    game_ms += 2000; /* 超过 800 ms 兜底窗口 */
+    game_ms += 2000; /* 时间过去但锅里有料：不能提前推进 */
     rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
     expect(rc == 0 && macro.step_index == 3,
-           "carried：见过锅里的料后不因兜底窗口提前推进");
+           "carried：见过锅里的料后不因时间过去提前推进");
     carried->content[0] = '\0';
     game_ms += 16;
     rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
     expect(rc == 0 && macro.step_index == 4, "carried：锅内容清空后回灶");
 }
 
-/* 插件还没填 carried 内容（一帧都没见过非空）时按兜底推进，别卡到 3 s 超时。 */
+/* 没有任何信号（carried_ 空、台面也没多料）时不再有 800 ms 兜底：一直按到步超时，
+ * 让失败原因停在 source-empty 而不是把没倒成的料当成倒完了。 */
 static void test_pour_carried_without_contents(const kos_kitchen *kitchen, const char *cooker,
                                                const char *container)
 {
@@ -684,10 +700,10 @@ static void test_pour_carried_without_contents(const kos_kitchen *kitchen, const
            "carried 空：第一帧先按一次");
     game_ms += 400;
     rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
-    expect(rc == 0 && macro.step_index == 3, "carried 空：兜底窗口内继续按");
-    game_ms += 500;
+    expect(rc == 0 && macro.step_index == 3, "carried 空：没有兜底窗口，继续按");
+    game_ms = macro.deadline_ms + 1;
     rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
-    expect(rc == 0 && macro.step_index == 4, "carried 空：超过兜底窗口后推进");
+    expect(rc == -1, "carried 空且台面无料：超时失败");
 }
 
 static void test_deliver(const kos_kitchen *kitchen, const char *serving)

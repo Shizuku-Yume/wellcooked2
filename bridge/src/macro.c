@@ -29,9 +29,6 @@
 #define MACRO_CHOP_MARGIN_MS 3000
 #define MACRO_WASH_MARGIN_MS 3000
 #define MACRO_POUR_MARGIN_MS 3000
-/* 倒料时看不到源锅（插件没上报那只锅）时的兜底交互窗口：一次 interact 就够把料倒过去，
- * 800 ms 只用来覆盖按键与状态上报的往返。 */
-#define MACRO_POUR_FALLBACK_MS 800
 /* 四人同场时 PIBT 让路、反复重规划，实机 `_3` 里 goto 在快到站时（剩 0~1 个路点）
  * 被 3 s 余量判超时；6 s 覆盖一次让路往返。 */
 #define MACRO_GOTO_MARGIN_MS 6000
@@ -785,16 +782,40 @@ static const kos_resource *find_carried_resource(const kos_world_state *world, i
 }
 
 /*
+ * 台面上/容器里是否已经有这一味料。`contents[]` 是递归叶子（烹饪节点写成
+ * cooked:<name>），所以用双向子串匹配：pour:BurritoChicken 命中
+ * cooked:BurritoChoppedChicken；`content` 是同一份内容的兼容拼串。
+ */
+static int resource_has_item(const kos_resource *resource, const char *item)
+{
+    int i;
+
+    if (resource == NULL || item == NULL || item[0] == '\0') {
+        return 0;
+    }
+    if (kos_kitchen_name_matches(item, resource->content)) {
+        return 1;
+    }
+    for (i = 0; i < (int)resource->content_count && i < KOS_SHM_MAX_CONTENTS; i++) {
+        if (kos_kitchen_name_matches(item, resource->contents[i])) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/*
  * 倒料：手上端着锅/容器，对着台面容器按 interact，直到锅里的料进到台面上。
  *
- * 完成判据取世界状态的"内容"，不按资源编号（锅跟着人走，pot_N 是灶台槽位、不是锅）：
- *   1. 插件报了 `carried_<chefId>`：先看到它的 content 非空（锅里确实有料），随后变空
- *      = 倒完了。一帧都没见过内容（插件的 contents 还没接上）不算完成，走兜底；
- *   2. 没有 carried_（旧插件）：退回"源锅里那味料从 pot_* 里消失"；
- *   3. 整段都没有可用信号时按 MACRO_POUR_FALLBACK_MS 兜底，别把一次成功的倒料拖成超时。
- * 目的台面（容器）的位置由 kitchen.json 的 station_id 给出，状态侧由 proto 的
- * find_station_resource 按位置找；只有"没有 carried_ 的旧状态"才拿它的内容当第二信号
- * （新状态里 carried_ 是权威：同一张台面可能被两单共用，内容分不清是谁的）。
+ * 完成判据只看内容，不看编号（锅跟着人走；G1 起 pot_N 是灶台槽位，锅在手上时
+ * 那个槽位是 empty，锅本身以 carried_<chefId> 出现）：
+ *   1. `carried_<chefId>` 的内容从非空变空 = 倒完了。这是权威信号：端起来的时候
+ *      锅里的料就在 carried_ 上，倒完同一项变空。
+ *   2. 资源块是 0.25 s 重建的，端起→倒完整段可能落在两个资源帧之间，carried_ 一次
+ *      都没出现过。这时看**目的台面**：玉米饼里多出这一味料（contents[] 命中
+ *      step->item）就是完成——它比"锅空了"更直接，也不会被同一张台面上别的锅骗到。
+ * 源槽位在锅被端走后没有内容可看，所以不再扫描 pot_*；800 ms 兜底随之删除：
+ * 3 s 余量内两个信号至少有一个会出现，看不见就让它明确超时。
  */
 static int run_pour(kos_macro *macro, const kos_kitchen *kitchen, const kos_world_state *world,
                     int chef_id, int64_t game_ms, kos_macro_output *out)
@@ -804,40 +825,11 @@ static int run_pour(kos_macro *macro, const kos_kitchen *kitchen, const kos_worl
     const kos_resource *counter = find_station_resource(kitchen, step, world);
     int done = 0;
 
-    if (carried != NULL) {
-        if (carried->content[0] != '\0') {
-            macro->saw_content = 1;
-        } else if (macro->saw_content) {
-            done = 1;
-        }
-    } else {
-        int found = 0;
-        int i;
-
-        for (i = 0; i < (int)world->resource_count; i++) {
-            const kos_resource *resource = &world->resources[i];
-
-            if (strncmp(resource->name, "pot_", 4) != 0 || resource->content[0] == '\0') {
-                continue;
-            }
-            if (kos_kitchen_name_matches(step->item, resource->content)) {
-                found = 1;
-                break;
-            }
-        }
-        /* 台面容器上有内容（contents[] 里有料）说明这一步的料已经倒进去了；
-         * 台面资源由 proto 的 find_station_resource 按位置找，旧世界状态里没有这一项。 */
-        if (counter != NULL && counter->content[0] != '\0') {
-            found = 1;
-        }
-        if (found) {
-            macro->saw_content = 1;
-        } else if (macro->saw_content) {
-            done = 1;
-        }
-    }
-    if (!done && !macro->saw_content &&
-        game_ms - macro->step_start_ms >= MACRO_POUR_FALLBACK_MS) {
+    if (carried != NULL && (carried->content[0] != '\0' || carried->content_count > 0)) {
+        macro->saw_content = 1;
+    } else if (carried != NULL && macro->saw_content) {
+        done = 1;
+    } else if (resource_has_item(counter, step->item)) {
         done = 1;
     }
     if (done) {

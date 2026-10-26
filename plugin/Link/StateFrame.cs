@@ -610,7 +610,8 @@ namespace WellCooked
         /// <summary>
         /// 台面（G5）：只报**上面有东西**的普通工位。空台面是静态的，位置在
         /// `kitchen.json` 里；运行时帧里没有 `counter_N` 就等于空闲。
-        /// 灶台/砧板/水槽/盘堆上的东西已经由各自的键报过，这里跳过。
+        /// 哪些算普通台面由 `Kitchen.IsPlainCounter` 一条规则决定——`WorldState`
+        /// 导出 kitchen.json 用的也是它，两处规则必须同源。
         /// </summary>
         private static void AppendCounters(JsonBuilder b, HashSet<int> covered)
         {
@@ -618,7 +619,7 @@ namespace WellCooked
             foreach (var found in WorldState.FindAll("ClientAttachStation"))
             {
                 var unity = found as Component;
-                if (unity == null || IsDedicatedStation(unity.gameObject))
+                if (unity == null || !Kitchen.IsPlainCounter(unity.gameObject.name))
                 {
                     continue;
                 }
