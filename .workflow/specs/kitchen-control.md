@@ -69,6 +69,8 @@ os-core 已经把 Supervisor / Scheduler / Worker 进程树、消息队列、FCF
 `grid.areas.count` 可以大于 1（`_2` 是两条互不相通的厨房条带），导航和距离场按连通块处理，
 不要把多个区域当成一块。
 
+`_2` 的两条带不是可由导航算法跨越的“软分区”：fresh 实机验收显示两个虚拟厨师都出生在 lower 带，而 Rice、Tortilla 与 cooker-0 位于 upper 带，Scheduler 必须记录 `task_station_unreachable` 并拒绝派发。W9 的“至少一单”因此需要 level owner 先提供真实的双带出生/菜单或交接语义；在该前置未验证前，不得用改 mask、假传送或放宽距离场伪造连通。
+
 ### L1 走位
 
 **站位格表与距离场（`stand`）。** 加载 `kitchen.json` 时为每个工位算出站位格：在 +x/-x/+z/-z

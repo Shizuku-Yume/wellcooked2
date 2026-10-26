@@ -970,3 +970,12 @@ user may overturn on sight. `Revisit when` of "never" is allowed but suspicious;
 - **Mine:** yes
 - **Revisit when:** The plugin action cadence or Worker input publication semantics change.
 - **Effort:** kitchen-control
+
+## 2026-10-26 - demo2 disconnected bands block task09 acceptance
+
+- **Decided:** Do not add a synthetic wall connector, fake teleport, or silently broaden reachability. Task09's `_2` acceptance plan is blocked until the authoritative level contract chooses one real remedy: a spawn/menu configuration that places a chef in each physical band, a supported cross-band handoff, or a corrected exported map/bundle whose topology is actually one connected kitchen. Keep `task_station_unreachable` rejection strict meanwhile.
+- **Instead of:** Marking the fetch-only `BurritoChicken` run as success, dispatching unreachable Rice/Tortilla/cooker work, or altering the distance field to bridge the two 175-cell components.
+- **Because:** Fresh `_2` runtime `logs/real-game/20261026-110357-_2-finalfresh` reports both chefs in the lower band (cells 128/240; final coordinates near `(-3,-4.94)` and `(-3,-8.27)`), while Rice, Tortilla, and cooker-0 are upper-band stations. Scheduler repeatedly and correctly rejects those stations; only BurritoChicken fetch completes and score is -390. The authoritative spec says `_2` has two mutually disconnected strips and navigation must preserve components, while game-bridge/13's older layout note incorrectly claims one connected main block and all key stations reachable.
+- **Mine:** yes
+- **Revisit when:** The level owner supplies verified spawn/menu/handoff semantics or a regenerated bundle/config pair with measured station reachability from both actual chef starts.
+- **Effort:** kitchen-control
