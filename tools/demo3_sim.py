@@ -197,11 +197,13 @@ def demo3_kitchen(*, boards=True, counter=True, cookers=None, clean_plates=5,
         stations = [s for s in stations if s.get("kind") != "cooker"]
         stations.extend(dict(s) for s in cookers)
     if boards:
+        stations = [s for s in stations if s.get("id") not in BOARD_POS]
         for sid, pos in BOARD_POS.items():
             stations.append({"id": sid, "kind": "board", "name": "chopping_board",
                              "types": ["ClientWorkstation"], "pos": list(pos),
                              "height": 0.0, "contents": []})
     if counter:
+        stations = [s for s in stations if s.get("id") not in COUNTER_POS]
         for sid, pos in COUNTER_POS.items():
             stations.append({"id": sid, "kind": "counter", "name": "countertop",
                              "types": ["ClientAttachStation"], "pos": list(pos),
@@ -513,6 +515,26 @@ class Demo3World:
         self.order_results = []
         self.order_result_seq = 0
         self._reject_reason = ""
+        self._assert_station_positions()
+
+    def _assert_station_positions(self):
+        if not KITCHEN_3.exists() or len(self.stations) < 50:
+            return
+        try:
+            ref = json.loads(KITCHEN_3.read_text())
+        except Exception:
+            return
+        ref_stations = {s["id"]: s["pos"] for s in ref.get("stations", []) if s.get("id") and "pos" in s}
+        for sid, station in self.stations.items():
+            if sid in COUNTER_POS:
+                continue  # counter-0 is the dedicated burrito counter at [0.6, -6.0]
+            if sid in ref_stations and "pos" in station:
+                p1 = station["pos"]
+                p2 = ref_stations[sid]
+                dist = math.hypot(p1[0] - p2[0], p1[1] - p2[1])
+                assert dist <= 0.30, (
+                    f"Station {sid} position {p1} drifts from kitchen.json {p2} (dist={dist:.3f} > 0.30)"
+                )
 
     # -- 初始化订单 --
     def set_orders(self, schedule):
