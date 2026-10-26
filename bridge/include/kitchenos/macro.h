@@ -94,9 +94,19 @@ typedef struct {
     int face_sent;
     int64_t face_sent_ms;
     int saw_content;                   /* chop/start_cook 曾看到工位上有料 */
+    /* chop：第一次看到板上内容时核对过"是不是这一份料"。切完游戏会把物体换成
+     * Chopped…/Diced… 名字，之后不能再按原始料名核对（G13 只抓放错料）。 */
+    int content_checked;
     char entry_holding[KOS_SHM_NAME_MAX];
     int clean_baseline_valid;
     int32_t clean_baseline;
+    /* DROP 步开始时厨师手里的物品；start_cook/chop 用它核对工位 content，
+     * 抓"料放错锅/板"这种游戏会静默拒绝的工序（G13）。 */
+    char dropped_item[KOS_SHM_NAME_MAX];
+    /* DELIVER 步开始时的 world.score。订单消失时用它区分"交付"与"过期"（G9）：
+     * 分数上涨是交付，下降是过期；不变说明整局分数没有上报（离线模拟器）。 */
+    int64_t score_base;
+    int score_base_valid;
     char fail_detail[KOS_MACRO_DETAIL_MAX];
 } kos_macro;
 

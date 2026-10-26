@@ -49,6 +49,8 @@ typedef struct {
     char sem_name[64];
     kos_kitchen kitchen;
     pid_t pid;
+    int chefs; /* 0 = 旧默认 2；测试在 spawn 前改 */
+    int verbose; /* 1 = 给 Scheduler 加 --verbose（调试用） */
 } ksfx_run;
 
 __attribute__((unused)) static void ksfx_copy(char *dst, size_t cap, const char *src)
@@ -406,7 +408,7 @@ __attribute__((unused)) static int ksfx_spawn_ex(ksfx_run *r, const char *strate
         ksfx_join(err_path, sizeof err_path, r->runtime_dir, "scheduler-stderr.log") != 0) {
         return -1;
     }
-    snprintf(chefs, sizeof chefs, "2");
+    snprintf(chefs, sizeof chefs, "%d", r->chefs > 0 ? r->chefs : 2);
     snprintf(tick, sizeof tick, "50");
 
     argv[ac++] = bin;
@@ -424,6 +426,9 @@ __attribute__((unused)) static int ksfx_spawn_ex(ksfx_run *r, const char *strate
     argv[ac++] = chefs;
     argv[ac++] = (char *)"--tick-ms";
     argv[ac++] = tick;
+    if (r->verbose) {
+        argv[ac++] = (char *)"--verbose";
+    }
     argv[ac++] = (char *)"--strategy";
     argv[ac++] = (char *)strategy;
     if (dispatch != NULL) {
@@ -590,6 +595,34 @@ __attribute__((unused)) static int ksfx_wait_events(const ksfx_run *r, const cha
     return -1;
 }
 
+/* 等到 Scheduler 日志里出现 needle（mq_ready 之类），最多 timeout_ms。 */
+__attribute__((unused)) static int ksfx_wait_log(const ksfx_run *r, const char *needle,
+                                                 int timeout_ms)
+{
+    char path[KSFX_PATH_MAX];
+    int waited = 0;
+
+    if (ksfx_join(path, sizeof path, r->runtime_dir, "logs/scheduler.log") != 0) {
+        return -1;
+    }
+    while (waited <= timeout_ms) {
+        size_t len = 0;
+        char *text = ksfx_read_file(path, &len);
+
+        if (text != NULL) {
+            int hit = strstr(text, needle) != NULL;
+
+            free(text);
+            if (hit) {
+                return 0;
+            }
+        }
+        ksfx_sleep_ms(20);
+        waited += 20;
+    }
+    return -1;
+}
+
 __attribute__((unused)) static int ksfx_stop(ksfx_run *r)
 {
     int status = 0;
@@ -628,7 +661,8 @@ __attribute__((unused)) static void ksfx_cleanup(ksfx_run *r)
     }
     kos_error_clear(&err);
     (void)kos_resources_unlink(&r->kitchen, KOS_INSTANCE_NONE, &err);
-    if (r->dir[0] != '\0') {
+    /* 调试用：KSFX_KEEP=1 保留临时地图与日志（默认仍然删干净）。 */
+    if (r->dir[0] != '\0' && getenv("KSFX_KEEP") == NULL) {
         (void)ksfx_remove_tree(r->dir);
     }
     memset(r, 0, sizeof *r);

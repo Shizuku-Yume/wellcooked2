@@ -178,7 +178,17 @@ static int compare_orders(kos_policy_kind kind, const kos_order_view *a,
     }
     case KOS_POLICY_FCFS:
     default:
+        /* FCFS 的主键就是到达时间，必须排在奖励之前，否则就不再是 FCFS。 */
+        if (a->arrival_ms != b->arrival_ms) {
+            return a->arrival_ms < b->arrival_ms ? -1 : 1;
+        }
         break;
+    }
+    /* 奖励是策略主键之外的次键：四种策略各自的语义（到达/截止/松弛/响应比）不变，
+     * 主键分不出先后时先做分值高的单。G7：分值来自订单（插件上报或菜谱 dish score），
+     * 不再固定 10；0 = 未知，不参与比较。 */
+    if (a->reward != b->reward && a->reward > 0 && b->reward > 0) {
+        return a->reward > b->reward ? -1 : 1;
     }
     return compare_fcfs(a, b, a_index, b_index);
 }

@@ -732,6 +732,31 @@ CHEFS=<n> REAL_GAME=1 bash tools/run-real-game.sh`；局后把游戏目录的 `B
 `/tmp/wellcooked-game.lock`，跑完释放。插件改动后 `bash scripts/build-plugin.sh`；重新导出地图见
 `.workflow/standards.md`。
 
+### P5 调度侧加固（2026-10-27，并行工作流 sched）
+
+任务 09 实机失败里属于 Scheduler 的部分已在分支 `kitchen-control/09-sched` 落地；下面每条都能离线复现，
+不需要游戏：
+
+| 行为 | 锁住它的检查 |
+|---|---|
+| 手上有料的厨师只接消费手上物品的工序，空手只接取料/拿盘/洗盘；持有亲和的成品 1 s 没到手判 `holding-lost` | `test_sched_flow` 1/2/11 |
+| 同一轮里三条就绪 fetch 派给三个不同厨师（`fetch:Rice`/`fetch:Tortilla` 候选缺失） | `test_sched_flow` 1 |
+| `macro=goto` 失败回队并按 n×2 s 退避，第三次才让订单失败 | `test_sched_flow` 3 |
+| 到站后游戏不收（`timeout`/`content-mismatch`/`no-station-resource`/`burning`）记 `recipe_infeasible`，不再重试 | `test_sched_flow` 4；`test_macro` 的 `content-mismatch` 用例 |
+| 交付/过期/送错以 `order_results[]` 为准；结果缺席时用 `world.score` 增量，交付动作后留 1.5 s 宽限，分数不涨不记完成 | `test_sched_flow` 5/6/10；`test_macro` 的 deliver 分数用例 |
+| 过期订单留下的料接到同菜的另一单；没人要就生成放下工序到 `counter` 台面，没有台面工位记 `hold_orphaned` | `test_sched_flow` 7/8/9 |
+| 每单分值取 `orders[].score`，缺省用菜谱 dish score，奖励只做四种策略的次键 | `test_sched_flow` 1（`reward=80`）；`test_policy` 的 reward 用例 |
+
+已知依赖（未落地前自动退化，不需要再改调度器）：
+
+- `protocol.c`/`bridge.c` 还没解析 `orders[].score` 与 `order_results[]`（proto 工作流）。字段为空时
+  分值退回菜谱 `dish.score`，结果退回 `world.score` 增量。
+- 放下工序要求 `kitchen.json` 里有 kind `counter` 的工位；`export-kitchen.py` 目前不导出普通
+  `Counter`。`_2` 的 `counter_handoff_0` 只在 `--dispatch zoned` 时注册进 Scheduler，Worker 不注册，
+  所以实机放下仍会失败（记 `putdown_failed`），不会重试。
+- 盘上菜的采纳依赖 `holding_contents` 里有菜名或节点 label。只报叶子原料名时不会采纳，退化为
+  放下/孤儿（`item_adopted` 不会出现）。[推断：盘内容的编码以插件实现为准]
+
 ## Open questions
 
 - **每格实际移动时间。** 已测（任务 01，2026-10-25）：`_2` 上让 1 号厨师沿 z=-7.2 的直线用

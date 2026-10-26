@@ -47,12 +47,28 @@
 #define SCHED_LINE_MAX 2048
 #define SCHED_WORLD_POLL_MS 100
 #define SCHED_ORDER_GAP_MS 700
-#define SCHED_ORDER_REWARD_FALLBACK 10
+#define SCHED_ORDER_REWARD_UNKNOWN 0 /* 订单没有分值：策略按 0 处理，不参与奖励比较 */
 #define SCHED_TASK_TIMEOUT_MS 30000
 /* 距离场够不到（另一个连通区/厨师格未知）时给的路程惩罚，单位是格。 */
 #define SCHED_UNREACHABLE_CELLS 600
 #define SCHED_WASH_PRIORITY 32
 #define SCHED_TASK_MAX_RETRIES 3 /* 同一工序宏动作最多失败 3 次 */
+/* 第 n 次宏失败回队后等 n × 2 s 再派（P2 重试风暴的退避）。 */
+#define SCHED_TASK_RETRY_BACKOFF_MS 2000
+/* 交付动作做完后等游戏把这一单的分数记上；超过这个窗口才按分数增量判断成败。
+ * fake_plugin 在 0.5 s 后才改分数，实机同一帧，1.5 s 两边都够。 */
+#define SCHED_OUTCOME_GRACE_MS 1500
+/* 子工序 DONE 后原料应在这个时间内出现在厨师手上；超过还空手就是"手上东西丢了"。 */
+#define SCHED_HOLDING_LOSS_MS 1000
+/* 放下工序的工时估计（goto + 一次交互），只用于派工代价。 */
+#define SCHED_PUTDOWN_MS 1500
+
+enum {
+    SCHED_OUTCOME_UNKNOWN = 0,
+    SCHED_OUTCOME_DELIVERED = 1,
+    SCHED_OUTCOME_EXPIRED = 2,
+    SCHED_OUTCOME_FAILED = 3 /* 游戏判送错菜（OnFoodDelivered(false)） */
+};
 
 typedef enum {
     TASK_PENDING = 0,
@@ -72,6 +88,10 @@ typedef struct {
     int64_t ready_since_ms; /* 第一次进入就绪队列 */
     int64_t wait_started_ms; /* 最近一段资源等待的开始；0 = 未等待 */
     int wait_logged;
+    int64_t not_before_ms; /* 宏失败回队后的退避截止；0 = 立即可派 */
+    int64_t done_ms;       /* DONE 的时刻；持有亲和丢失判定的宽限起点 */
+    int64_t score_base;    /* deliver 派发时的 world.score；G9 的分数锚点 */
+    int score_base_valid;
     char station_id[KOS_SHM_NAME_MAX];
     int cooker_reserved;
     int64_t cooker_reserved_ms;
@@ -92,6 +112,14 @@ typedef struct {
     int64_t finished_ms;
     int64_t lateness_ms;
     int reject_event_pending; /* 启动期被拒的单，events.jsonl 还没打开，等打开后补写 */
+    /* G9：完成/过期以游戏结果为准。world 订单的 DAG 走完只说明动作做完；
+     * 分数增量为正才算交付，为负或动作没做完订单就消失则算过期。 */
+    int outcome;
+    int64_t reward_observed; /* 交付时实际观察到的分数增量 */
+    int64_t score_anchor;    /* 订单到达、以及 deliver 派发时刷新的分数锚点 */
+    int seen_in_world;       /* 至少有一帧在世界状态里见过；防止启动空帧误判过期 */
+    int outcome_pending_logged;
+    int64_t outcome_check_ms; /* 交付动作 DONE 后等游戏记分的截止 */
     int task_count;
     sched_task tasks[SCHED_MAX_TASKS];
 } sched_order;
@@ -109,8 +137,18 @@ typedef struct {
     int64_t started_ms;
 } sched_wash;
 
+/* 手上拿着的东西没人要时的放下工序（不属于任何订单，和 wash 一样是服务任务）。 */
 typedef struct {
-    int order_index; /* -1 = wash */
+    int state; /* 0 = 没有，1 = 待派，2 = 已派 */
+    int chef_id;
+    uint64_t task_id;
+    int64_t ready_ms;
+    char item[KOS_SHM_NAME_MAX];
+    int station_index;
+} sched_putdown;
+
+typedef struct {
+    int order_index; /* -1 = wash, -2 = putdown */
     int task_index;
     int node_index;
     int station_index;
@@ -153,6 +191,7 @@ typedef struct {
     int64_t dispatch_hrrn;
     int64_t worker_restarts;
     int blocked_hold[KOS_SHM_MAX_CHEFS]; /* 报过 BLOCKED 的厨师先不接新活 */
+    int hold_stuck[KOS_SHM_MAX_CHEFS];   /* 手里那件东西没人要、也没台面可放 */
     char metrics_path[KOS_DAEMON_PATH_MAX + 48];
     uint64_t next_task_id;
     int64_t started_ms;
@@ -168,7 +207,10 @@ typedef struct {
     int64_t world_read_ms;
     int64_t next_plate_poll_ms;
     sched_wash wash;
+    sched_putdown putdown;
     int open_seq;
+    int64_t result_seq_seen; /* order_results 去重游标（G9） */
+    int result_seq_valid;
 
     mqd_t tasks[KOS_SHM_MAX_CHEFS];
     mqd_t events;
@@ -184,6 +226,7 @@ static int sink_station_index(const kos_kitchen *kitchen);
 static int plate_count(const kos_world_state *world, const char *name);
 static int cooker_step_matches(const kos_station *station, const char *step);
 static void recipe_feasibility_check(scheduler *s);
+static void finish_order_if_done(scheduler *s, int order_index);
 
 static int64_t now_ms(void)
 {
@@ -468,7 +511,7 @@ static void mark_resource_wait(scheduler *s, int chef, const sched_order *order,
     const char *kind = node->resource;
 
     if (strcmp(node->op, "plate") == 0 &&
-        kos_kitchen_count_kind(&s->kitchen, "plate_stack") == 0) {
+        kos_kitchen_count_kind(&s->kitchen, node->resource) == 0) {
         int sink = sink_station_index(&s->kitchen);
 
         if (sink >= 0) {
@@ -645,6 +688,146 @@ static void holding_chefs(const scheduler *s, int bound[KOS_SHM_MAX_CHEFS])
     }
 }
 
+/* 归一名比较，与 macro.c 的 name_eq 同一规则（忽略大小写，'-' 与 '_' 等价）。 */
+static int sched_name_eq(const char *a, const char *b)
+{
+    size_t i = 0;
+
+    if (a == NULL || b == NULL) {
+        return 0;
+    }
+    for (;;) {
+        char ca = a[i];
+        char cb = b[i];
+
+        if (ca == '-' || ca == '_') {
+            ca = '_';
+        }
+        if (cb == '-' || cb == '_') {
+            cb = '_';
+        }
+        if (ca >= 'A' && ca <= 'Z') {
+            ca = (char)(ca - 'A' + 'a');
+        }
+        if (cb >= 'A' && cb <= 'Z') {
+            cb = (char)(cb - 'A' + 'a');
+        }
+        if (ca != cb) {
+            return 0;
+        }
+        if (ca == '\0') {
+            return 1;
+        }
+        i++;
+    }
+}
+
+/*
+ * 世界状态里厨师手上拿着什么。返回 NULL = 不知道（没有世界状态/该厨师不在帧里），
+ * 空串 = 空手，其它 = 物品名。NULL 与 "" 必须分开：不知道时保持旧的图亲和规则，
+ * 不能把"没读到"当成"空手"而卡住所有派工。
+ */
+static const char *chef_holding(const kos_world_state *world, int chef)
+{
+    int i;
+
+    if (world == NULL) {
+        return NULL;
+    }
+    for (i = 0; i < (int)world->chef_count && i < KOS_SHM_MAX_CHEFS; i++) {
+        if (world->chefs[i].id == chef) {
+            return world->chefs[i].holding;
+        }
+    }
+    return NULL;
+}
+
+/* 消费手上物品的工序：先把料放下/开火/端去交付，手上必须是同一件东西。 */
+static int op_consumes_holding(const char *op)
+{
+    return op != NULL && (strcmp(op, "cook") == 0 || strcmp(op, "cut") == 0 ||
+                          strcmp(op, "mix") == 0 || strcmp(op, "assemble") == 0 ||
+                          strcmp(op, "deliver") == 0);
+}
+
+/*
+ * 厨师能不能接这道工序（G11）。规则：
+ *   - 手上不空：只接消费手上东西的工序，而且图上的持有亲和必须就是他
+ *     （原料在他手里，换成空手的人去 drop 会"已放下"直接完成、去 fetch 只能超时）。
+ *   - 空手：只接取料/拿盘/洗盘；拿着料却空手的持有者不能接 drop/开火，
+ *     否则宏会对着空锅按交互直到超时。
+ *   - 世界状态读不到时退回旧规则（只看 holder/bound），离线测试照旧。
+ */
+static int chef_can_take_task(const kos_world_state *world, int chef, const char *op,
+                              int holder, int bound)
+{
+    const char *holding = chef_holding(world, chef);
+
+    if (holding == NULL) {
+        return holder >= 0 ? holder == chef : !bound;
+    }
+    if (holding[0] == '\0') {
+        if (holder >= 0 || bound) {
+            return 0;
+        }
+        return !op_consumes_holding(op);
+    }
+    /* holder < 0 说明图上没有唯一持有者（deliver 只有盘子、或两个子工序在两个人手里）：
+     * 这时允许手上有东西的厨师去试，内容核对会把放错的料判成 content-mismatch。 */
+    return op_consumes_holding(op) && (holder < 0 || holder == chef);
+}
+
+/*
+ * 手上物品是否就是某个节点的产物。fetch/cut/mix 的节点名后缀就是产物名
+ * （fetch:Tomato、cut:ChoppedTomato）；plate 的产物是盘上那道菜，靠
+ * holding_contents 匹配（G4 之后插件会发盘内容）。
+ */
+static int node_product_is_held(const sched_order *order, int task_index,
+                                const kos_recipes *recipes, const kos_chef *chef)
+{
+    const kos_recipe_node *node = &recipes->nodes[order->tasks[task_index].node_index];
+    const char *colon;
+
+    if (chef == NULL || chef->holding[0] == '\0') {
+        return 0;
+    }
+    if (strcmp(node->op, "fetch") == 0 || strcmp(node->op, "cut") == 0 ||
+        strcmp(node->op, "mix") == 0) {
+        colon = strchr(node->id, ':');
+        return colon != NULL && sched_name_eq(colon + 1, chef->holding);
+    }
+    if (strcmp(node->op, "plate") == 0) {
+        int i;
+
+        if (!sched_name_eq(chef->holding, "Plate")) {
+            return 0;
+        }
+        for (i = 0; i < (int)chef->holding_content_count && i < KOS_SHM_MAX_CONTENTS; i++) {
+            if (sched_name_eq(chef->holding_contents[i], node->label) ||
+                sched_name_eq(chef->holding_contents[i], order->dish)) {
+                return 1;
+            }
+        }
+        /* 内容读不到时不能靠猜：盘里是哪道菜未验证，不做采纳。 */
+    }
+    return 0;
+}
+
+static const kos_chef *world_chef(const kos_world_state *world, int chef)
+{
+    int i;
+
+    if (world == NULL) {
+        return NULL;
+    }
+    for (i = 0; i < (int)world->chef_count && i < KOS_SHM_MAX_CHEFS; i++) {
+        if (world->chefs[i].id == chef) {
+            return &world->chefs[i];
+        }
+    }
+    return NULL;
+}
+
 static int order_has_done_all(const sched_order *order)
 {
     int i;
@@ -680,6 +863,16 @@ static void task_requeue(scheduler *s, int order_index, int task_index, const ch
         return;
     }
     task = &order->tasks[task_index];
+    if (order->status != KOS_ORDER_ACTIVE) {
+        /* 订单已经以交付/过期/失败收尾：租约到期或 Worker 恢复不能再把它排回来。 */
+        if (task->chef_id >= 0 && task->chef_id < KOS_SHM_MAX_CHEFS &&
+            s->running_by_chef[task->chef_id] == task->task_id) {
+            s->running_by_chef[task->chef_id] = 0;
+        }
+        task->chef_id = -1;
+        task->task_id = 0;
+        return;
+    }
     chef = task->chef_id;
     if (chef >= 0 && chef < KOS_SHM_MAX_CHEFS &&
         s->running_by_chef[chef] == task->task_id) {
@@ -717,6 +910,17 @@ static void deactivate_wash(scheduler *s, const char *reason)
     memset(&s->wash, 0, sizeof s->wash);
 }
 
+/* 放下工序失败一次就放弃：再派一次还是同一个动作（P2 不重试风暴）。 */
+static void deactivate_putdown(scheduler *s, const char *reason)
+{
+    if (s->putdown.state == 0) {
+        return;
+    }
+    kos_log_warn(s->rt.log, "putdown_dropped", "reason=%s task=%llu chef=%d", reason,
+                 (unsigned long long)s->putdown.task_id, s->putdown.chef_id);
+    memset(&s->putdown, 0, sizeof s->putdown);
+}
+
 /* 回收某厨师的所有租约；每条租约只走一次 release_lease_for_task。 */
 static int reclaim_leases_for_chef(scheduler *s, int chef, const char *reason)
 {
@@ -737,6 +941,8 @@ static int reclaim_leases_for_chef(scheduler *s, int chef, const char *reason)
         (void)release_lease_for_task(s, task_id, "resource_reclaimed", reason);
         if (task_id != 0 && task_id == s->wash.task_id) {
             deactivate_wash(s, reason);
+        } else if (task_id != 0 && task_id == s->putdown.task_id) {
+            deactivate_putdown(s, reason);
         } else {
             task_requeue(s, order_index, task_index, reason);
         }
@@ -790,6 +996,8 @@ static void expire_leases(scheduler *s, int64_t now)
                                          "lease-expired");
             if (task_id != 0 && task_id == s->wash.task_id) {
                 deactivate_wash(s, "lease-expired");
+            } else if (task_id != 0 && task_id == s->putdown.task_id) {
+                deactivate_putdown(s, "lease-expired");
             } else {
                 task_requeue(s, order_index, task_index, "lease-expired");
             }
@@ -850,6 +1058,8 @@ static void detect_deadlock(scheduler *s)
                                          "deadlock-victim");
             if (task_id != 0 && task_id == s->wash.task_id) {
                 deactivate_wash(s, "deadlock-victim");
+            } else if (task_id != 0 && task_id == s->putdown.task_id) {
+                deactivate_putdown(s, "deadlock-victim");
             } else {
                 task_requeue(s, order_index, task_index, "deadlock-victim");
             }
@@ -911,7 +1121,12 @@ static int add_order(scheduler *s, const char *id, const char *dish, int64_t arr
     order->arrival_ms = arrival_ms;
     order->deadline_ms = deadline_ms;
     order->est_cost_ms = kos_recipe_est_cost_ms(&s->recipes, dish_index);
-    order->reward = reward > 0 ? reward : SCHED_ORDER_REWARD_FALLBACK;
+    /* G7：优先用游戏上报的每单分值（orders[].score，协议已定义）；没有时用
+     * 菜单导出的 dish score；两者都没有记 0（未知），不再固定 10。 */
+    if (reward <= 0 && s->recipes.dishes[dish_index].score > 0) {
+        reward = s->recipes.dishes[dish_index].score;
+    }
+    order->reward = reward > 0 ? reward : SCHED_ORDER_REWARD_UNKNOWN;
     order->status = KOS_ORDER_ACTIVE;
     order->from_world = from_world;
     order->task_count = s->recipes.dishes[dish_index].node_count;
@@ -948,6 +1163,8 @@ static int add_order(scheduler *s, const char *id, const char *dish, int64_t arr
     json_writer_int(&w, arrival_ms - s->started_ms);
     json_writer_key(&w, "deadline_ms");
     json_writer_int(&w, deadline_ms - s->started_ms);
+    json_writer_key(&w, "reward");
+    json_writer_int(&w, order->reward);
     json_writer_key(&w, "source");
     json_writer_string(&w, from_world ? "world" : "config");
     event_end(s, &w);
@@ -1185,6 +1402,410 @@ static const kos_world_state *scheduler_world(scheduler *s, int64_t now)
     return &s->world;
 }
 
+/* ===================================================== 订单结果与过期收尾 */
+
+static int world_order_present(const kos_world_state *world, const char *id)
+{
+    int i;
+
+    for (i = 0; i < (int)world->order_count && i < KOS_SHM_MAX_ORDERS; i++) {
+        if (strcmp(world->orders[i].id, id) == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/*
+ * 订单以某种结果结束。租约留给正在执行的宏自己收尾（RUNNING 的任务不能凭空
+ * 取消，Worker 也不支持中途撤销）；PENDING 的任务直接作废，cook 的锅令牌在这里
+ * 归还，避免过期订单一直占着灶台。
+ */
+static void finish_order_with_outcome(scheduler *s, int order_index, int status,
+                                      const char *source, int64_t now)
+{
+    sched_order *order = &s->orders[order_index];
+    json_writer w;
+    char line[SCHED_LINE_MAX];
+    const char *event_name;
+    int i;
+
+    if (order->status != KOS_ORDER_ACTIVE) {
+        return;
+    }
+    release_order_cook_reservations(s, order);
+    for (i = 0; i < order->task_count; i++) {
+        if (order->tasks[i].state == TASK_PENDING) {
+            order->tasks[i].state = TASK_FAILED;
+        }
+    }
+    mark_order_finished(order, status, now);
+    event_name = status == KOS_ORDER_COMPLETED
+                     ? "order_completed"
+                     : (status == KOS_ORDER_EXPIRED ? "order_expired" : "order_failed");
+    kos_log_info(s->rt.log, event_name,
+                 "id=%s dish=%s source=%s outcome=%d reward=%lld tasks=%d", order->id,
+                 order->dish, source != NULL ? source : "", order->outcome,
+                 (long long)order->reward_observed, order->task_count);
+    json_writer_init(&w, line, sizeof line);
+    event_common(&w, s, event_name);
+    json_writer_key(&w, "order_id");
+    json_writer_string(&w, order->id);
+    json_writer_key(&w, "dish");
+    json_writer_string(&w, order->dish);
+    json_writer_key(&w, "source");
+    json_writer_string(&w, source != NULL ? source : "");
+    json_writer_key(&w, "outcome");
+    json_writer_string(&w, order->outcome == SCHED_OUTCOME_DELIVERED
+                              ? "delivered"
+                              : (order->outcome == SCHED_OUTCOME_EXPIRED
+                                     ? "expired"
+                                     : (order->outcome == SCHED_OUTCOME_FAILED ? "failed"
+                                                                               : "unknown")));
+    json_writer_key(&w, "reward");
+    json_writer_int(&w, order->reward_observed);
+    event_end(s, &w);
+}
+
+static int counter_station_index(const kos_kitchen *kitchen)
+{
+    int i;
+
+    for (i = 0; i < kitchen->station_count; i++) {
+        if (kos_kitchen_name_matches("counter", kitchen->stations[i].kind)) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+/* 把手上没人要的东西放下。没有普通台面工位（kitchen.json 目前不导出 Counter）时
+ * 只能记 orphaned，等工位表补上后这条路径才有地方放。 */
+static void queue_putdown(scheduler *s, int chef, const char *item, const char *reason,
+                          int64_t now)
+{
+    int station = counter_station_index(&s->kitchen);
+    json_writer w;
+    char line[SCHED_LINE_MAX];
+    const char *event_name;
+
+    if (station < 0 || s->putdown.state != 0) {
+        event_name = "hold_orphaned";
+        if (chef >= 0 && chef < KOS_SHM_MAX_CHEFS) {
+            /* 没地方放：先把人从空闲表里摘掉，避免每轮都拿"该派活"去开新订单。 */
+            s->hold_stuck[chef] = 1;
+        }
+        kos_log_warn(s->rt.log, event_name, "chef=%d item=%s reason=%s station=%d",
+                     chef, item != NULL ? item : "", reason != NULL ? reason : "",
+                     station);
+    } else {
+        memset(&s->putdown, 0, sizeof s->putdown);
+        s->putdown.state = 1;
+        s->putdown.chef_id = chef;
+        s->putdown.station_index = station;
+        s->putdown.ready_ms = now;
+        copy_str(s->putdown.item, sizeof s->putdown.item, item);
+        if (chef >= 0 && chef < KOS_SHM_MAX_CHEFS) {
+            s->hold_stuck[chef] = 0; /* 有地方放就不再扣留这个厨师 */
+        }
+        event_name = "putdown_queued";
+        kos_log_info(s->rt.log, event_name, "chef=%d item=%s station=%s reason=%s", chef,
+                     item != NULL ? item : "", s->kitchen.stations[station].id,
+                     reason != NULL ? reason : "");
+    }
+    json_writer_init(&w, line, sizeof line);
+    event_common(&w, s, event_name);
+    json_writer_key(&w, "chef_id");
+    json_writer_int(&w, chef);
+    json_writer_key(&w, "item");
+    json_writer_string(&w, item != NULL ? item : "");
+    json_writer_key(&w, "reason");
+    json_writer_string(&w, reason != NULL ? reason : "");
+    event_end(s, &w);
+}
+
+/* 节点祖先里还有没有正在执行的工序；有就不能采纳（会和正在跑的动作抢东西）。 */
+static int ancestors_adoptable(const scheduler *s, const sched_order *order, int node,
+                               unsigned char *seen)
+{
+    int e;
+
+    for (e = 0; e < s->recipes.edge_count; e++) {
+        int child_task;
+        const sched_task *child;
+
+        if (s->recipes.edges[e].to != node) {
+            continue;
+        }
+        child_task = order_task_by_node(order, s->recipes.edges[e].from);
+        if (child_task < 0) {
+            continue;
+        }
+        child = &order->tasks[child_task];
+        if (child->state == TASK_DONE) {
+            continue;
+        }
+        if (child->state == TASK_RUNNING) {
+            return 0;
+        }
+        if (seen[child_task]) {
+            continue;
+        }
+        seen[child_task] = 1;
+        if (!ancestors_adoptable(s, order, child->node_index, seen)) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+/* 采纳一件成品等于这条链上的工序都已经有产物，全部记 DONE；锅令牌一并归还。 */
+static void mark_ancestors_done(scheduler *s, sched_order *order, int node, int64_t now,
+                                unsigned char *seen)
+{
+    int e;
+
+    for (e = 0; e < s->recipes.edge_count; e++) {
+        int child_task;
+        sched_task *child;
+
+        if (s->recipes.edges[e].to != node) {
+            continue;
+        }
+        child_task = order_task_by_node(order, s->recipes.edges[e].from);
+        if (child_task < 0 || order->tasks[child_task].state == TASK_DONE ||
+            seen[child_task]) {
+            continue;
+        }
+        seen[child_task] = 1;
+        child = &order->tasks[child_task];
+        mark_ancestors_done(s, order, child->node_index, now, seen);
+        child->state = TASK_DONE;
+        child->chef_id = -1;
+        child->done_ms = now;
+        if (child->cooker_reserved) {
+            (void)kos_resource_release(&s->resources, "cooker");
+            child->cooker_reserved = 0;
+            child->station_id[0] = '\0';
+        }
+    }
+}
+
+/*
+ * G11：厨师手里那件东西如果正是另一张订单待做工序的产物，就直接记到那张订单
+ * 名下（连同它的祖先链），让这个厨师接着往下做，而不是把东西丢在地上重做。
+ * 匹配按产物名（fetch/cut/mix）或盘内容（plate），不跨菜乱认。
+ */
+static int try_adopt_holding(scheduler *s, int chef, const char *reason, int64_t now)
+{
+    const kos_chef *state = world_chef(&s->world, chef);
+    int i;
+
+    if (state == NULL || state->holding[0] == '\0') {
+        return 0;
+    }
+    for (i = 0; i < s->order_count; i++) {
+        sched_order *order = &s->orders[i];
+        int j;
+
+        if (order->status != KOS_ORDER_ACTIVE) {
+            continue;
+        }
+        for (j = 0; j < order->task_count; j++) {
+            unsigned char seen[KOS_RECIPE_MAX_DISH_NODES];
+            sched_task *task = &order->tasks[j];
+            json_writer w;
+            char line[SCHED_LINE_MAX];
+
+            if (task->state != TASK_PENDING ||
+                !node_product_is_held(order, j, &s->recipes, state)) {
+                continue;
+            }
+            memset(seen, 0, sizeof seen);
+            if (!ancestors_adoptable(s, order, task->node_index, seen)) {
+                continue;
+            }
+            memset(seen, 0, sizeof seen);
+            mark_ancestors_done(s, order, task->node_index, now, seen);
+            task->state = TASK_DONE;
+            task->chef_id = chef;
+            task->done_ms = now;
+            kos_log_info(s->rt.log, "item_adopted",
+                         "order=%s node=%s chef=%d item=%s reason=%s", order->id,
+                         s->recipes.nodes[task->node_index].id, chef, state->holding,
+                         reason != NULL ? reason : "");
+            json_writer_init(&w, line, sizeof line);
+            event_common(&w, s, "item_adopted");
+            json_writer_key(&w, "order_id");
+            json_writer_string(&w, order->id);
+            json_writer_key(&w, "node");
+            json_writer_string(&w, s->recipes.nodes[task->node_index].id);
+            json_writer_key(&w, "chef_id");
+            json_writer_int(&w, chef);
+            json_writer_key(&w, "item");
+            json_writer_string(&w, state->holding);
+            event_end(s, &w);
+            finish_order_if_done(s, i);
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/* 订单过期后处理它留在厨师手上的东西：先给同菜的另一单，没人要就放下。 */
+static void salvage_chef_holding(scheduler *s, int chef, const char *reason, int64_t now)
+{
+    const kos_chef *state;
+
+    if (!s->world_valid) {
+        return;
+    }
+    state = world_chef(&s->world, chef);
+    if (state == NULL || state->holding[0] == '\0') {
+        return;
+    }
+    if (try_adopt_holding(s, chef, reason, now)) {
+        return;
+    }
+    queue_putdown(s, chef, state->holding, reason, now);
+}
+
+static void salvage_expired_holdings(scheduler *s, const sched_order *order, int64_t now)
+{
+    int j;
+
+    for (j = 0; j < order->task_count; j++) {
+        const sched_task *task = &order->tasks[j];
+
+        if (task->state != TASK_DONE || task->chef_id < 0 ||
+            !op_leaves_item_in_hand(s->recipes.nodes[task->node_index].op)) {
+            continue;
+        }
+        if (task->chef_id < KOS_SHM_MAX_CHEFS &&
+            s->running_by_chef[task->chef_id] != 0) {
+            continue; /* 他正在做后续工序，事件回来时再收 */
+        }
+        salvage_chef_holding(s, task->chef_id, "order-expired", now);
+    }
+}
+
+/*
+ * G9：插件把最近结束的订单放在 order_results[] 里每帧重发，按 seq 去重。这是
+ * 完成/过期的第一手判据；world.score 增量只是它没上报时的退路。seq 比上次见到
+ * 的小说明插件重启过，游标归零。
+ */
+static void handle_order_result(scheduler *s, const kos_order_result *result, int64_t now)
+{
+    int order_index = order_find(s, result->id);
+    sched_order *order;
+
+    if (order_index < 0) {
+        kos_log_debug(s->rt.log, "order_result_unmatched", "id=%s outcome=%s seq=%lld",
+                      result->id, result->outcome, (long long)result->seq);
+        return;
+    }
+    order = &s->orders[order_index];
+    if (order->status != KOS_ORDER_ACTIVE) {
+        return;
+    }
+    if (strcmp(result->outcome, "delivered") == 0) {
+        order->outcome = SCHED_OUTCOME_DELIVERED;
+        order->reward_observed = result->has_score ? result->score : 0;
+        finish_order_with_outcome(s, order_index, KOS_ORDER_COMPLETED, "game-result", now);
+        return;
+    }
+    if (strcmp(result->outcome, "expired") == 0) {
+        order->outcome = SCHED_OUTCOME_EXPIRED;
+        finish_order_with_outcome(s, order_index, KOS_ORDER_EXPIRED, "game-result", now);
+        salvage_expired_holdings(s, order, now);
+        return;
+    }
+    order->outcome = SCHED_OUTCOME_FAILED;
+    finish_order_with_outcome(s, order_index, KOS_ORDER_FAILED, "game-result", now);
+    salvage_expired_holdings(s, order, now);
+}
+
+static void poll_order_results(scheduler *s, const kos_world_state *world, int64_t now)
+{
+    int64_t newest = 0;
+    uint32_t i;
+
+    for (i = 0; i < world->order_result_count && i < KOS_SHM_MAX_ORDER_RESULTS; i++) {
+        if (world->order_results[i].seq > newest) {
+            newest = world->order_results[i].seq;
+        }
+    }
+    if (s->result_seq_valid && newest > 0 && newest < s->result_seq_seen) {
+        kos_log_info(s->rt.log, "order_result_seq_reset", "seen=%lld newest=%lld",
+                     (long long)s->result_seq_seen, (long long)newest);
+        s->result_seq_seen = 0;
+    }
+    for (i = 0; i < world->order_result_count && i < KOS_SHM_MAX_ORDER_RESULTS; i++) {
+        const kos_order_result *result = &world->order_results[i];
+
+        if (result->seq <= 0 || result->seq <= s->result_seq_seen) {
+            continue;
+        }
+        /* 上一局残留的结果：游戏时钟比本帧还晚，/ 或已经过去很久。 */
+        if (result->game_time_ms > world->game_time_ms + 500) {
+            continue;
+        }
+        handle_order_result(s, result, now);
+    }
+    if (newest > s->result_seq_seen) {
+        s->result_seq_seen = newest;
+    }
+    s->result_seq_valid = 1;
+}
+
+/*
+ * 订单从世界状态里消失且没等到结果事件时的兜底（协议字段还没上报的老 Bridge、
+ * 或结果丢帧）。全部工序 DONE 时看分数增量：涨了算交付，其余都算过期——宁可
+ * 少记一单完成，也不把扣分记成完成（G9）。等 1.5 s 是为了让分数/结果同一帧
+ * 之后到齐。
+ */
+static void reconcile_world_orders(scheduler *s, const kos_world_state *world, int64_t now)
+{
+    int i;
+
+    if (world->chef_count == 0) {
+        return; /* 插件刚连上/不在关卡：空帧不是"订单过期" */
+    }
+    for (i = 0; i < s->order_count; i++) {
+        sched_order *order = &s->orders[i];
+        int64_t delta;
+
+        if (order->status != KOS_ORDER_ACTIVE || !order->from_world) {
+            continue;
+        }
+        if (world_order_present(world, order->id)) {
+            order->seen_in_world = 1;
+            order->outcome_check_ms = 0;
+            continue;
+        }
+        if (!order->seen_in_world) {
+            continue;
+        }
+        if (order->outcome_check_ms == 0) {
+            order->outcome_check_ms = now + SCHED_OUTCOME_GRACE_MS;
+            continue;
+        }
+        if (now < order->outcome_check_ms) {
+            continue;
+        }
+        delta = world->score - order->score_anchor;
+        if (order_has_done_all(order) && delta > 0) {
+            order->outcome = SCHED_OUTCOME_DELIVERED;
+            order->reward_observed = delta;
+            finish_order_with_outcome(s, i, KOS_ORDER_COMPLETED, "world-score", now);
+        } else {
+            order->outcome = SCHED_OUTCOME_EXPIRED;
+            finish_order_with_outcome(s, i, KOS_ORDER_EXPIRED, "world-order-gone", now);
+            salvage_expired_holdings(s, order, now);
+        }
+    }
+}
+
 static void poll_world_orders(scheduler *s, int64_t now)
 {
     const kos_world_state *world;
@@ -1198,7 +1819,7 @@ static void poll_world_orders(scheduler *s, int64_t now)
     if (world == NULL) {
         return;
     }
-    for (i = 0; i < (int)world->order_count; i++) {
+    for (i = 0; i < (int)world->order_count && i < KOS_SHM_MAX_ORDERS; i++) {
         const kos_order *order = &world->orders[i];
         int64_t deadline;
 
@@ -1206,11 +1827,21 @@ static void poll_world_orders(scheduler *s, int64_t now)
             continue;
         }
         deadline = now + (order->time_remaining > 0 ? order->time_remaining * 1000LL : 30000);
-        if (add_order(s, order->id, order->recipe, now, deadline, 0, 1, now) == KOS_OK) {
-            kos_log_info(s->rt.log, "world_order", "id=%s dish=%s time_remaining=%d",
-                         order->id, order->recipe, order->time_remaining);
+        if (add_order(s, order->id, order->recipe, now, deadline, order->score, 1, now) ==
+            KOS_OK) {
+            int index = order_find(s, order->id);
+
+            if (index >= 0) {
+                s->orders[index].score_anchor = world->score;
+            }
+            kos_log_info(s->rt.log, "world_order",
+                         "id=%s dish=%s time_remaining=%d reward=%d", order->id,
+                         order->recipe, order->time_remaining,
+                         index >= 0 ? s->orders[index].reward : 0);
         }
     }
+    poll_order_results(s, world, now);
+    reconcile_world_orders(s, world, now);
 }
 
 /* ============================================================== 事件处理 */
@@ -1218,23 +1849,30 @@ static void poll_world_orders(scheduler *s, int64_t now)
 static void finish_order_if_done(scheduler *s, int order_index)
 {
     sched_order *order = &s->orders[order_index];
-    json_writer w;
-    char line[SCHED_LINE_MAX];
 
     if (order->status != KOS_ORDER_ACTIVE || !order_has_done_all(order)) {
         return;
     }
-    release_order_cook_reservations(s, order);
-    mark_order_finished(order, KOS_ORDER_COMPLETED, now_ms());
-    kos_log_info(s->rt.log, "order_completed", "id=%s dish=%s tasks=%d", order->id,
-                 order->dish, order->task_count);
-    json_writer_init(&w, line, sizeof line);
-    event_common(&w, s, "order_completed");
-    json_writer_key(&w, "order_id");
-    json_writer_string(&w, order->id);
-    json_writer_key(&w, "dish");
-    json_writer_string(&w, order->dish);
-    event_end(s, &w);
+    /* world 订单的 DAG 走完只说明动作都做了；完成/过期以游戏结果为准（G9）。 */
+    if (order->from_world && order->outcome != SCHED_OUTCOME_DELIVERED) {
+        if (!order->outcome_pending_logged) {
+            json_writer w;
+            char line[SCHED_LINE_MAX];
+
+            order->outcome_pending_logged = 1;
+            kos_log_info(s->rt.log, "order_outcome_pending",
+                         "id=%s dish=%s outcome=%d", order->id, order->dish,
+                         order->outcome);
+            json_writer_init(&w, line, sizeof line);
+            event_common(&w, s, "order_outcome_pending");
+            json_writer_key(&w, "order_id");
+            json_writer_string(&w, order->id);
+            event_end(s, &w);
+        }
+        return;
+    }
+    finish_order_with_outcome(s, order_index, KOS_ORDER_COMPLETED,
+                              order->from_world ? "world-score" : "dag", now_ms());
 }
 
 static void handle_wash_event(scheduler *s, const kos_mq_msg *msg)
@@ -1268,6 +1906,71 @@ static void handle_wash_event(scheduler *s, const kos_mq_msg *msg)
     if (msg->event != KOS_EVT_ACCEPTED) {
         memset(&s->wash, 0, sizeof s->wash);
     }
+}
+
+static void emit_recipe_infeasible(scheduler *s, const sched_order *order,
+                                   const sched_task *task, const char *reason,
+                                   const char *detail)
+{
+    json_writer w;
+    char line[SCHED_LINE_MAX];
+
+    kos_log_warn(s->rt.log, "recipe_infeasible", "order=%s node=%s reason=%s detail=%s",
+                 order->id, s->recipes.nodes[task->node_index].id, reason, detail);
+    json_writer_init(&w, line, sizeof line);
+    event_common(&w, s, "recipe_infeasible");
+    json_writer_key(&w, "order_id");
+    json_writer_string(&w, order->id);
+    json_writer_key(&w, "node");
+    json_writer_string(&w, s->recipes.nodes[task->node_index].id);
+    json_writer_key(&w, "reason");
+    json_writer_string(&w, reason);
+    json_writer_key(&w, "detail");
+    json_writer_string(&w, detail != NULL ? detail : "");
+    event_end(s, &w);
+}
+
+/* P2 的失败分流。detail 由 macro.c 的 fail_step 写成
+ * "macro=<动作> wait=<条件> <原因> waited_ms=<n>"，动作与原因共同决定处理方式。 */
+enum {
+    SCHED_FAIL_REQUEUE = 0, /* 走位问题/世界变了：回队再派 */
+    SCHED_FAIL_INFEASIBLE,  /* 已到站而游戏不收：工序图不可行，当单失败 */
+    SCHED_FAIL_ITEM_LOST,   /* 手上的东西没了 */
+    SCHED_FAIL_EXPIRED,     /* 订单在交付前消失 */
+    SCHED_FAIL_ORDER        /* 宏映射等硬错误 */
+};
+
+static int macro_fail_disposition(const char *detail)
+{
+    if (detail == NULL) {
+        return SCHED_FAIL_ORDER;
+    }
+    if (strstr(detail, "wait=order-gone") != NULL && strstr(detail, "expired") != NULL) {
+        return SCHED_FAIL_EXPIRED;
+    }
+    if (strstr(detail, "holding-lost") != NULL) {
+        return SCHED_FAIL_ITEM_LOST;
+    }
+    /* 没到站：走位/让路问题，重试有意义。 */
+    if (strstr(detail, "macro=goto") != NULL) {
+        return SCHED_FAIL_REQUEUE;
+    }
+    /* 明确的模型/内容错误：重试只会重复同样的动作。 */
+    if (strstr(detail, "no-station-resource") != NULL ||
+        strstr(detail, "burning") != NULL ||
+        strstr(detail, "content-mismatch") != NULL ||
+        strstr(detail, "unknown-kind") != NULL) {
+        return SCHED_FAIL_INFEASIBLE;
+    }
+    /* 工位上的东西被拿走了：世界变了，重试可能拿到另一份。 */
+    if (strstr(detail, "source-gone") != NULL || strstr(detail, "content-gone") != NULL) {
+        return SCHED_FAIL_REQUEUE;
+    }
+    /* 已经到站还等到超时：游戏不收这个动作（对错目标/工序图错），判不可行。 */
+    if (strstr(detail, "timeout") != NULL) {
+        return SCHED_FAIL_INFEASIBLE;
+    }
+    return SCHED_FAIL_ORDER;
 }
 
 static void handle_worker_event(scheduler *s, const kos_mq_msg *msg)
@@ -1304,6 +2007,33 @@ static void handle_worker_event(scheduler *s, const kos_mq_msg *msg)
     }
     if (s->wash.state == 2 && msg->task_id != 0 && msg->task_id == s->wash.task_id) {
         handle_wash_event(s, msg);
+        return;
+    }
+    if (s->putdown.state == 2 && msg->task_id != 0 && msg->task_id == s->putdown.task_id) {
+        if (msg->chef_id >= 0 && msg->chef_id < KOS_SHM_MAX_CHEFS &&
+            s->running_by_chef[msg->chef_id] == msg->task_id) {
+            s->running_by_chef[msg->chef_id] = 0;
+        }
+        if (msg->event != KOS_EVT_ACCEPTED) {
+            const char *event_name =
+                msg->event == KOS_EVT_DONE ? "putdown_done" : "putdown_failed";
+
+            (void)release_lease_for_task(s, msg->task_id, "resource_reclaimed",
+                                         msg->event == KOS_EVT_DONE ? "putdown-done"
+                                                                    : "putdown-failed");
+            kos_log_info(s->rt.log, event_name, "task=%llu chef=%d detail=%s",
+                         (unsigned long long)msg->task_id, msg->chef_id, msg->detail);
+            json_writer_init(&w, line, sizeof line);
+            event_common(&w, s, event_name);
+            json_writer_key(&w, "task_id");
+            json_writer_int(&w, (long long)msg->task_id);
+            json_writer_key(&w, "chef_id");
+            json_writer_int(&w, msg->chef_id);
+            json_writer_key(&w, "item");
+            json_writer_string(&w, s->putdown.item);
+            event_end(s, &w);
+            memset(&s->putdown, 0, sizeof s->putdown);
+        }
         return;
     }
     task = task_find(s, msg->task_id, &order_index);
@@ -1352,29 +2082,70 @@ static void handle_worker_event(scheduler *s, const kos_mq_msg *msg)
         s->running_by_chef[task->chef_id] == task->task_id) {
         s->running_by_chef[task->chef_id] = 0;
     }
+    if (order->status != KOS_ORDER_ACTIVE) {
+        /* 订单已收尾（结果/过期先到）：只把租约还掉，不再改订单状态。 */
+        (void)release_lease_for_task(s, msg->task_id, "resource_reclaimed", "order-closed");
+        if (msg->event == KOS_EVT_DONE) {
+            task->state = TASK_DONE;
+            task->done_ms = now_ms();
+            if (op_leaves_item_in_hand(s->recipes.nodes[task->node_index].op)) {
+                salvage_chef_holding(s, msg->chef_id, "order-closed", now_ms());
+            }
+        } else {
+            task->state = TASK_FAILED;
+        }
+        return;
+    }
     {
         int node = task->node_index;
+        int64_t now = now_ms();
+        const char *op = s->recipes.nodes[node].op;
 
         if (msg->event == KOS_EVT_DONE) {
             if (order->status == KOS_ORDER_ACTIVE &&
-                strcmp(s->recipes.nodes[node].op, "cook") == 0 &&
+                strcmp(op, "cook") == 0 &&
                 cook_has_pour_successor(s, node)) {
                 task->cooker_reserved = detach_lease_keep_token(s, msg->task_id);
                 if (!task->cooker_reserved) {
                     (void)release_lease_for_task(s, msg->task_id, "resource_reclaimed",
                                                  "reservation-transfer-failed");
                     task->state = TASK_FAILED;
-                    mark_order_finished(order, KOS_ORDER_FAILED, now_ms());
-                    release_order_cook_reservations(s, order);
+                    finish_order_with_outcome(s, order_index, KOS_ORDER_FAILED,
+                                              "reservation-transfer-failed", now);
                     return;
                 }
-                task->cooker_reserved_ms = now_ms();
+                task->cooker_reserved_ms = now;
             } else {
                 (void)release_lease_for_task(s, msg->task_id, "resource_released", "task-done");
             }
             task->state = TASK_DONE;
-            if (strcmp(s->recipes.nodes[node].op, "pour") == 0) {
+            task->done_ms = now;
+            task->not_before_ms = 0;
+            if (strcmp(op, "pour") == 0) {
                 release_pour_source(s, order, &s->recipes.nodes[node]);
+            }
+            if (order->status != KOS_ORDER_ACTIVE) {
+                /* 订单已经过期/失败，这道工序的产物还可能在手上：能给别人就给别人。 */
+                if (op_leaves_item_in_hand(op)) {
+                    salvage_chef_holding(s, msg->chef_id, "order-closed", now);
+                }
+                return;
+            }
+            if (strcmp(op, "deliver") == 0) {
+                const kos_world_state *world = scheduler_world(s, now);
+
+                if (order->from_world && world != NULL && task->score_base_valid) {
+                    int64_t delta = world->score - task->score_base;
+
+                    if (delta > 0) {
+                        order->outcome = SCHED_OUTCOME_DELIVERED;
+                        order->reward_observed = delta;
+                    } else if (order->outcome_check_ms == 0) {
+                        /* 分数还没记上（或本局没上报）：等结果事件/分数变化再判，
+                         * 不能在这里把一单没记分的交付当完成（G9）。 */
+                        order->outcome_check_ms = now + SCHED_OUTCOME_GRACE_MS;
+                    }
+                }
             }
             finish_order_if_done(s, order_index);
         } else if (msg->event == KOS_EVT_BLOCKED) {
@@ -1394,26 +2165,61 @@ static void handle_worker_event(scheduler *s, const kos_mq_msg *msg)
                 }
                 order->tasks[task_index].avoid_chef = blocked_chef;
             }
-        } else if (strncmp(msg->detail, "macro=", 6) == 0 &&
-                   task->fail_count + 1 < SCHED_TASK_MAX_RETRIES) {
-            /* 宏动作超时（多人拥堵时 goto 走不到、料箱没回料）不是订单本身坏了：
-             * 回就绪队列再派。不设 avoid_chef：料多半还在这个厨师手里，换成空手的人
-             * 去 drop 会被当成"已放下"直接完成。缺工位/宏映射失败这类配置错误照旧
-             * 让订单失败。 */
+        } else if (strncmp(msg->detail, "macro=", 6) == 0) {
             int task_index = (int)(task - order->tasks);
+            int disposition = macro_fail_disposition(msg->detail);
 
             (void)release_lease_for_task(s, msg->task_id, "resource_reclaimed",
                                          "task-failed");
-            task->fail_count++;
-            task_requeue(s, order_index, task_index, "macro-failed");
+            if (disposition == SCHED_FAIL_EXPIRED) {
+                order->outcome = SCHED_OUTCOME_EXPIRED;
+                task->state = TASK_FAILED;
+                finish_order_with_outcome(s, order_index, KOS_ORDER_EXPIRED,
+                                          "deliver-expired", now);
+                /* 交付的菜还在这个厨师手上，给同菜的另一单或放下。 */
+                salvage_chef_holding(s, msg->chef_id, "order-expired", now);
+            } else if (disposition == SCHED_FAIL_ITEM_LOST) {
+                task->state = TASK_FAILED;
+                kos_log_warn(s->rt.log, "task_item_lost", "order=%s node=%s detail=%s",
+                             order->id, s->recipes.nodes[node].id, msg->detail);
+                finish_order_with_outcome(s, order_index, KOS_ORDER_FAILED, "item-lost",
+                                          now);
+            } else if (disposition == SCHED_FAIL_REQUEUE) {
+                task->fail_count++;
+                if (task->fail_count < SCHED_TASK_MAX_RETRIES) {
+                    task_requeue(s, order_index, task_index, "macro-failed");
+                    task->not_before_ms =
+                        now + (int64_t)task->fail_count * SCHED_TASK_RETRY_BACKOFF_MS;
+                    kos_log_info(s->rt.log, "task_retry_backoff",
+                                 "order=%s node=%s attempt=%d not_before_ms=%lld",
+                                 order->id, s->recipes.nodes[node].id, task->fail_count,
+                                 (long long)(task->not_before_ms - now));
+                } else {
+                    task->state = TASK_FAILED;
+                    emit_recipe_infeasible(s, order, task, "macro-retries-exhausted",
+                                           msg->detail);
+                    finish_order_with_outcome(s, order_index, KOS_ORDER_FAILED,
+                                              "macro-retries-exhausted", now);
+                }
+            } else if (disposition == SCHED_FAIL_INFEASIBLE) {
+                task->state = TASK_FAILED;
+                emit_recipe_infeasible(s, order, task, "game-refused", msg->detail);
+                finish_order_with_outcome(s, order_index, KOS_ORDER_FAILED,
+                                          "recipe-infeasible", now);
+            } else {
+                task->state = TASK_FAILED;
+                kos_log_warn(s->rt.log, "task_failed", "order=%s node=%s detail=%s",
+                             order->id, s->recipes.nodes[node].id, msg->detail);
+                finish_order_with_outcome(s, order_index, KOS_ORDER_FAILED, "macro-error",
+                                          now);
+            }
         } else {
             (void)release_lease_for_task(s, msg->task_id, "resource_reclaimed",
                                          "task-failed");
             task->state = TASK_FAILED;
-            mark_order_finished(order, KOS_ORDER_FAILED, now_ms());
-            release_order_cook_reservations(s, order);
             kos_log_warn(s->rt.log, "task_failed", "order=%s node=%s detail=%s",
                          order->id, s->recipes.nodes[node].id, msg->detail);
+            finish_order_with_outcome(s, order_index, KOS_ORDER_FAILED, "task-failed", now);
         }
     }
 }
@@ -1450,6 +2256,9 @@ static unsigned task_priority(const sched_order *order, int64_t now)
 
 static int candidate_duration_ms(const scheduler *s, const sched_candidate *cand)
 {
+    if (cand->order_index == -2) {
+        return SCHED_PUTDOWN_MS;
+    }
     if (cand->order_index < 0) {
         return (int)(s->assign_cfg.wash_ms + 0.5);
     }
@@ -1465,7 +2274,7 @@ static const char *candidate_resource(const scheduler *s, const sched_candidate 
         const kos_recipe_node *node = &s->recipes.nodes[cand->node_index];
 
         if (strcmp(node->op, "plate") == 0 &&
-            kos_kitchen_count_kind(&s->kitchen, "plate_stack") == 0) {
+            kos_kitchen_count_kind(&s->kitchen, node->resource) == 0) {
             return s->kitchen.stations[cand->station_index].kind;
         }
         return node->resource;
@@ -1514,7 +2323,10 @@ static int cooker_step_matches(const kos_station *station, const char *step)
            strcmp(station->step, step) == 0;
 }
 
-static int pick_cooker_station(const scheduler *s, const char *step, unsigned salt, int *index)
+/* 灶台按资源 kind 找，不写死 "cooker"：kind 由 kitchen.json 决定（测试夹具会给
+ * 同名 kind 加进程后缀避免信号量撞名），配方里 cook 节点的 resource 与它一致。 */
+static int pick_cooker_station(const scheduler *s, const char *kind, const char *step,
+                               unsigned salt, int *index)
 {
     int offset;
     int matching = 0;
@@ -1523,7 +2335,7 @@ static int pick_cooker_station(const scheduler *s, const char *step, unsigned sa
         int candidate = (int)((salt + (unsigned)offset) % (unsigned)s->kitchen.station_count);
         const kos_station *station = &s->kitchen.stations[candidate];
 
-        if (strcmp(station->kind, "cooker") != 0 || !cooker_step_matches(station, step)) {
+        if (strcmp(station->kind, kind) != 0 || !cooker_step_matches(station, step)) {
             continue;
         }
         matching++;
@@ -1838,13 +2650,13 @@ static int task_station_index(const scheduler *s, int order_index, int task_inde
         return KOS_ERR_MISSING;
     }
     if (strcmp(node->op, "cook") == 0) {
-        return pick_cooker_station(s, node->step,
+        return pick_cooker_station(s, node->resource, node->step,
                                    (unsigned)(order_index * KOS_RECIPE_MAX_DISH_NODES +
                                               task_index),
                                    station_out);
     }
     if (strcmp(node->op, "plate") == 0 &&
-        kos_kitchen_count_kind(&s->kitchen, "plate_stack") == 0) {
+        kos_kitchen_count_kind(&s->kitchen, node->resource) == 0) {
         int sink;
 
         if (s->world_valid && plate_count(&s->world, "plate_stack") == 0) {
@@ -1892,13 +2704,18 @@ static int station_reachable(const scheduler *s, int station, const int *chef_ce
     return 0;
 }
 
-static int task_dispatch_ready(const scheduler *s, const sched_order *order, int task_index)
+static int task_dispatch_ready(const scheduler *s, const sched_order *order, int task_index,
+                               int64_t now)
 {
     const sched_task *task = &order->tasks[task_index];
     const kos_recipe_node *node;
 
     if (task->state != TASK_PENDING ||
         !order_node_ready(s, order, task->node_index)) {
+        return 0;
+    }
+    /* P2 退避：同一个工序第 n 次宏失败后 n × 2 s 内不进候选。 */
+    if (task->not_before_ms > 0 && now < task->not_before_ms) {
         return 0;
     }
     node = &s->recipes.nodes[task->node_index];
@@ -1936,7 +2753,8 @@ static int match_task_to_chef(int task, const int *mask, int *chef_task,
  * 手里拿着原料的厨师只算进那道工序的匹配（task_holder_chef）。
  */
 static int opened_ready_count(scheduler *s, int64_t now, const int *idle,
-                              const int *chef_cells, int chef_count)
+                              const int *chef_cells, int chef_count,
+                              const kos_world_state *world)
 {
     int bound[KOS_SHM_MAX_CHEFS];
     char kind_names[KOS_ASSIGN_MAX_TASKS][KOS_RES_KIND_MAX];
@@ -1970,7 +2788,7 @@ static int opened_ready_count(scheduler *s, int64_t now, const int *idle,
             if (task_count >= KOS_ASSIGN_MAX_TASKS) {
                 goto match;
             }
-            if (!task_dispatch_ready(s, order, j)) {
+            if (!task_dispatch_ready(s, order, j, now)) {
                 continue;
             }
             if (task_station_index(s, i, j, &station) != KOS_OK) {
@@ -2007,9 +2825,12 @@ static int opened_ready_count(scheduler *s, int64_t now, const int *idle,
             }
             {
                 int holder = task_holder_chef(s, order, j);
+                const kos_recipe_node *rnode = &s->recipes.nodes[order->tasks[j].node_index];
 
                 for (k = 0; k < KOS_ASSIGN_MAX_CHEFS && k < chef_count; k++) {
-                    if (holder >= 0 ? idle[k] != holder : bound[idle[k]]) {
+                    int chef = idle[k];
+
+                    if (!chef_can_take_task(world, chef, rnode->op, holder, bound[chef])) {
                         mask &= ~(1 << k);
                     }
                 }
@@ -2073,7 +2894,7 @@ static int open_next_order(scheduler *s, int64_t now, const int *chef_cells,
             int station;
             int station_rc;
 
-            if (!task_dispatch_ready(s, candidate, j)) {
+            if (!task_dispatch_ready(s, candidate, j, now)) {
                 continue;
             }
             station_rc = task_station_index(s, i, j, &station);
@@ -2195,7 +3016,7 @@ static int build_candidates(scheduler *s, int64_t now, const int *chef_cells,
             sched_task *task = &order->tasks[j];
             int station;
 
-            if (!task_dispatch_ready(s, order, j)) {
+            if (!task_dispatch_ready(s, order, j, now)) {
                 continue;
             }
             if (task->ready_since_ms == 0) {
@@ -2236,6 +3057,18 @@ static int build_candidates(scheduler *s, int64_t now, const int *chef_cells,
 
         if (station >= 0 && station_reachable(s, station, chef_cells, chef_count)) {
             out[n].order_index = -1;
+            out[n].task_index = -1;
+            out[n].node_index = -1;
+            out[n].station_index = station;
+            n++;
+        }
+    }
+    if (s->putdown.state == 1 && n < cap) {
+        int station = s->putdown.station_index;
+
+        if (station >= 0 && station < s->kitchen.station_count &&
+            station_reachable(s, station, chef_cells, chef_count)) {
+            out[n].order_index = -2;
             out[n].task_index = -1;
             out[n].node_index = -1;
             out[n].station_index = station;
@@ -2391,6 +3224,87 @@ static int has_avoid_task(const scheduler *s, int chef)
     return 0;
 }
 
+/*
+ * 持有亲和的子工序 DONE 后，产物必须出现在这个厨师手上。超过宽限还空手，说明
+ * 东西丢了（被换走/掉地/插件漏帧）：把订单判死，别再派下去让宏对着空工位按交互
+ * （实机 worker-2 的 `macro=drop wait=empty-hand timeout`）。
+ */
+static int64_t holder_child_done_ms(const scheduler *s, const sched_order *order, int node,
+                                    int chef)
+{
+    int64_t done_ms = 0;
+    int e;
+
+    for (e = 0; e < s->recipes.edge_count; e++) {
+        int child_task;
+        const sched_task *child;
+
+        if (s->recipes.edges[e].to != node) {
+            continue;
+        }
+        child_task = order_task_by_node(order, s->recipes.edges[e].from);
+        if (child_task < 0) {
+            continue;
+        }
+        child = &order->tasks[child_task];
+        if (child->state != TASK_DONE || child->chef_id != chef ||
+            !op_leaves_item_in_hand(s->recipes.nodes[child->node_index].op)) {
+            continue;
+        }
+        if (child->done_ms > done_ms) {
+            done_ms = child->done_ms;
+        }
+    }
+    return done_ms;
+}
+
+static void reconcile_holding_loss(scheduler *s, int64_t now)
+{
+    int i;
+
+    if (!s->world_valid) {
+        return;
+    }
+    for (i = 0; i < s->order_count; i++) {
+        sched_order *order = &s->orders[i];
+        int j;
+
+        if (order->status != KOS_ORDER_ACTIVE) {
+            continue;
+        }
+        for (j = 0; j < order->task_count; j++) {
+            sched_task *task = &order->tasks[j];
+            const kos_chef *chef;
+            int64_t done_ms;
+            int holder;
+
+            if (task->state != TASK_PENDING) {
+                continue;
+            }
+            holder = task_holder_chef(s, order, j);
+            if (holder < 0 || holder >= s->rt.opts.chefs) {
+                continue;
+            }
+            chef = world_chef(&s->world, holder);
+            if (chef == NULL || chef->holding[0] != '\0') {
+                continue;
+            }
+            done_ms = holder_child_done_ms(s, order, task->node_index, holder);
+            if (done_ms == 0 || now - done_ms < SCHED_HOLDING_LOSS_MS) {
+                continue;
+            }
+            kos_log_warn(s->rt.log, "task_item_lost",
+                         "order=%s node=%s chef=%d child_done_ms=%lld", order->id,
+                         s->recipes.nodes[task->node_index].id, holder,
+                         (long long)(now - done_ms));
+            task->state = TASK_FAILED;
+            finish_order_with_outcome(s, i, KOS_ORDER_FAILED, "holding-lost", now);
+            salvage_expired_holdings(s, order, now);
+            break;
+        }
+    }
+}
+
 static void dispatch_ready(scheduler *s, int64_t now)
 {
     sched_candidate all[KOS_ASSIGN_MAX_TASKS];
@@ -2416,10 +3330,25 @@ static void dispatch_ready(scheduler *s, int64_t now)
     if (s->rt.opts.chefs <= 0) {
         return;
     }
+    world = scheduler_world(s, now);
     for (i = 0; i < s->rt.opts.chefs && i < KOS_ASSIGN_MAX_CHEFS; i++) {
         if (s->blocked_hold[i] && !has_avoid_task(s, i)) {
             /* 被重排的工序已经完成/失败，扣留自然解除，避免这个厨师永远没活。 */
             s->blocked_hold[i] = 0;
+        }
+        if (s->hold_stuck[i]) {
+            const kos_chef *stuck = world_chef(&s->world, i);
+
+            /* 手里没人要的东西一旦没了（别人拿走/终于放下），恢复接活。 */
+            if (stuck != NULL && stuck->holding[0] == '\0') {
+                s->hold_stuck[i] = 0;
+            } else if (s->world_valid && stuck != NULL &&
+                       try_adopt_holding(s, i, "hold-stuck", now)) {
+                /* 新开了一张同菜的订单，手里的东西有用了。 */
+                s->hold_stuck[i] = 0;
+            } else {
+                continue;
+            }
         }
         if (s->running_by_chef[i] == 0 && !s->blocked_hold[i]) {
             idle[idle_count++] = i;
@@ -2428,7 +3357,6 @@ static void dispatch_ready(scheduler *s, int64_t now)
     if (idle_count == 0) {
         return;
     }
-    world = scheduler_world(s, now);
     for (i = 0; i < idle_count; i++) {
         int chef = idle[i];
 
@@ -2442,7 +3370,7 @@ static void dispatch_ready(scheduler *s, int64_t now)
     }
     /* 已开工订单没有足够多的可派工序填满空闲厨师时，才按策略开下一单。 */
     for (;;) {
-        int ready = opened_ready_count(s, now, idle, chef_cells, idle_count);
+        int ready = opened_ready_count(s, now, idle, chef_cells, idle_count, world);
 
         if (ready >= idle_count ||
             open_next_order(s, now, chef_cells, idle_count) != KOS_OK) {
@@ -2519,10 +3447,19 @@ static void dispatch_ready(scheduler *s, int64_t now)
                     travel_cells[index] = SCHED_UNREACHABLE_CELLS;
                 }
             }
-            if (holder >= 0 ? holder != chef : bound[chef]) {
-                /* 原料在 holder 手里：只有他能做这道；他也不接别的活，免得手里的东西没处放。 */
-                term->unreachable = 1;
-                travel_cells[index] = SCHED_UNREACHABLE_CELLS;
+            {
+                const char *op = pool[j].order_index >= 0
+                                     ? s->recipes.nodes[pool[j].node_index].op
+                                     : (pool[j].order_index == -2 ? "assemble" : "wash");
+                int putdown = pool[j].order_index == -2;
+
+                if (putdown ? s->putdown.chef_id != chef
+                            : !chef_can_take_task(world, chef, op, holder, bound[chef])) {
+                    /* G11：手里不是这件东西就派去 drop/fetch 只会空等到超时；
+                     * 放下工序只派给东西在他手上的那个厨师。 */
+                    term->unreachable = 1;
+                    travel_cells[index] = SCHED_UNREACHABLE_CELLS;
+                }
             }
             if (cell >= 0) {
                 uint16_t distance = kos_stand_distance(&s->kitchen, station, cell);
@@ -2538,7 +3475,10 @@ static void dispatch_ready(scheduler *s, int64_t now)
                 }
             }
             term->work_s = candidate_duration_ms(s, &pool[j]) / 1000.0;
-            if (pool[j].order_index < 0) {
+            if (pool[j].order_index == -2) {
+                term->critical_s = SCHED_PUTDOWN_MS / 1000.0;
+                term->urgency = 1.0;
+            } else if (pool[j].order_index < 0) {
                 term->critical_s = s->assign_cfg.wash_ms / 1000.0;
                 term->urgency = 1.0;
             } else {
@@ -2607,6 +3547,7 @@ static void dispatch_ready(scheduler *s, int64_t now)
         int priority;
         const kos_station *station;
         char source_station_id[KOS_SHM_NAME_MAX] = "";
+        char putdown_node[KOS_MQ_NODE_ID_MAX] = "";
         kos_assign_components components;
         kos_mq_msg msg;
         kos_error err;
@@ -2631,6 +3572,14 @@ static void dispatch_ready(scheduler *s, int64_t now)
                                                       cand->node_index);
             slack_ms = order->deadline_ms - now;
             priority = (int)task_priority(order, now);
+        } else if (cand->order_index == -2) {
+            /* 放下工序：worker 按 assemble 展开成 goto + drop，node 名只用于日志。 */
+            snprintf(putdown_node, sizeof putdown_node, "drop:%s", s->putdown.item);
+            order_id = "putdown";
+            dish = "";
+            node_id = putdown_node;
+            duration = SCHED_PUTDOWN_MS;
+            priority = SCHED_WASH_PRIORITY;
         } else {
             order_id = "wash";
             node_id = "wash";
@@ -2692,7 +3641,9 @@ static void dispatch_ready(scheduler *s, int64_t now)
         copy_str(msg.order_id, sizeof msg.order_id, order_id);
         copy_str(msg.dish, sizeof msg.dish, dish);
         copy_str(msg.node_id, sizeof msg.node_id, node_id);
-        copy_str(msg.op, sizeof msg.op, cand->order_index < 0 ? "wash" : node->op);
+        copy_str(msg.op, sizeof msg.op,
+                 cand->order_index == -2 ? "assemble"
+                                         : (cand->order_index < 0 ? "wash" : node->op));
         copy_str(msg.resource, sizeof msg.resource, kind);
         copy_str(msg.station_id, sizeof msg.station_id, station->id);
         copy_str(msg.source_station_id, sizeof msg.source_station_id, source_station_id);
@@ -2744,14 +3695,24 @@ static void dispatch_ready(scheduler *s, int64_t now)
             }
             task->avoid_chef = -1;
             task->state = TASK_RUNNING;
-            if (task->avoid_chef >= 0 && task->avoid_chef != chef &&
-                task->avoid_chef < KOS_SHM_MAX_CHEFS) {
-                s->blocked_hold[task->avoid_chef] = 0;
-            }
-            task->avoid_chef = -1;
             task->chef_id = chef;
             task->task_id = msg.task_id;
             task->started_ms = now;
+            task->not_before_ms = 0;
+            if (strcmp(node->op, "deliver") == 0) {
+                const kos_world_state *dispatch_world = scheduler_world(s, now);
+
+                task->score_base_valid = dispatch_world != NULL;
+                task->score_base = dispatch_world != NULL ? dispatch_world->score : 0;
+                if (dispatch_world != NULL) {
+                    /* 这一单从这一刻起的分数变化才算它的（G9）。 */
+                    order->score_anchor = dispatch_world->score;
+                }
+            }
+        } else if (cand->order_index == -2) {
+            s->putdown.state = 2;
+            s->putdown.chef_id = chef;
+            s->putdown.task_id = msg.task_id;
         } else {
             s->wash.state = 2;
             s->wash.chef_id = chef;
@@ -2948,6 +3909,8 @@ static const char *order_status_name(int status)
         return "completed";
     case KOS_ORDER_FAILED:
         return "failed";
+    case KOS_ORDER_EXPIRED:
+        return "expired";
     default:
         return "active";
     }
@@ -2987,7 +3950,8 @@ static void write_metrics_snapshot(scheduler *s, const char *reason)
         dst->lateness_ms = src->lateness_ms;
         if (src->status == KOS_ORDER_COMPLETED) {
             snapshot.orders_completed++;
-        } else if (src->status == KOS_ORDER_FAILED) {
+        } else if (src->status == KOS_ORDER_FAILED ||
+                   src->status == KOS_ORDER_EXPIRED) {
             snapshot.orders_failed++;
         } else {
             snapshot.orders_active++;
@@ -3298,8 +4262,7 @@ static int scheduler_main(scheduler *s, const kos_child_opts *opts)
                     (void)release_lease_for_task(s, task->task_id,
                                                  "resource_reclaimed", "task-timeout");
                     task->state = TASK_FAILED;
-                    mark_order_finished(&s->orders[i], KOS_ORDER_FAILED, now);
-                    release_order_cook_reservations(s, &s->orders[i]);
+                    finish_order_with_outcome(s, i, KOS_ORDER_FAILED, "task-timeout", now);
                 }
             }
         }
@@ -3319,6 +4282,22 @@ static int scheduler_main(scheduler *s, const kos_child_opts *opts)
                                          "wash-timeout");
             memset(&s->wash, 0, sizeof s->wash);
         }
+        if (s->putdown.state == 2 &&
+            now - s->putdown.ready_ms > SCHED_PUTDOWN_MS + SCHED_TASK_TIMEOUT_MS) {
+            uint64_t task_id = s->putdown.task_id;
+            int chef = s->putdown.chef_id;
+
+            kos_log_warn(s->rt.log, "putdown_timeout", "task=%llu chef=%d",
+                         (unsigned long long)task_id, chef);
+            if (chef >= 0 && chef < KOS_SHM_MAX_CHEFS &&
+                s->running_by_chef[chef] == task_id) {
+                s->running_by_chef[chef] = 0;
+            }
+            (void)release_lease_for_task(s, task_id, "resource_reclaimed",
+                                         "putdown-timeout");
+            deactivate_putdown(s, "putdown-timeout");
+        }
+        reconcile_holding_loss(s, now);
         dispatch_ready(s, now);
         kos_child_sleep(&s->rt, s->rt.opts.tick_ms);
     }
