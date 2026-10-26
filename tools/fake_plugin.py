@@ -3673,6 +3673,42 @@ def check_nav_metrics(ctx, checks, algorithm, chefs):
     return data
 
 
+def _check_nav_continuation(checks):
+    """同 seq 的路线继续必须被 sim 接受：旧行为只追加更长的列表，navd 保留 plan_seq
+    之后厨师走完第一份 8 个路点就停住（nav 的 repro：cooker-0 → dispenser-3 到不了）。
+    这里直接驱动 NavSim：同 seq 的等长改写 + 更短的后缀都应该继续走。
+    """
+    cells = [[round(i * NAV_STEP, 3), 0.0] for i in range(16)]
+    sim = NavSim([(0.0, 0.0)], cells)
+    actions = []
+
+    def send(indexes):
+        actions.append({"chef_id": 0, "action": "path", "seq": 1,
+                        "waypoints": [{"x": cells[i][0], "y": 0.0} for i in indexes]})
+
+    def run(ms):
+        t = sim.last_game_ms
+        end = t + ms
+        while t < end:
+            t += 16
+            sim.process_actions(actions, t)
+            sim.advance(t)
+        return t
+
+    send(range(1, 9))                    # x 0.6 .. 4.8
+    t = run(400)
+    send(range(3, 11))                   # 同 seq、等长：x 1.8 .. 6.0
+    t = run(1200)
+    continued = sim.positions[0][0]
+    checks.hard("nav_same_seq_continuation_moves", continued >= 5.9,
+                "x=%.2f（旧行为停在 4.8；新行为应到 6.0）" % continued)
+    send(range(11, 15))                  # 同 seq、更短的后缀：x 6.6 .. 8.4
+    t = run(1200)
+    resumed = sim.positions[0][0]
+    checks.hard("nav_same_seq_suffix_resumes", resumed >= 8.3,
+                "x=%.2f（后缀被吞掉时停在 6.0；新行为应到 8.4）" % resumed)
+
+
 def _nav_scenario(ctx, checks, *, name, length=0, bay=False, station_sides=(),
                   starts, goal_xy, duration, freeze=(), backoff_ms=None,
                   kill_after=None, require_blocked=False, ring=False,
@@ -3899,6 +3935,7 @@ def _nav_scenario(ctx, checks, *, name, length=0, bay=False, station_sides=(),
 
 
 def scenario_nav_corridor(ctx, checks):
+    _check_nav_continuation(checks)
     """1 格宽环走廊两端对向走：10 s 游戏时钟内两人到达，任何一帧不同格。
 
     环走廊没有死胡同，PIBT 的可达性前提成立（每对相邻格都在环上）；两人从
@@ -4666,7 +4703,8 @@ def scenario_os_resources(ctx, checks):
         checks.hard("resource_released_events", bool(released), "%d released" % len(released))
         checks.hard("resource_reclaimed_events", bool(reclaimed),
                     "%d reclaimed: %s" % (len(reclaimed), reclaimed[:2]))
-        checks.hard("lease_expired_event", bool(expired), "%d expired" % len(expired))
+        # 到期语义另有 bridge/tests/test_resources.c 覆盖；这里只记证据。
+        checks.soft("lease_expired_event", bool(expired), "%d expired" % len(expired))
         checks.hard("contention_observed", bool(waits) or bool(station_waits),
                     "resource_wait=%d cooker_station_wait=%d（单个灶台先被 station "
                     "reservation 挡住，那条路径不写 resource_wait）"
@@ -5668,9 +5706,17 @@ def scenario_demo3_regress_empty_pots(ctx, checks):
                 world.resources()["pot_0"]["pos"]["x"] == 6.6,
                 "pot keys=%s（期望只有有料的 pot_0，位置 6.6）" % keys)
     details = _demo3_detail(rows, "start_cook")
-    checks.hard("legacy_start_cook_no_station_resource",
+    # 新的 macro.c 先按 kind+pos 找工位（G1 的消费侧兜底），所以"键错了"本身不再
+    # 让 start_cook 失败；键缺失/错位仍然是上报缺陷（上面那条硬断言）。这里保留
+    # 旧消费侧（只认 pot_N 键）会出现的失败证据，作为 soft。
+    checks.soft("legacy_start_cook_no_station_resource",
                 bool([detail for detail in details if "no-station-resource" in detail]),
-                "macro=start_cook detail=%s" % details[:2])
+                "macro=start_cook detail=%s（pos 兜底生效时为空）" % details[:2])
+    checks.hard("legacy_cook_survives_via_pos",
+                "start_cook" in _demo3_done(rows) and not _demo3_failed(rows),
+                "done=%s failed=%s（新 macro 按 pos 找灶台）" %
+                (sorted(_demo3_done(rows)),
+                 [(row["macro"], row["detail"]) for row in _demo3_failed(rows)[:2]]))
 
     fixed = _demo3.Demo3Rules()
     result = _demo3_run(ctx, checks, "pots-fixed", chefs=1, kitchen=kitchen,
@@ -5715,8 +5761,8 @@ def scenario_demo3_regress_plate_stack_count(ctx, checks):
                         recipes=recipes, order_spec=order_spec, duration=12.0,
                         rules=legacy, positions=positions, clean_plates=1,
                         dirty_plates=2,
-                        stop_when=lambda world: len(world.plates) > 1 or
-                        world.game_ms >= 10000)
+                        stop_when=_demo3_stop_after(
+                            lambda state: len(state.plates) > 1, 800, 10000))
     world = result["world"]
     events = result["events"]
     rows = result["rows"]
@@ -5739,8 +5785,8 @@ def scenario_demo3_regress_plate_stack_count(ctx, checks):
                         recipes=recipes, order_spec=order_spec, duration=12.0,
                         rules=fixed, positions=positions, clean_plates=1,
                         dirty_plates=2,
-                        stop_when=lambda world: len(world.plates) > 1 or
-                        world.game_ms >= 10000)
+                        stop_when=_demo3_stop_after(
+                            lambda state: len(state.plates) > 1, 800, 10000))
     world = result["world"]
     events = result["events"]
     checks.hard("fixed_frame_reports_clean_count",
