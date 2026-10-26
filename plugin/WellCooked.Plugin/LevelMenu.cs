@@ -162,8 +162,8 @@ namespace WellCooked
                     e.Use();
                     if (!HotkeyLoad.InLevel())
                     {
-                        _message = "主菜单里不能直接进关：先进入任意关卡，再按 F9 选关";
-                        _messageUntil = float.MaxValue;
+                        _message = "主菜单/加载屏里不能进关（会卡在加载界面）：先进任意关卡，再按 F9 选关";
+                        _messageUntil = Time.realtimeSinceStartup + 6f;
                         Log("[Menu] refused: frontend state");
                         break;
                     }
