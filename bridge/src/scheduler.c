@@ -1662,6 +1662,83 @@ static int container_station_index(const scheduler *s, const sched_order *order,
     return container_station_from(s, order, node_index, 8, station_out);
 }
 
+/* 这道菜的 `cook` 工序要用哪几种烹饪类型：台面离这些灶越近，倒料来回越短。 */
+static int dish_cook_steps(const kos_recipes *recipes, const kos_dish *dish,
+                           const char *steps[], int max)
+{
+    int count = 0;
+    int i;
+    int j;
+
+    for (i = 0; i < dish->node_count && count < max; i++) {
+        const kos_recipe_node *node = &recipes->nodes[dish->nodes[i]];
+
+        if (strcmp(node->op, "cook") != 0 || node->step[0] == '\0') {
+            continue;
+        }
+        for (j = 0; j < count; j++) {
+            if (strcmp(steps[j], node->step) == 0) {
+                break;
+            }
+        }
+        if (j == count) {
+            steps[count++] = node->step;
+        }
+    }
+    return count;
+}
+
+/*
+ * 卷饼台面：优先离这道菜的灶与盘堆最近的那张，不再按 salt 摊。重派时沿用第一次
+ * 挑好的台面——pour/pickup 已经按它记录了容器位置。别的活跃订单占着的台面跳过
+ * （一张台面只放一只玉米饼）。
+ */
+static int place_station_index(const scheduler *s, int order_index, int task_index,
+                               int *station_out)
+{
+    const sched_order *order = &s->orders[order_index];
+    const sched_task *task = &order->tasks[task_index];
+    unsigned char busy[KOS_KITCHEN_MAX_STATIONS];
+    const char *steps[8];
+    int step_count;
+    int i;
+    int j;
+
+    if (task->station_id[0] != '\0') {
+        int existing = kos_kitchen_station_index(&s->kitchen, task->station_id);
+
+        if (existing >= 0) {
+            *station_out = existing;
+            return KOS_OK;
+        }
+    }
+    memset(busy, 0, sizeof busy);
+    for (i = 0; i < s->order_count; i++) {
+        const sched_order *other = &s->orders[i];
+
+        if (other->status != KOS_ORDER_ACTIVE) {
+            continue;
+        }
+        for (j = 0; j < other->task_count; j++) {
+            const sched_task *peer = &other->tasks[j];
+            int index;
+
+            if (peer == task || peer->station_id[0] == '\0' ||
+                peer->state == TASK_FAILED ||
+                strcmp(s->recipes.nodes[peer->node_index].op, "place") != 0) {
+                continue;
+            }
+            index = kos_kitchen_station_index(&s->kitchen, peer->station_id);
+            if (index >= 0) {
+                busy[index] = 1;
+            }
+        }
+    }
+    step_count = dish_cook_steps(&s->recipes, &s->recipes.dishes[order->dish_index], steps,
+                                 (int)(sizeof steps / sizeof steps[0]));
+    return kos_kitchen_pick_counter(&s->kitchen, steps, step_count, busy, station_out);
+}
+
 
 /* pickup 的容器来自 place；卷饼流程里中间隔着 pour，所以按祖先找而不是只看直接父工序。 */
 static int recipe_has_place_ancestor(const kos_recipes *recipes, int node_index, int depth)
@@ -1739,7 +1816,18 @@ static const char *node_infeasible_reason(const scheduler *s, const kos_dish *di
         !recipe_has_place_ancestor(&s->recipes, node_index, 8)) {
         return "pickup-without-place";
     }
-    (void)dish;
+    if (strcmp(node->op, "place") == 0) {
+        const char *steps[8];
+        int step_count = dish_cook_steps(&s->recipes, dish, steps,
+                                        (int)(sizeof steps / sizeof steps[0]));
+        int dummy = -1;
+
+        /* 台面存在不等于能用：盘堆/灶底下那张放不了玉米饼，角上走不到的也被导出
+         * 丢掉了（scripts/export-kitchen.py 的 drop_stations_without_stand）。 */
+        if (kos_kitchen_pick_counter(&s->kitchen, steps, step_count, NULL, &dummy) != KOS_OK) {
+            return "no-free-counter";
+        }
+    }
     return NULL;
 }
 
@@ -1856,6 +1944,9 @@ static int task_station_index(const scheduler *s, int order_index, int task_inde
         }
         *station_out = sink;
         return KOS_OK;
+    }
+    if (strcmp(node->op, "place") == 0) {
+        return place_station_index(s, order_index, task_index, station_out);
     }
     if (strcmp(node->op, "pour") == 0 || strcmp(node->op, "pickup") == 0) {
         int pinned;
@@ -2662,7 +2753,9 @@ static void dispatch_ready(scheduler *s, int64_t now)
             copy_str(source_station_id, sizeof source_station_id,
                      order->tasks[cook_task_index].station_id);
         }
-        if (node != NULL && strcmp(node->op, "cook") == 0) {
+        if (node != NULL &&
+            (strcmp(node->op, "cook") == 0 || strcmp(node->op, "place") == 0)) {
+            /* cook 留锅要它；place 的台面是 pour/pickup 的容器位置，必须跟着任务走。 */
             copy_str(task->station_id, sizeof task->station_id, station->id);
         }
         kind = candidate_resource(s, cand);
