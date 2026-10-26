@@ -311,10 +311,12 @@ namespace WellCooked
             // 砧板（任务 09 P0）：`ClientWorkstation` 是 chopping 台面的同步组件，
             // 之前不在工位表里，导出的 kitchen.json 没有 board-N。
             "ClientWorkstation",
-            // 普通台面：卷饼当容器的地方。`ClientAttachStation` 挂在所有能放东西的表面上，
-            // 导出时按 `Kitchen.IsPlainCounter`（名字含 countertop 且不是砧板）过滤。
-            // [INFERENCE] 具体组件是反编译 + 砧板同款（砧板也从同一个组件读 m_item）推的，
-            // 还没在关卡里导一次 state 确认。
+            // 普通台面：卷饼当容器的地方。`ClientAttachStation` 是游戏给所有
+            // `AttachStation`（能放东西的表面）加上的同步组件——`MultiplayerController`
+            // 的 `AddSynchronisedType(typeof(AttachStation), SynchroniserConfig(ServerAttachStation,
+            // ClientAttachStation))`。导出时按 `Kitchen.IsPlainCounter`（名字含 countertop
+            // 且不是砧板）过滤；实机对象名是 `countertop_01_standard_wood`
+            // （logs/manual/20261027-022317/manual.log），实测玉米饼放在 (0.60,-6.00) 那张。
             "ClientAttachStation",
             // 料箱：DispenserCrate 上的这个组件给出它发的是哪种料
             "ClientPickupItemSpawner",
