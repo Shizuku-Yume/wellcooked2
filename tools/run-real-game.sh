@@ -42,16 +42,16 @@ PLUGIN_LOG_OFFSET=0
 say() { printf '%s\n' "$*"; }
 plugin_run_log() {
     python3 - "$BEPINEX_LOG" "$PLUGIN_LOG_OFFSET" <<'PY'
-import os, sys
+import sys
 try:
     with open(sys.argv[1], encoding="utf-8", errors="replace") as log:
         text = log.read()
-    start = text.rfind("WellCooked.Smoke loaded")
-    if start >= 0:
-        text = text[start:]
-    else:
-        text = text[min(int(sys.argv[2]), len(text)):]
-    sys.stdout.write(text)
+    offset = int(sys.argv[2])
+    marker = text.rfind("WellCooked.Smoke loaded")
+    # BepInEx may rewrite the log with a new run larger than the old offset;
+    # the newest plugin marker is the fresh boundary in that case.
+    start = marker if marker >= 0 and marker < offset else min(offset, len(text))
+    sys.stdout.write(text[start:])
 except Exception:
     raise SystemExit(1)
 PY
@@ -140,13 +140,14 @@ BACKUP_DIR=""
 restore_game_configs() {
     [ -n "$BACKUP_DIR" ] || return 0
     local name
-    for name in wellcooked-takeover.txt wellcooked-command.txt wellcooked-orders.json; do
+    for name in wellcooked-takeover.txt wellcooked-orders.json; do
         if [ -f "$BACKUP_DIR/$name" ]; then
             cp -p "$BACKUP_DIR/$name" "$GAME_DIR/BepInEx/$name"
         else
             rm -f "$GAME_DIR/BepInEx/$name"
         fi
     done
+    rm -f "$GAME_DIR/BepInEx/wellcooked-command.txt"
 }
 cleanup() {
     if [ -n "$SUPERVISOR_PID" ] && kill -0 "$SUPERVISOR_PID" 2>/dev/null; then
@@ -178,7 +179,7 @@ run_supervisor_acceptance() {
     fi
     printf 'work=auto\nslots=1,2\nfrontend_press=true\ndiag=false\nbridge=127.0.0.1:%s\n' "$PORT" \
         > "$GAME_DIR/BepInEx/wellcooked-takeover.txt"
-    : > "$GAME_DIR/BepInEx/wellcooked-command.txt"
+    rm -f "$GAME_DIR/BepInEx/wellcooked-command.txt"
     state="$GAME_DIR/BepInEx/wellcooked-state.json"
     state_mtime_before="$(stat -c %Y "$state" 2>/dev/null || printf '0')"
     say "Launching the game through Steam; waiting for both virtual pads to join before loading the level."
@@ -219,6 +220,7 @@ run_supervisor_acceptance() {
     printf 'work=auto\nslots=1,2\nfrontend_press=false\ndiag=false\nbridge=127.0.0.1:%s\n' "$PORT" \
         > "$GAME_DIR/BepInEx/wellcooked-takeover.txt"
     sleep 2
+    printf 'load=%s\n' "$SCENE" > "$GAME_DIR/BepInEx/wellcooked-command.txt"
     deadline=$(( $(date +%s) + WAIT_SECONDS ))
     load_requested=0
     while [ "$(date +%s)" -lt "$deadline" ]; do
