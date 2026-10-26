@@ -72,9 +72,12 @@ C 侧 `bridge/include/kitchenos/protocol.h` + `bridge/src/protocol.c`，
 | `game_time` | number | 否 | `game_time` | 游戏内已进行秒数 |
 | `game_time_ms` | integer | 是 | `game_time_ms` | 游戏内已进行毫秒数（暂停不走；缺失当错误被拒） |
 | `score` | number | 否 | `score` | 当前分数 |
+| `round_time_left` | number | 否 | `round_time_left` + `has_round_time` | 本局剩余秒数（`ServerRoundTimer.m_timeLeft`）；最后 20 秒的收尾决策用 |
+| `round_time_limit` | number | 否 | 同上 | 本局时长上限（`m_timeLimit`） |
 | `chefs` | array | 否 | `chefs[]` | 最多 16 个，见下 |
 | `orders` | array | 否 | `orders[]` | 最多 32 张，见下 |
-| `resources` | object | 否 | `resources[]` | 最多 48 个键，见下 |
+| `order_results` | array | 否 | `order_results[]` | 最近结束的订单，最多 32 条，见下 |
+| `resources` | object | 否 | `resources[]` | 最多 96 个键，见下 |
 
 `chefs[]`：
 
@@ -83,6 +86,7 @@ C 侧 `bridge/include/kitchenos/protocol.h` + `bridge/src/protocol.c`，
 | `id` | integer | 是 | 厨师编号，同时也是输入槽编号；没有 `id` 的条目会被单独丢弃并计数 |
 | `position` | object `{x,y}` | 否 | 世界坐标（映射游戏 x/z 平面） |
 | `holding` | string \| null | 否 | 手上的东西；`null` 表示空手，C 侧存成 `""`（`proto_chef.holding`） |
+| `holding_contents` | string[] | 否 | 手持物里递归展开的内容名，最多 8 个，编码同 `resources[].contents`（G4：盘里是哪道菜、锅里煮的是什么） |
 | `state` | string | 否 | 取自游戏，例如 `moving` / `idle` |
 | `facing` | number | 否 | 厨师朝向（弧度） |
 
@@ -93,30 +97,67 @@ C 侧 `bridge/include/kitchenos/protocol.h` + `bridge/src/protocol.c`，
 | `id` | string | 否 | 例如 `order_001` |
 | `recipe` | string | 否 | 例如 `salad` |
 | `time_remaining` | number | 否 | 剩余秒数 |
+| `score` | integer | 否 | 游戏给这单的分（`RecipeListEntry.m_scoreForMeal`），G7 |
 | `ingredients` | string[] | 否 | 已放入的原料，最多 8 个 |
 
-`resources` 的**键是动态的**：`pot_0`、`pot_1`、`cutting_board_0`、`plate_stack`、
-`dirty_plates`、`sink_0`。
-将来游戏新增 `pot_7`、`sink_2` 之类也必须能收，所以 C 侧按前缀分类后保留**原始键名**，
-认不出的键归 `PROTO_RES_UNKNOWN`，绝不因为"键不认识"而拒绝整条消息。
+`order_results[]`（G9：交付成功与过期必须能分开）：
 
-| 键形式 | C 侧 kind | index |
-|---|---|---|
-| `pot_<N>` | `PROTO_RES_POT` | N |
-| `cutting_board_<N>` | `PROTO_RES_CUTTING_BOARD` | N |
-| `plate_stack` | `PROTO_RES_PLATE_STACK` | -1 |
-| `dirty_plates`、`sink_<N>` 等其它 | `PROTO_RES_UNKNOWN` | -1 |
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `seq` | integer | 是 | 插件进程内单调递增；比上一条小说明插件重启过，消费者应重置去重游标 |
+| `id` | string | 是 | 订单 id，与 `orders[].id` 同一套 |
+| `recipe` | string \| null | 否 | 结果发生时读到的菜名；订单已从 `m_activeOrders` 移除时可能为空 |
+| `outcome` | string | 是 | `delivered`（送对菜）/ `expired`（超时消失）/ `failed`（送错菜被拒） |
+| `score` | integer | 否 | 这单的分；缺失与 `0` 不同 |
+| `game_time_ms` | integer | 否 | 结果发生的游戏时刻 |
+
+插件把**最近 16 条**结果按"旧 → 新"整份重发（不是增量），Bridge 每次整份替换；
+消费者按 `seq` 去重。这样丢一帧不会丢事件，重复帧也不会重复计数。来源是游戏自己的
+`ClientOrderControllerBase.OnFoodDelivered(bool, OrderID)` 与 `OnOrderExpired(OrderID)`
+（Harmony 后置补丁，`plugin/Link/OrderResults.cs`）。
+
+`resources` 的**键是动态的**：`pot_0`、`pot_1`、`cutting_board_0`、`plate_stack`、
+`dirty_plates`、`sink_0`、`counter_0`、`container_0`、`carried_2`。
+将来游戏新增 `pot_7`、`sink_2` 之类也必须能收，所以 C 侧按前缀分类后保留**原始键名**，
+认不出的键归 `PROTO_RES_UNKNOWN`，绝不因为"键不认识"而拒绝整条消息。值里的 `kind`
+比键名前缀更权威（前缀只是约定），两者不一致时以 `kind` 为准。
+
+| 键形式 | C 侧 kind | index | 语义 |
+|---|---|---|---|
+| `pot_<N>` | `PROTO_RES_POT` | N | **灶台槽位** N（`ClientCookingStation` 按 x、z 排序），不是"当前枚举到的锅"；空灶台也发，`state=empty`。N 与 `kitchen.json` 的 `cooker-N` 一一对应（G1） |
+| `cutting_board_<N>` | `PROTO_RES_CUTTING_BOARD` | N | 砧板 N，排序同 `board-N` |
+| `plate_stack` | `PROTO_RES_PLATE_STACK` | -1 | 干净盘堆，`count` 来自 `ClientPlateStackBase.GetCount()`（G2） |
+| `dirty_plates` | `PROTO_RES_DIRTY_PLATES` | -1 | 脏盘台 |
+| `sink_<N>` | `PROTO_RES_SINK` | N | 水槽 N |
+| `counter_<N>` | `PROTO_RES_COUNTER` | N | **台面上有东西的**普通工位（`ClientAttachStation` 且 `m_item` 非空），按 x、z、name 排序；空台面不发——静置台面的位置在 `kitchen.json` 里 |
+| `container_<N>` | `PROTO_RES_CONTAINER` | N | 没有挂到工位、也没人拿的容器（掉在地上等），按 x、z 排序 |
+| `carried_<M>` | `PROTO_RES_CARRIED` | M = 厨师号 | 厨师 M 手里那个容器/锅，`chef_id` 必填；同一只锅在灶上时是 `pot_<N>`，被端走后就只在 `carried_<M>` 里（G1/G4） |
 
 每个键的值是一个对象：
 
 | 字段 | 类型 | 必填 | C 侧字段 | 说明 |
 |---|---|---|---|---|
-| `state` | string | 否 | `state` | `free` / `occupied` … |
-| `content` | string \| null | 否 | `content` | 锅里在煮什么 |
-| `time_left` | number | 否 | `time_left` + `has_time_left` | 剩余烹饪时间 |
-| `chef_id` | integer | 否 | `chef_id` + `has_chef_id` | 占用该工位的厨师 |
-| `count` | integer | 否 | `count` + `has_count` | 盘子数量（`plate_stack`）；`0` 与"没这个字段"不同，靠 `has_count` 区分 |
-| `progress` | number | 否 | `progress` + `has_progress` | 烹饪/切菜/洗盘进度（0..1） |
+| `kind` | string | 否 | `kind_name` | `cooker` / `board` / `plate_stack` / `dirty_plates` / `sink` / `counter` / `container` / `carried` |
+| `pos` | object `{x,y}` | 否 | `x`/`y` + `has_pos` | 工位/物品的世界坐标（游戏 x/z 平面）；用来按位置找工位，别依赖枚举序号 |
+| `state` | string | 否 | `state` | `free` / `empty` / `occupied` / `cooking` / `cooked` / `burning` / `washing` / `carried` |
+| `item` | string \| null | 否 | `item` | 工位上那个物体 / 容器自己的名字，例如 `utensil_pot_01`、`Tortilla`、`equipment_plate_01` |
+| `content` | string \| null | 否 | `content` | `contents` 的兼容拼串形式（`"a+b"`），C 侧只有 32 字节，超长截断；新代码读 `contents` |
+| `contents` | string[] | 否 | `contents[]` + `content_count` | 递归内容名，最多 8 个（C 侧留 4 个），编码见下 |
+| `time_left` | number | 否 | `time_left` + `has_time_left` | 灶台当前烹饪阶段剩余秒数（熟之前 / 烧焦之前），G6 |
+| `progress` | number | 否 | `progress` + `has_progress` | 烹饪/切菜/洗盘进度（0..1），G6 |
+| `chef_id` | integer | 否 | `chef_id` + `has_chef_id` | 占用/手持该资源的厨师；`carried_<M>` 上必填 |
+| `count` | integer | 否 | `count` + `has_count` | 计数类资源的数量（`plate_stack` / `dirty_plates` / 水槽上的盘子）；`0` 与"没这个字段"不同，靠 `has_count` 区分 |
+| `step` | string | 否 | `step` | 灶台的烹饪类型：`Pot` / `FryingPan` / `DeepFatFryer`；非灶台或空灶台省略 |
+
+`contents[]` 的编码（G3/G4）：容器、盘子、手持物都递归展开成**叶子名**，深度优先：
+
+- 叶子 = `IngredientAssembledNode.m_ingriedientOrderNode.name`（例如 `ChoppedSushiFish`）。
+- 叶子外面套了 `CookedCompositeAssembledNode` 时写成 `cooked:<name>`（例如
+  `cooked:BurritoChoppedChicken`）；否则分不清生鸡和熟鸡。
+- 组合节点（`CompositeAssembledNode` / `CookedCompositeAssembledNode`）本身不单列，只展开它的
+  `m_composition`；盘子优先用 `ClientPlate.GetOrderComposition()`，其余用
+  `ClientIngredientContainer.GetContents()`。
+- 没有内容的容器给空数组；完全读不到时省略该字段（与"空"不同）。
 
 样例见 `overcooked_os_course_project.md` §5.2；`bridge/tests/test_protocol.c` 逐字段核对了那份样例，
 并额外覆盖了样例里没有的 `pot_7` 与未知键。
@@ -155,7 +196,7 @@ Bridge 判为失联（断链、清空注入、3 秒后重连）。要改这个�
 | `actions` | string[] | 否 | 本端支持的动作名，最多 32 个 |
 
 C 侧构造样例：
-`{"type":"hello","instance":"linux-bridge","version":"0.2.0","actions":["move","stop","interact"]}`
+`{"type":"hello","instance":"linux-bridge","version":"0.3.0","actions":["move","stop","interact"]}`
 
 ### 3.4 `echo` / `echo_reply`
 
@@ -271,7 +312,7 @@ C 侧错误码：`bridge/include/kitchenos/json.h` 的 `JSON_ERR_*`、
 
 ## 6. 版本与兼容
 
-- 当前版本 `0.2.0`（`bridge/include/kitchenos/protocol.h` 的 `PROTO_VERSION`，
+- 当前版本 `0.3.0`（`bridge/include/kitchenos/protocol.h` 的 `PROTO_VERSION`，
   同时是插件 `WellCooked.Plugin` 的版本基准）。
 - 加法兼容：新增可选字段、新增 `resources` 键、新增消息类型 —— 老实现忽略即可，不必改版本。
 - 破坏兼容：改字段名、改字段类型、改动作名、改分帧 —— 必须同时改两端并提升版本号。
