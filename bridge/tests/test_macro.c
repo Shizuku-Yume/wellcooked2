@@ -599,6 +599,26 @@ static void test_timeouts(const kos_kitchen *kitchen, const char *dispenser,
     expect(rc == -1 && strstr(kos_macro_fail_detail(&macro), "macro=goto") != NULL,
            "goto 超时失败");
 
+    /* 距离未知/无计划场景：旧逻辑给 30 s 导致宏永远不报失败；新逻辑必须在短默认时间 (<= 8 s) 内有界超时 */
+    base_world(&world);
+    chef = chef_at_station(&world, kitchen, dispenser);
+    {
+        int disp_idx = kos_kitchen_station_index(kitchen, dispenser);
+        int chef_cell = kos_kitchen_nearest_cell(kitchen, chef->x, chef->y);
+        uint16_t orig_dist = ((kos_kitchen *)kitchen)->stand.distance[disp_idx][chef_cell];
+        ((kos_kitchen *)kitchen)->stand.distance[disp_idx][chef_cell] = KOS_STAND_UNREACHABLE;
+
+        expect(build(&macro, kitchen, "fetch", "fetch:Carrot", dispenser, "o1", 1000) == 0,
+               "距离未知场景计划建成");
+        game_ms = 1000;
+        rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+        expect(rc == 0 && out.action == KOS_MACRO_ACT_NAVIGATE, "未知距离时先发 navigate");
+        game_ms += 9000; /* 9 s 后（超过短默认 6~8 s，但远小于旧逻辑的 30 s） */
+        rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+        expect(rc == -1 && strstr(kos_macro_fail_detail(&macro), "macro=goto") != NULL,
+               "距离未知时 goto 在有界时间内失败，不拖到 30 s");
+        ((kos_kitchen *)kitchen)->stand.distance[disp_idx][chef_cell] = orig_dist;
+    }
     /* 到站后转身把厨师推离格心，navd 报回 moving：goto 仍在转身阶段发 face，不退回 navigate。 */
     base_world(&world);
     chef = chef_at_station(&world, kitchen, dispenser);
