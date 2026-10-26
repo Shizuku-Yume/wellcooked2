@@ -1,14 +1,15 @@
-# 09: 实机 _2 两个厨师系统控制完成一单
+# 09: 实机 _2 四个厨师系统控制完成一单
 
 **Effort:** kitchen-control
 **Task type:** feature
 **Base commit:** b0129232ece42cb481a5821c2688a86a0a631d7e
 **Base branch:** kitchen-control/05-ring-and-pa-baseline
 **Started:** 2026-10-25T16:50:00+08:00
-**Status:** blocked
+**Status:** paused
 
-**Delivers:** 插件 `work=auto` 关掉 `WorkOrder.cs` 的替身逻辑后，`s_wellcooked_demo_2` 上两个
-厨师完全由 Linux 侧控制，无手动输入完成至少一单；`_1`（没有干净盘堆）上洗盘让盘子循环起来。
+**Delivers:** 插件 `work=auto` 关掉 `WorkOrder.cs` 的替身逻辑后，`s_wellcooked_demo_2` 上四个
+厨师（4 个玩家位全占，每条带 2 人）完全由 Linux 侧控制，按分区流水线无手动输入完成至少一单；
+`_1`（没有干净盘堆）上洗盘让盘子循环起来。
 
 **Blocked by:** 05, 06, 07
 **Files:** `plugin/{WorkOrder,SmokePlugin,ActionDriver}.cs`、`tools/run-real-game.sh`、
@@ -19,11 +20,17 @@
 `.workflow/tasks/game-bridge/13-diy-demo-level.md`
 **Covers:** W9, W11
 
-**Check:** 实机跑 `tools/run-real-game.sh`（`_2`、2 厨师、`work=auto`）→ 局内得分 > 0，
-Worker 日志能对出一单完整的 `macro_*` 链，`navd` 日志有对应的 `path` 放行，期间没有手柄输入；
-再在 `_1` 上跑一局 → 出现 `wash` 工序、没有订单因缺盘超时，`decisions.jsonl` 里 `cook` 前置先于
-等长的非烹饪工序派出。需要游戏。
+**Check:** 实机跑 `tools/run-real-game.sh`（`_2`、`CHEFS=4`、`work=auto`、分区模式）→ 局内得分 > 0，
+四个厨师分在两条带（每带 2 人），Worker 日志能对出一单完整的 `macro_*` 链（含跨带的 `drop`/`fetch`
+交接），`navd` 日志有对应的 `path` 放行，期间没有手柄输入；再在 `_1` 上用 4 个厨师跑一局 → 出现
+`wash` 工序、没有订单因缺盘超时，`decisions.jsonl` 里 `cook` 前置先于等长的非烹饪工序派出。需要游戏。
 
+- [ ] `tools/run-real-game.sh` 的 `slots=` 按 `CHEFS` 生成（4 → `1,2,3,4`），默认 `CHEFS=4`；
+      Supervisor 以 `--workers 4` 起 4 个 Worker
+- [ ] 实机确认 4 个玩家位各出生在哪条带（`layout_2.tsv` 每带 2 个出生点，位→出生点的对应未验证）
+- [ ] 分区归属支持一区多厨师：`zones.json` 现在每区只有一个 `chef`（`kos_zone.chef_id`），4 人时
+      另两人 `kos_zones_chef_zone` 返回 -1、不受分区约束；改成每区一组厨师，或按厨师所在连通块推出所属区
+- [ ] `_2` 分区模式严格验收通过后，`_1` 用 4 个厨师跑 wash/cook 优先
 - [ ] 系统控制下 `WorkOrder.cs` 的选厨师/走工序/1.4 m 兜底不运行
 - [ ] 实机发现的协议或完成条件偏差，回写 spec 对应段落
 - [ ] 跑通后在 os-core W10 与 game-bridge/05 的进度里记一笔实测结果
@@ -118,8 +125,13 @@ The failed `_2` Supervisor tree owned by this task was stopped via PID 1416010; 
 
 仍未完成：真实 `_2` 必须有 score>0、`order_completed`、两个 worker 完整宏链、navd path、无手动输入；随后真实 `_1` wash/cook priority 且无订单超时。未移动 done archive、未创建完成 PR；任务因地图/关卡契约矛盾 blocked，非验收通过。
 
-## Blocked
+## Replanned 2026-10-26
 
-任务计划假设 `_2` 的两个厨师能从实际出生位置完成至少一单，但 fresh 实机证据证明两个厨师均在 lower 175-cell component；Rice/Tortilla/cooker-0 属于 upper component，且当前地图没有 Portal/Bridge 等跨区机制。Scheduler 的 `task_station_unreachable` 是正确行为，不能靠改 mask、加连接墙或放宽距离场修复。
+原 `## Blocked` 记的是“两个厨师都出生在下带、上带工位不可达，需要 level owner 改图”。根因是计划
+只占了 2 个玩家位：`layout_2.tsv` 每条带各有 2 个出生点，用户一直要求 4 人控制。地图不改，
+W11 改成 `_2` 四人分区流水线（见 spec W11 与 decisions.md: 2026-10-26 - 实机控制按 4 个厨师验收）。
+本分支已并入 `kitchen-control/10-zoned-pipeline`（分区派工与交接工序），合并后 `make test`
+16 套件 0 失败、插件 `WellCooked.Smoke.csproj` 编译 0 错误。
 
-恢复条件：level owner 必须提供并验证真实的双带出生/菜单配置、支持的跨带交接语义，或重新导出与 bundle 一致的可达地图；随后重新运行 `_2` 严格验收，再继续 `_1`。fresh 证据保留在 `logs/real-game/20261026-110357-_2-finalfresh`。
+下一步：按上面新增的四条勾选项改脚本与分区归属，再跑 `_2` 四人实机验收。2 人时的 fresh 证据
+保留在 `logs/real-game/20261026-110357-_2-finalfresh`，作为“只占 2 位时上带无人”的对照。

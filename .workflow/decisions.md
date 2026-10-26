@@ -978,6 +978,7 @@ user may overturn on sight. `Revisit when` of "never" is allowed but suspicious;
 - **Because:** Fresh `_2` runtime `logs/real-game/20261026-110357-_2-finalfresh` reports both chefs in the lower band (cells 128/240; final coordinates near `(-3,-4.94)` and `(-3,-8.27)`), while Rice, Tortilla, and cooker-0 are upper-band stations. Scheduler repeatedly and correctly rejects those stations; only BurritoChicken fetch completes and score is -390. The authoritative spec says `_2` has two mutually disconnected strips and navigation must preserve components, while game-bridge/13's older layout note incorrectly claims one connected main block and all key stations reachable.
 - **Mine:** yes
 - **Revisit when:** The level owner supplies verified spawn/menu/handoff semantics or a regenerated bundle/config pair with measured station reachability from both actual chef starts.
+- **Superseded by:** 2026-10-26 - 实机控制按 4 个厨师验收
 
 ## 2026-10-25 - 分区模式下跨区中间产物在菜谱 DAG 中展开为 (drop, fetch) 节点
 
@@ -987,3 +988,22 @@ user may overturn on sight. `Revisit when` of "never" is allowed but suspicious;
 - **Mine:** yes
 - **Revisit when:** 出现多级流水线（中间产物经过三个以上区域交接）或多交接台面竞争缓冲需要细粒度排队时。
 - **Effort:** kitchen-control
+
+## 2026-10-26 - 实机控制按 4 个厨师验收
+
+- **Supersedes:** 2026-10-26 - demo2 disconnected bands block task09 acceptance
+- **Decided:** 实机验收（kitchen-control W11/W13、game-bridge W6）一律占满 4 个玩家位、4 个厨师系统控制。`_2` 不改图：每条带 2 人，按分区流水线派工，跨带中间产物经交接台面 `drop`/`fetch`。“不得伪造连通”仍然成立。
+- **Instead of:** 继续按 2 个厨师验收，然后让地图作者改 `_2` 的出生点或菜单，或者重新导出一张连通的图。
+- **Because:** 用户一直要求 4 人控制。`layout_2.tsv` 每条带各有 2 个出生点（下 (4,-12)/(12,-12)，上 (4,-2)/(11,-1)），只占 2 位时两人都落在下带，这就是 `logs/real-game/20261026-110357-_2-finalfresh` 里上带工位全部不可达的原因。地图本身不是问题，问题出在计划只写了 2 人（课设方案 §1628 “第一版只做 2 名厨师”被沿用进了 W11）。
+- **Mine:** no（用户定的）
+- **Revisit when:** 某张图实测 4 人时出生点与 `layout_*.tsv` 不符，或游戏/加载器限制本地玩家数少于 4。
+- **Effort:** kitchen-control
+
+## 2026-10-26 - 共享中间产物不做硬性判据，跟着地图来
+
+- **Decided:** 自制关卡不再要求“至少两种菜共享一个中间产物”。地图菜谱里有就用，没有就靠共用工位、锅、砧板与盘子产生资源争用。
+- **Instead of:** 改某道菜，让它和 `Chicken_Burrito` 共用 `BoiledRice`，然后重新打包 bundle。
+- **Because:** 用户定的。四张图现有菜谱已经覆盖切、煮、煎，争用靠共用 2 块砧板、锅和盘堆，不用为这条判据重打 bundle。
+- **Mine:** no（用户定的）
+- **Revisit when:** 调度实验需要演示“中间产物复用”带来的策略差异。
+- **Effort:** game-bridge
