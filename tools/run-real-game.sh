@@ -1,17 +1,14 @@
 #!/usr/bin/env bash
 #
-# W8：与真实游戏跑通 —— 这是整个 effort 里唯一需要启动游戏的一步。
+# W8 默认模式只做 Bridge 连接检查；REAL_GAME=1 用完整 Supervisor + 真游戏验收。
 #
-# 用法（在 WSL 里）：
-#     bash tools/run-real-game.sh
-# 然后按提示启动 Overcooked! 2。
+# 用法：
+#     GAME_DIR=<游戏目录> REAL_GAME=1 SCENE=s_wellcooked_demo_2 CHEFS=2 \
+#       bash tools/run-real-game.sh
+# 完整模式会启动 Supervisor、通过 Steam 启动游戏、自动继续存档并加载场景，再检查新鲜运行产物。
+# `_1` 验收同样设置 SCENE=s_wellcooked_demo_1。
 #
-# 脚本自己起 Bridge、自己等插件、自己判定 task 05 的 Check，不要求你读日志下结论：
-#     logs/bridge.log 里有 >=1 条 hello 与 >=10 条 state_update，且没有解析错误。
-#
-# 之所以先起 Bridge 再让你启动游戏：插件是 client（Network.Mode=client，
-# Network.Port=14455），收不到连接就每 ReconnectDelayMs 重试一次。所以顺序反过来
-# 也照样能连上，你不用掐时间。
+# 两种模式都要求先取得共享游戏锁；完整模式还会备份并恢复三个 wellcooked 配置文件。
 
 set -u
 
@@ -27,7 +24,7 @@ NEED_HELLO="${NEED_HELLO:-1}"
 NEED_STATE="${NEED_STATE:-10}"
 # 游戏侧日志。插件在 Awake 里会写一行 "[Plugin] WellCooked <版本> loaded (game=...)"，
 # 这一行是"插件真的初始化了"与"BepInEx 只是找到了这个类型"之间的分界。
-GAME_DIR="${GAME_DIR:-/mnt/d/EPIC/Games/Overcooked2}"
+GAME_DIR="${GAME_DIR:-/run/media/shizuku/File/Steam/steamapps/common/Overcooked! 2}"
 BEPINEX_LOG="${BEPINEX_LOG:-${GAME_DIR}/BepInEx/LogOutput.log}"
 # Awake 的第一件事是 BindConfig()，BepInEx 在 Bind 时会写这个文件。它是"Awake 跑过"
 # 的第二个独立证据，与日志行互不依赖 —— 只看日志会把"没启动"和"日志没写出来"混为一谈。
@@ -39,35 +36,267 @@ REAL_GAME="${REAL_GAME:-0}"
 RUNTIME_DIR="${RUNTIME_DIR:-}"
 SCENE="${SCENE:-s_wellcooked_demo_2}"
 CHEFS="${CHEFS:-2}"
+GAME_SECONDS="${GAME_SECONDS:-240}"
+PLUGIN_LOG_OFFSET=0
+
+say() { printf '%s\n' "$*"; }
+plugin_run_log() {
+    python3 - "$BEPINEX_LOG" "$PLUGIN_LOG_OFFSET" <<'PY'
+import os, sys
+try:
+    with open(sys.argv[1], encoding="utf-8", errors="replace") as log:
+        text = log.read()
+    start = text.rfind("WellCooked.Smoke loaded")
+    if start >= 0:
+        text = text[start:]
+    else:
+        text = text[min(int(sys.argv[2]), len(text)):]
+    sys.stdout.write(text)
+except Exception:
+    raise SystemExit(1)
+PY
+}
 
 assert_real_game() {
-    local run_dir decisions events scheduler navd worker0 worker1
     [ "$REAL_GAME" = "1" ] || return 0
-    [ -n "$RUNTIME_DIR" ] || { say "REAL_GAME=1 需要 RUNTIME_DIR"; return 2; }
-    run_dir="$(find "$RUNTIME_DIR/runs" -mindepth 1 -maxdepth 1 -type d | sort | tail -n 1)"
-    decisions="$run_dir/decisions.jsonl"; events="$run_dir/events.jsonl"
-    scheduler="$RUNTIME_DIR/logs/scheduler.log"; navd="$RUNTIME_DIR/logs/navd.log"
-    worker0="$RUNTIME_DIR/logs/worker-0.log"; worker1="$RUNTIME_DIR/logs/worker-1.log"
-    [ -s "$decisions" ] && grep -q '"kind":"dispatch"' "$decisions" || { say "FAIL real-game: 无 dispatch"; return 1; }
-    grep -q '"kind":"order_completed"' "$events" || { say "FAIL real-game: 无 order_completed"; return 1; }
-    grep -q 'macro_start' "$worker0" && grep -q 'macro_done' "$worker0" || { say "FAIL real-game: worker-0 宏链不完整"; return 1; }
-    [ "$CHEFS" -lt 2 ] || { grep -q 'macro_start' "$worker1" || { say "FAIL real-game: worker-1 未执行宏动作"; return 1; }; }
-    grep -q 'nav_plan' "$navd" || { say "FAIL real-game: navd 无 path 放行"; return 1; }
-    ! grep -Eiq 'gamepad|joystick|manual input|手柄输入' "$scheduler" "$worker0" "$worker1" || { say "FAIL real-game: 发现手动输入"; return 1; }
-    say "PASS real-game: scene=$SCENE chefs=$CHEFS score/order/macro/navd assertions"
+    [ -d "$RUNTIME_DIR/runs" ] || { say "FAIL real-game: runs 目录不存在"; return 1; }
+    python3 - "$RUNTIME_DIR" "$GAME_DIR/BepInEx/wellcooked-state.json" \
+        "$GAME_DIR/BepInEx/LogOutput.log" "$SCENE" "$CHEFS" "$PLUGIN_LOG_OFFSET" <<'PY'
+import glob, json, os, sys
+runtime, state_path, plugin_path, scene, chefs, plugin_offset = sys.argv[1:]
+plugin_offset = int(plugin_offset)
+chefs = int(chefs)
+runs = sorted(glob.glob(os.path.join(runtime, "runs", "*")))
+if not runs:
+    raise SystemExit("FAIL real-game: 没有本次运行的 Scheduler run artifacts")
+run = runs[-1]
+def rows(path):
+    with open(path, encoding="utf-8") as f:
+        return [json.loads(line) for line in f if line.strip()]
+events = rows(os.path.join(run, "events.jsonl"))
+decisions = rows(os.path.join(run, "decisions.jsonl"))
+with open(state_path, encoding="utf-8") as f:
+    state = json.load(f)
+if state.get("scene") != scene or len(state.get("chefs", [])) != chefs:
+    raise SystemExit("FAIL real-game: state scene/chefs=%r/%d expected %s/%d" %
+                     (state.get("scene"), len(state.get("chefs", [])), scene, chefs))
+if float(state.get("score", 0)) <= 0:
+    raise SystemExit("FAIL real-game: score=%s (must be > 0)" % state.get("score"))
+completed = [e for e in events if e.get("event") == "order_completed"]
+if not completed:
+    raise SystemExit("FAIL real-game: no order_completed in %s" % run)
+dispatched = [d for d in decisions if d.get("kind") == "dispatch"]
+if not dispatched:
+    raise SystemExit("FAIL real-game: no scheduler dispatch decisions")
+navlog = os.path.join(runtime, "logs", "navd.log")
+navtext = open(navlog, encoding="utf-8").read() if os.path.isfile(navlog) else ""
+if not __import__("re").search(r"nav_plan .*released=1(?: |$)", navtext):
+    raise SystemExit("FAIL real-game: navd has no released path plan")
+workers = []
+macro_done = set()
+task_done = {int(e.get("task_id")) for e in events
+             if e.get("event") == "task_done" and e.get("task_id") is not None}
+for chef in range(chefs):
+    path = os.path.join(runtime, "logs", "worker-%d.log" % chef)
+    text = open(path, encoding="utf-8").read() if os.path.isfile(path) else ""
+    starts = set(map(int, __import__("re").findall(r"macro_start task=(\d+)", text)))
+    dones = set(map(int, __import__("re").findall(r"macro_done task=(\d+)", text)))
+    if not starts or not dones or "macro=goto" not in text:
+        raise SystemExit("FAIL real-game: worker-%d has no completed navigation macro" % chef)
+    workers.append((chef, len(starts), len(dones)))
+    macro_done.update(dones)
+if not macro_done.intersection(task_done):
+    raise SystemExit("FAIL real-game: no completed scheduler task matched worker macro_done")
+if scene.endswith("_1"):
+    if not any(d.get("node") == "wash" for d in dispatched):
+        raise SystemExit("FAIL real-game: _1 had no wash dispatch")
+    if any(e.get("event") in ("order_expired", "order_timeout") for e in events):
+        raise SystemExit("FAIL real-game: _1 order expired/timed out")
+    cooks = [i for i, d in enumerate(dispatched) if str(d.get("node", "")).startswith("cook:")]
+    if not cooks:
+        raise SystemExit("FAIL real-game: _1 has no cook dispatch to verify priority")
+    boosted = [d for d in dispatched if str(d.get("node", "")).startswith("cook:") and
+               float(d.get("weight_c", 0)) < 0]
+    if not boosted:
+        raise SystemExit("FAIL real-game: cook dispatch has no critical-path priority weight")
+if not os.path.isfile(plugin_path):
+    raise SystemExit("FAIL real-game: missing BepInEx LogOutput.log")
+with open(plugin_path, encoding="utf-8", errors="replace") as f:
+    full_plugin_log = f.read()
+plugin_start = full_plugin_log.rfind("WellCooked.Smoke loaded")
+plugin = (full_plugin_log[plugin_start:] if plugin_start >= 0 else
+          full_plugin_log[min(plugin_offset, len(full_plugin_log)):])
+if "工作模式 auto（系统控制：只执行 Bridge 动作）" not in plugin:
+    raise SystemExit("FAIL real-game: plugin did not confirm Linux-controlled auto mode")
+if "工序:" in plugin:
+    raise SystemExit("FAIL real-game: WorkOrder local substitute ran under auto")
+print("PASS real-game: scene=%s chefs=%d score=%s orders=%d workers=%s run=%s" %
+      (scene, chefs, state.get("score"), len(completed), workers, run))
+PY
 }
+
+SUPERVISOR_PID=""
+BACKUP_DIR=""
+restore_game_configs() {
+    [ -n "$BACKUP_DIR" ] || return 0
+    local name
+    for name in wellcooked-takeover.txt wellcooked-command.txt wellcooked-orders.json; do
+        if [ -f "$BACKUP_DIR/$name" ]; then
+            cp -p "$BACKUP_DIR/$name" "$GAME_DIR/BepInEx/$name"
+        else
+            rm -f "$GAME_DIR/BepInEx/$name"
+        fi
+    done
+}
+cleanup() {
+    if [ -n "$SUPERVISOR_PID" ] && kill -0 "$SUPERVISOR_PID" 2>/dev/null; then
+        kill -TERM "$SUPERVISOR_PID" 2>/dev/null || true
+        wait "$SUPERVISOR_PID" 2>/dev/null || true
+    fi
+    restore_game_configs
+}
+trap cleanup EXIT
+trap 'exit 130' INT TERM
+
+run_supervisor_acceptance() {
+    local state deadline run_dir score scene chefs joined state_mtime_before
+    local state_ready_streak=0
+    local supervisor_bin="$REPO_ROOT/bridge/build/kitchenos-supervisor"
+    [ -x "$supervisor_bin" ] || { say "先构建：cd bridge && make"; return 2; }
+    [ -d "$GAME_DIR/BepInEx" ] || { say "找不到游戏 BepInEx 目录：$GAME_DIR"; return 2; }
+    if [ -z "$RUNTIME_DIR" ]; then
+        RUNTIME_DIR="$REPO_ROOT/logs/real-game/$(date +%Y%m%d-%H%M%S)-$$"
+    fi
+    [ ! -e "$RUNTIME_DIR" ] || { say "本次运行目录已存在，拒绝复用旧证据：$RUNTIME_DIR"; return 2; }
+    mkdir -p "$RUNTIME_DIR/logs" "$RUNTIME_DIR/runs" "$GAME_DIR/BepInEx"
+    BACKUP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/kc09-configs.XXXXXX")"
+    for name in wellcooked-takeover.txt wellcooked-command.txt wellcooked-orders.json; do
+        [ ! -e "$GAME_DIR/BepInEx/$name" ] || cp -p "$GAME_DIR/BepInEx/$name" "$BACKUP_DIR/$name"
+    done
+    if [ -f "$GAME_DIR/BepInEx/LogOutput.log" ]; then
+        PLUGIN_LOG_OFFSET="$(wc -c < "$GAME_DIR/BepInEx/LogOutput.log")"
+    fi
+    printf 'work=auto\nslots=1,2\nfrontend_press=true\ndiag=false\nbridge=127.0.0.1:%s\n' "$PORT" \
+        > "$GAME_DIR/BepInEx/wellcooked-takeover.txt"
+    : > "$GAME_DIR/BepInEx/wellcooked-command.txt"
+    state="$GAME_DIR/BepInEx/wellcooked-state.json"
+    state_mtime_before="$(stat -c %Y "$state" 2>/dev/null || printf '0')"
+    say "Launching the game through Steam; waiting for both virtual pads to join before loading the level."
+    if ! bash "$REPO_ROOT/scripts/run-game.sh"; then
+        say "Game launch failed; see scripts/run-game.sh output."
+        return 1
+    fi
+    if [ -f "$BEPINEX_LOG" ] && [ "$(wc -c < "$BEPINEX_LOG")" -lt "$PLUGIN_LOG_OFFSET" ]; then
+        PLUGIN_LOG_OFFSET=0
+    fi
+    deadline=$(( $(date +%s) + WAIT_SECONDS ))
+    plugin_ready=0
+    while [ "$(date +%s)" -lt "$deadline" ]; do
+        if plugin_run_log | grep -Fq "takeover: 每帧检查已挂上"; then
+            plugin_ready=1
+            break
+        fi
+        sleep 1
+    done
+    if [ "$plugin_ready" -ne 1 ]; then
+        say "本次启动未检测到插件 Takeover 初始化。"
+        return 1
+    fi
+
+    say "Waiting for the game itself to join both virtual pads (no continue/engage command)."
+    deadline=$(( $(date +%s) + WAIT_SECONDS ))
+    joined=0
+    while [ "$(date +%s)" -lt "$deadline" ]; do
+        joined="$(plugin_run_log | grep -Fc 'takeover: 游戏已自己加入 pad ' || true)"
+        [ "$joined" -ge 2 ] && break
+        sleep 2
+    done
+    if [ "$joined" -lt 2 ]; then
+        say "游戏未在 ${WAIT_SECONDS}s 内自动加入两个虚拟 pad（${joined}/2）；停在 $(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("scene","?"))' "$state" 2>/dev/null || echo '?')。"
+        return 1
+    fi
+
+    printf 'work=auto\nslots=1,2\nfrontend_press=false\ndiag=false\nbridge=127.0.0.1:%s\n' "$PORT" \
+        > "$GAME_DIR/BepInEx/wellcooked-takeover.txt"
+    sleep 2
+    deadline=$(( $(date +%s) + WAIT_SECONDS ))
+    load_requested=0
+    while [ "$(date +%s)" -lt "$deadline" ]; do
+        if plugin_run_log | grep -Fq "指令: 已请求加载 $SCENE"; then
+            load_requested=1
+            break
+        fi
+        sleep 1
+    done
+    if [ "$load_requested" -ne 1 ]; then
+        say "游戏未确认处理 load=$SCENE 命令；不启动 Supervisor。"
+        return 1
+    fi
+    state_mtime_before="$(python3 -c 'import os,sys; print(os.stat(sys.argv[1]).st_mtime_ns)' "$state" 2>/dev/null || printf '0')"
+    deadline=$(( $(date +%s) + WAIT_SECONDS ))
+    while [ "$(date +%s)" -lt "$deadline" ]; do
+        if python3 - "$state" "$SCENE" "$CHEFS" "$state_mtime_before" <<'PY'
+import json, os, sys
+try:
+    state = json.load(open(sys.argv[1]))
+    fresh = os.stat(sys.argv[1]).st_mtime_ns > int(sys.argv[4])
+    raise SystemExit(0 if fresh and state.get("scene") == sys.argv[2] and
+                     len(state.get("chefs", [])) == int(sys.argv[3]) else 1)
+except Exception:
+    raise SystemExit(1)
+PY
+        then
+            state_ready_streak=$((state_ready_streak + 1))
+            [ "$state_ready_streak" -ge 5 ] && break
+        else
+            state_ready_streak=0
+        fi
+        sleep 1
+    done
+    if [ "$state_ready_streak" -lt 5 ]; then
+        say "指定关卡没有连续 5 秒报告预期厨师数：$SCENE/$CHEFS"
+        return 1
+    fi
+
+    say "Game state confirmed: scene=$SCENE chefs=$CHEFS. Starting a fresh Supervisor."
+    "$supervisor_bin" --foreground --verbose --runtime-dir "$RUNTIME_DIR" \
+        --workers "$CHEFS" --bridge-host "$HOST" --bridge-port "$PORT" \
+        --kitchen "$REPO_ROOT/config/maps/$SCENE/kitchen.json" \
+        --recipes "$REPO_ROOT/config/maps/$SCENE/recipes.json" \
+        --orders "$REPO_ROOT/config/orders.world.json" --runs-dir "$RUNTIME_DIR/runs" \
+        > "$RUNTIME_DIR/supervisor.console.log" 2>&1 &
+    SUPERVISOR_PID=$!
+
+    say "Waiting up to ${GAME_SECONDS}s for fresh real-game acceptance artifacts."
+    deadline=$(( $(date +%s) + GAME_SECONDS ))
+    while [ "$(date +%s)" -lt "$deadline" ]; do
+        run_dir="$(find "$RUNTIME_DIR/runs" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null | sort | tail -n 1)"
+        if [ -n "$run_dir" ] && grep -q '"kind":"order_completed"' "$RUNTIME_DIR/runs/$run_dir/events.jsonl" 2>/dev/null; then
+            score="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("score",0))' "$state" 2>/dev/null || echo 0)"
+            navlog="$RUNTIME_DIR/logs/navd.log"
+            if python3 -c 'import sys; raise SystemExit(0 if float(sys.argv[1]) > 0 else 1)' "$score" &&
+                grep -Eq 'nav_plan .*released=1([[:space:]]|$)' "$navlog" 2>/dev/null; then break; fi
+        fi
+        sleep 2
+    done
+    assert_real_game
+}
+
+if [ "$REAL_GAME" = "1" ]; then
+    run_supervisor_acceptance
+    exit $?
+fi
 
 BRIDGE_PID=""
 
-cleanup() {
+cleanup_w8() {
     if [ -n "$BRIDGE_PID" ] && kill -0 "$BRIDGE_PID" 2>/dev/null; then
-        kill -TERM "$BRIDGE_PID" 2>/dev/null
-        wait "$BRIDGE_PID" 2>/dev/null
+        kill -TERM "$BRIDGE_PID" 2>/dev/null || true
+        wait "$BRIDGE_PID" 2>/dev/null || true
     fi
 }
-trap cleanup EXIT INT TERM
-
-say() { printf '%s\n' "$*"; }
+trap cleanup_w8 EXIT
+trap 'exit 130' INT TERM
 
 # ---------------------------------------------------------------- 前置检查
 if [ ! -x "$BIN" ]; then

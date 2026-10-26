@@ -329,6 +329,21 @@ const kos_station *kos_kitchen_station_by_id(const kos_kitchen *kitchen, const c
     return NULL;
 }
 
+int kos_kitchen_face_action(const kos_kitchen *kitchen, const char *id,
+                            kos_input_action *action)
+{
+    const kos_station *station = kos_kitchen_station_by_id(kitchen, id);
+
+    if (station == NULL || action == NULL) {
+        return KOS_ERR_INVAL;
+    }
+    memset(action, 0, sizeof *action);
+    action->kind = KOS_ACTION_FACE;
+    action->target_x = station->x;
+    action->target_y = station->z;
+    return KOS_OK;
+}
+
 int kos_kitchen_station_index(const kos_kitchen *kitchen, const char *id)
 {
     int i;

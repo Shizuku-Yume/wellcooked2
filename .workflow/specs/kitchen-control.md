@@ -175,6 +175,16 @@ Worker 把它展开成宏动作序列，逐个执行；完成以世界状态为�
 | `wash` | `work` | 水槽 `progress` 到 1 且干净盘数加一（没有 `plate_stack` 可读时只认 progress） | 工时 + 3 s |
 | `deliver` | `interact` | 该订单从世界状态订单表消失 | 1.5 s |
 
+Worker keeps each interaction intent alive for 1000 ms so the plugin can issue its immediate A
+pulse and the retry after 600 ms (held for 250 ms). The interaction still completes only when
+the corresponding world-state condition changes; an input acknowledgement is not proof of pickup.
+
+Navigation arrival and station interaction are separate geometric checks: a `path` endpoint is
+acknowledged only when the chef's actual world coordinates are within 0.3 m of the final navd cell
+waypoint; the nearest reachable stand cell for every station must itself be within 1.2 m of that
+station. Never replace the navd cell target with the station center or widen either bound to mask a
+mapping error.
+
 工序到宏动作的映射是 Worker 里的一张表：`fetch` = goto(料箱) + pickup，`cut` = goto(砧板) +
 drop + chop + pickup，`cook` = goto(锅) + drop/start_cook（启动成功后放下就走，但 Scheduler 将该
 订单的锅令牌与工位归属保留给其 `plate` 工序），`plate` = goto(干净盘堆) + pickup(Plate) +

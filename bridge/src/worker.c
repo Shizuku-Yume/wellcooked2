@@ -3,8 +3,8 @@
  *
  * 它不选单、不规划路径：走位由 navd 统一算，Worker 只把"到哪个工位"写进目标槽、
  * 按计划槽里已放行的路点发 path。到站后把 Scheduler 的 op 展开成宏动作（macro.c），
- * 每一步按世界状态判完成：interact 只发一小段（约 250 ms）就停，等 holding/锅状态/
- * 进度变化；work 持续按住；等待期间发 stop，Bridge 的帧屏障始终拿到有效槽。
+ * 每一步按世界状态判完成；interact intent 维持 1000 ms，覆盖插件立即按一次、600 ms 后
+ * 重按 250 ms 的完整两脉冲窗口；work 持续按住，等待期间发 stop，Bridge 的帧屏障始终拿到有效槽。
  *
  * 时间一律用世界状态的 game_time_ms：暂停时超时不走。navd 崩溃（计划槽写入时钟
  * 落后 500 ms）时先发 stop；正在 goto 的人暂停推进宏动作，等 navd 回来再继续。
@@ -14,6 +14,7 @@
 #endif
 
 #include <kitchenos/child.h>
+#include "worker_timing.h"
 #include <kitchenos/kitchen.h>
 #include <kitchenos/log.h>
 #include <kitchenos/macro.h>
@@ -32,8 +33,7 @@
 
 #define WORKER_LOOP_MS 5
 #define WORKER_NAV_STALE_MS 500
-#define WORKER_NAV_ATTACH_LOG_MS 2000
-#define WORKER_INTERACT_WINDOW_MS 250
+#define WORKER_INTERACT_WINDOW_MS KOS_WORKER_INTERACT_WINDOW_MS
 
 typedef struct {
     kos_child_runtime rt;
@@ -295,34 +295,27 @@ static void publish_macro_action(worker *w, const kos_macro_output *out, int64_t
 
     memset(&action, 0, sizeof action);
     if (out->action == KOS_MACRO_ACT_FACE) {
-        int station = kos_kitchen_station_index(&w->kitchen, out->target_object);
-
-        action.kind = KOS_ACTION_FACE;
-        if (station >= 0) {
-            /* 插件按资源键（pot_0/cutting_board_0）或 GameObject 名解析 target_object，
-             * kitchen.json 的 id 两者都不一定是；face 支持坐标，直接给工位坐标。 */
-            action.target_x = w->kitchen.stations[station].x;
-            action.target_y = w->kitchen.stations[station].z;
-        } else {
-            copy_str(action.target_object, sizeof action.target_object,
-                     out->target_object);
-        }
-        publish_action(w, &action);
-        return;
-    }
-    if (out->action == KOS_MACRO_ACT_WORK) {
-        action.kind = KOS_ACTION_WORK;
-    } else {
-        /* 交互只发一小段：ActionDriver 对同一条未完成的按键会去重，但完成后的
-         * 每帧重发会重新按键；等状态变化期间发 stop 更接近旧 Worker 的 200 ms 脉冲。 */
-        if (w->interact_window_step != w->macro.step_index ||
-            game_ms > w->interact_until_game_ms) {
+        if (kos_kitchen_face_action(&w->kitchen, out->target_object, &action) != KOS_OK) {
+            kos_log_warn(w->rt.log, "macro_face_station_missing",
+                         "task=%llu station=%s",
+                         (unsigned long long)w->current.task_id, out->target_object);
             publish_stop(w);
             return;
         }
-        action.kind = KOS_ACTION_INTERACT;
+    } else {
+        if (out->action == KOS_MACRO_ACT_WORK) {
+            action.kind = KOS_ACTION_WORK;
+        } else {
+            /* Keep the intent through ActionDriver's immediate and retry A pulses; wait for state change after. */
+            if (w->interact_window_step != w->macro.step_index ||
+                game_ms > w->interact_until_game_ms) {
+                publish_stop(w);
+                return;
+            }
+            action.kind = KOS_ACTION_INTERACT;
+        }
+        copy_str(action.target_object, sizeof action.target_object, out->target_object);
     }
-    copy_str(action.target_object, sizeof action.target_object, out->target_object);
     publish_action(w, &action);
 }
 

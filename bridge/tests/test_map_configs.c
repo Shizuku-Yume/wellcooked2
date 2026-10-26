@@ -164,6 +164,32 @@ static void test_one_map(const char *scene)
     }
 }
 
+static void test_face_target_coordinate(void)
+{
+    static kos_kitchen kitchen;
+    kos_input_action action;
+    kos_error err;
+    const kos_station *station;
+    char path[KOS_DAEMON_PATH_MAX];
+
+    expect(find_config("maps/s_wellcooked_demo_2/kitchen.json", path, sizeof path),
+           "demo2 face coordinate kitchen path");
+    kos_error_clear(&err);
+    expect(kos_kitchen_load(path, &kitchen, &err) == KOS_OK,
+           "demo2 face coordinate kitchen loads");
+    station = kos_kitchen_station_by_id(&kitchen, "dispenser-4");
+    expect(station != NULL, "dispenser-4 is a stable map station ID");
+    expect(kos_kitchen_face_action(&kitchen, "dispenser-4", &action) == KOS_OK,
+           "face action accepts dispenser-4 map ID");
+    if (station != NULL) {
+        expect(action.kind == KOS_ACTION_FACE && action.target_x == station->x &&
+                   action.target_y == station->z,
+               "face action carries dispenser-4 map x/z coordinates");
+    }
+    expect(kos_kitchen_face_action(&kitchen, "dispenser-missing", &action) != KOS_OK,
+           "unknown station ID cannot produce face action");
+}
+
 int main(void)
 {
     static const char *const scenes[] = {
@@ -174,6 +200,7 @@ int main(void)
     };
     size_t i;
 
+    test_face_target_coordinate();
     printf("[test_map_configs] 开始：四张地图的 kitchen/recipes 加载\n");
     for (i = 0; i < sizeof scenes / sizeof scenes[0]; i++) {
         test_one_map(scenes[i]);

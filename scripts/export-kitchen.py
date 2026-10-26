@@ -111,7 +111,15 @@ def kind_of(types):
     return "unknown"
 
 
-def build_stations(raw):
+def snap_near_grid(value, origin, step):
+    """Remove tiny transform noise when a station lies on a sampled grid coordinate."""
+    if step <= 0 or origin is None:
+        return round(value, 2)
+    aligned = origin + round((value - origin) / step) * step
+    return round(aligned if abs(value - aligned) <= 0.02 else value, 2)
+
+
+def build_stations(raw, grid_step, grid_origin):
     merged = []
     unknown = []
     for group in group_stations(raw):
@@ -123,7 +131,8 @@ def build_stations(raw):
             "kind": kind,
             "name": group["name"],
             "types": group["types"],
-            "pos": [round(group["pos"][0], 2), round(group["pos"][1], 2)],
+            "pos": [snap_near_grid(group["pos"][0], grid_origin[0], grid_step),
+                    snap_near_grid(group["pos"][1], grid_origin[1], grid_step)],
             "height": round(float(group["height"]), 2),
             "gives": group["gives"],
             "contents": group["contents"],
@@ -393,8 +402,10 @@ def main():
         args.out = args.out or DEFAULT_OUT
         args.out_recipes = args.out_recipes or DEFAULT_OUT_RECIPES
 
-    stations, unknown = build_stations(state.get("stations") or [])
     step, indices, lookup, cells = grid_index(terrain)
+    grid_origin = (min((x for x, _ in cells), default=None),
+                   min((z for _, z in cells), default=None))
+    stations, unknown = build_stations(state.get("stations") or [], step, grid_origin)
     mask = terrain.get("mask") or []
     sizes = areas_of(indices, mask, lookup)
 

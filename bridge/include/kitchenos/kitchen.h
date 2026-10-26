@@ -93,6 +93,9 @@ int kos_kitchen_nearest_cell(const kos_kitchen *kitchen, float x, float z);
 
 int kos_kitchen_count_kind(const kos_kitchen *kitchen, const char *kind);
 const kos_station *kos_kitchen_station_by_id(const kos_kitchen *kitchen, const char *id);
+/* Build the observable FACE payload for a stable map station ID; unknown IDs fail. */
+int kos_kitchen_face_action(const kos_kitchen *kitchen, const char *id,
+                            kos_input_action *action);
 
 /* 工位 id → stations[] 下标；找不到返回 -1。 */
 int kos_kitchen_station_index(const kos_kitchen *kitchen, const char *id);

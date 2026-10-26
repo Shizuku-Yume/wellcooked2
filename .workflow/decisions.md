@@ -953,3 +953,20 @@ user may overturn on sight. `Revisit when` of "never" is allowed but suspicious;
 - **Revisit when:** Scheduler 具备可恢复的持久化订单状态，或 recipe DAG 用显式产物位置替代 cook→plate 同名节点绑定。
 - **Effort:** kitchen-control
 - **Supersedes:** 2026-10-25 - plate 拆成 goto + wait_ready + pickup
+
+## 2026-10-26 - navd waypoint and station interaction bounds stay separate
+
+- **Decided:** A plugin `path` endpoint is accepted only at actual-coordinate distance ≤ 0.3 m from its final navd cell waypoint; corner skipping stays at 0.15 m. Kitchen exports require the nearest stand cell to be within 1.2 m of each station. Exported station coordinates snap to the sampled grid only when transform noise is at most 0.02 m.
+- **Instead of:** A station-center target, broader endpoint tolerance, or accepting a stand beyond 1.2 m.
+- **Because:** Task 04 defines coordinate-based movement, while real interactions use a separate adjacent-cell geometry. `_2` and `_3` sink transforms were offset by 0.01 m, producing a false 1.20004 m distance against the 1.2 m bound.
+- **Mine:** no
+- **Revisit when:** The game changes its grid spacing or the real interaction contract changes.
+
+## 2026-10-26 - Worker interaction intent spans plugin retry pulses
+
+- **Decided:** Keep each Worker `interact` intent live for 1000 ms, long enough for ActionDriver's immediate 250 ms pulse and the retry pulse starting 600 ms later. Macro completion remains gated on world-state change.
+- **Instead of:** A 250 ms Worker window that ends before the plugin retry, or changing ActionDriver's pulse cadence.
+- **Because:** Fresh `_2` evidence shows the Worker sent a 250 ms interact window while the plugin's second pulse is scheduled 600 ms after the first; the pickup timed out with `holding` still empty. Plugin ack confirms receipt only, not the game interaction.
+- **Mine:** yes
+- **Revisit when:** The plugin action cadence or Worker input publication semantics change.
+- **Effort:** kitchen-control

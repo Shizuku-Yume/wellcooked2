@@ -108,6 +108,11 @@ action: 厨师位 1 work 按住 cutting_board_0（直到下一条动作）
 action: 厨师位 1 work 松开（收到 stop）
 ```
 
+`path` completion measures the chef's actual world position against the final navd cell waypoint
+(≤ 0.3 m); turn-corner skipping remains ≤ 0.15 m. This is distinct from interaction geometry:
+the kitchen map's nearest reachable stand cell must be within 1.2 m of the station, and the path
+must not substitute the station center for that cell.
+
 `action: 厨师位 1` 里的"1"是**日志给人看的**编号（槽号 + 1）；协议与状态文件里是 0 基的 `chef_id`。
 
 ## 文件分工

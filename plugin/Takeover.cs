@@ -222,6 +222,8 @@ namespace WellCooked
 
             ReadConfig();
 
+            // A pulse only targets pads that have not yet joined. Once the game accepts a pad,
+            // release its A button and leave it alone so the same pulse cannot join another slot.
             // 设备一直挂；但**前端里不抢着占位**：游戏的"按 A 加入"靠 GetEngagementPad
             // 找一个还没占位、刚按下的 pad（反编译证据 StartScreenFlow.CheckForEngagement），
             // 我们提前占满会让标题画面永远等不到，卡死在那儿。
@@ -265,18 +267,17 @@ namespace WellCooked
             _nextFrontendPress = now + 2f;
             _frontendHeld = !_frontendHeld;
             int count = 0;
-            foreach (var owned in OwnedPads)
-            {
-                owned.Pad.Want(_frontendHeld, false, Vector2.zero);
-                count++;
-            }
 
             foreach (var pad in PendingPads)
             {
                 pad.Want(_frontendHeld, false, Vector2.zero);
                 count++;
             }
-
+            foreach (var owned in OwnedPads)
+            {
+                owned.Pad.Want(false, false, Vector2.zero);
+                count++;
+            }
             _log.LogInfo("takeover: 前端 A " + (_frontendHeld ? "按下" : "松开") + "（" + count + " 个手柄）");
         }
 
@@ -310,7 +311,7 @@ namespace WellCooked
         {
             foreach (var owned in OwnedPads)
             {
-                if (owned.Slot == slot)
+                if (owned.Pad.Slot == slot)
                 {
                     return true;
                 }
@@ -357,6 +358,7 @@ namespace WellCooked
                 // 游戏自己已经把这只手柄加入了（pad 号即玩家位号）
                 if (manager.GetUser((EngagementSlot)padNumber) != null)
                 {
+                    pad.Want(false, false, Vector2.zero);
                     OwnedPads.Add(new Owned
                     {
                         Slot = padNumber,
@@ -365,7 +367,8 @@ namespace WellCooked
                         ChefName = SlotName(padNumber)
                     });
                     PendingPads.RemoveAt(i);
-                    _log.LogInfo("takeover: 游戏已自己加入 pad " + padNumber + " → 玩家位 " + (padNumber + 1));
+                    _log.LogInfo("takeover: 游戏已自己加入 pad " + padNumber + " → 配置玩家位 " +
+                                 (pad.Slot + 1) + "（实际玩家位 " + (padNumber + 1) + "）");
                     continue;
                 }
 

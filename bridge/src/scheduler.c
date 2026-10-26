@@ -173,6 +173,8 @@ static int cook_has_plate_successor(const scheduler *s, int cook_node);
 static void release_plate_source(scheduler *s, sched_order *order,
                                  const kos_recipe_node *plate_node);
 static int plate_cook_task(const scheduler *s, const sched_order *order, int plate_node);
+static int sink_station_index(const kos_kitchen *kitchen);
+static int plate_count(const kos_world_state *world, const char *name);
 
 static int64_t now_ms(void)
 {
@@ -422,13 +424,23 @@ static void mark_resource_wait(scheduler *s, int chef, const sched_order *order,
                                sched_task *task, const kos_recipe_node *node)
 {
     sched_res_stat *stat;
+    const char *kind = node->resource;
+
+    if (strcmp(node->op, "plate") == 0 &&
+        kos_kitchen_count_kind(&s->kitchen, "plate_stack") == 0) {
+        int sink = sink_station_index(&s->kitchen);
+
+        if (sink >= 0) {
+            kind = s->kitchen.stations[sink].kind;
+        }
+    }
 
     if (task->wait_logged) {
         return;
     }
-    s->wanted_kind[chef] = kos_resources_index(&s->resources, node->resource);
+    s->wanted_kind[chef] = kos_resources_index(&s->resources, kind);
     task->wait_started_ms = now_ms();
-    stat = stat_find(s, node->resource);
+    stat = stat_find(s, kind);
     if (stat != NULL) {
         stat->waits++;
     }
@@ -439,7 +451,7 @@ static void mark_resource_wait(scheduler *s, int chef, const sched_order *order,
         json_writer_init(&w, line, sizeof line);
         event_common(&w, s, "resource_wait");
         json_writer_key(&w, "kind");
-        json_writer_string(&w, node->resource);
+        json_writer_string(&w, kind);
         json_writer_key(&w, "chef_id");
         json_writer_int(&w, chef);
         json_writer_key(&w, "order_id");
@@ -451,7 +463,7 @@ static void mark_resource_wait(scheduler *s, int chef, const sched_order *order,
         event_end(s, &w);
     }
     kos_log_info(s->rt.log, "resource_wait", "kind=%s order=%s node=%s chef=%d",
-                 node->resource, order->id, node->id, chef);
+                 kind, order->id, node->id, chef);
     task->wait_logged = 1;
 }
 
@@ -1261,10 +1273,8 @@ static void handle_worker_event(scheduler *s, const kos_mq_msg *msg)
             (void)release_lease_for_task(s, msg->task_id, "resource_reclaimed",
                                          "task-failed");
             task->state = TASK_FAILED;
-            if (!order_has_done_all(order)) {
-                mark_order_finished(order, KOS_ORDER_FAILED, now_ms());
-                release_order_cook_reservations(s, order);
-            }
+            mark_order_finished(order, KOS_ORDER_FAILED, now_ms());
+            release_order_cook_reservations(s, order);
             kos_log_warn(s->rt.log, "task_failed", "order=%s node=%s detail=%s",
                          order->id, s->recipes.nodes[node].id, msg->detail);
         }
@@ -1311,11 +1321,18 @@ static int candidate_duration_ms(const scheduler *s, const sched_candidate *cand
 
 static const char *candidate_resource(const scheduler *s, const sched_candidate *cand)
 {
-    /* wash 的目标是水槽工位；资源 kind 取工位自己的 kind，地图把水槽叫 wash_sink
-     * 时租约表与 metrics 也跟着用那个名字。 */
-    return cand->order_index < 0
-               ? s->kitchen.stations[cand->station_index].kind
-               : s->recipes.nodes[cand->node_index].resource;
+    if (cand->order_index < 0) {
+        return s->kitchen.stations[cand->station_index].kind;
+    }
+    {
+        const kos_recipe_node *node = &s->recipes.nodes[cand->node_index];
+
+        if (strcmp(node->op, "plate") == 0 &&
+            kos_kitchen_count_kind(&s->kitchen, "plate_stack") == 0) {
+            return s->kitchen.stations[cand->station_index].kind;
+        }
+        return node->resource;
+    }
 }
 
 /* 水槽工位：kind 与 "sink" 互相包含即可，导出的地图目前都正好叫 sink。 */
@@ -1521,6 +1538,20 @@ static int task_station_index(const scheduler *s, int order_index, int task_inde
                                               task_index),
                                    station_out);
     }
+    if (strcmp(node->op, "plate") == 0 &&
+        kos_kitchen_count_kind(&s->kitchen, "plate_stack") == 0) {
+        int sink;
+
+        if (s->world_valid && plate_count(&s->world, "plate_stack") == 0) {
+            return KOS_ERR_EMPTY;
+        }
+        sink = sink_station_index(&s->kitchen);
+        if (sink < 0) {
+            return KOS_ERR_MISSING;
+        }
+        *station_out = sink;
+        return KOS_OK;
+    }
     return kos_kitchen_pick_station(&s->kitchen, node->resource, hint,
                                     (unsigned)(order_index * KOS_RECIPE_MAX_DISH_NODES +
                                                task_index),
@@ -1692,14 +1723,19 @@ static int open_next_order(scheduler *s, int64_t now, const int *chef_cells,
         }
         for (j = 0; j < candidate->task_count; j++) {
             int station;
+            int station_rc;
 
             if (!task_dispatch_ready(s, candidate, j)) {
                 continue;
             }
-            /* 找不到工位也算"能开"：订单会在 build_candidates() 里走
-             * fail_task_no_station 并标记 FAILED，而不是永远停在未开工状态。
-             * 只有"有工位但当前空闲厨师都到不了"才留到厨师换位置后再试。 */
-            if (task_station_index(s, i, j, &station) != KOS_OK ||
+            station_rc = task_station_index(s, i, j, &station);
+            if (station_rc == KOS_ERR_EMPTY) {
+                /* A known resource is temporarily unavailable; keep the order waiting. */
+                has_feasible = 1;
+                break;
+            }
+            /* Missing stations are opened so build_candidates() reports task failure. */
+            if (station_rc != KOS_OK ||
                 station_reachable(s, station, chef_cells, chef_count)) {
                 has_feasible = 1;
                 break;

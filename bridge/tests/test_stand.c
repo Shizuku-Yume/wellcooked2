@@ -154,6 +154,12 @@ static void test_one_map(const char *scene)
             cell = &kitchen.cells[stand->cell];
             dist = (cell->x - station->x) * (cell->x - station->x) +
                    (cell->z - station->z) * (cell->z - station->z);
+            if (j == 0) {
+                snprintf(label, sizeof label,
+                         "%s/%s: nearest stand cell within 1.2 m interaction reach",
+                         scene, station->id);
+                expect(dist <= 1.2f * 1.2f + 1e-5f, label);
+            }
             snprintf(label, sizeof label, "%s/%s: 站位格按距离升序", scene,
                      station->id);
             expect(previous_distance < 0.0f || dist >= previous_distance - 1e-4f,

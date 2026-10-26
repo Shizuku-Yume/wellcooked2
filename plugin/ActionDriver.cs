@@ -31,7 +31,8 @@ namespace WellCooked
     {
         private const float ArriveRadius = 0.5f;      // 一格（0.6 米）以内算到了
         private const float MoveTimeout = 10f;        // 一次 move 最多走这么久（任务清单定的默认）
-        private const float PathCornerTolerance = 0.15f; // 转角偏离 <= 0.15 m
+        private const float PathEndpointTolerance = 0.3f; // nav waypoint must be reached within 0.3 m
+        private const float PathCornerTolerance = 0.15f; // turn corners may be skipped within 0.15 m
         private const float FaceAngleTolerance = 15f;    // 朝向误差 < 15°
         private const float PulseSeconds = 0.25f;     // 按键按下去多久（游戏只认边沿）
         private const float PulseInterval = 0.6f;     // 一次动作没做出效果时，隔多久再按一次
@@ -442,7 +443,10 @@ namespace WellCooked
                                + " t=" + now.ToString("F2"));
                 }
 
-                if (idx == command.Waypoints.Count - 1 && dist <= PathCornerTolerance)
+                if (idx == command.Waypoints.Count - 1 &&
+                    PathArrival.IsWithinTolerance(position.x, position.y,
+                                                  currentTarget.x, currentTarget.y,
+                                                  PathEndpointTolerance))
                 {
                     string arrived = "path 到达终点 (" + currentTarget.x.ToString("F1") + "," + currentTarget.y.ToString("F1")
                                      + ") seq=" + command.Seq + "，用时 " + (clock - command.StartedAt).ToString("F1") + " 秒";
