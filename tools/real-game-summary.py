@@ -171,6 +171,8 @@ def main():
         "no_local_workorder": local_workorder == 0,
         "all_pads_joined": joined == list(range(1, args.chefs + 1)),
         "frontend_press_off": frontend_off,
+        "no_manual_input": auto_mode and local_workorder == 0 and frontend_off
+                           and joined == list(range(1, args.chefs + 1)),
         "invalid_cast_zero": invalid_cast == 0,
     }
     failed = [name for name, ok in checks.items() if not ok]
