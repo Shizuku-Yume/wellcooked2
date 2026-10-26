@@ -131,7 +131,9 @@ The failed `_2` Supervisor tree owned by this task was stopped via PID 1416010; 
   随后变空 = 倒完；旧状态没有 `carried_` 时退回"`pot_*` 里那味料消失"，并顺带看 proto 的
   `find_station_resource`（按位置）找到的台面容器有没有内容；整段都没有可用信号时 800 ms 兜底。
   `carried_` 由 `find_carried_resource`（macro.c 内的名字查找）取；台面的位置匹配仍归 proto 的
-  `find_station_resource`。`plate` 改成
+  `find_station_resource`。插件侧资源块按 `StateFrame.ResourceTtl` 最多 0.25 s 重建一次，锅在缓存
+  窗口内被端起/倒空会一步跳成"空 carried_"；"先见过非空"的门与 800 ms 兜底正好覆盖这种跳变（锅里有
+  料时同一帧就带内容，不会分帧补）。`plate` 改成
   "放下手里整份菜 → 取盘"（删掉 cooker source、`wait_ready` 与取料）；`cut` 的收尾 pickup 与新增的
   `pickup`（台面容器取成品）都按"拿到任意物品"判；新增 `place`（goto + drop）。`KOS_MACRO_WAIT_READY`
   删除，kind 表里换成 `pour`。
