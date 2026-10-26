@@ -36,8 +36,11 @@ namespace WellCooked.Game
             public int chop_stages = 8;
             public int chop_multiplier = 5;
             // Level 3 only: shorter chopping. The active scene name contains "wellcooked_demo_3".
-            public int level3_chop_stages = 2;
-            public int level3_chop_multiplier = 1;
+            // Keep the stage count at the level default: dropping it to 2 made the knife feel
+            // broken in game (items skipped straight to the chopped state), so only the time
+            // multiplier is raised.
+            public int level3_chop_stages = 5;
+            public int level3_chop_multiplier = 6;
             public string updated_at;
             public string source;
         }

@@ -98,16 +98,12 @@ namespace WellCooked.Game
 
         private static bool IsCookware(Component container)
         {
+            // Only the container that actually sits on a cooking vessel counts. Deliberately no
+            // ancestor scan: ingredient trays (料箱) and dispensers live on counters, and a wide
+            // ancestor check risked vetoing them.
             GameObject go = container.gameObject;
             if (_cookingHandlerType != null && go.GetComponent(_cookingHandlerType) != null) return true;
-            if (_cookingStationType == null) return false;
-            if (go.GetComponent(_cookingStationType) != null) return true;
-            Transform parent = go.transform.parent;
-            for (int depth = 0; depth < 4 && parent != null; depth++)
-            {
-                if (parent.GetComponent(_cookingStationType) != null) return true;
-                parent = parent.parent;
-            }
+            if (_cookingStationType != null && go.GetComponent(_cookingStationType) != null) return true;
             return false;
         }
 
@@ -136,7 +132,7 @@ namespace WellCooked.Game
             if (container == null || !IsCookware(container)) return;
             if (!HasContents(__instance)) return;
             __result = false;
-            if (_blockedLogs < 6)
+            if (_blockedLogs < 20)
             {
                 _blockedLogs++;
                 Log("[Capacity] level3 second ingredient rejected on " + container.gameObject.name);
