@@ -111,13 +111,10 @@ namespace WellCooked
         {
             var timer = flow == null ? null : WorldState.Get(flow, "RoundTimer");
             var left = timer == null ? null : WorldState.Get(timer, "m_timeLeft");
-            // 上限先读 flow（`wellcooked-state.json` 的 timer.limit 一直用这个来源），
-            // 再退回 ServerRoundTimer.m_timeLimit。
-            var limit = flow == null ? null : WorldState.Get(flow, "m_timeLimit");
-            if (limit == null && timer != null)
-            {
-                limit = WorldState.Get(timer, "m_timeLimit");
-            }
+            // 上限在 ServerRoundTimer.m_timeLimit（字段）；flow 上的 m_timeLimit **不存在**
+            // （实机 LogOutput: ServerCampaignFlowController.m_timeLimit 属性/字段/方法三连
+            // 未找到），去问它只会多一行反射未命中。
+            var limit = timer == null ? null : WorldState.Get(timer, "m_timeLimit");
             if (left == null || limit == null || ToDouble(limit) <= 0.0)
             {
                 return; // 未初始化/读不到就不报，别给调度侧一个 0 秒的局
@@ -457,16 +454,15 @@ namespace WellCooked
                         var itemGo = item.gameObject;
                         var contents = Kitchen.ItemContents(itemGo);
                         b.Field("item", itemGo.name);
-                        var workableItem = itemGo.GetComponent("ClientWorkableItem");
-                        if (workableItem != null)
+                        // 实机这一版没有 `ClientWorkableItem.GetProgress()`（LogOutput 里
+                        // 属性/字段都没找到，Invoke 吞掉异常返回 null，进度永远缺字段，
+                        // run_chop 就一直等到超时）。按 m_progress / (m_stages-1) 读，
+                        // 与 Kitchen.WorkState 共用同一份实现。
+                        bool finished;
+                        double progress = Kitchen.WorkableProgress(itemGo, out finished);
+                        if (progress >= 0.0)
                         {
-                            // 游戏自己的 `GetProgress()` 就是 `m_progress / (m_stages - 1)`
-                            // （ClientWorkableItem.GetProgress），不必再猜字段类型。
-                            var progressValue = WorldState.Invoke(workableItem, "GetProgress");
-                            if (progressValue != null)
-                            {
-                                b.FieldNum("progress", Clamp01(ToDouble(progressValue)));
-                            }
+                            b.FieldNum("progress", progress);
                         }
                         WriteContents(b, "contents", contents);
                         WriteContentCompat(b, contents);
