@@ -408,3 +408,10 @@ Dirty at start: `plugin/README.md`、`plugin/SmokePlugin.cs`、`plugin/Takeover.
 或者让 `make test` 变红。
 
 下一步：用户决定第 1–3 项这类 schema 扩展是否要做；批了我就按第 4–6 项一次做完再验。
+
+**2026-10-27 倒料工序命名决策与容差匹配（[推断] 待实机日志确认）**
+
+- 倒料节点命名与实测对齐：`/tmp/kc-fixtures/demo3`（实机新关卡导出）中 `recipes.json` 的 pour 节点以生料名标注（`pour:BurritoChicken` / `pour:BurritoMeat` / `pour:Mushroom` / `pour:Rice`），烹饪节点为熟料名（`cook:FriedChicken` / `cook:FriedBurritoMeat` / `cook:FriedMushrooms` / `cook:BoiledRice`）。
+- 开局状态 `wellcooked-state.json` 中锅具 `contents=[]`，实机运行中熟料在锅内上报的名字究竟是熟料名（`FriedChicken`）、切块 prefab 名（`BurritoChoppedChicken`）还是生料名（`BurritoChicken`）属于 [推断]。
+- 决策：C 侧 `macro.c` 的 `run_pour` 采用源工序输入原料词根容差匹配（`chicken`/`meat`/`mushroom`/`rice` 等），避免全字严格匹配将同源熟料 `FriedChicken` 误拦截为 `wrong-item`；同时保留对完全不同原料（如鸡肉倒米饭）的校验。倒料执行时输出 `[macro:pour]` 运行时日志打印实机锅内 content 名称，待下次真机运行直接确认实机真实命名。
+- 检查锁住：`bridge/tests/test_macro.c` 补充 `test_pour_tolerant_matching` 单测；`python3 scripts/test_export_kitchen.py` 与 `cd bridge && make test` 全绿。
