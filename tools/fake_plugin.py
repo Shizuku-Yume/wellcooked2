@@ -39,6 +39,9 @@ import traceback
 from collections import Counter
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import demo3_sim as _demo3  # noqa: E402 - 同目录的世界模型（tools/demo3_sim.py）
+
 # --------------------------------------------------------------------------
 # 协议常量：这些数字与名字来自插件实现，改了就不再是同一个协议
 # --------------------------------------------------------------------------
@@ -64,7 +67,12 @@ EXIT_SKIP = 77
 SCENARIOS = ("happy", "one-slot", "no-heartbeat", "bad-frames", "connect-mode",
              "reconnect-storm", "silent-connect", "data-shapes", "second-peer",
              "pickup-dash", "path-face-work", "input-grace", "os-loop", "os-resources",
-             "nav-corridor", "nav-stuck", "nav-crash", "nav-ring", "macro")
+             "nav-corridor", "nav-stuck", "nav-crash", "nav-ring", "macro",
+             "demo3-rules", "demo3-sushi-1chef", "demo3-4chef-5dish",
+             "demo3-regress-goto-drift", "demo3-regress-grid-offset",
+             "demo3-regress-double-pick", "demo3-regress-empty-pots",
+             "demo3-regress-plate-stack-count", "demo3-regress-cooker-type",
+             "demo3-regress-deliver-expired")
 
 # 日志行 = "ISO8601(毫秒) 级别 事件名 key=value ..."（bridge/src/log.c）。
 # 只认行首这个位置上的事件名：key=value 里出现同名词不算一次事件。
@@ -1447,7 +1455,12 @@ class Ctx:
                 "--recipes", str(recipes),
                 "--orders", str(orders),
                 "--nav", self.args.nav,
-                "--instance", str(self.instance)]
+                "--instance", str(self.instance),
+                # 显式给导航表/锁名字：--instance 只在没显式给名字时才把 nav 名字
+                # 换成 /kitchenos_nav_<N>（supervisor.c），那样 NavTargetReader
+                # 读不到 <state>_nav。两个名字都带 state-name，本来就按 run 隔离。
+                "--nav-name", "/" + self.state_name.lstrip("/") + "_nav",
+                "--nav-sem-name", "/" + self.state_name.lstrip("/") + "_nav_lock"]
         if lease_ttl_ms is not None:
             argv += ["--lease-ttl-ms", str(lease_ttl_ms)]
         if backoff_ms is not None:
@@ -3066,6 +3079,19 @@ def nav_cell_index(cells, x, y):
     return best
 
 
+PATH_CORNER_TOLERANCE = 0.15   # ActionDriver.PathCornerTolerance
+ARRIVE_IN_M = 0.30             # navd: 进 0.3 m 算到站
+ARRIVE_OUT_M = 0.50            # navd: 出 0.5 m 才算离开（滞回）
+
+
+def _waypoint_distance(a, b):
+    ax = float(a["x"]) if isinstance(a, dict) else float(a[0])
+    ay = float(a["y"]) if isinstance(a, dict) else float(a[1])
+    bx = float(b["x"]) if isinstance(b, dict) else float(b[0])
+    by = float(b["y"]) if isinstance(b, dict) else float(b[1])
+    return ((ax - bx) ** 2 + (ay - by) ** 2) ** 0.5
+
+
 class NavSim:
     """按 path 动作移动模拟厨师，并记录每帧位置/同格/到达时刻。
 
@@ -3088,6 +3114,7 @@ class NavSim:
         self.last_game_ms = 0
         self.collisions = []
         self.arrivals = {}
+        self.arrival_state = {}
         self.stops = {}
         self.path_actions = Counter()
         self.move_actions = Counter()
@@ -3101,6 +3128,43 @@ class NavSim:
             return None
         return chef
 
+    def _start_index(self, chef, waypoints):
+        """从当前位置之后第一个还没到的路点开始（与 ActionDriver 的 0.15 m 转角容差一致）。"""
+        pos = self.positions[chef]
+        index = 0
+        while index < len(waypoints) - 1 and \
+                _waypoint_distance(pos, waypoints[index]) <= PATH_CORNER_TOLERANCE:
+            index += 1
+        return index
+
+    def _realign(self, chef, command, waypoints):
+        """同 seq 收到更短/更长的列表：换整份列表并重新对齐下标。
+
+        navd 现在会在路线只是"继续"时保留 plan_seq（走过的格从队首弹出、PIBT 临时
+        压住前缀、队尾追加都算），ActionDriver 的做法是：先找旧列表"当前目标"在新列表
+        里的位置，找不到就从当前位置之后第一个没到的路点开始；然后跳过已经进到
+        0.15 m 内的路点。镜像它，否则 sim 里的厨师在第一份列表走完后就不动了。
+        """
+        previous_target = None
+        index = command["index"]
+        if 0 <= index < len(command["waypoints"]):
+            previous_target = command["waypoints"][index]
+        match = -1
+        if previous_target is not None:
+            for i, waypoint in enumerate(waypoints):
+                if _waypoint_distance(previous_target, waypoint) <= 0.01:
+                    match = i
+                    break
+        if match < 0:
+            match = self._start_index(chef, waypoints)
+        else:
+            pos = self.positions[chef]
+            while match < len(waypoints) - 1 and \
+                    _waypoint_distance(pos, waypoints[match]) <= PATH_CORNER_TOLERANCE:
+                match += 1
+        command["waypoints"] = list(waypoints)
+        command["index"] = match
+
     def process_actions(self, actions, game_ms):
         for action in actions[self.seen_actions:]:
             chef = self._chef(action)
@@ -3113,12 +3177,11 @@ class NavSim:
                 seq = action.get("seq", -1)
                 command = self.commands[chef]
                 if command is not None and command["seq"] == seq:
-                    if len(waypoints) > len(command["waypoints"]):
-                        command["waypoints"].extend(waypoints[len(command["waypoints"]):])
+                    self._realign(chef, command, waypoints)
                 else:
                     self.commands[chef] = {"seq": seq,
                                            "waypoints": list(waypoints),
-                                           "index": 0}
+                                           "index": self._start_index(chef, waypoints)}
             elif kind == "move":
                 self.move_actions[chef] += 1
             elif kind == "stop":
@@ -3165,12 +3228,19 @@ class NavSim:
         self.frames += 1
         return same
 
-    def note_arrival(self, chef, x, y, game_ms, tolerance=0.15):
+    def note_arrival(self, chef, x, y, game_ms, tolerance=ARRIVE_IN_M,
+                     leave_tolerance=ARRIVE_OUT_M):
+        """到站判定与 navd 一致：进 0.3 m 算到，离开 0.5 m 才算走（滞回）。"""
         px, py = self.positions[chef]
         dx = px - x
         dy = py - y
-        if dx * dx + dy * dy <= tolerance * tolerance and chef not in self.arrivals:
-            self.arrivals[chef] = game_ms
+        distance = (dx * dx + dy * dy) ** 0.5
+        arrived = self.arrival_state.get(chef, False)
+        if not arrived and distance <= tolerance:
+            self.arrival_state[chef] = True
+            self.arrivals.setdefault(chef, game_ms)
+        elif arrived and distance > leave_tolerance:
+            self.arrival_state[chef] = False
 
 
 class WorldSim(NavSim):
@@ -3517,6 +3587,30 @@ NAV_METRICS_TOP = {"schema", "algorithm", "planning_cycles", "game_ms", "chefs",
 NAV_METRICS_TOTALS = {"steps", "waits", "replans", "stuck"}
 NAV_METRICS_PLANNING = {"samples", "p50", "p99", "max"}
 NAV_METRICS_CHEF = {"chef_id", "steps", "waits", "replans", "stuck"}
+# navd 新增的抖动指标（P1）：paths / paths_per_s / heading_delta_deg。
+NAV_METRICS_CHEF_EXTRA = ("paths", "paths_per_s", "heading_delta_deg")
+
+
+def _nav_chef_row_ok(row, index):
+    """一行 chef 指标：必需键齐全、编号对得上、新增字段类型/范围合理。"""
+    if not isinstance(row, dict):
+        return False, "not an object"
+    missing = NAV_METRICS_CHEF - set(row)
+    if missing:
+        return False, "missing %s" % sorted(missing)
+    if row.get("chef_id") != index:
+        return False, "chef_id=%r expected %d" % (row.get("chef_id"), index)
+    for key in ("steps", "waits", "replans", "stuck", "paths"):
+        if key in row:
+            value = row[key]
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                return False, "%s=%r (want int >= 0)" % (key, value)
+    for key in ("paths_per_s", "heading_delta_deg"):
+        if key in row:
+            value = row[key]
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
+                return False, "%s=%r (want number >= 0)" % (key, value)
+    return True, ""
 
 
 def check_nav_metrics(ctx, checks, algorithm, chefs):
@@ -3544,11 +3638,23 @@ def check_nav_metrics(ctx, checks, algorithm, chefs):
     checks.hard("nav_metrics_algorithm", data.get("algorithm") == algorithm,
                 "algorithm=%s expected=%s" % (data.get("algorithm"), algorithm))
     chef_rows = data.get("chefs")
-    chef_ok = (isinstance(chef_rows, list) and len(chef_rows) == chefs and
-               all(isinstance(row, dict) and set(row) == NAV_METRICS_CHEF and
-                   row.get("chef_id") == i for i, row in enumerate(chef_rows)))
+    chef_ok = isinstance(chef_rows, list) and len(chef_rows) == chefs
+    detail = ""
+    if chef_ok:
+        for i, row in enumerate(chef_rows):
+            row_ok, why = _nav_chef_row_ok(row, i)
+            if not row_ok:
+                chef_ok, detail = False, "chef %d: %s" % (i, why)
+                break
     checks.hard("nav_metrics_chefs", chef_ok,
-                "chefs=%s" % (chef_rows if not chef_ok else len(chef_rows)))
+                detail or "chefs=%s" % (chef_rows if not chef_ok else len(chef_rows)))
+    if chef_ok:
+        # 抖动指标（P1 验收用）在新 navd 里才有：有就校验类型/范围，没有只记 soft。
+        extras = [row for row in chef_rows
+                  if any(key not in row for key in NAV_METRICS_CHEF_EXTRA)]
+        checks.soft("nav_metrics_jitter_fields", not extras,
+                    "缺新字段的行=%s（navd 未升级时只记录）"
+                    % [row.get("chef_id") for row in extras])
     checks.hard("nav_metrics_totals", isinstance(data.get("totals"), dict) and
                 set(data["totals"]) == NAV_METRICS_TOTALS,
                 "totals=%s" % (data.get("totals"),))
@@ -4643,6 +4749,1134 @@ def scenario_os_resources(ctx, checks):
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+# --------------------------------------------------------------------------
+# demo3：s_wellcooked_demo_3 的实机规则场景
+#
+# 这些场景用 tools/demo3_sim.py 的世界模型（按 `_3` 手动局动作表实测的规则：
+# 放置/取放、砧板 8 格、锅类型、12.1 s 熟、倒料、盘堆转交、0.5 s 交付、订单超时），
+# 再走真实的 Bridge → Scheduler → Worker → 动作链路。状态上报按
+# protocol/schema/state_update.schema.json 的新字段发；实机缺陷用规则开关回到旧行为，
+# 场景成对跑"缺陷在 → 失败症状对得上 / 修好 → 通过"。
+#
+# 注意：pour / counter / 修正后的 plate 由另一个分支（manual-flow）实现，落到本分支前，
+# 依赖它们的场景会失败——失败信息会点名是哪一步、哪条 detail。
+# --------------------------------------------------------------------------
+
+
+class _RuleMotion:
+    """进程内规则测试用的假移动层：只提供 positions，不做寻路。"""
+
+    def __init__(self, positions):
+        self.positions = [[float(x), float(y)] for x, y in positions]
+        self.frames = 0
+
+    def process_actions(self, actions, game_ms):
+        pass
+
+    def advance(self, game_ms):
+        pass
+
+    def frame(self, game_ms):
+        self.frames += 1
+
+
+class _Demo3Driver:
+    """按 macro.c 的步骤序列驱动世界模型（不经 Bridge/插件），用于纯规则场景。"""
+
+    def __init__(self, world, *, chef=0):
+        self.world = world
+        self.chef = chef
+        self.t = 0
+        self.actions = []
+
+    def frame(self, extra=()):
+        self.t += 16
+        self.actions.extend(extra)
+        self.world.process_actions(self.actions, self.t)
+        self.world.tick(self.t)
+        self.world.frame(self.t)
+
+    def stop(self):
+        self.frame([{"chef_id": self.chef, "action": "stop"}])
+
+    def goto(self, station):
+        stand = _demo3.STANDS.get(station)
+        if stand is not None:
+            self.world.positions[self.chef] = [float(stand[0]), float(stand[1])]
+        self.stop()
+        for _ in range(3):
+            self.frame([{"chef_id": self.chef, "action": "face",
+                         "target_object": station}])
+
+    def press(self, station, seconds=0.35, kind="interact"):
+        end = self.t + int(seconds * 1000)
+        while self.t < end:
+            self.frame([{"chef_id": self.chef, "action": kind,
+                         "target_object": station}])
+
+    def work(self, station, ms):
+        end = self.t + int(ms)
+        while self.t < end:
+            self.frame([{"chef_id": self.chef, "action": "work",
+                         "target_object": station}])
+
+    def wait(self, ms):
+        end = self.t + int(ms)
+        while self.t < end:
+            self.frame([])
+
+    def step(self, kind, station=(), seconds=0.35):
+        if kind == "goto":
+            self.goto(station)
+        elif kind == "pickup":
+            self.press(station, 1.2)
+        elif kind == "drop":
+            self.press(station, seconds)
+        elif kind == "chop":
+            self.work(station, 1900)
+        elif kind == "deliver":
+            self.press(station, 1.2)
+        elif kind == "interact":
+            self.press(station, seconds)
+        self.stop()
+
+
+def _demo3_world(stations, *, positions=None, rules=None, clean_plates=5,
+                 dirty_plates=0, orders=None):
+    motion = _RuleMotion(positions or [list(_demo3.SPAWNS[0])])
+    world = _demo3.Demo3World(motion, stations, rules=rules,
+                              clean_plates=clean_plates)
+    if orders is not None:
+        world.set_orders(orders)
+    world.sink["dirty"] = int(dirty_plates)
+    return world
+
+
+def _demo3_failed(rows):
+    return [row for row in rows if row["event"] == "failed"]
+
+
+def _demo3_detail(rows, macro):
+    return [row["detail"] for row in rows
+            if row["event"] == "failed" and row.get("macro") == macro]
+
+
+def _demo3_started(rows):
+    return {row["macro"] for row in rows if row["event"] == "start" and row["macro"]}
+
+
+def _demo3_done(rows):
+    return {row["macro"] for row in rows if row["event"] == "done" and row["macro"]}
+
+
+def _demo3_macro_rows(ctx, chefs):
+    rows = []
+    for chef in range(chefs):
+        path = (ctx.runtime_dir / "logs" / ("worker-%d.log" % chef)
+                if ctx.runtime_dir else None)
+        if path is not None and path.exists():
+            rows.extend(_macro_log_rows(path))
+    return rows
+
+
+def _demo3_read_events(ctx):
+    run_dir = ctx.run_dir()
+    if run_dir is None:
+        return [], [], ["no run dir"]
+    events, bad_e = _read_jsonl(run_dir / "events.jsonl")
+    decisions, bad_d = _read_jsonl(run_dir / "decisions.jsonl")
+    return events, decisions, bad_e + bad_d
+
+
+def _demo3_run(ctx, checks, label, *, chefs, kitchen, recipes, order_spec,
+               duration, rules=None, clean_plates=5, dirty_plates=0,
+               positions=None, stop_when=None):
+    """起一棵 Supervisor，让 demo3 世界模型按动作改世界，跑一局。"""
+    args = ctx.args
+    workdir = Path(tempfile.mkdtemp(prefix="kitchenos-demo3-"))
+    paths = _demo3.demo3_files(workdir, kitchen=kitchen, recipes=recipes)
+    try:
+        ctx.clear_stale_shm()
+        port = args.listen_port or pick_free_port(args.host)
+        ctx.start_supervisor(port=port, chefs=chefs,
+                             kitchen=paths["kitchen.json"],
+                             recipes=paths["recipes.json"],
+                             orders=paths["orders.json"])
+        if not ctx.wait_supervisor_ready(port, chefs, args.ready_timeout):
+            raise InfraError("Supervisor tree never reached running state on %s:%d\n%s" %
+                             (args.host, port, ctx.diagnostics()))
+        checks.note("%s_supervisor_tree" % label,
+                    "bridge+scheduler+navd+%d worker(s)" % chefs)
+        cells = kitchen["grid"]["cells"]
+        motion = NavSim(positions or [list(_demo3.SPAWNS[i]) for i in range(chefs)],
+                        cells)
+        world = _demo3.Demo3World(motion, kitchen["stations"], rules=rules,
+                                  clean_plates=clean_plates)
+        if order_spec is not None:
+            world.set_orders(order_spec)
+        world.sink["dirty"] = int(dirty_plates)
+        initial_resources = world.resources()
+        period_ms = 1000.0 / args.hz
+        stats = Stats(label)
+        stop_check = (lambda: stop_when(world)) if stop_when is not None else None
+
+        def builder(n, frame_index):
+            game_ms = int(round(frame_index * period_ms))
+            world.process_actions(stats.actions, game_ms)
+            game_ms = world.tick(game_ms)
+            world.frame(game_ms)
+            return world.message(n, frame_index, cells, game_ms)
+
+        link = Link(connect(args.host, port, args.ready_timeout))
+        link.send_json(msg_hello())
+        try:
+            run_exchange(link, stats, duration, chefs=chefs, hz=args.hz,
+                         heartbeat_ms=args.heartbeat_ms, ack_actions=True,
+                         state_builder=builder, stop_when=stop_check)
+        finally:
+            link.close()
+            time.sleep(0.4)
+        rows = _demo3_macro_rows(ctx, chefs)
+        events, decisions, bad = _demo3_read_events(ctx)
+        code, seconds = ctx.stop_supervisor()
+        checks.hard("%s_supervisor_clean" % label, code == 0,
+                    "exit=%s in %.2fs" % (code, seconds or 0.0))
+        checks.hard("%s_events_parse" % label, not bad, "%d bad line(s)" % len(bad))
+        checks.note("%s_sim" % label, json.dumps(world.summary(), ensure_ascii=False))
+        checks.note("%s_resource_keys" % label, ",".join(sorted(world.resources())))
+        checks.note("%s_macro" % label,
+                    "; ".join("%s:%s%s" % (row["event"], row["macro"] or "-",
+                                           (" " + row["detail"]) if row["detail"] else "")
+                              for row in rows[:12]) or "none")
+        return {"world": world, "stats": stats, "rows": rows, "events": events,
+                "decisions": decisions, "paths": paths, "workdir": workdir,
+                "initial_resources": initial_resources}
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
+
+
+def _demo3_reduced_kitchen():
+    """两个灶台的小厨房，用来单独验锅键与锅类型。
+
+    工位数组顺序决定 pick_cooker_station 的候选起点；plate_stack/serving 保留真坐标，
+    网格仍是 `_3` 的真实网格。id 按 x、z 排序重编，和协议里 pot_<N> 的含义一致：
+    炸锅（x=-3.0）是 cooker-0，汤锅（x=6.6）是 cooker-1。
+    """
+    kitchen = _demo3.demo3_kitchen(clean_plates=1)
+    by_id = {station["id"]: station for station in kitchen["stations"]}
+    order = [("dispenser-2", "dispenser-2"),
+             ("cooker-0", "cooker-0"),
+             ("cooker-4", "cooker-1"),
+             ("sink-0", "sink-0")]
+    stations = []
+    for old, new in order:
+        station = dict(by_id[old])
+        station["id"] = new
+        stations.append(station)
+    kitchen["stations"] = stations
+    return kitchen
+
+
+def _demo3_cook_recipe(*, step, dish="BoiledRice_Dish"):
+    return _demo3.linear_recipes(dish, [
+        {"node_id": "fetch:Rice", "op": "fetch", "label": "Rice",
+         "resource": "dispenser", "ingredient": "rice"},
+        {"node_id": "cook:BoiledRice", "op": "cook", "label": "BoiledRice",
+         "resource": "cooker", "duration": 12.1, "step": step},
+    ], score=10)
+
+
+def _demo3_order(dish, *, timeout_s=60, slots=1):
+    return _demo3.order_schedule([dish], timeout_s=timeout_s, slots=slots)
+
+
+def _demo3_stop_after(flag, grace_ms, max_ms):
+    """flag(world) 第一次为真后再多跑 grace_ms，让 Worker/Scheduler 把结果写完。"""
+    seen = {}
+
+    def stop(world):
+        if "at" not in seen and flag(world):
+            seen["at"] = world.game_ms
+        if "at" in seen:
+            return world.game_ms >= seen["at"] + grace_ms
+        return world.game_ms >= max_ms
+    return stop
+
+
+def scenario_demo3_rules(ctx, checks):
+    """纯规则：不开 Bridge，直接按 macro 的步骤序列打世界模型，逐条锁住 `_3` 的实测规则。
+
+    这些断言是"场景通过 = 实机能过"的地基：交互按键节奏、切菜进度与朝向、锅类型、
+    12.1 s 熟 / 20 s 烧焦 [推断]、倒料时锅仍在手上、盘堆转交给最上面那只盘、生料不能上盘、
+    0.5 s 交付加分、过期扣分且晚交不加分、G1/G2 的上报开关。
+    """
+    kitchen = _demo3.demo3_kitchen()
+    stations = kitchen["stations"]
+    orders = _demo3.order_schedule(["Sushi_PlainPrawn"], timeout_s=600)
+
+    # 1) 交互节奏：一次 1.2 s 的 interact 意图 = 两次按键（0 ms / 600 ms）
+    world = _demo3_world(stations, orders=orders)
+    driver = _Demo3Driver(world)
+    driver.goto("board-0")          # 空砧板：第一下没有效果，第二下才会补按
+    driver.press("board-0", 1.2)
+    presses = [entry for entry in world.presses
+               if entry["station"] == "board-0" and entry["effect"] != "skipped-second"]
+    second = [entry for entry in presses if entry["second"]]
+    checks.hard("pulse_two_edges_per_intent", len(presses) == 2,
+                "按了 %d 下（期望 2）: %s" % (len(presses), [(p["at_ms"], p["second"])
+                                                             for p in presses]))
+    checks.hard("pulse_retry_at_600ms",
+                bool(second) and 580 <= second[0]["at_ms"] - presses[0]["at_ms"] <= 700,
+                "第二下间隔=%s ms" %
+                (second[0]["at_ms"] - presses[0]["at_ms"] if second else "none"))
+    driver.goto("dispenser-0")
+    driver.press("dispenser-0", 1.2)
+    checks.hard("pulse_takes_one_item", world.holding_name(0) == "SushiPrawn",
+                "holding=%r" % world.holding_name(0))
+    checks.hard("pulse_guard_skips_second_after_effect",
+                any(entry["effect"] == "skipped-second" and entry["station"] == "dispenser-0"
+                    for entry in world.presses),
+                "presses=%s" % [(entry["station"], entry["effect"])
+                                for entry in world.presses[-4:]])
+
+    # 2) 切菜：只有按住加工键才推进；朝向不对不推进；切完改名
+    driver.step("goto", "board-0")
+    driver.step("drop", "board-0")
+    board = world.board_state["board-0"]
+    driver.work("board-0", 850)
+    halfway = board["progress"]
+    driver.wait(400)
+    checks.hard("chop_progresses_while_work_held", 0.4 <= halfway <= 0.6,
+                "0.85 s 后 progress=%.2f（期望约 0.5）" % halfway)
+    checks.hard("chop_stops_when_key_released", abs(board["progress"] - halfway) < 1e-6,
+                "松手后 progress=%.3f（期望仍是 %.3f）" % (board["progress"], halfway))
+    world.facings[0] += math.pi
+    driver.work("board-0", 300)
+    checks.hard("chop_requires_facing", abs(board["progress"] - halfway) < 1e-6,
+                "背对砧板时 progress=%.3f" % board["progress"])
+    driver.goto("board-0")
+    driver.work("board-0", 1200)
+    checks.hard("chop_completes_in_1_7s", board["progress"] >= 0.999 and
+                board["item"] is not None and board["item"].name == "ChoppedSushiPrawn",
+                "progress=%.3f item=%r" % (board["progress"],
+                                           board["item"].name if board["item"] else None))
+    checks.hard("chop_eight_substeps", _demo3.CHOP_STEPS == 8 and
+                abs(_demo3.CHOP_TIME_MS - 1700) < 1,
+                "CHOP_STEPS=%d CHOP_TIME_MS=%d" % (_demo3.CHOP_STEPS,
+                                                   _demo3.CHOP_TIME_MS))
+
+    # 3) 生料不能上盘；熟料/切好的可以；盘堆转交给最上面那只盘
+    world = _demo3_world(stations, orders=orders, clean_plates=2)
+    driver = _Demo3Driver(world)
+    driver.goto("dispenser-0")
+    driver.press("dispenser-0", 0.3)
+    driver.goto("plate_stack-0")
+    before = len(world.plates)
+    driver.press("plate_stack-0", 0.35)
+    raw_rejects = [entry for entry in world.rejected
+                   if entry["station"] == "plate_stack-0"]
+    checks.hard("raw_ingredient_rejected_by_plate", bool(raw_rejects) and
+                len(world.plates) == before and world.holding_name(0) == "SushiPrawn",
+                "rejects=%s plates=%d holding=%r" %
+                (raw_rejects[:1], len(world.plates), world.holding_name(0)))
+    world = _demo3_world(stations, orders=orders, clean_plates=2)
+    driver = _Demo3Driver(world)
+    world.board_state["board-0"]["item"] = _demo3.Item("ChoppedSushiPrawn")
+    world.board_state["board-0"]["progress"] = 1.0
+    driver.step("goto", "board-0")
+    driver.step("pickup", "board-0")
+    driver.step("goto", "plate_stack-0")
+    top_before = len(world.plates[-1].contents)
+    driver.step("drop", "plate_stack-0")
+    checks.hard("plate_transfers_to_top_plate",
+                len(world.plates[-1].contents) == top_before + 1 and
+                world.holding_name(0) == "",
+                "top=%s holding=%r" %
+                ([item.name for item in world.plates[-1].contents], world.holding_name(0)))
+    driver.step("pickup", "plate_stack-0")
+    checks.hard("take_plate_after_placing", world.holding_name(0) == "equipment_plate_01",
+                "holding=%r" % world.holding_name(0))
+
+    # 4) 锅类型：米进平底锅/炸锅被拒（CookableContainer.AllowItemPlacement），进汤锅才收
+    world = _demo3_world(stations, orders=orders)
+    driver = _Demo3Driver(world)
+    driver.goto("dispenser-2")
+    driver.press("dispenser-2", 0.3)
+    driver.goto("cooker-2")                # FryingPan
+    driver.press("cooker-2", 0.35)
+    checks.hard("wrong_cooker_type_rejected",
+                bool(world.rejected) and
+                world.rejected[-1]["reason"] == "wrong-cooker-type" and
+                world.holding_name(0) == "Rice" and
+                world.cooker_state["cooker-2"]["item"] is None,
+                "rejects=%s holding=%r" % (world.rejected[-1:],
+                                           world.holding_name(0)))
+    driver.goto("cooker-4")                # Pot
+    driver.press("cooker-4", 0.35)
+    checks.hard("pot_accepts_rice",
+                world.cooker_state["cooker-4"]["state"] == "cooking" and
+                world.holding_name(0) == "",
+                "state=%s holding=%r" % (world.cooker_state["cooker-4"]["state"],
+                                         world.holding_name(0)))
+
+    # 5) 12.1 s 熟、继续加热 20 s 烧焦 [推断]
+    world = _demo3_world(stations, orders=orders)
+    driver = _Demo3Driver(world)
+    driver.goto("dispenser-2")
+    driver.press("dispenser-2", 0.3)
+    driver.goto("cooker-4")
+    driver.press("cooker-4", 0.35)
+    started = world.cooker_state["cooker-4"]["started_ms"]
+    driver.wait(int(_demo3.COOK_TIME_MS - 250 - (world.game_ms - started)))
+    checks.hard("not_cooked_before_12_1s",
+                world.cooker_state["cooker-4"]["state"] == "cooking",
+                "熟前 0.25 s: state=%s" % world.cooker_state["cooker-4"]["state"])
+    driver.wait(int(250 + (started + _demo3.COOK_TIME_MS - world.game_ms)))
+    checks.hard("cooked_at_12_1s",
+                world.cooker_state["cooker-4"]["state"] == "cooked",
+                "熟后: state=%s" % world.cooker_state["cooker-4"]["state"])
+    pot = world.resources()["pot_4"]
+    checks.hard("cooked_leaf_has_prefix", pot["contents"] == ["cooked:Rice"],
+                "pot_4.contents=%s" % pot["contents"])
+    burn_at = started + _demo3.COOK_TIME_MS + _demo3.BURN_TIME_MS
+    driver.wait(int(burn_at - 300 - world.game_ms))
+    checks.hard("not_burning_before_burn_time",
+                world.cooker_state["cooker-4"]["state"] == "cooked",
+                "烧焦前 0.3 s: state=%s" % world.cooker_state["cooker-4"]["state"])
+    driver.wait(int(burn_at - world.game_ms + 200))
+    checks.hard("burning_after_burn_time",
+                world.cooker_state["cooker-4"]["state"] == "burning",
+                "烧焦后: state=%s（BURN_TIME_MS=%d，[推断]）" %
+                (world.cooker_state["cooker-4"]["state"], _demo3.BURN_TIME_MS))
+
+    # 6) 倒料：锅留在手上，料进玉米饼；锅回灶后手空
+    world = _demo3_world(stations, orders=orders, clean_plates=2)
+    driver = _Demo3Driver(world)
+    driver.goto("dispenser-1")
+    driver.press("dispenser-1", 0.3)
+    driver.goto("counter-0")
+    driver.press("counter-0", 0.35)
+    world.cooker_state["cooker-4"]["item"] = _demo3.Item("Rice", cooked=True)
+    world.cooker_state["cooker-4"]["state"] = "cooked"
+    world.cooker_state["cooker-4"]["started_ms"] = world.game_ms - 12300
+    driver.goto("cooker-4")
+    driver.press("cooker-4", 0.35)
+    checks.hard("took_cooked_pot",
+                world.holding_name(0) == "utensil_pot_01" and
+                world.cooker_state["cooker-4"]["utensil"] is None,
+                "holding=%r stove utensil=%r" %
+                (world.holding_name(0), world.cooker_state["cooker-4"]["utensil"]))
+    driver.goto("counter-0")
+    driver.press("counter-0", 0.35)
+    tortilla = world.counter_state["counter-0"]["item"]
+    checks.hard("pour_keeps_pot_in_hand",
+                world.holding_name(0) == "utensil_pot_01",
+                "holding=%r" % world.holding_name(0))
+    checks.hard("pour_moves_contents_into_tortilla",
+                bool(world.pour_events) and
+                [item.name for item in tortilla.contents] == ["Rice"] and
+                tortilla.contents[0].cooked,
+                "tortilla=%s pours=%s" %
+                ([item.describe() for item in tortilla.contents], world.pour_events))
+    driver.goto("cooker-4")
+    driver.press("cooker-4", 0.35)
+    checks.hard("pot_returns_to_stove",
+                world.holding_name(0) == "" and
+                world.cooker_state["cooker-4"]["utensil"] == "utensil_pot_01",
+                "holding=%r utensil=%r" %
+                (world.holding_name(0), world.cooker_state["cooker-4"]["utensil"]))
+
+    # 7) 交付：盘到传菜口 0.5 s 后消失并加分
+    world = _demo3_world(stations, orders=orders, clean_plates=2)
+    driver = _Demo3Driver(world)
+    world.board_state["board-0"]["item"] = _demo3.Item("ChoppedSushiPrawn")
+    world.board_state["board-0"]["progress"] = 1.0
+    driver.step("goto", "board-0")
+    driver.step("pickup", "board-0")
+    driver.step("goto", "plate_stack-0")
+    driver.step("drop", "plate_stack-0")
+    driver.step("pickup", "plate_stack-0")
+    driver.step("goto", "serving-0")
+    driver.press("serving-0", 0.35)
+    score_now = world.score
+    driver.wait(350)
+    checks.hard("delivery_scores_after_0_5s", score_now == 0 and world.score == 20,
+                "按下后 score=%d，0.5 s 后 score=%d（期望 0 → 20）" %
+                (score_now, world.score))
+    checks.hard("delivery_records_result",
+                world.order_results and
+                world.order_results[-1]["outcome"] == "delivered" and
+                world.order_results[-1]["score"] == 20,
+                "results=%s" % world.order_results)
+
+    # 8) 过期：扣分；之后同样的菜再交付只记 failed、不再加分
+    expired_orders = _demo3.order_schedule(["Sushi_PlainPrawn"], timeout_s=1, slots=1)
+    world = _demo3_world(stations, orders=expired_orders, clean_plates=2)
+    driver = _Demo3Driver(world)
+    driver.wait(1200)
+    checks.hard("expired_order_penalised",
+                bool(world.expired) and world.score == -world.expire_penalty,
+                "expired=%s score=%d penalty=%d" %
+                ([entry["recipe"] for entry in world.expired], world.score,
+                 world.expire_penalty))
+    world.board_state["board-0"]["item"] = _demo3.Item("ChoppedSushiPrawn")
+    world.board_state["board-0"]["progress"] = 1.0
+    driver.step("goto", "board-0")
+    driver.step("pickup", "board-0")
+    driver.step("goto", "plate_stack-0")
+    driver.step("drop", "plate_stack-0")
+    driver.step("pickup", "plate_stack-0")
+    driver.step("goto", "serving-0")
+    score_before = world.score
+    driver.press("serving-0", 0.35)
+    checks.hard("pass_still_accepts_the_plate",
+                world.holding_name(0) == "" and bool(world.pass_pending),
+                "holding=%r pass_pending=%s" %
+                (world.holding_name(0), world.pass_pending))
+    driver.wait(600)
+    checks.hard("late_delivery_not_scored", world.score == score_before,
+                "交付前 score=%d，0.5 s 后 score=%d" % (score_before, world.score))
+    checks.hard("late_delivery_reported_failed",
+                world.delivered_expired and
+                world.order_results[-1]["outcome"] == "failed",
+                "delivered_expired=%s results=%s" %
+                (world.delivered_expired, world.order_results[-2:]))
+
+    # 9) G1/G2 上报开关：旧行为、修好后的字段
+    world = _demo3_world(stations, orders=orders)
+    resources = world.resources()
+    checks.hard("fixed_pot_keys_match_stove_slots",
+                all("pot_%d" % index in resources for index in range(6)) and
+                resources["pot_4"]["state"] == "empty" and
+                "step" not in resources["pot_4"],
+                "pot keys=%s pot_4=%s（空灶台省略 step）" %
+                ([key for key in resources if key.startswith("pot_")],
+                 resources.get("pot_4")))
+    checks.hard("fixed_plate_stack_count", resources.get("plate_stack", {}).get("count") == 5,
+                "plate_stack=%s" % resources.get("plate_stack"))
+    checks.hard("resource_has_pos_and_kind",
+                all("pos" in payload and "kind" in payload
+                    for payload in resources.values()),
+                "bad=%s" % [key for key, payload in resources.items()
+                            if "pos" not in payload or "kind" not in payload][:3])
+    world.cooker_state["cooker-4"]["item"] = _demo3.Item("Rice")
+    world.cooker_state["cooker-4"]["state"] = "cooking"
+    world.holdings[0] = _demo3.Item("utensil_pot_01",
+                                    contents=[_demo3.Item("Rice", cooked=True)])
+    world.counter_state["counter-0"]["item"] = _demo3.Item(
+        "Tortilla", container=True,
+        contents=[_demo3.Item("BurritoChoppedChicken", cooked=True)])
+    resources = world.resources()
+    checks.hard("carried_resource_for_pot_in_hand",
+                resources.get("carried_0", {}).get("item") == "utensil_pot_01" and
+                resources["carried_0"]["chef_id"] == 0 and
+                resources["carried_0"]["contents"] == ["cooked:Rice"],
+                "carried_0=%s" % resources.get("carried_0"))
+    checks.hard("occupied_counter_reported_with_pos",
+                resources.get("counter_0", {}).get("item") == "Tortilla" and
+                resources["counter_0"]["contents"] == ["cooked:BurritoChoppedChicken"] and
+                "pos" in resources["counter_0"],
+                "counter_0=%s" % resources.get("counter_0"))
+    message = json.loads(world.message(1, 0, kitchen["grid"]["cells"], world.game_ms))
+    checks.hard("message_has_new_protocol_fields",
+                {"round_time_left", "round_time_limit", "order_results"} <=
+                set(message) and
+                message["orders"][0].get("score") == 20 and
+                message["chefs"][0].get("holding_contents") == ["cooked:Rice"],
+                "keys=%s order=%s chef=%s" %
+                (sorted(message), message["orders"][:1], message["chefs"][:1]))
+    legacy = _demo3.Demo3Rules(legacy_pot_keys=True, plate_stack_reported=False)
+    world = _demo3_world(stations, rules=legacy, orders=orders)
+    world.cooker_state["cooker-4"]["item"] = _demo3.Item("Rice")
+    world.cooker_state["cooker-4"]["state"] = "cooking"
+    resources = world.resources()
+    checks.hard("legacy_pot_keys_are_enumeration_index",
+                "pot_4" not in resources and "pot_0" in resources and
+                resources["pot_0"]["pos"]["x"] == 6.6,
+                "pot keys=%s" % [key for key in resources if key.startswith("pot_")])
+    checks.hard("legacy_mode_omits_plate_stack", "plate_stack" not in resources,
+                "keys=%s" % sorted(resources))
+
+    return ("规则断言通过：按键 2 次/意图、切菜 8 格 1.7 s 且要朝向、锅类型与 12.1 s 熟、"
+            "20 s 烧焦 [推断]、倒料锅仍在手、盘堆转交顶盘、生料不能上盘、0.5 s 交付、"
+            "过期扣分且晚交不加分、G1/G2 上报开关")
+
+
+def scenario_demo3_sushi_1chef(ctx, checks):
+    """任务 09 的 P0 验收：1 个厨师、Sushi_PlainFish、系统控制完成一单、得分 > 0。
+
+    依赖修正后的 `plate`（把整份菜放到盘堆上再取盘）。本分支的 macro 还是"先取盘"，
+    这条场景会以 `plate_stack 第一次按键就是 took-plate` 与 deliver 超时失败。
+    """
+    chefs = 1
+    kitchen = _demo3.demo3_kitchen(clean_plates=5)
+    recipes = _demo3.build_recipes(dishes=["Sushi_PlainFish"])
+    order_spec = _demo3.order_schedule(["Sushi_PlainFish"], timeout_s=90, slots=1)
+    positions = [[3.0, -7.2]]        # 鱼箱 dispenser-6 (7.8,-8.4) 的站位格
+
+    stop = _demo3_stop_after(
+        lambda state: bool(state.delivered or state.expired), 2000, 45000)
+
+    result = _demo3_run(ctx, checks, "sushi", chefs=chefs, kitchen=kitchen,
+                        recipes=recipes, order_spec=order_spec, duration=50.0,
+                        positions=positions, stop_when=stop)
+    world = result["world"]
+    rows = result["rows"]
+    events = result["events"]
+    checks.note("sushi_sim", json.dumps(world.summary(), ensure_ascii=False))
+    checks.note("sushi_macro_failed",
+                "; ".join(row["detail"] for row in _demo3_failed(rows)) or "none")
+    checks.hard("sushi_score_positive", world.score > 0,
+                "score=%d delivered=%s expired=%s" %
+                (world.score, world.summary()["delivered"], world.summary()["expired"]))
+    completed = [event for event in events if event.get("event") == "order_completed"]
+    checks.hard("sushi_order_completed_event", bool(completed),
+                "order_completed=%s" % completed[:1])
+    checks.hard("sushi_sim_recorded_delivery",
+                [entry["dish"] for entry in world.delivered] == ["Sushi_PlainFish"],
+                "delivered=%s" % world.delivered)
+    plate_presses = [entry for entry in world.presses
+                     if entry["station"] == "plate_stack-0"
+                     and entry["effect"] != "skipped-second"]
+    checks.hard("sushi_plate_step_places_then_takes",
+                bool(plate_presses) and
+                plate_presses[0]["effect"].startswith("stacked-") and
+                any(entry["effect"] == "took-plate" for entry in plate_presses),
+                "盘堆按键=%s（修正后的 plate 第一下应是把菜放上去）" %
+                [entry["effect"] for entry in plate_presses])
+    failures = _demo3_failed(rows)
+    # P0 的验收是"完成一单、得分 > 0"；干净链路（不靠 macro 失败回队重试）是更严的
+    # 指标：现在 HEAD 的 plate 还是"先取盘"，第一次按会把手里的菜放到盘堆上再超时，
+    # 靠重派第二次才拿到盘。该项只记 soft，整合 manual-flow 的修正 plate 后应为 0 次。
+    checks.soft("sushi_clean_macro_chain",
+                not [row for row in failures if "timeout" in row["detail"]],
+                "macro_failed=%s（旧 plate 会先取盘；修好后这条应为空）"
+                % [(row["macro"], row["detail"]) for row in failures[:3]])
+    checks.hard("sushi_all_steps_ran",
+                {"goto", "pickup", "drop", "chop"} <= _demo3_started(rows),
+                "started=%s" % sorted(_demo3_started(rows)))
+    return ("score=%d delivered=%s; macro_failed=%s" %
+            (world.score, world.summary()["delivered"],
+             [(row["macro"], row["detail"]) for row in failures[:2]] or "none"))
+
+
+def scenario_demo3_4chef_5dish(ctx, checks):
+    """4 个厨师、`_3` 的 5 道菜各交付至少一次、得分 > 0、无过期、无宏超时、4 人都被驱动。
+
+    需要 pour / counter / 修正后的 plate（manual-flow 分支）。本分支会在第一个
+    `place` / `pour` 节点上报宏计划失败；失败信息里会点名。
+    """
+    chefs = ctx.args.chefs or 4
+    kitchen = _demo3.demo3_kitchen(clean_plates=5)
+    recipes = _demo3.build_recipes()
+    order_spec = _demo3.order_schedule(_demo3.MENU, timeout_s=60, slots=3)
+    positions = [list(cell) for cell in _demo3.SPAWNS]
+
+    stop = _demo3_stop_after(
+        lambda state: len(state.delivered) >= len(_demo3.MENU), 3000, 120000)
+
+    result = _demo3_run(ctx, checks, "five", chefs=chefs, kitchen=kitchen,
+                        recipes=recipes, order_spec=order_spec, duration=150.0,
+                        positions=positions, stop_when=stop)
+    world = result["world"]
+    rows = result["rows"]
+    events = result["events"]
+    decisions = result["decisions"]
+    failures = _demo3_failed(rows)
+    checks.note("five_sim", json.dumps(world.summary(), ensure_ascii=False))
+    checks.note("five_rejections",
+                json.dumps(world.rejected[:10], ensure_ascii=False))
+
+    delivered = [entry["dish"] for entry in world.delivered]
+    checks.hard("five_each_dish_delivered_once",
+                set(delivered) >= set(_demo3.MENU),
+                "delivered=%s expected=%s" % (delivered, _demo3.MENU))
+    checks.hard("five_score_positive", world.score > 0, "score=%d" % world.score)
+    checks.hard("five_no_expired_order",
+                not world.expired and
+                not [entry for entry in world.order_results
+                     if entry["outcome"] == "expired"],
+                "expired=%s results=%s" %
+                ([entry["recipe"] for entry in world.expired],
+                 world.order_results[-4:]))
+    checks.hard("five_no_macro_timeout",
+                not [row for row in failures if "timeout" in row["detail"]],
+                "macro_failed=%s" %
+                [(row["macro"], row["detail"]) for row in failures[:4]])
+
+    dispatched = [event for event in events if event.get("event") == "task_dispatched"]
+    chef_ids = {event.get("chef_id") for event in dispatched}
+    checks.hard("five_all_chefs_driven", chef_ids >= set(range(chefs)),
+                "dispatch chefs=%s" % sorted(chef_ids))
+    per_chef_rows = {}
+    for chef in range(chefs):
+        path = (ctx.runtime_dir / "logs" / ("worker-%d.log" % chef)
+                if ctx.runtime_dir else None)
+        per_chef_rows[chef] = _macro_log_rows(path) if path else []
+    checks.hard("five_each_chef_runs_a_macro",
+                all(any(row["event"] == "start" for row in rows_chef)
+                    for rows_chef in per_chef_rows.values()),
+                "macro starts per chef=%s" %
+                {chef: sum(1 for row in rows_chef if row["event"] == "start")
+                 for chef, rows_chef in per_chef_rows.items()})
+
+    # "有活却闲着"的粗指标：某条派工决策发生时 ready_tasks>1（还有别的就绪工序），
+    # 而某个厨师距上一次拿到活已经超过 N 秒。4 人局里这能抓到"整局没活干"的厨师。
+    last_dispatch = {}
+    max_gap = 0.0
+    idle_chef = None
+    for decision in decisions:
+        if decision.get("kind") != "dispatch":
+            continue
+        chef = decision.get("chef_id")
+        t_ms = decision.get("t_ms") or 0
+        if (decision.get("ready_tasks") or 0) > 1:
+            for other, last in last_dispatch.items():
+                if other == chef:
+                    continue
+                gap = (t_ms - last) / 1000.0
+                if gap > max_gap:
+                    max_gap, idle_chef = gap, other
+        last_dispatch[chef] = t_ms
+    checks.hard("five_no_long_idle_chef", max_gap <= 20.0,
+                "最长'有工序就绪但没派给他'=%.1fs chef=%s（上限 20 s）" %
+                (max_gap, idle_chef))
+
+    completed_ids = [event.get("order_id") for event in events
+                     if event.get("event") == "order_completed"]
+    delivered_ids = {entry["order_id"] for entry in world.delivered}
+    checks.hard("five_no_false_completion",
+                set(completed_ids) <= delivered_ids,
+                "order_completed=%s sim delivered ids=%s" %
+                (completed_ids, sorted(delivered_ids)))
+    checks.hard("five_no_pour_dispatch_warnings",
+                not [event for event in events
+                     if event.get("event") in ("pour_source_missing",
+                                               "pour_ambiguous_cooker")],
+                "pour warnings=%s" %
+                [event for event in events
+                 if event.get("event", "").startswith("pour_")][:3])
+    return ("score=%d delivered=%s expired=%s macro_failed=%s dispatch=%d chefs=%s "
+            "max_gap=%.1fs" %
+            (world.score, delivered, world.summary()["expired"],
+             [(row["macro"], row["detail"]) for row in failures[:3]] or "none",
+             len(dispatched), sorted(chef_ids), max_gap))
+
+
+def scenario_demo3_regress_goto_drift(ctx, checks):
+    """转身漂移 0.3 m：navd 的 0.3 m 到站判定会从 arrived 翻回 moving。
+
+    fix3 的失败是 macro 在这时退回 navigate，Worker 发 stop 顶掉 face，最后
+    `goto wait=arrived+face timeout`。这里让模型在第一次转身时把厨师推离格心
+    0.34 m（略超 0.3 m 的判定圈），断言 goto 仍然完成、切菜做完。
+    """
+    kitchen = _demo3.demo3_kitchen(clean_plates=2)
+    recipes = _demo3.linear_recipes("ChoppedPrawn", [
+        {"node_id": "fetch:SushiPrawn", "op": "fetch", "label": "SushiPrawn",
+         "resource": "dispenser", "ingredient": "sushiprawn"},
+        {"node_id": "cut:ChoppedSushiPrawn", "op": "cut", "label": "ChoppedSushiPrawn",
+         "resource": "board", "duration": 1.7},
+    ], score=10)
+    rules = _demo3.Demo3Rules(turn_drift=0.34)
+    order_spec = _demo3_order("ChoppedPrawn", timeout_s=60)
+
+    # 提前停止：切完（板上有切好的料）或到点（失败重试留给断言看日志）
+    def stop(world):
+        board = world.board_state["board-0"]
+        return (board["item"] is not None and board["item"].name == "ChoppedSushiPrawn") \
+            or world.game_ms >= 22000
+
+    result = _demo3_run(ctx, checks, "drift", chefs=1, kitchen=kitchen,
+                        recipes=recipes, order_spec=order_spec, duration=25.0,
+                        rules=rules, positions=[[3.0, -7.2]], stop_when=stop)
+    world = result["world"]
+    rows = result["rows"]
+    checks.note("drift_events", json.dumps(world.drift_events[:3]))
+    checks.hard("drift_observed", bool(world.drift_events),
+                "drift_events=%d（期望 ≥1）" % len(world.drift_events))
+    face_timeouts = [row for row in _demo3_failed(rows)
+                     if "arrived+face" in row["detail"]]
+    checks.hard("drift_no_arrive_face_timeout", not face_timeouts,
+                "goto 超时=%s" % [(row["macro"], row["detail"]) for row in face_timeouts[:2]])
+    cut = [row for row in rows if row["event"] == "done" and row["macro"] == "chop"]
+    checks.hard("drift_cut_completed", bool(cut) and
+                world.holding_name(0) == "ChoppedSushiPrawn",
+                "chop done=%s holding=%r" % (cut[:1], world.holding_name(0)))
+    checks.hard("drift_no_macro_failure", not _demo3_failed(rows),
+                "macro_failed=%s" % [(row["macro"], row["detail"])
+                                     for row in _demo3_failed(rows)[:3]])
+    return ("drift=%s; cut=%s; macro_failed=%s" %
+            (world.drift_events[:1], bool(cut),
+             [(row["macro"], row["detail"]) for row in _demo3_failed(rows)[:2]] or "none"))
+
+
+def scenario_demo3_regress_grid_offset(ctx, checks):
+    """`_3` 网格原点错半格：按 crate 所在格交互，拿到邻格的箱子。
+
+    实机 fix2 前的症状：厨师站在 Rice/Fish 箱前，第一下拿到的是邻格料；宏的
+    pickup 等 `holding` 超时。这里用 grid_offset=(0.6,0) 复现（导航仍是真实网格）。
+    修好（offset 0）后再跑一遍，断言拿到正确料。
+    """
+    kitchen = _demo3.demo3_kitchen(clean_plates=2)
+    recipes = _demo3.linear_recipes("SushiPrawnDish", [
+        {"node_id": "fetch:SushiPrawn", "op": "fetch", "label": "SushiPrawn",
+         "resource": "dispenser", "ingredient": "sushiprawn"},
+    ], score=10)
+    order_spec = _demo3_order("SushiPrawnDish", timeout_s=60)
+    positions = [[0.6, -7.2]]
+
+    bug_rules = _demo3.Demo3Rules(grid_offset=(0.6, 0.0), turn_drift=0.0)
+    result = _demo3_run(ctx, checks, "offset-bug", chefs=1, kitchen=kitchen,
+                        recipes=recipes, order_spec=order_spec, duration=12.0,
+                        rules=bug_rules, positions=positions,
+                        stop_when=lambda world: world.game_ms >= 10000)
+    world = result["world"]
+    bug_rows = result["rows"]
+    first = next((entry for entry in world.presses
+                  if entry["station"] is not None and entry["effect"] != "skipped-second"),
+                 None)
+    checks.hard("offset_takes_neighbour_crate",
+                first is not None and first["station"] == "dispenser-1" and
+                first.get("holding_after") == "Tortilla",
+                "第一次按键：station=%s holding=%s（期望 dispenser-1 / Tortilla）" %
+                (first and first["station"], first and first.get("holding_after")))
+    details = _demo3_detail(bug_rows, "pickup")
+    checks.hard("offset_macro_reports_pickup_timeout",
+                bool([detail for detail in details if "wait=holding" in detail]),
+                "macro=pickup detail=%s" % details[:2])
+
+    fixed_rules = _demo3.Demo3Rules(turn_drift=0.0)
+    result = _demo3_run(ctx, checks, "offset-fixed", chefs=1, kitchen=kitchen,
+                        recipes=recipes, order_spec=order_spec, duration=12.0,
+                        rules=fixed_rules, positions=positions,
+                        stop_when=lambda world: world.holding_name(0) == "SushiPrawn"
+                        or world.game_ms >= 10000)
+    world = result["world"]
+    rows = result["rows"]
+    checks.hard("offset_fixed_takes_right_crate",
+                world.holding_name(0) == "SushiPrawn",
+                "holding=%r" % world.holding_name(0))
+    checks.hard("offset_fixed_pickup_done",
+                "pickup" in _demo3_done(rows) and not _demo3_failed(rows),
+                "done=%s failed=%s" % (sorted(_demo3_done(rows)),
+                                       [(row["macro"], row["detail"])
+                                        for row in _demo3_failed(rows)[:2]]))
+    return ("bug: first press station=%s holding=%s, pickup detail=%s; fixed: holding=%r" %
+            (first and first["station"], first and first.get("holding_after"),
+             details[:1], world.holding_name(0)))
+
+
+def scenario_demo3_regress_double_pick(ctx, checks):
+    """盲按第二下（旧 ActionDriver）：放下又拿回、箱子里换一件。
+
+    进程内场景，复现 fix2 的两处症状：一次交互意图按两下（0 ms / 600 ms）；
+    第一下已经改变了手持物时，旧插件仍会在 600 ms 补按——
+      * 砧板：放下料 → 又拿回手上，`drop wait=empty-hand` 永远等不到；
+      * 料箱：拿起 → 又换一次（双拿）。
+    修好的 ActionDriver 在第一下之后比较手持物，直接跳过第二下（`retry_guard`）。
+    """
+    kitchen = _demo3.demo3_kitchen(clean_plates=2)
+    stations = kitchen["stations"]
+    orders = _demo3.order_schedule(["ChoppedPrawn"], timeout_s=600)
+
+    blind = _demo3.Demo3Rules(retry_guard=False)
+    world = _demo3_world(stations, rules=blind, orders=orders, clean_plates=2)
+    driver = _Demo3Driver(world)
+    driver.goto("dispenser-0")
+    driver.press("dispenser-0", 0.3)      # 先拿一件料
+    driver.step("goto", "board-0")
+    driver.press("board-0", 1.2)          # 旧插件：放下 + 600 ms 再按
+    board_presses = [(entry["second"], entry["effect"]) for entry in world.presses
+                     if entry["station"] == "board-0"]
+    checks.hard("blind_retry_places_then_picks_back",
+                ("False" if False else False) or
+                [effect for _, effect in board_presses][:2] == ["placed", "picked"],
+                "砧板按键=%s" % board_presses)
+    checks.hard("blind_retry_holding_is_not_empty",
+                world.holding_name(0) == "SushiPrawn",
+                "holding=%r（drop 的完成条件等不到）" % world.holding_name(0))
+    driver.goto("dispenser-0")
+    world.presses = []
+    driver.press("dispenser-0", 1.2)
+    crate_presses = [(entry["second"], entry["effect"]) for entry in world.presses
+                     if entry["station"] == "dispenser-0"]
+    checks.hard("blind_retry_represses_the_crate",
+                any(effect == "swapped" for _, effect in crate_presses),
+                "料箱按键=%s（旧插件 600 ms 补按=再换一次）" % crate_presses)
+
+    guarded = _demo3.Demo3Rules(retry_guard=True)
+    world = _demo3_world(stations, rules=guarded, orders=orders, clean_plates=2)
+    driver = _Demo3Driver(world)
+    driver.goto("dispenser-0")
+    driver.press("dispenser-0", 0.3)
+    driver.step("goto", "board-0")
+    driver.press("board-0", 1.2)
+    board_presses = [(entry["second"], entry["effect"]) for entry in world.presses
+                     if entry["station"] == "board-0"]
+    checks.hard("guarded_retry_does_not_pick_back",
+                [effect for _, effect in board_presses][:2] ==
+                ["placed", "skipped-second"],
+                "砧板按键=%s（第一下已生效，不再补按）" % board_presses)
+    checks.hard("guarded_retry_item_stays_on_board",
+                world.holding_name(0) == "" and
+                world.board_state["board-0"]["item"] is not None,
+                "holding=%r board=%r" %
+                (world.holding_name(0),
+                 world.board_state["board-0"]["item"]))
+    driver.goto("dispenser-0")
+    world.presses = []
+    driver.press("dispenser-0", 1.2)
+    crate_presses = [(entry["second"], entry["effect"]) for entry in world.presses
+                     if entry["station"] == "dispenser-0"]
+    checks.hard("guarded_retry_crate_presses_once",
+                [entry for entry in crate_presses if entry[1] != "skipped-second"]
+                == [(False, "took")],
+                "料箱按键=%s（期望只按一下）" % crate_presses)
+    return ("blind board=%s crate=%s; guarded board=%s crate=%s" %
+            (board_presses, crate_presses, board_presses, crate_presses))
+
+
+def scenario_demo3_regress_empty_pots(ctx, checks):
+    """G1：空锅不进帧、有料的锅按枚举下标编号 → 灶台 cooker-1 的锅报成 pot_0，
+    `start_cook` 找 pot_1 报 `no-station-resource`（fix8 的症状）。
+
+    小厨房里有两口锅：cooker-0 是空炸锅（x=-3.0），cooker-1 是汤锅（x=6.6）。
+    legacy_pot_keys=True 时只发有料的锅（pot_0，位置在 6.6），macro 按 cooker-1 → pot_1
+    找不到；legacy_pot_keys=False 时 pot_0/pot_1 都在，pot_0 state=empty。
+    """
+    kitchen = _demo3_reduced_kitchen()
+    recipes = _demo3_cook_recipe(step="Pot")
+    order_spec = _demo3_order("BoiledRice_Dish", timeout_s=60)
+    positions = [[3.0, -7.2]]
+
+    legacy = _demo3.Demo3Rules(legacy_pot_keys=True)
+    result = _demo3_run(ctx, checks, "pots-legacy", chefs=1, kitchen=kitchen,
+                        recipes=recipes, order_spec=order_spec, duration=16.0,
+                        rules=legacy, positions=positions,
+                        stop_when=lambda world: world.game_ms >= 14000)
+    world = result["world"]
+    rows = result["rows"]
+    keys = [key for key in world.resources() if key.startswith("pot_")]
+    checks.hard("legacy_empty_pots_not_reported",
+                keys == ["pot_0"] and
+                world.resources()["pot_0"]["pos"]["x"] == 6.6,
+                "pot keys=%s（期望只有有料的 pot_0，位置 6.6）" % keys)
+    details = _demo3_detail(rows, "start_cook")
+    checks.hard("legacy_start_cook_no_station_resource",
+                bool([detail for detail in details if "no-station-resource" in detail]),
+                "macro=start_cook detail=%s" % details[:2])
+
+    fixed = _demo3.Demo3Rules()
+    result = _demo3_run(ctx, checks, "pots-fixed", chefs=1, kitchen=kitchen,
+                        recipes=recipes, order_spec=order_spec, duration=16.0,
+                        rules=fixed, positions=positions,
+                        stop_when=lambda world:
+                        world.cooker_state["cooker-1"]["state"] == "cooking"
+                        or world.game_ms >= 14000)
+    world = result["world"]
+    rows = result["rows"]
+    resources = world.resources()
+    checks.hard("fixed_empty_stove_reported",
+                resources.get("pot_0", {}).get("state") == "empty" and
+                resources.get("pot_0", {}).get("pos", {}).get("x") == -3.0,
+                "pot_0=%s" % resources.get("pot_0"))
+    checks.hard("fixed_start_cook_finds_pot_1",
+                "start_cook" in _demo3_done(rows) and not _demo3_failed(rows),
+                "done=%s failed=%s" %
+                (sorted(_demo3_done(rows)),
+                 [(row["macro"], row["detail"]) for row in _demo3_failed(rows)[:2]]))
+    checks.hard("fixed_pot_1_is_the_stove_with_rice",
+                resources.get("pot_1", {}).get("state") == "cooking" and
+                resources.get("pot_1", {}).get("pos", {}).get("x") == 6.6,
+                "pot_1=%s" % resources.get("pot_1"))
+    return ("legacy keys=%s start_cook detail=%s; fixed pot_0=%s pot_1=%s" %
+            (keys, details[:1], resources.get("pot_0", {}).get("state"),
+             resources.get("pot_1", {}).get("state")))
+
+
+def scenario_demo3_regress_plate_stack_count(ctx, checks):
+    """G2：`plate_stack.count` 不进帧 → 调度器的干净盘计数恒 0（`ClientCleanPlateStack
+    .GetSize()` 不存在）。盘堆只放 1 只盘、脏盘 2 只，洗盘会被生成：
+    legacy 的 `wash_generated clean_plates=0`，修好后是 1。
+    """
+    kitchen = _demo3.demo3_kitchen(clean_plates=1)
+    recipes = _demo3.build_recipes(dishes=[])
+    order_spec = _demo3.order_schedule([], slots=0)
+    positions = [[11.4, -2.4]]
+
+    legacy = _demo3.Demo3Rules(plate_stack_reported=False)
+    result = _demo3_run(ctx, checks, "count-legacy", chefs=1, kitchen=kitchen,
+                        recipes=recipes, order_spec=order_spec, duration=12.0,
+                        rules=legacy, positions=positions, clean_plates=1,
+                        dirty_plates=2,
+                        stop_when=lambda world: len(world.plates) > 1 or
+                        world.game_ms >= 10000)
+    world = result["world"]
+    events = result["events"]
+    rows = result["rows"]
+    checks.hard("legacy_frames_omit_plate_stack",
+                "plate_stack" not in world.resources(),
+                "keys=%s" % sorted(world.resources()))
+    wash = [event for event in events if event.get("event") == "wash_generated"]
+    checks.hard("legacy_scheduler_sees_zero_clean_plates",
+                bool(wash) and wash[0].get("clean_plates") == 0,
+                "wash_generated=%s（期望 clean_plates=0）" % wash[:1])
+    legacy_plates = len(world.plates)
+    legacy_wash = wash[:1]
+    checks.hard("legacy_wash_still_completes",
+                "wash" in _demo3_done(rows) and legacy_plates >= 2,
+                "plate count=%d macro done=%s" % (legacy_plates,
+                                                  sorted(_demo3_done(rows))))
+
+    fixed = _demo3.Demo3Rules()
+    result = _demo3_run(ctx, checks, "count-fixed", chefs=1, kitchen=kitchen,
+                        recipes=recipes, order_spec=order_spec, duration=12.0,
+                        rules=fixed, positions=positions, clean_plates=1,
+                        dirty_plates=2,
+                        stop_when=lambda world: len(world.plates) > 1 or
+                        world.game_ms >= 10000)
+    world = result["world"]
+    events = result["events"]
+    checks.hard("fixed_frame_reports_clean_count",
+                result["initial_resources"].get("plate_stack", {}).get("count") == 1,
+                "plate_stack=%s（起始 1 只）" %
+                result["initial_resources"].get("plate_stack"))
+    wash = [event for event in events if event.get("event") == "wash_generated"]
+    checks.hard("fixed_scheduler_sees_one_clean_plate",
+                bool(wash) and wash[0].get("clean_plates") == 1,
+                "wash_generated=%s（期望 clean_plates=1）" % wash[:1])
+    fixed_plates = len(world.plates)
+    fixed_wash = wash[:1]
+    checks.hard("fixed_wash_adds_a_plate",
+                fixed_plates >= 2,
+                "plate count=%d" % fixed_plates)
+    return ("legacy wash=%s plates=%d; fixed wash=%s plates=%d" %
+            (legacy_wash, legacy_plates, fixed_wash, fixed_plates))
+
+
+def scenario_demo3_regress_cooker_type(ctx, checks):
+    """锅类型不匹配：米被派到炸锅（DeepFatFryer）游戏不收 → `drop wait=empty-hand timeout`。
+
+    旧工序图没有 cook 节点的 `step`，`pick_cooker_station` 不限类型；这里的小厨房
+    工位数组顺序让 cook 任务的候选起点落在 cooker-0（炸锅）。补上 step=Pot 后同一
+    厨房派到 cooker-1（汤锅），start_cook 完成。
+    """
+    kitchen = _demo3_reduced_kitchen()
+    order_spec = _demo3_order("BoiledRice_Dish", timeout_s=60)
+    positions = [[3.0, -7.2]]
+
+    legacy = _demo3.Demo3Rules()
+    rejected_at = {}
+
+    def legacy_stop(world):
+        if world.rejected and "t" not in rejected_at:
+            rejected_at["t"] = world.game_ms
+        return ("t" in rejected_at and world.game_ms >= rejected_at["t"] + 2200) \
+            or world.game_ms >= 16000
+
+    result = _demo3_run(ctx, checks, "type-legacy", chefs=1, kitchen=kitchen,
+                        recipes=_demo3_cook_recipe(step=""), order_spec=order_spec,
+                        duration=18.0, rules=legacy, positions=positions,
+                        stop_when=legacy_stop)
+    world = result["world"]
+    rows = result["rows"]
+    events = result["events"]
+    cook_dispatch = [event for event in events
+                     if event.get("event") == "task_dispatched" and
+                     event.get("node") == "cook:BoiledRice"]
+    checks.hard("legacy_dispatches_rice_to_fryer",
+                bool(cook_dispatch) and
+                cook_dispatch[0].get("station") == "cooker-0",
+                "cook dispatch=%s" % [entry.get("station") for entry in cook_dispatch])
+    checks.hard("legacy_game_rejects_wrong_cooker",
+                bool(world.rejected) and
+                world.rejected[0]["reason"] == "wrong-cooker-type" and
+                world.rejected[0]["station"] == "cooker-0",
+                "rejects=%s" % world.rejected[:2])
+    details = _demo3_detail(rows, "drop")
+    legacy_rejects = list(world.rejected)
+    legacy_stations = [entry.get("station") for entry in cook_dispatch]
+    checks.hard("legacy_macro_reports_drop_timeout",
+                bool([detail for detail in details if "wait=empty-hand" in detail]),
+                "macro=drop detail=%s" % details[:2])
+
+    fixed = _demo3.Demo3Rules()
+    result = _demo3_run(ctx, checks, "type-fixed", chefs=1, kitchen=kitchen,
+                        recipes=_demo3_cook_recipe(step="Pot"), order_spec=order_spec,
+                        duration=18.0, rules=fixed, positions=positions,
+                        stop_when=lambda world: world.cooker_state["cooker-1"]["state"]
+                        == "cooking" or world.game_ms >= 16000)
+    world = result["world"]
+    rows = result["rows"]
+    events = result["events"]
+    cook_dispatch = [event for event in events
+                     if event.get("event") == "task_dispatched" and
+                     event.get("node") == "cook:BoiledRice"]
+    checks.hard("fixed_dispatches_rice_to_pot",
+                bool(cook_dispatch) and
+                cook_dispatch[0].get("station") == "cooker-1",
+                "cook dispatch=%s" % [entry.get("station") for entry in cook_dispatch])
+    checks.hard("fixed_cook_starts",
+                "start_cook" in _demo3_done(rows) and not _demo3_failed(rows) and
+                world.cooker_state["cooker-1"]["state"] == "cooking",
+                "done=%s state=%s failed=%s" %
+                (sorted(_demo3_done(rows)), world.cooker_state["cooker-1"]["state"],
+                 [(row["macro"], row["detail"]) for row in _demo3_failed(rows)[:2]]))
+    fixed_stations = [entry.get("station") for entry in cook_dispatch]
+    return ("legacy station=%s rejects=%s drop=%s; fixed station=%s state=%s" %
+            (legacy_stations, legacy_rejects[:1], details[:1], fixed_stations,
+             world.cooker_state["cooker-1"]["state"]))
+
+
+def scenario_demo3_regress_deliver_expired(ctx, checks):
+    """交付时订单已过期：盘照收、0.5 s 后消失，但只扣分不加分（G9 的世界侧事实）。
+
+    进程内场景：订单 1 s 过期（扣 100），再按修正后的寿司流程把菜送到传菜口；
+    交付后分数不上升，`delivered_expired` 记一条、`order_results` 的最后一条是
+    `failed`，而不是 `delivered`。
+    """
+    kitchen = _demo3.demo3_kitchen(clean_plates=2)
+    order_spec = _demo3.order_schedule(["Sushi_PlainPrawn"], timeout_s=1, slots=1)
+    world = _demo3_world(kitchen["stations"], orders=order_spec, clean_plates=2)
+    driver = _Demo3Driver(world)
+    driver.wait(1300)
+    expired_score = world.score
+    checks.hard("expiry_penalised", bool(world.expired) and
+                expired_score == -world.expire_penalty,
+                "expired=%s score=%d" % ([entry["recipe"] for entry in world.expired],
+                                         expired_score))
+    world.board_state["board-0"]["item"] = _demo3.Item("ChoppedSushiPrawn")
+    world.board_state["board-0"]["progress"] = 1.0
+    driver.step("goto", "board-0")
+    driver.step("pickup", "board-0")
+    driver.step("goto", "plate_stack-0")
+    driver.step("drop", "plate_stack-0")
+    driver.step("pickup", "plate_stack-0")
+    driver.step("goto", "serving-0")
+    driver.press("serving-0", 0.35)
+    checks.hard("expired_pass_accepts_plate", world.holding_name(0) == "" and
+                bool(world.pass_pending),
+                "holding=%r pass_pending=%s" %
+                (world.holding_name(0), world.pass_pending))
+    driver.wait(650)
+    checks.hard("expired_delivery_adds_no_score", world.score == expired_score,
+                "交付前=%d 交付后=%d" % (expired_score, world.score))
+    checks.hard("expired_delivery_is_not_delivered",
+                not world.delivered and bool(world.delivered_expired),
+                "delivered=%s delivered_expired=%s" %
+                (world.delivered, world.delivered_expired))
+    checks.hard("expired_delivery_result_is_failed",
+                bool(world.order_results) and
+                world.order_results[-1]["outcome"] == "failed" and
+                world.order_results[-1].get("score") is None,
+                "results=%s" % world.order_results[-2:])
+    checks.hard("expired_result_recorded",
+                any(entry["outcome"] == "expired" for entry in world.order_results),
+                "results=%s" % world.order_results)
+    return ("expired score=%d; late delivery score=%d; results=%s" %
+            (expired_score, world.score,
+             [(entry["outcome"], entry.get("score")) for entry in world.order_results]))
+
 SCENARIO_IMPL = {
     "happy": scenario_happy,
     "one-slot": scenario_one_slot,
@@ -4663,6 +5897,16 @@ SCENARIO_IMPL = {
     "nav-crash": scenario_nav_crash,
     "nav-ring": scenario_nav_ring,
     "macro": scenario_macro,
+    "demo3-rules": scenario_demo3_rules,
+    "demo3-sushi-1chef": scenario_demo3_sushi_1chef,
+    "demo3-4chef-5dish": scenario_demo3_4chef_5dish,
+    "demo3-regress-goto-drift": scenario_demo3_regress_goto_drift,
+    "demo3-regress-grid-offset": scenario_demo3_regress_grid_offset,
+    "demo3-regress-double-pick": scenario_demo3_regress_double_pick,
+    "demo3-regress-empty-pots": scenario_demo3_regress_empty_pots,
+    "demo3-regress-plate-stack-count": scenario_demo3_regress_plate_stack_count,
+    "demo3-regress-cooker-type": scenario_demo3_regress_cooker_type,
+    "demo3-regress-deliver-expired": scenario_demo3_regress_deliver_expired,
 }
 
 
