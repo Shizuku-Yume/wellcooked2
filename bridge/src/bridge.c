@@ -51,6 +51,7 @@
 #include <kitchenos/net.h>
 #include <kitchenos/protocol.h>
 #include <kitchenos/shm.h>
+#include <kitchenos/state.h>
 
 /* ============================================================== 常量 */
 
@@ -165,60 +166,6 @@ static int64_t now_ms(void)
         return 0;
     }
     return (int64_t)ts.tv_sec * 1000 + (int64_t)(ts.tv_nsec / 1000000L);
-}
-
-/* Bounded string copy that always NUL-terminates. The shm layout uses fixed
- * char arrays, and a frame from the game may carry arbitrarily long strings, so
- * truncation here is normal and must not be a buffer overrun. */
-static void copy_str(char *dst, size_t cap, const char *src)
-{
-    size_t i = 0;
-
-    if (cap == 0) {
-        return;
-    }
-    if (src != NULL) {
-        while (i + 1 < cap && src[i] != '\0') {
-            dst[i] = src[i];
-            i++;
-        }
-    }
-    dst[i] = '\0';
-}
-
-static int double_is_finite(double v)
-{
-    /* Deliberately not isfinite(): that is a macro from math.h and pulls the
-     * -lm question into a program that otherwise needs no math library. */
-    return v == v && v <= 1.0e308 && v >= -1.0e308;
-}
-
-static int64_t double_to_ll(double v)
-{
-    if (!double_is_finite(v)) {
-        return 0;
-    }
-    if (v >= 9.0e18) {
-        return INT64_MAX;
-    }
-    if (v <= -9.0e18) {
-        return INT64_MIN;
-    }
-    return (int64_t)(v < 0 ? v - 0.5 : v + 0.5);
-}
-
-static float double_to_float(double v)
-{
-    if (!double_is_finite(v)) {
-        return 0.0f;
-    }
-    if (v >= 3.0e38) {
-        return 3.0e38f;
-    }
-    if (v <= -3.0e38) {
-        return -3.0e38f;
-    }
-    return (float)v;
 }
 
 static const char *net_error_text(const bridge *b)
@@ -547,80 +494,13 @@ static int parse_args(int argc, char **argv, bridge *b)
  * caps differ on purpose: the protocol tolerates whatever the game sends, the
  * shared layout is fixed. Everything past the layout's cap is dropped, and the
  * counts are what readers use, so a truncated snapshot stays self-consistent.
+ *
+ * The mapping itself lives in state.c so tests can link it without this
+ * daemon's main().
  */
 static void world_from_state_update(const proto_state_update *up, kos_world_state *world)
 {
-    size_t chefs;
-    size_t orders;
-    size_t resources;
-    size_t i;
-    size_t k;
-
-    kos_world_state_reset(world);
-    world->score = double_to_ll(up->score);
-    world->game_time = double_to_ll(up->game_time);
-    world->game_time_ms = up->game_time_ms;
-
-    chefs = up->chef_count;
-    if (chefs > KOS_SHM_MAX_CHEFS) {
-        chefs = KOS_SHM_MAX_CHEFS;
-    }
-    world->chef_count = (uint32_t)chefs;
-    for (i = 0; i < chefs; i++) {
-        const proto_chef *src = &up->chefs[i];
-        kos_chef *dst = &world->chefs[i];
-
-        dst->id = (int32_t)src->id;
-        dst->x = double_to_float(src->x);
-        dst->y = double_to_float(src->y);
-        dst->facing = double_to_float(src->facing);
-        copy_str(dst->holding, sizeof dst->holding, src->holding);
-        copy_str(dst->state, sizeof dst->state, src->state);
-    }
-
-    orders = up->order_count;
-    if (orders > KOS_SHM_MAX_ORDERS) {
-        orders = KOS_SHM_MAX_ORDERS;
-    }
-    world->order_count = (uint32_t)orders;
-    for (i = 0; i < orders; i++) {
-        const proto_order *src = &up->orders[i];
-        kos_order *dst = &world->orders[i];
-
-        copy_str(dst->id, sizeof dst->id, src->id);
-        copy_str(dst->recipe, sizeof dst->recipe, src->recipe);
-        dst->time_remaining = (int32_t)double_to_ll(src->time_remaining);
-        k = src->ingredient_count;
-        if (k > KOS_SHM_MAX_ORDER_INGREDIENTS) {
-            k = KOS_SHM_MAX_ORDER_INGREDIENTS;
-        }
-        dst->ingredient_count = (int32_t)k;
-        for (size_t j = 0; j < k; j++) {
-            copy_str(dst->ingredients[j], sizeof dst->ingredients[j], src->ingredients[j]);
-        }
-    }
-
-    /* resources are keyed by name on the wire (pot_0, cutting_board_1,
-     * plate_stack, and whatever the game grows later); the layout keeps the key
-     * verbatim in `name` and classifies by prefix only, so an unknown key is
-     * carried through instead of rejected. */
-    resources = up->resource_count;
-    if (resources > KOS_SHM_MAX_RESOURCES) {
-        resources = KOS_SHM_MAX_RESOURCES;
-    }
-    world->resource_count = (uint32_t)resources;
-    for (i = 0; i < resources; i++) {
-        const proto_resource *src = &up->resources[i];
-        kos_resource *dst = &world->resources[i];
-
-        copy_str(dst->name, sizeof dst->name, src->key);
-        copy_str(dst->state, sizeof dst->state, src->state);
-        copy_str(dst->content, sizeof dst->content, src->content);
-        dst->time_left = src->has_time_left ? double_to_float(src->time_left) : 0.0f;
-        dst->chef_id = src->has_chef_id ? (int32_t)src->chef_id : -1;
-        dst->count = src->has_count ? (int32_t)src->count : 0;
-        dst->progress = src->has_progress ? double_to_float(src->progress) : 0.0f;
-    }
+    kos_state_from_update(up, world);
 }
 
 /* ======================================================== 帧屏障 */
@@ -724,7 +604,7 @@ static int build_action_from_slot(int chef, const kos_input_action *action,
 
     switch (action->kind) {
     case KOS_ACTION_MOVE:
-        if (!double_is_finite(action->target_x) || !double_is_finite(action->target_y)) {
+        if (!kos_state_double_is_finite(action->target_x) || !kos_state_double_is_finite(action->target_y)) {
             return PROTO_ERR_RANGE; /* no usable target: fall back to idle */
         }
         return protocol_build_action_move(chef, action->target_x, action->target_y,
@@ -745,8 +625,8 @@ static int build_action_from_slot(int chef, const kos_input_action *action,
             return PROTO_ERR_RANGE;
         }
         for (size_t w = 0; w < count; w++) {
-            if (!double_is_finite(action->waypoints[w].x)
-                || !double_is_finite(action->waypoints[w].y)) {
+            if (!kos_state_double_is_finite(action->waypoints[w].x)
+                || !kos_state_double_is_finite(action->waypoints[w].y)) {
                 return PROTO_ERR_RANGE;
             }
             wps[w].x = action->waypoints[w].x;
@@ -759,7 +639,7 @@ static int build_action_from_slot(int chef, const kos_input_action *action,
          * 坐标 0,0 是个合法位置，不能拿它当"没给坐标"。 */
         int has_target = 0;
         if (action->target_object[0] == '\0'
-            && double_is_finite(action->target_x) && double_is_finite(action->target_y)) {
+            && kos_state_double_is_finite(action->target_x) && kos_state_double_is_finite(action->target_y)) {
             has_target = 1;
         }
         if (!has_target && action->target_object[0] == '\0') {
@@ -985,7 +865,7 @@ static void on_state_update(bridge *b, const proto_state_update *up, const proto
                   " game_time=%" PRId64 " game_time_ms=%" PRId64
                   " dropped=%zu truncated=%zu pending=%d",
                   b->frames, up->chef_count, up->order_count, up->resource_count,
-                  double_to_ll(up->score), double_to_ll(up->game_time),
+                  kos_state_double_to_ll(up->score), kos_state_double_to_ll(up->game_time),
                   (int64_t)up->game_time_ms,
                   diag != NULL ? diag->dropped_items : 0,
                   diag != NULL ? diag->truncated_strings : 0, b->pending);
@@ -995,7 +875,7 @@ static void on_state_update(bridge *b, const proto_state_update *up, const proto
                      "frames=%" PRId64 " chefs=%zu orders=%zu score=%" PRId64
                      " game_time=%" PRId64 " paused=%d",
                      b->frames, up->chef_count, up->order_count,
-                     double_to_ll(up->score), double_to_ll(up->game_time), b->paused);
+                     kos_state_double_to_ll(up->score), kos_state_double_to_ll(up->game_time), b->paused);
     }
 }
 

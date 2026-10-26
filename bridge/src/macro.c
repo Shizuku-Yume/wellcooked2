@@ -324,16 +324,36 @@ static int station_ordinal(const char *id)
 
 /*
  * 工位 → 世界状态资源键。插件用 pot_0/cutting_board_0/sink_0，kitchen.json 用
- * cooker-0/board-0/sink-0；先认精确/归一化名，再按同类工位序号找。
- * cooker-N 只认 pot_N、board-N 只认 cutting_board_N：编号规则与插件 StateFrame /
- * Kitchen.ChoppingBoards 的排序一致（任务 09 P0）。
+ * cooker-0/board-0/sink-0。任务 09 G1 起**先按位置认**（`resources[].pos`），
+ * 再退回精确/归一化名与序号：序号来自插件枚举顺序，锅空/满时会变，位置不会。
+ * 位置容差 0.3 m —— 台面按 0.6 m 摆放，取半个格距，不会串到隔壁工位。
  */
+#define MACRO_STATION_POS_TOL 0.30f
+
+/* 资源 kind 与工位 kind 对齐；老插件不发 kind 时只认键名前缀。 */
+static int resource_kind_matches(const kos_resource *res, const kos_station *station)
+{
+    if (res->kind[0] != '\0')
+        return strcmp(res->kind, station->kind) == 0;
+    if (strcmp(station->kind, "cooker") == 0)
+        return strncmp(res->name, "pot_", 4) == 0;
+    if (strcmp(station->kind, "board") == 0)
+        return strncmp(res->name, "cutting_board_", 14) == 0;
+    if (strcmp(station->kind, "sink") == 0)
+        return strncmp(res->name, "sink_", 5) == 0;
+    if (strcmp(station->kind, "counter") == 0)
+        return strncmp(res->name, "counter_", 8) == 0;
+    return 1;
+}
+
 static const kos_resource *find_station_resource(const kos_kitchen *kitchen,
                                                  const kos_macro_step *step,
                                                  const kos_world_state *world)
 {
     int station_index;
     const kos_station *station;
+    const kos_resource *nearest = NULL;
+    float nearest_d2 = MACRO_STATION_POS_TOL * MACRO_STATION_POS_TOL;
     int ordinal;
     int i;
 
@@ -342,6 +362,25 @@ static const kos_resource *find_station_resource(const kos_kitchen *kitchen,
         return NULL;
     }
     station = &kitchen->stations[station_index];
+
+    for (i = 0; i < (int)world->resource_count; i++) {
+        float dx;
+        float dz;
+        float d2;
+
+        if (!world->resources[i].has_pos || !resource_kind_matches(&world->resources[i], station))
+            continue;
+        dx = world->resources[i].pos_x - station->x;
+        dz = world->resources[i].pos_y - station->z;
+        d2 = dx * dx + dz * dz;
+        if (d2 <= nearest_d2) {
+            nearest_d2 = d2;
+            nearest = &world->resources[i];
+        }
+    }
+    if (nearest != NULL) {
+        return nearest;
+    }
 
     for (i = 0; i < (int)world->resource_count; i++) {
         if (strcmp(world->resources[i].name, step->station_id) == 0) {

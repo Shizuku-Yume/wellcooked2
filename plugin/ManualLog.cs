@@ -223,7 +223,7 @@ namespace WellCooked
                 {
                     continue;
                 }
-                var size = WorldState.Invoke(stack, "GetSize");
+                var size = WorldState.Invoke(stack, "GetCount");
                 if (size == null)
                 {
                     continue;
@@ -330,29 +330,23 @@ namespace WellCooked
             return result;
         }
 
-        /// <summary>`AssembledDefinitionNode` 不是 Unity 对象；名字在它包着的订单节点上。</summary>
+        /// <summary>
+        /// `AssembledDefinitionNode` 不是 Unity 对象：递归展开成叶子名（盘子里是哪道菜、
+        /// 卷饼里夹了什么）。与 `state_update` 的 `contents` 用同一套 `Kitchen.NodeLeaves`，
+        /// 否则手动局日志与上报会各说各话（任务 09 G3）。
+        /// </summary>
         private static string NodeName(object node)
         {
             if (node == null)
             {
                 return "?";
             }
-            var unity = node as UnityEngine.Object;
-            if (unity != null && !string.IsNullOrEmpty(unity.name))
+            var names = Kitchen.NodeLeaves(node);
+            if (names.Count == 0)
             {
-                return unity.name;
+                return "?";
             }
-            var orderNode = WorldState.Get(node, "m_ingriedientOrderNode") as UnityEngine.Object;
-            if (orderNode != null && !string.IsNullOrEmpty(orderNode.name))
-            {
-                return orderNode.name;
-            }
-            var name = WorldState.Get(node, "name") ?? WorldState.Get(node, "Name");
-            if (name != null && !string.IsNullOrEmpty(name.ToString()))
-            {
-                return name.ToString();
-            }
-            return node.GetType().Name;
+            return string.Join("+", names.ToArray());
         }
 
         private static GameObject AsGameObject(UnityEngine.Object item)

@@ -155,6 +155,156 @@ namespace WellCooked
         }
 
         /// <summary>
+        /// 灶台（`ClientCookingStation`）按位置排序，顺序就是 `pot_&lt;N&gt;` 的编号。
+        /// 与 `ServerCookingHandler` 的静态表不同，灶台本身一直在，空灶台也能报到，
+        /// 所以 `pot_N` 不会随"锅里有料"变化（任务 09 G1）。Value 是灶台组件，
+        /// 它身上的 `m_itemPot` 是当前那口锅（空灶台为 null）。
+        /// </summary>
+        public static List<Station> SortedCookingStations()
+        {
+            var result = new List<Station>();
+            foreach (var found in WorldState.FindAll("ClientCookingStation"))
+            {
+                var unity = found as Component;
+                if (unity == null)
+                {
+                    continue;
+                }
+
+                var p = unity.transform.position;
+                result.Add(new Station
+                {
+                    Type = "CookingStation",
+                    Name = unity.gameObject.name,
+                    Position = new Vector2(p.x, p.z),
+                    Component = unity
+                });
+            }
+
+            result.Sort(delegate(Station a, Station b)
+            {
+                int byX = a.Position.x.CompareTo(b.Position.x);
+                if (byX != 0)
+                {
+                    return byX;
+                }
+                int byZ = a.Position.y.CompareTo(b.Position.y);
+                if (byZ != 0)
+                {
+                    return byZ;
+                }
+                return string.CompareOrdinal(a.Name, b.Name);
+            });
+            return result;
+        }
+
+        /// <summary>
+        /// 把一个 `AssembledDefinitionNode` 递归展开成叶子名（任务 09 G3/G4）。
+        /// 组合节点只展开 `m_composition`；叶子取 `IngredientAssembledNode.m_ingriedientOrderNode.name`。
+        /// 外面套了 `CookedCompositeAssembledNode` 的叶子写成 `cooked:&lt;name&gt;`，
+        /// 否则分不清生鸡与熟鸡。盘子的 `GetOrderComposition()` 与容器的 `GetContents()`
+        /// 用的都是这一套，两处必须一致。
+        /// </summary>
+        public static List<string> NodeLeaves(object node)
+        {
+            var result = new List<string>();
+            CollectNodeLeaves(node, "", result, 0);
+            return result;
+        }
+
+        private static void CollectNodeLeaves(object node, string prefix, List<string> result, int depth)
+        {
+            if (node == null || depth > 4)
+            {
+                return;
+            }
+
+            string typeName = node.GetType().Name;
+            bool cooked = typeName == "CookedCompositeAssembledNode";
+            string childPrefix = cooked ? prefix + "cooked:" : prefix;
+
+            // 只有组合节点才有 m_composition；叶子（IngredientAssembledNode）上查它会在
+            // WorldState 的反射未命中日志里留一行，白白让人以为名字失效了。
+            var children = typeName.IndexOf("CompositeAssembledNode", StringComparison.Ordinal) >= 0
+                ? WorldState.Get(node, "m_composition") as IEnumerable
+                : null;
+            if (children != null)
+            {
+                bool any = false;
+                foreach (var child in children)
+                {
+                    any = true;
+                    CollectNodeLeaves(child, childPrefix, result, depth + 1);
+                }
+                if (any)
+                {
+                    return;
+                }
+            }
+
+            var ingredient = WorldState.Get(node, "m_ingriedientOrderNode") as UnityEngine.Object;
+            if (ingredient != null && !string.IsNullOrEmpty(ingredient.name))
+            {
+                result.Add(childPrefix + ingredient.name);
+                return;
+            }
+
+            var unity = node as UnityEngine.Object;
+            if (unity != null && !string.IsNullOrEmpty(unity.name))
+            {
+                result.Add(childPrefix + unity.name);
+                return;
+            }
+
+            result.Add(childPrefix + node.GetType().Name);
+        }
+
+        /// <summary>
+        /// 一个物体"里面是什么"：盘子优先用 `ClientPlate.GetOrderComposition()`，
+        /// 容器用 `ClientIngredientContainer.GetContents()`，都不是就把它自己当成内容。
+        /// 返回空列表表示"是个空容器"，不会退回物体名（Tortilla 的名字不是它的内容）。
+        /// </summary>
+        public static List<string> ItemContents(GameObject gameObject)
+        {
+            var result = new List<string>();
+            if (gameObject == null)
+            {
+                return result;
+            }
+
+            var plate = gameObject.GetComponent("ClientPlate");
+            if (plate != null)
+            {
+                var composition = WorldState.Invoke(plate, "GetOrderComposition");
+                if (composition != null)
+                {
+                    result = NodeLeaves(composition);
+                    if (result.Count > 0)
+                    {
+                        return result;
+                    }
+                }
+            }
+
+            var container = gameObject.GetComponent("ClientIngredientContainer");
+            if (container != null)
+            {
+                var contents = WorldState.Invoke(container, "GetContents") as IEnumerable;
+                if (contents != null)
+                {
+                    foreach (var node in contents)
+                    {
+                        result.AddRange(NodeLeaves(node));
+                    }
+                    return result;
+                }
+            }
+
+            result.Add(gameObject.name);
+            return result;
+        }
+
+        /// <summary>
         /// 把 `state_update` 的资源键（`cutting_board_2`、`pot_0`、`plate_stack`、
         /// `dirty_plates`、`sink_1`）解析成世界坐标。插件收到的 `face.target_object`
         /// 用的就是这套键，所以编号必须与 `StateFrame` 的上报顺序完全一致。
@@ -197,18 +347,11 @@ namespace WellCooked
 
             if (TrySuffixIndex(key, "pot_", out index))
             {
-                var pots = SortedCookingHandlers();
-                if (index >= 0 && index < pots.Count)
+                var stations = SortedCookingStations();
+                if (index >= 0 && index < stations.Count)
                 {
-                    var handler = pots[index].Value;
-                    var component = handler as Component
-                                    ?? WorldState.Get(handler, "GetCookingHandler") as Component;
-                    if (component != null)
-                    {
-                        position = new Vector2(component.transform.position.x,
-                                               component.transform.position.z);
-                        return true;
-                    }
+                    position = stations[index].Position;
+                    return true;
                 }
                 return false;
             }

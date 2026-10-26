@@ -168,30 +168,86 @@ static int get_req_bool(const json_value *object, const char *key, int *dst)
     return map_status(json_object_get_bool(object, key, dst));
 }
 
+/* Optional string-array member (`contents`, `holding_contents`): absent or JSON
+ * null means "nothing to say" and leaves the count at 0; a present member of the
+ * wrong type is still an error. Entries that are not strings are dropped and
+ * counted, and anything past `max` is dropped and counted once. */
+static int get_str_array(const json_value *object, const char *key,
+                         char dst[][PROTO_KEY_MAX], size_t max, size_t *count,
+                         proto_diag *diag)
+{
+    const json_value *array = NULL;
+    size_t total;
+    size_t i;
+    int rc = json_object_get_array(object, key, &array);
+
+    *count = 0;
+    if (rc == JSON_ERR_MISSING || json_is_null(json_object_get(object, key)))
+        return PROTO_OK;
+    if (rc != JSON_OK)
+        return PROTO_ERR_RANGE;
+
+    total = json_array_size(array);
+    for (i = 0; i < total; i++) {
+        const json_value *item = json_array_get(array, i);
+        const char *text = json_string_value(item);
+
+        if (text == NULL) {
+            if (diag != NULL)
+                diag->dropped_items++;
+            continue;
+        }
+        if (*count >= max) {
+            if (diag != NULL)
+                diag->dropped_items += total - i;
+            break;
+        }
+        copy_str(dst[*count], PROTO_KEY_MAX, text, json_string_length(item), diag);
+        (*count)++;
+    }
+    return PROTO_OK;
+}
+
 /* "pot_7" -> POT/7, "cutting_board_0" -> CUTTING_BOARD/0, "plate_stack" ->
- * PLATE_STACK. Anything else is kept as an unknown resource rather than dropped:
- * the game may grow new station kinds and the bridge must survive that. */
+ * PLATE_STACK, "carried_2" -> CARRIED/2. Anything else is kept as an unknown
+ * resource rather than dropped: the game may grow new station kinds and the
+ * bridge must survive that. */
 static proto_resource_kind classify_key(const char *key, int *index)
 {
-    static const char pot[] = "pot_";
-    static const char board[] = "cutting_board_";
+    static const struct {
+        const char *prefix;
+        proto_resource_kind kind;
+    } table[] = {
+        { "pot_", PROTO_RES_POT },
+        { "cutting_board_", PROTO_RES_CUTTING_BOARD },
+        { "sink_", PROTO_RES_SINK },
+        { "counter_", PROTO_RES_COUNTER },
+        { "container_", PROTO_RES_CONTAINER },
+        { "carried_", PROTO_RES_CARRIED }
+    };
     const char *digits = NULL;
+    proto_resource_kind kind = PROTO_RES_UNKNOWN;
     const char *p;
+    size_t i;
     int value = 0;
 
     *index = -1;
     if (strcmp(key, "plate_stack") == 0)
         return PROTO_RES_PLATE_STACK;
-    if (strncmp(key, board, sizeof board - 1) == 0) {
-        digits = key + (sizeof board - 1);
-    } else if (strncmp(key, pot, sizeof pot - 1) == 0) {
-        digits = key + (sizeof pot - 1);
-    } else {
-        return PROTO_RES_UNKNOWN;
-    }
+    if (strcmp(key, "dirty_plates") == 0)
+        return PROTO_RES_DIRTY_PLATES;
 
-    if (*digits == '\0')
+    for (i = 0; i < sizeof table / sizeof table[0]; i++) {
+        size_t len = strlen(table[i].prefix);
+        if (strncmp(key, table[i].prefix, len) == 0) {
+            kind = table[i].kind;
+            digits = key + len;
+            break;
+        }
+    }
+    if (digits == NULL || *digits == '\0')
         return PROTO_RES_UNKNOWN;
+
     for (p = digits; *p != '\0'; p++) {
         if (*p < '0' || *p > '9')
             return PROTO_RES_UNKNOWN;
@@ -199,7 +255,7 @@ static proto_resource_kind classify_key(const char *key, int *index)
             value = value * 10 + (*p - '0');
     }
     *index = value;
-    return digits == key + (sizeof board - 1) ? PROTO_RES_CUTTING_BOARD : PROTO_RES_POT;
+    return kind;
 }
 
 proto_msg_type protocol_message_type(const json_value *root)
@@ -278,6 +334,10 @@ static int parse_chefs(const json_value *root, proto_state_update *out, proto_di
         rc = get_str(entry, "state", chef->state, sizeof chef->state, diag);
         if (rc != PROTO_OK)
             return rc;
+        rc = get_str_array(entry, "holding_contents", chef->holding_contents,
+                           PROTO_MAX_CONTENTS, &chef->holding_content_count, diag);
+        if (rc != PROTO_OK)
+            return rc;
 
         out->chef_count++;
     }
@@ -327,6 +387,12 @@ static int parse_orders(const json_value *root, proto_state_update *out, proto_d
         rc = get_num(entry, "time_remaining", &order->time_remaining);
         if (rc != PROTO_OK)
             return rc;
+        if (json_object_get(entry, "score") != NULL) {
+            rc = get_int(entry, "score", &order->score);
+            if (rc != PROTO_OK)
+                return rc;
+            order->has_score = 1;
+        }
 
         rc = json_object_get_array(entry, "ingredients", &ingredients);
         if (rc == JSON_OK) {
@@ -375,6 +441,7 @@ static int parse_resources(const json_value *root, proto_state_update *out,
     for (i = 0; i < total; i++) {
         const char *key = json_object_key_at(resources, i);
         const json_value *entry = json_object_value_at(resources, i);
+        const json_value *pos;
         proto_resource *res;
 
         if (json_typeof(entry) != JSON_OBJECT) {
@@ -431,7 +498,104 @@ static int parse_resources(const json_value *root, proto_state_update *out,
             res->has_progress = 1;
         }
 
+        /* ---- state audit G1–G6 ---- */
+        rc = get_str(entry, "kind", res->kind_name, sizeof res->kind_name, diag);
+        if (rc != PROTO_OK)
+            return rc;
+        rc = get_str(entry, "item", res->item, sizeof res->item, diag);
+        if (rc != PROTO_OK)
+            return rc;
+        rc = get_str(entry, "step", res->step, sizeof res->step, diag);
+        if (rc != PROTO_OK)
+            return rc;
+
+        /* `pos` is how the worker finds a station without trusting enumeration
+         * order (G1). A half-written position is a sender bug: refuse it rather
+         * than pretend the station sits at (0,0). */
+        pos = json_object_get(entry, "pos");
+        if (pos != NULL && json_typeof(pos) != JSON_NULL) {
+            if (json_typeof(pos) != JSON_OBJECT)
+                return PROTO_ERR_RANGE;
+            if (json_object_get(pos, "x") == NULL || json_object_get(pos, "y") == NULL)
+                return PROTO_ERR_RANGE;
+            rc = get_num(pos, "x", &res->x);
+            if (rc != PROTO_OK)
+                return rc;
+            rc = get_num(pos, "y", &res->y);
+            if (rc != PROTO_OK)
+                return rc;
+            res->has_pos = 1;
+        }
+
+        rc = get_str_array(entry, "contents", res->contents, PROTO_MAX_CONTENTS,
+                           &res->content_count, diag);
+        if (rc != PROTO_OK)
+            return rc;
+
         out->resource_count++;
+    }
+    return PROTO_OK;
+}
+
+/* Finished orders (G9). The plugin resends its whole bounded ring every frame,
+ * so an entry is dropped, not the message, when it lacks the three fields that
+ * make it usable: seq, id, outcome. */
+static int parse_order_results(const json_value *root, proto_state_update *out,
+                               proto_diag *diag)
+{
+    const json_value *results = NULL;
+    size_t total;
+    size_t i;
+    int rc = json_object_get_array(root, "order_results", &results);
+
+    if (rc == JSON_ERR_MISSING)
+        return PROTO_OK;
+    if (rc != JSON_OK)
+        return PROTO_ERR_RANGE;
+
+    total = json_array_size(results);
+    for (i = 0; i < total; i++) {
+        const json_value *entry = json_array_get(results, i);
+        const char *id;
+        const char *outcome;
+        size_t id_len;
+        size_t outcome_len;
+        long long seq = 0;
+        proto_order_result *result;
+
+        if (json_typeof(entry) != JSON_OBJECT ||
+            json_object_get_int(entry, "seq", &seq) != JSON_OK ||
+            json_object_get_string(entry, "id", &id, &id_len) != JSON_OK ||
+            json_object_get_string(entry, "outcome", &outcome, &outcome_len) != JSON_OK) {
+            if (diag != NULL)
+                diag->dropped_items++;
+            continue;
+        }
+        if (out->order_result_count >= PROTO_MAX_ORDER_RESULTS) {
+            if (diag != NULL)
+                diag->dropped_items += total - i;
+            break;
+        }
+
+        result = &out->order_results[out->order_result_count];
+        memset(result, 0, sizeof *result);
+        result->seq = seq;
+        copy_str(result->id, sizeof result->id, id, id_len, diag);
+        copy_str(result->outcome, sizeof result->outcome, outcome, outcome_len, diag);
+        rc = get_str(entry, "recipe", result->recipe, sizeof result->recipe, diag);
+        if (rc != PROTO_OK)
+            return rc;
+        if (json_object_get(entry, "score") != NULL) {
+            rc = get_int(entry, "score", &result->score);
+            if (rc != PROTO_OK)
+                return rc;
+            result->has_score = 1;
+        }
+        rc = get_int(entry, "game_time_ms", &result->game_time_ms);
+        if (rc != PROTO_OK)
+            return rc;
+
+        out->order_result_count++;
     }
     return PROTO_OK;
 }
@@ -464,10 +628,26 @@ int protocol_parse_state_update(const json_value *root, proto_state_update *out,
     if (rc != PROTO_OK)
         return rc;
 
+    /* The round clock is one datum with two numbers: report neither rather than
+     * a left value without its limit. */
+    if (json_object_get(root, "round_time_left") != NULL ||
+        json_object_get(root, "round_time_limit") != NULL) {
+        rc = get_num(root, "round_time_left", &out->round_time_left);
+        if (rc != PROTO_OK)
+            return rc;
+        rc = get_num(root, "round_time_limit", &out->round_time_limit);
+        if (rc != PROTO_OK)
+            return rc;
+        out->has_round_time = 1;
+    }
+
     rc = parse_chefs(root, out, diag);
     if (rc != PROTO_OK)
         return rc;
     rc = parse_orders(root, out, diag);
+    if (rc != PROTO_OK)
+        return rc;
+    rc = parse_order_results(root, out, diag);
     if (rc != PROTO_OK)
         return rc;
     return parse_resources(root, out, diag);
