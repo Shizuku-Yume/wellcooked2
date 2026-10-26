@@ -1196,7 +1196,8 @@ class Demo3World:
             "score": self.score,
             "delivered": [entry["dish"] for entry in self.delivered],
             "delivered_expired": [entry["dish"] for entry in self.delivered_expired],
-            "expired": [entry["dish"] for entry in self.expired],
+            "expired": [entry.get("dish") or entry.get("recipe")
+                        for entry in self.expired],
             "plates": len(self.plates),
             "dirty": self.sink["dirty"],
             "presses": len(self.presses),
