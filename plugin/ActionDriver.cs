@@ -263,7 +263,7 @@ namespace WellCooked
                     if (matchIndex < 0) matchIndex = 0;
                     if (hasPos) matchIndex = ForwardWaypoint(newWps, pos, matchIndex);
                     LogPathSelection(m, chef, pos, hasPos, newWps, matchIndex, "updated");
-                    previous.Waypoints = newWps;
+                    previous.Seq = m.seq;
                     previous.PathDirection = inheritedDirection;
                     previous.WaypointIndex = matchIndex;
                     previous.Done = false;
