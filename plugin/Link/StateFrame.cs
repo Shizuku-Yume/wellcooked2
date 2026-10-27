@@ -110,7 +110,7 @@ namespace WellCooked
             object left = timer == null ? null : WorldState.Get(timer, "m_timeLeft");
             object limit = timer == null ? null : WorldState.Get(timer, "m_timeLimit");
             return left != null && limit != null && ToDouble(limit) > 0.0 && ToDouble(left) > 0.0
-                && ToDouble(left) < ToDouble(limit);
+                && (ToDouble(left) < ToDouble(limit) || GameTime() > 0f);
         }
 
         /// <summary>
@@ -129,7 +129,9 @@ namespace WellCooked
             {
                 return; // 未初始化/读不到就不报，别给调度侧一个 0 秒的局
             }
-            b.FieldNum("round_time_left", ToDouble(left));
+            float elapsed = GameTime();
+            double leftSec = elapsed > 0f ? Math.Max(0.0, ToDouble(limit) - elapsed) : ToDouble(left);
+            b.FieldNum("round_time_left", leftSec);
             b.FieldNum("round_time_limit", ToDouble(limit));
         }
 

@@ -6088,7 +6088,7 @@ def scenario_round_start(ctx, checks):
             1 for action, received_at in zip(stats.actions, stats.action_times)
             if action.get("action") != "stop" and
             (round_started_wall is None or received_at < round_started_wall))
-        left = 120.0 if round_started_at is None else max(0.0, 120.0 - elapsed_round)
+        left = 120.0 if round_started_at is None else max(0.0, math.ceil(120.0 - elapsed_round))
         return msg_state_update_os(n, frame_index, cells,
                                    positions=[tuple(p) for p in sim.positions],
                                    game_ms=game_ms, resources=sim.resources_message(),

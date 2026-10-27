@@ -3811,7 +3811,7 @@ static void dispatch_ready(scheduler *s, int64_t now)
     if (world == NULL || !world->has_round_time || world->round_time_left <= 0.0f) {
         return;
     }
-    if (!s->round_started && world->round_time_left >= world->round_time_limit) {
+    if (!s->round_started && world->round_time_left >= world->round_time_limit && world->game_time_ms <= 0) {
         return;
     }
     if (!s->round_started) {
