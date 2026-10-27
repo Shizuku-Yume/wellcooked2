@@ -372,9 +372,9 @@ def build_recipes(*, cook_step=True, dishes=None, plate_layout="spec"):
                         child_of=(cook, tortilla_place))
         pour_rice = add(_node("pour:Rice", "pour", "Rice", "counter",
                               ingredient="rice", duration=1.0),
-                        child_of=(rice_cook, pour_meat))
+                        child_of=(rice_cook, tortilla_place))
         pickup = add(_node("pickup:%s_Tortilla" % dish, "pickup", dish, "counter",
-                           duration=1.0), child_of=(pour_rice,))
+                           duration=1.0), child_of=(pour_meat, pour_rice))
         plate = add(_node("plate:%s" % dish, "plate", dish, "plate_stack",
                           duration=0.2), child_of=(pickup,))
         deliver = add(_node("deliver:%s" % dish, "deliver", dish, "serving"),

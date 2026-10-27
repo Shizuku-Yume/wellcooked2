@@ -1146,6 +1146,25 @@ static void test_wash(const kos_kitchen *kitchen, const char *sink)
     game_ms += 16;
     rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
     expect(rc == 1, "progress=1 且干净盘数 +1 后 wash 完成");
+
+    /* 盘堆被其他厨师取走（3 -> 2），但水槽进度从 < 1 到达 1.0 时洗盘仍能正确完成 */
+    plates->count = 2;
+    expect(build(&macro, kitchen, "wash", "wash:CleanPlate", sink, "o1", 1000) == 0,
+           "第 2 盘 wash 计划建成");
+    (void)finish_goto(&macro, kitchen, &world, &game_ms, &out);
+    game_ms += 16;
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    game_ms += 16;
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    basin->progress = 0.5f;
+    game_ms += 16;
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    /* 别人取走一只盘子，盘堆从 2 减少到 1 */
+    plates->count = 1;
+    basin->progress = 1.0f;
+    game_ms += 16;
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    expect(rc == 1, "盘堆被并发取走时，progress=1 仍判定 wash 完成");
 }
 
 static void test_timeouts(const kos_kitchen *kitchen, const char *dispenser,
