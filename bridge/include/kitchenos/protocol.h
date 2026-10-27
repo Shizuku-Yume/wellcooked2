@@ -116,6 +116,12 @@ typedef struct {
      * Same encoding as proto_resource.contents. */
     size_t holding_content_count;
     char holding_contents[PROTO_MAX_CONTENTS][PROTO_KEY_MAX];
+    /* The game's own selected interactable (InteractWithItemHelper facing cell):
+     * its world position is the authority for "pressing A acts on this station",
+     * the name is for logs only. */
+    int has_facing_target;
+    double facing_x;
+    double facing_y;
 } proto_chef;
 
 typedef struct {

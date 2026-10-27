@@ -21,6 +21,11 @@
 
 #define MACRO_PI 3.14159265358979323846f
 #define MACRO_PROGRESS_DONE 0.999f
+/* 游戏选中的交互对象与目标工位的允许偏差：工位按 0.6 m 摆放，0.35 m 不会串到
+ * 隔壁工位；实机发现"面前是别的台面"时差值是半格以上。 */
+#define MACRO_FOCUS_TOL 0.35f
+/* 焦点不对时先原地转身；这么久还不对说明站位格本身错了，重新走位。 */
+#define MACRO_FOCUS_RETRY_MS 500
 
 /* 超时表：与 spec L2 的表格一一对应。 */
 #define MACRO_PICKUP_TIMEOUT_MS 1500
@@ -533,6 +538,9 @@ static int resource_kind_matches(const kos_resource *res, const kos_station *sta
     return 1;
 }
 
+static int facing_towards(const kos_kitchen *kitchen, const kos_macro_step *step,
+                          const kos_chef *chef);
+
 static const kos_resource *find_station_resource(const kos_kitchen *kitchen,
                                                  const kos_macro_step *step,
                                                  const kos_world_state *world)
@@ -652,6 +660,61 @@ static int holding_is(const kos_chef *chef, const char *item)
 {
     return chef != NULL && item != NULL && item[0] != '\0' &&
            kos_kitchen_name_matches(item, chef->holding);
+}
+
+/*
+ * 游戏自己选中的交互对象是不是目标工位（宏按键的唯一授权）。
+ *
+ * 插件报 `facing_pos`（InteractWithItemHelper.GetFacingGridOccupant 那个物体的
+ * 世界坐标）：它直接回答"现在按 A 会作用到谁"，比"厨师朝向哪边"可靠。实机
+ * 20261027-131838 的四个失败都是朝向/站位看着对、游戏选中的却是隔壁台面或料箱
+ * （LogOutput.run.log:731/1630/2297/…）：这时按 interact/work 只会把料放到错的
+ * 地方，或者对着空气切 4.7 s。旧插件没有这个字段时退回几何朝向判断。
+ */
+static int station_in_focus(const kos_kitchen *kitchen, const kos_macro_step *step,
+                            const kos_chef *chef)
+{
+    int index;
+
+    if (kitchen == NULL || step == NULL) {
+        return 0;
+    }
+    index = kos_kitchen_station_index(kitchen, step->station_id);
+    if (index < 0) {
+        return 0;
+    }
+    if (chef != NULL && chef->has_facing_target) {
+        float dx = chef->facing_x - kitchen->stations[index].x;
+        float dz = chef->facing_y - kitchen->stations[index].z;
+
+        return dx * dx + dz * dz <= MACRO_FOCUS_TOL * MACRO_FOCUS_TOL;
+    }
+    return facing_towards(kitchen, step, chef);
+}
+
+/*
+ * 焦点不对就不按键：先发 FACE（原地转身），超过 MACRO_FOCUS_RETRY_MS 仍不对
+ * 就发 NAVIGATE 重新走位。返回 1 = 可以按键，0 = 本帧已发出转向/重走动作。
+ */
+static int ensure_focus(kos_macro *macro, const kos_kitchen *kitchen,
+                        const kos_world_state *world, int chef_id,
+                        const kos_macro_step *step, int64_t game_ms,
+                        kos_macro_output *out)
+{
+    const kos_chef *chef = find_chef(world, chef_id);
+
+    if (station_in_focus(kitchen, step, chef)) {
+        macro->focus_lost_since_ms = 0;
+        return 1;
+    }
+    if (macro->focus_lost_since_ms == 0) {
+        macro->focus_lost_since_ms = game_ms;
+    }
+    out->action = game_ms - macro->focus_lost_since_ms >= MACRO_FOCUS_RETRY_MS
+                      ? KOS_MACRO_ACT_NAVIGATE
+                      : KOS_MACRO_ACT_FACE;
+    copy_str(out->target_object, sizeof out->target_object, step->station_id);
+    return 0;
 }
 
 static int facing_towards(const kos_kitchen *kitchen, const kos_macro_step *step,
@@ -801,6 +864,7 @@ static int step_init(kos_macro *macro, const kos_kitchen *kitchen,
     macro->face_sent_ms = 0;
     macro->saw_content = 0;
     macro->content_checked = 0;
+    macro->focus_lost_since_ms = 0;
     macro->board_item_before[0] = '\0';
     macro->source_item[0] = '\0';
     macro->entry_holding[0] = '\0';
@@ -915,7 +979,7 @@ static int run_goto(kos_macro *macro, const kos_kitchen *kitchen,
         return 0;
     }
 
-    if (game_ms > macro->face_sent_ms && facing_towards(kitchen, step, chef)) {
+    if (game_ms > macro->face_sent_ms && station_in_focus(kitchen, step, chef)) {
         return next_step(macro, out) == 1 ? 1 : 0;
     }
     out->action = KOS_MACRO_ACT_FACE;
@@ -950,6 +1014,13 @@ static int run_pickup(kos_macro *macro, const kos_kitchen *kitchen,
     if (got) {
         return next_step(macro, out) == 1 ? 1 : 0;
     }
+    if (!ensure_focus(macro, kitchen, world, chef_id, step, game_ms, out)) {
+        if (game_ms >= macro->deadline_ms) {
+            fail_step(macro, game_ms, "holding", "focus");
+            return -1;
+        }
+        return 0;
+    }
     if (resource != NULL) {
         if (resource->content[0] != '\0') {
             macro->saw_content = 1;
@@ -967,11 +1038,19 @@ static int run_pickup(kos_macro *macro, const kos_kitchen *kitchen,
     return 0;
 }
 
-static int run_drop(kos_macro *macro, const kos_chef *chef,
+static int run_drop(kos_macro *macro, const kos_kitchen *kitchen,
+                    const kos_world_state *world, int chef_id, const kos_chef *chef,
                     const kos_macro_step *step, int64_t game_ms, kos_macro_output *out)
 {
     if (chef != NULL && chef->holding[0] == '\0') {
         return next_step(macro, out) == 1 ? 1 : 0;
+    }
+    if (!ensure_focus(macro, kitchen, world, chef_id, step, game_ms, out)) {
+        if (game_ms >= macro->deadline_ms) {
+            fail_step(macro, game_ms, "empty-hand", "focus");
+            return -1;
+        }
+        return 0;
     }
     if (game_ms >= macro->deadline_ms) {
         fail_step(macro, game_ms, "empty-hand", "timeout");
@@ -983,7 +1062,8 @@ static int run_drop(kos_macro *macro, const kos_chef *chef,
 }
 
 static int run_chop(kos_macro *macro, const kos_kitchen *kitchen,
-                    const kos_world_state *world, int64_t game_ms, kos_macro_output *out)
+                    const kos_world_state *world, int chef_id, int64_t game_ms,
+                    kos_macro_output *out)
 {
     const kos_macro_step *step = &macro->plan.steps[macro->step_index];
     const kos_resource *resource = find_station_resource(kitchen, step, world);
@@ -1020,6 +1100,13 @@ static int run_chop(kos_macro *macro, const kos_kitchen *kitchen,
             return -1;
         }
         return next_step(macro, out) == 1 ? 1 : 0;
+    }
+    if (!ensure_focus(macro, kitchen, world, chef_id, step, game_ms, out)) {
+        if (game_ms >= macro->deadline_ms) {
+            fail_step(macro, game_ms, "progress=1", "focus");
+            return -1;
+        }
+        return 0;
     }
     if (game_ms >= macro->deadline_ms) {
         fail_step(macro, game_ms, "progress=1", "timeout");
@@ -1343,6 +1430,13 @@ static int run_pour(kos_macro *macro, const kos_kitchen *kitchen, const kos_worl
     if (done) {
         return next_step(macro, out) == 1 ? 1 : 0;
     }
+    if (!ensure_focus(macro, kitchen, world, chef_id, step, game_ms, out)) {
+        if (game_ms >= macro->deadline_ms) {
+            fail_step(macro, game_ms, "source-empty", "focus");
+            return -1;
+        }
+        return 0;
+    }
     if (game_ms >= macro->deadline_ms) {
         fail_step(macro, game_ms, "source-empty", "timeout");
         return -1;
@@ -1353,7 +1447,8 @@ static int run_pour(kos_macro *macro, const kos_kitchen *kitchen, const kos_worl
 }
 
 static int run_wash(kos_macro *macro, const kos_kitchen *kitchen,
-                    const kos_world_state *world, int64_t game_ms, kos_macro_output *out)
+                    const kos_world_state *world, int chef_id, int64_t game_ms,
+                    kos_macro_output *out)
 {
     const kos_macro_step *step = &macro->plan.steps[macro->step_index];
     const kos_resource *resource = find_station_resource(kitchen, step, world);
@@ -1373,6 +1468,13 @@ static int run_wash(kos_macro *macro, const kos_kitchen *kitchen,
          (!macro->clean_baseline_valid || (have_clean && clean > macro->clean_baseline)))) {
         return next_step(macro, out) == 1 ? 1 : 0;
     }
+    if (!ensure_focus(macro, kitchen, world, chef_id, step, game_ms, out)) {
+        if (game_ms >= macro->deadline_ms) {
+            fail_step(macro, game_ms, "progress=1+clean", "focus");
+            return -1;
+        }
+        return 0;
+    }
     if (game_ms >= macro->deadline_ms) {
         fail_step(macro, game_ms, "progress=1+clean", "timeout");
         return -1;
@@ -1382,9 +1484,9 @@ static int run_wash(kos_macro *macro, const kos_kitchen *kitchen,
     return 0;
 }
 
-static int run_deliver(kos_macro *macro, const kos_world_state *world,
-                       const kos_chef *chef, const kos_macro_step *step,
-                       int64_t game_ms, kos_macro_output *out)
+static int run_deliver(kos_macro *macro, const kos_kitchen *kitchen,
+                       const kos_world_state *world, int chef_id, const kos_chef *chef,
+                       const kos_macro_step *step, int64_t game_ms, kos_macro_output *out)
 {
     /* G9：游戏自己的订单结果比"从 m_activeOrders 消失"更早也更准。交付瞬间盘子
      * 就消失、手先空，订单却可能晚一两帧才移除；只按手空判失败会把成功交付记成
@@ -1445,6 +1547,13 @@ static int run_deliver(kos_macro *macro, const kos_world_state *world,
     } else {
         macro->empty_hand_since_ms = 0;
     }
+    if (!ensure_focus(macro, kitchen, world, chef_id, step, game_ms, out)) {
+        if (game_ms >= macro->deadline_ms) {
+            fail_step(macro, game_ms, "order-gone", "focus");
+            return -1;
+        }
+        return 0;
+    }
     if (game_ms >= macro->deadline_ms) {
         fail_step(macro, game_ms, "order-gone", "timeout");
         return -1;
@@ -1484,17 +1593,17 @@ int kos_macro_advance(kos_macro *macro, const kos_kitchen *kitchen,
     case KOS_MACRO_PICKUP:
         return run_pickup(macro, kitchen, world, chef_id, game_ms, out);
     case KOS_MACRO_DROP:
-        return run_drop(macro, chef, step, game_ms, out);
+        return run_drop(macro, kitchen, world, chef_id, chef, step, game_ms, out);
     case KOS_MACRO_CHOP:
-        return run_chop(macro, kitchen, world, game_ms, out);
+        return run_chop(macro, kitchen, world, chef_id, game_ms, out);
     case KOS_MACRO_START_COOK:
         return run_start_cook(macro, kitchen, world, chef_id, game_ms, out);
     case KOS_MACRO_POUR:
         return run_pour(macro, kitchen, world, chef_id, game_ms, out);
     case KOS_MACRO_WASH:
-        return run_wash(macro, kitchen, world, game_ms, out);
+        return run_wash(macro, kitchen, world, chef_id, game_ms, out);
     case KOS_MACRO_DELIVER:
-        return run_deliver(macro, world, chef, step, game_ms, out);
+        return run_deliver(macro, kitchen, world, chef_id, chef, step, game_ms, out);
     default:
         fail_step(macro, game_ms, "known-macro", "unknown-kind");
         return -1;

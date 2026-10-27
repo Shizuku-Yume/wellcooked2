@@ -1151,6 +1151,111 @@ static void test_pour_carried_without_contents(const kos_kitchen *kitchen, const
 }
 
 /*
+ * 实机 20261027-131838 的四次失败都是"朝向看着对、游戏选中的是别的东西"：
+ * 动作授权必须用游戏自己选中的交互对象（插件报 facing_pos），不是厨师朝向。
+ * 这里用合成世界锁住三条：
+ *   1. 焦点不在目标工位上时，pickup/drop 只发 FACE/NAVIGATE，绝不发 interact；
+ *   2. 焦点回到工位上才按键；
+ *   3. 旧插件（没有 facing_pos）退回几何朝向，行为不变。
+ */
+static void test_facing_authority(const kos_kitchen *kitchen, const char *dispenser,
+                                  const char *board_id)
+{
+    kos_world_state world;
+    kos_macro macro;
+    kos_macro_output out;
+    kos_chef *chef;
+    kos_resource *disp;
+    kos_resource *board;
+    int station_index;
+    float sx;
+    float sz;
+    int64_t game_ms = 1000;
+    int rc;
+
+    printf("test_facing_authority\n");
+    station_index = kos_kitchen_station_index(kitchen, dispenser);
+    sx = kitchen->stations[station_index].x;
+    sz = kitchen->stations[station_index].z;
+
+    base_world(&world);
+    chef = chef_at_station(&world, kitchen, dispenser);
+    disp = add_resource(&world, "dispenser_0");
+    disp->has_pos = 1;
+    disp->pos_x = sx;
+    disp->pos_y = sz;
+    snprintf(disp->content, sizeof disp->content, "SushiFish");
+    expect(build(&macro, kitchen, "fetch", "fetch:SushiFish", dispenser, "o1", 100) == 0,
+           "focus：fetch 计划建成");
+    (void)finish_goto(&macro, kitchen, &world, &game_ms, &out);
+    expect(macro.step_index == 1, "focus：goto 完成进入 pickup");
+
+    /* 几何朝向正确，但游戏选中的是隔壁（0.6 m 外）的台面：不许按键。 */
+    chef->has_facing_target = 1;
+    chef->facing_x = sx + 0.6f;
+    chef->facing_y = sz;
+    game_ms += 16;
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    expect(rc == 0 && macro.step_index == 1 && out.action == KOS_MACRO_ACT_FACE,
+           "focus：选中的是隔壁台面时只转身、不按 pickup");
+    game_ms += 600;
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    expect(rc == 0 && macro.step_index == 1 && out.action == KOS_MACRO_ACT_NAVIGATE,
+           "focus：转身 500 ms 仍不对就重新走位");
+    /* 焦点回到料箱上：恢复按键。 */
+    chef->facing_x = sx;
+    chef->facing_y = sz;
+    game_ms += 16;
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    expect(rc == 0 && macro.step_index == 1 && out.action == KOS_MACRO_ACT_INTERACT,
+           "focus：游戏选中的就是料箱时发 interact");
+
+    /* 切菜：焦点漂到别处时不能继续按住 work。 */
+    base_world(&world);
+    chef = chef_at_station(&world, kitchen, board_id);
+    chef->has_facing_target = 0; /* 先按几何朝向走完 goto/drop */
+    snprintf(chef->holding, sizeof chef->holding, "SushiFish");
+    board = add_resource(&world, "cutting_board_0");
+    snprintf(board->content, sizeof board->content, "SushiFish");
+    expect(build(&macro, kitchen, "cut", "cut:ChoppedSushiFish", board_id, "o1", 1700) == 0,
+           "focus：cut 计划建成");
+    (void)finish_goto(&macro, kitchen, &world, &game_ms, &out);
+    game_ms += 16;
+    (void)kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out); /* drop interact */
+    chef->holding[0] = '\0';
+    game_ms += 16;
+    (void)kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out); /* drop 完成 */
+    chef->has_facing_target = 1;
+    chef->facing_x = kitchen->stations[kos_kitchen_station_index(kitchen, board_id)].x;
+    chef->facing_y = kitchen->stations[kos_kitchen_station_index(kitchen, board_id)].z;
+    game_ms += 16;
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    expect(rc == 0 && out.action == KOS_MACRO_ACT_WORK,
+           "focus：焦点在砧板上时按住 work");
+    chef->facing_x += 0.6f; /* 厨师没动，但游戏改选了隔壁 */
+    game_ms += 16;
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    expect(rc == 0 && out.action == KOS_MACRO_ACT_FACE,
+           "focus：焦点漂走后停止 work、改为转身");
+
+    /* 旧插件没有 facing_pos：退回几何朝向，继续按键。 */
+    base_world(&world);
+    chef = chef_at_station(&world, kitchen, dispenser);
+    disp = add_resource(&world, "dispenser_0");
+    disp->has_pos = 1;
+    disp->pos_x = sx;
+    disp->pos_y = sz;
+    snprintf(disp->content, sizeof disp->content, "SushiFish");
+    expect(build(&macro, kitchen, "fetch", "fetch:SushiFish", dispenser, "o1", 100) == 0,
+           "focus old：fetch 计划建成");
+    (void)finish_goto(&macro, kitchen, &world, &game_ms, &out);
+    game_ms += 16;
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    expect(rc == 0 && out.action == KOS_MACRO_ACT_INTERACT,
+           "focus old：没有 facing_pos 时按几何朝向按键");
+}
+
+/*
  * S3：旧状态完全没有 carried_、源 pot_* 也看不到这味料、台面也没有新增内容——
  * 三个来源都没有证据。旧实现（119423f）在 800 ms 后按"时间到了"判完成，等于把
  * 没倒成的料当成倒完了，后面装盘/交付连锁失败。现在必须等到步超时并以
@@ -1720,6 +1825,7 @@ int main(void)
     test_fetch(&kitchen, dispenser);
     test_cut(&kitchen, board);
     test_chop_completion_by_rename(&kitchen, board);
+    test_facing_authority(&kitchen, dispenser, board);
     test_cook(&kitchen, cooker);
     test_plate(&kitchen, cooker, plate_stack);
     test_pour(&kitchen, cooker, container);

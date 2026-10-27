@@ -344,6 +344,7 @@ static void test_synthetic(void)
     char line_path[256];
     char far_path[256];
     char edge_path[256];
+    char diagonal_path[256];
     static kos_kitchen kitchen;
     kos_error err;
     int rc;
@@ -359,6 +360,7 @@ static void test_synthetic(void)
     snprintf(line_path, sizeof line_path, "%s/line.json", dir);
     snprintf(far_path, sizeof far_path, "%s/far.json", dir);
     snprintf(edge_path, sizeof edge_path, "%s/edge.json", dir);
+    snprintf(diagonal_path, sizeof diagonal_path, "%s/diagonal.json", dir);
 
     /*
      * 一个可走格，两个工位分别在它上下：两个工位共用同一站位格，朝向相反。
@@ -443,6 +445,23 @@ static void test_synthetic(void)
     expect(rc == KOS_ERR_MISSING, "2.4 m 外的工位没有站位格，加载失败");
     expect(strstr(err.context, "far-0") != NULL, "超距错误里带工位 id");
 
+    /*
+     * 侧向偏移 0.7 m：距离只有 1.22 m，但游戏面前那一格不是这个工位
+     * （实机 20261027-131838 的料箱/盘堆错位）。旧的 1.5 格侧向兜底会接受它，
+     * 现在必须失败——站位格与工位必须在同一条正对线上。
+     */
+    expect(write_file(diagonal_path,
+                      "{\"scene\":\"diagonal\",\"grid\":{\"step\":0.6,"
+                      "\"cells\":[[0,0]],\"mask\":[0]},"
+                      "\"stations\":[{\"id\":\"diag-0\",\"kind\":\"dispenser\","
+                      "\"pos\":[0.7,-1.0]}]}") == 0,
+           "diagonal.json 写入");
+    memset(&kitchen, 0, sizeof kitchen);
+    kos_error_clear(&err);
+    rc = kos_kitchen_load(diagonal_path, &kitchen, &err);
+    expect(rc == KOS_ERR_MISSING, "侧向偏移 0.7 m 的工位没有站位格（不再用侧向兜底）");
+    expect(strstr(err.context, "diag-0") != NULL, "侧向偏移错误里带工位 id");
+
     /* 2.0 m 整（上限边上）：仍然接受，并记录兜底。 */
     expect(write_file(edge_path,
                       "{\"scene\":\"edge\",\"grid\":{\"step\":0.6,"
@@ -490,6 +509,7 @@ static void test_synthetic(void)
     unlink(line_path);
     unlink(far_path);
     unlink(edge_path);
+    unlink(diagonal_path);
     rmdir(dir);
 }
 static void test_demo3_cooker_stands(void)
@@ -540,6 +560,19 @@ static void test_demo3_cooker_stands(void)
                      "demo3/%s(kind=%s): 站位格 cell=%d 在交互半径内 <= 2.0m (实际 %.2fm)",
                      station->id, station->kind, cell_idx, dist);
             expect(dist <= 2.0f + 1e-3f, label);
+            /* 站位格必须正对工位：侧向偏移 <= 半格，否则游戏面前那一格是别人。 */
+            {
+                float lateral = stands->cells[j].facing == KOS_GRID_EDGE_PX
+                                    ? fabsf(cz - station->z)
+                                : stands->cells[j].facing == KOS_GRID_EDGE_NX
+                                    ? fabsf(cz - station->z)
+                                    : fabsf(cx - station->x);
+
+                snprintf(label, sizeof label,
+                         "demo3/%s(kind=%s): 站位格 cell=%d 侧向偏移 <= 0.3m (实际 %.2fm)",
+                         station->id, station->kind, cell_idx, lateral);
+                expect(lateral <= 0.3f + 1e-3f, label);
+            }
 
             if (strcmp(station->kind, "cooker") != 0) {
                 continue;

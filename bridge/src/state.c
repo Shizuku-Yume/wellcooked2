@@ -128,6 +128,9 @@ void kos_state_from_update_logged(const proto_state_update *up, kos_world_state 
                       src->holding_contents, src->holding_content_count);
         dst->holding_content_count =
             (int32_t)capped(src->holding_content_count, KOS_SHM_MAX_CONTENTS);
+        dst->has_facing_target = src->has_facing_target;
+        dst->facing_x = kos_state_double_to_float(src->facing_x);
+        dst->facing_y = kos_state_double_to_float(src->facing_y);
     }
 
     orders = capped(up->order_count, KOS_SHM_MAX_ORDERS);

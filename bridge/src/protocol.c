@@ -298,6 +298,7 @@ static int parse_chefs(const json_value *root, proto_state_update *out, proto_di
         const json_value *entry = json_array_get(chefs, i);
         const json_value *position = NULL;
         const json_value *holding;
+        const json_value *facing;
         proto_chef *chef;
         long long id = 0;
 
@@ -333,6 +334,19 @@ static int parse_chefs(const json_value *root, proto_state_update *out, proto_di
         rc = get_num(entry, "facing", &chef->facing);
         if (rc != PROTO_OK)
             return rc;
+
+        facing = json_object_get(entry, "facing_pos");
+        if (facing != NULL && json_typeof(facing) != JSON_NULL) {
+            if (json_typeof(facing) != JSON_OBJECT)
+                return PROTO_ERR_RANGE;
+            rc = get_num(facing, "x", &chef->facing_x);
+            if (rc != PROTO_OK)
+                return rc;
+            rc = get_num(facing, "y", &chef->facing_y);
+            if (rc != PROTO_OK)
+                return rc;
+            chef->has_facing_target = 1;
+        }
 
         /* `holding` is a string when the chef carries something and JSON null
          * otherwise; both describe a usable chef, so null stays as "". */

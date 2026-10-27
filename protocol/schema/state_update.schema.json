@@ -63,7 +63,16 @@
             "type": "number",
             "description": "朝向（弧度）。"
           },
-          "state": {
+          "facing_pos": {
+          "type": "object",
+          "required": ["x", "y"],
+          "description": "游戏自己选中的交互对象（InteractWithItemHelper.GetFacingGridOccupant）的世界坐标；宏只在它等于目标工位时才按 A。缺失 = 老插件，退回按厨师朝向判断。",
+          "properties": {
+            "x": { "type": "number" },
+            "y": { "type": "number" }
+          }
+        },
+        "state": {
             "type": "string",
             "description": "取自游戏，例如 moving / idle。"
           }

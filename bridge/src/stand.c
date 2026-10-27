@@ -30,8 +30,6 @@
 /* 跳过工位自己所在的那一格（工位偶尔压在可走格上，实机 sink 偏 0.01 m），
  * 但不跳过与工位相距四分之一格以上的相邻格。 */
 #define STAND_MIN_ALONG_FACTOR 0.25f
-/* 兜底允许侧向偏移至 1.5 格。 */
-#define STAND_FALLBACK_PERP_FACTOR 1.5f
 /* 兜底的最大距离：游戏交互半径约 1.2 m（站位格）、最远吃到 1.8–2.0 m。
  * 超过这个距离按不到工位，宁可加载失败（站位格为 0 会让厨师永远走不到），
  * 也不要把一个"看起来能站"的格当成可交互位置。 */
@@ -284,15 +282,23 @@ int kos_stand_build(kos_kitchen *kitchen, kos_error *err)
             stands->count++;
         }
         if (stands->count == 0) {
-            float fallback_perp = kitchen->step * STAND_FALLBACK_PERP_FACTOR + 1e-3f;
             int best_cell = -1;
             uint8_t best_facing = 0;
             float best_dist = 1e9f;
 
-            /* 1. 尝试允许侧向偏移行走格（兜底时记录 WARN） */
+            /*
+             * 只允许"正对方向更远一点"的兜底，不再允许侧向偏移。
+             *
+             * 游戏按 A 作用到的是厨师面朝的那一格上的物体；站位的侧向偏移超过
+             * 半格时，面前那一格就是别的台面/别的料箱了。实机 20261027-131838：
+             * 厨师在 (-0.10,-7.40) 面对的是 countertop，而目标是 (0.6,-8.4) 的
+             * 料箱（LogOutput.run.log:731）；侧向偏移 0.7 m 正是旧的 1.5 格兜底
+             * 放出来的，2.0 m 的距离上限并不能救它。宁可加载失败，也不要一个
+             * "能站、但按不到目标"的站位格。
+             */
             for (d = 0; d < sizeof STAND_DIRECTIONS / sizeof STAND_DIRECTIONS[0]; d++) {
                 int cell = find_stand_cell(kitchen, station, &STAND_DIRECTIONS[d],
-                                           fallback_perp, min_along, max_along);
+                                           perp_tolerance, min_along, 1e6f);
                 if (cell >= 0) {
                     float dx = kitchen->cells[cell].x - station->x;
                     float dz = kitchen->cells[cell].z - station->z;
@@ -306,41 +312,14 @@ int kos_stand_build(kos_kitchen *kitchen, kos_error *err)
                 }
             }
             if (best_cell >= 0 && sqrtf(best_dist) > STAND_FALLBACK_MAX_DIST) {
-                best_cell = -1; /* 够不着：交给下面报"没有可站的格" */
+                best_cell = -1; /* 超过交互半径：不拿假站位格骗调用方 */
             }
             if (best_cell >= 0) {
                 record_stand_fallback(kitchen, station, best_cell, sqrtf(best_dist),
-                                      "sideways offset");
+                                      "far cell in the facing direction");
                 stands->cells[stands->count].cell = best_cell;
                 stands->cells[stands->count].facing = best_facing;
                 stands->count++;
-            } else {
-                /* 2. 尝试正对方向更远距离的可行格（兼容特殊合成测试，兜底时记录 WARN） */
-                for (d = 0; d < sizeof STAND_DIRECTIONS / sizeof STAND_DIRECTIONS[0]; d++) {
-                    int cell = find_stand_cell(kitchen, station, &STAND_DIRECTIONS[d],
-                                               perp_tolerance, min_along, 1e6f);
-                    if (cell >= 0) {
-                        float dx = kitchen->cells[cell].x - station->x;
-                        float dz = kitchen->cells[cell].z - station->z;
-                        float dist = dx * dx + dz * dz;
-
-                        if (dist < best_dist) {
-                            best_dist = dist;
-                            best_cell = cell;
-                            best_facing = STAND_DIRECTIONS[d].facing;
-                        }
-                    }
-                }
-                if (best_cell >= 0 && sqrtf(best_dist) > STAND_FALLBACK_MAX_DIST) {
-                    best_cell = -1; /* 超过交互半径：不拿假站位格骗调用方 */
-                }
-                if (best_cell >= 0) {
-                    record_stand_fallback(kitchen, station, best_cell, sqrtf(best_dist),
-                                          "far cell in the facing direction");
-                    stands->cells[stands->count].cell = best_cell;
-                    stands->cells[stands->count].facing = best_facing;
-                    stands->count++;
-                }
             }
         }
         if (stands->count == 0) {

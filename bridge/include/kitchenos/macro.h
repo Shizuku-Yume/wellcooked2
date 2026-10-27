@@ -111,6 +111,9 @@ typedef struct {
     /* pickup 的步骤 item 为空时（切好的 prefab 改名、端锅），记录进入这一步时
      * 源工位上的物体名；拿到同名物品才算完成，避免"随手抓到别的东西"也算数。 */
     char source_item[KOS_SHM_NAME_MAX];
+    /* 本步第一次发现"游戏选中的交互对象不是目标工位"的时刻：先转身，超过
+     * MACRO_FOCUS_RETRY_MS 还不对就重新走位（站位格或朝向选错了）。 */
+    int64_t focus_lost_since_ms;
     char entry_holding[KOS_SHM_NAME_MAX];
     int clean_baseline_valid;
     int32_t clean_baseline;

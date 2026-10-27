@@ -87,6 +87,7 @@ C 侧 `bridge/include/kitchenos/protocol.h` + `bridge/src/protocol.c`，
 | `position` | object `{x,y}` | 否 | 世界坐标（映射游戏 x/z 平面） |
 | `holding` | string \| null | 否 | 手上的东西；`null` 表示空手，C 侧存成 `""`（`proto_chef.holding`） |
 | `holding_contents` | string[] | 否 | 手持物里递归展开的内容名，最多 8 个，编码同 `resources[].contents`（G4：盘里是哪道菜、锅里煮的是什么） |
+| `facing_pos` | object `{x,y}` | 否 | `facing_x`/`facing_y` + `has_facing_target` | 游戏自己选中的交互对象（`InteractWithItemHelper.GetFacingGridOccupant`）的世界坐标：它回答"现在按 A 会作用到谁"，宏只在它等于目标工位时才按键（KOS_SHM_VERSION 4） |
 | `state` | string | 否 | 取自游戏，例如 `moving` / `idle` |
 | `facing` | number | 否 | 厨师朝向（弧度） |
 

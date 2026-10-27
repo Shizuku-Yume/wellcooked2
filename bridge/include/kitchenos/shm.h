@@ -82,8 +82,9 @@
 /* 2：资源加 kind/pos/item/contents[]/step，厨师加手持内容，订单加 score，
  * 世界状态加回合剩余与订单结果表（任务 09 G1–G9）。旧读者会因版本不符拒绝挂接。
  * 3：资源上限 48 → 96（与协议一致，carried_* 不再被截断），资源加 cooked/burning/
- * burn_in/fire —— 熟与烧焦必须同时可见，否则调度侧分不清"刚熟还能倒"和"已经烧起来"。 */
-#define KOS_SHM_VERSION 3u
+ * burn_in/fire —— 熟与烧焦必须同时可见，否则调度侧分不清"刚熟还能倒"和"已经烧起来"。
+ * 4：厨师加游戏选中的交互对象（facing_*），宏只在它指向目标工位时才按键。 */
+#define KOS_SHM_VERSION 4u
 
 #define KOS_SHM_DEFAULT_NAME "/kitchenos_state"
 #define KOS_SHM_DEFAULT_SEM_NAME "/kitchenos_input_ready"
@@ -203,6 +204,13 @@ typedef struct {
     /* 手持物里递归展开的内容（盘上是哪道菜、锅里煮的是什么），编码见 kos_resource.contents。 */
     int32_t holding_content_count;
     char holding_contents[KOS_SHM_MAX_CONTENTS][KOS_SHM_INGREDIENT_MAX];
+    /* ---- KOS_SHM_VERSION 4：游戏自己选中的交互对象 ----
+     * 插件按 `InteractWithItemHelper.GetFacingGridOccupant` 取"厨师面前那一格上的
+     * 物体"，报它的名字与位置。坐标是权威判据：厨师站在哪个格子、朝哪边，都不如
+     * "游戏按 A 会作用到谁"直接。名字只进日志。 */
+    int32_t has_facing_target;      /* 1 = facing_x/facing_y 有效 */
+    float facing_x;
+    float facing_y;
 } kos_chef;
 
 typedef struct {

@@ -393,6 +393,32 @@ static void test_cooking_flags(void)
     }
 }
 
+/*
+ * KOS_SHM_VERSION 4：厨师报"游戏自己选中的交互对象"（facing_pos）。
+ * 宏只在这个对象就是目标工位时才按键（实机 20261027-131838 的错位按键）。
+ */
+static void test_chef_facing_target(void)
+{
+    static const char sample[] =
+        "{\"type\":\"state_update\",\"game_time_ms\":1,\"chefs\":["
+        "{\"id\":0,\"position\":{\"x\":3.0,\"y\":-2.2},\"facing\":0.0,"
+        "\"facing_pos\":{\"x\":3.0,\"y\":-1.2}},"
+        "{\"id\":1,\"position\":{\"x\":3.0,\"y\":-2.2},\"facing\":0.0}]}";
+    json_value *root = parse_ok(sample, sizeof sample - 1);
+    proto_state_update state;
+
+    CHECK(root != NULL);
+    if (root == NULL)
+        return;
+    CHECK_INT(protocol_parse_state_update(root, &state, NULL), PROTO_OK);
+    CHECK_INT(state.chef_count, 2);
+    CHECK_INT(state.chefs[0].has_facing_target, 1);
+    CHECK_DBL(state.chefs[0].facing_x, 3.0);
+    CHECK_DBL(state.chefs[0].facing_y, -1.2);
+    CHECK_INT(state.chefs[1].has_facing_target, 0); /* 老插件：字段缺失 */
+    json_free(root);
+}
+
 /* 任务 09 G1–G9：灶台槽位、递归内容、手持内容、每单分值、回合时钟、订单结果。 */
 static void test_state_audit_fields(void)
 {
@@ -1238,6 +1264,7 @@ int main(void)
     test_state_new_fields();
     test_dynamic_resources();
     test_state_audit_fields();
+    test_chef_facing_target();
     test_cooking_flags();
     test_state_field_errors();
     test_heartbeat();

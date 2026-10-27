@@ -42,7 +42,7 @@ namespace WellCooked
         }
 
         /// <summary>厨师面前那个占位物体（`InteractWithItemHelper.GetFacingGridOccupant`），没查到返回 null。</summary>
-        private static Component FacingOccupant(PlayerControls chef)
+        public static Component FacingOccupant(PlayerControls chef)
         {
             ResolveLookups();
             return _facingLookup == null
