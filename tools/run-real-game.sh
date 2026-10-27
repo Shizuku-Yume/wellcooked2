@@ -523,8 +523,6 @@ wait_frontend_off
 before="$(state_mtime_ns)"
 printf 'load=%s\n' "$SCENE" > "$COMMAND"
 wait_load_stable "$before" || die "scene $SCENE did not stay fresh/stable with $CHEFS chefs"
-
-
 export_map
 if [ "$EXPORT" = 1 ]; then
     KITCHEN="$MAP_DIR/$SCENE/kitchen.json"
@@ -560,22 +558,11 @@ for i in $(seq 1 30); do
     fi
     sleep 1
 done
-[ "$clock_ok" = 1 ] || die "round clock stayed at 0 after load (scene is stuck before RunKitchen)"
+if [ "$clock_ok" != 1 ]; then
+    stop_supervisor
+    die "round clock stayed at 0 after load (scene is stuck before RunKitchen)"
+fi
 
-say "supervisor: starting"
-"$SUPERVISOR" --foreground --verbose --runtime-dir "$RT" \
-    --workers "$CHEFS" --bridge-host "$HOST" --bridge-port "$PORT" \
-    --kitchen "$KITCHEN" --recipes "$RECIPES" \
-    --orders "$ROOT/config/orders.world.json" --runs-dir "$RT/runs" \
-    >"$RT/supervisor.console.log" 2>&1 &
-SUPERVISOR_PID=$!
-say "supervisor: pid $SUPERVISOR_PID"
-
-for i in $(seq 1 30); do
-    kill -0 "$SUPERVISOR_PID" 2>/dev/null || die "supervisor exited during startup"
-    [ -f "$RT/status.json" ] && break
-    sleep 1
-done
 
 say "round: waiting up to ${GAME_SECONDS}s for round end"
 deadline=$((SECONDS + GAME_SECONDS))

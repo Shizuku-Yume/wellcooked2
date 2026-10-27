@@ -552,6 +552,10 @@ static void test_distance_and_wash(void)
         return;
     }
     kos_world_state_reset(&world);
+    world.has_round_time = 1;
+    world.round_time_limit = 120.0f;
+    world.round_time_left = 119.0f;
+    world.game_time_ms = 1000;
     world.chef_count = 2;
     world.chefs[0].id = 0;
     world.chefs[0].x = run.kitchen.cells[chef_cell].x;

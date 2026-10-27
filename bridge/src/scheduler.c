@@ -3811,6 +3811,9 @@ static void dispatch_ready(scheduler *s, int64_t now)
     if (world == NULL || !world->has_round_time || world->round_time_left <= 0.0f) {
         return;
     }
+    if (!s->round_started && world->round_time_left >= world->round_time_limit) {
+        return;
+    }
     if (!s->round_started) {
         s->round_started = 1;
         kos_log_info(s->rt.log, "round_started", "game_time_ms=%lld",

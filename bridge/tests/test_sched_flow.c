@@ -382,6 +382,9 @@ static int start_run_ex(ksfx_run *run, kos_shm **shm, mqd_t *events, mqd_t *task
         return -1;
     }
     world->game_time_ms = 1000;
+    world->has_round_time = 1;
+    world->round_time_limit = 120.0f;
+    world->round_time_left = 119.0f;
     if (world_write(*shm, world) != 0) {
         return -1;
     }

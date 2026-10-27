@@ -20,6 +20,7 @@
 #include "kitchenos/kitchen.h"
 #include "kitchenos/recipes.h"
 #include "kitchenos/resource.h"
+#include "kitchenos/shm.h"
 
 #include <dirent.h>
 #include <errno.h>
@@ -56,6 +57,7 @@ typedef struct {
     int verbose; /* 1 = 给 Scheduler 加 --verbose（调试用） */
     int instance; /* 每个测试进程一个实例号：资源信号量与 mq 名不撞同机并发跑的套件 */
     char scene[64]; /* 空 = KSFX_SCENE；用例可改成 s_wellcooked_demo_3 用板/多灶 */
+    int owns_test_shm;
 } ksfx_run;
 
 __attribute__((unused)) static void ksfx_copy(char *dst, size_t cap, const char *src)
@@ -457,6 +459,30 @@ __attribute__((unused)) static int ksfx_spawn_ex(ksfx_run *r, const char *strate
     argv[ac++] = (char *)"--sem-name";
     argv[ac++] = r->sem_name;
     argv[ac] = NULL;
+    {
+        kos_shm_opts opts;
+        kos_shm *shm = NULL;
+        kos_error err;
+        kos_world_state world;
+        memset(&opts, 0, sizeof opts);
+        opts.object_name = r->state_name;
+        opts.sem_name = r->sem_name;
+        opts.perm = 0600;
+        kos_error_clear(&err);
+        if (kos_shm_open(&opts, KOS_SHM_CREATE, &shm, &err) == KOS_OK) {
+            r->owns_test_shm = 1;
+            kos_world_state_reset(&world);
+            world.has_round_time = 1;
+            world.round_time_limit = 120.0f;
+            world.round_time_left = 119.0f;
+            world.game_time_ms = 1000;
+            if (kos_shm_world_write(shm, &world) != KOS_OK) {
+                (void)kos_shm_close(shm, NULL);
+                return -1;
+            }
+            (void)kos_shm_close(shm, NULL);
+        }
+    }
 
     pid = fork();
     if (pid < 0) {
@@ -675,6 +701,13 @@ __attribute__((unused)) static void ksfx_cleanup(ksfx_run *r)
 
     if (r->pid > 0) {
         (void)ksfx_stop(r);
+    }
+    if (r->owns_test_shm) {
+        kos_shm_opts opts;
+        memset(&opts, 0, sizeof opts);
+        opts.object_name = r->state_name;
+        opts.sem_name = r->sem_name;
+        (void)kos_shm_unlink(&opts, NULL);
     }
     kos_error_clear(&err);
     (void)kos_resources_unlink(&r->kitchen, r->instance, &err);
