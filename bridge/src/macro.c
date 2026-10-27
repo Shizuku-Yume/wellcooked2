@@ -693,10 +693,13 @@ static int station_in_focus(const kos_kitchen *kitchen, const kos_macro_step *st
     if (chef != NULL && chef->facing_reported) {
         /* 新插件：没选中任何东西 = 眼前没有可交互对象，不能按键（几何朝向再对也不行）。 */
         if (!chef->has_facing_target) {
-            /* the game never reports a facing target at the pass */
-            if (strcmp(kitchen->stations[index].kind, "serving") == 0 ||
-                (kitchen->stations[index].kind[0] == '\0' &&
-                 strncmp(step->station_id, "serving", 7) == 0)) {
+            /* 游戏对出菜口与盘堆从不上报面前目标（实机 20261027-190659 worker-0.log:142），
+             * 这两类退回几何朝向。 */
+            const char *kind = kitchen->stations[index].kind;
+
+            if (strcmp(kind, "serving") == 0 || strcmp(kind, "plate_stack") == 0 ||
+                (kind[0] == '\0' && (strncmp(step->station_id, "serving", 7) == 0 ||
+                                     strncmp(step->station_id, "plate_stack", 11) == 0))) {
                 return facing_towards(kitchen, step, chef);
             }
             return 0;

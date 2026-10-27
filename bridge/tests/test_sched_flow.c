@@ -610,8 +610,8 @@ static void test_retry_backoff(void)
     cleanup_run(&run, &shm, &events, 1);
 }
 
-/* P2：已经到站、游戏不收（pickup 超时）→ 不退避，当单失败。 */
-static void test_refusal_is_infeasible(void)
+/* 到站后超时（pickup 等不到手持物）是瞬时状态：回队重试，不当单判死。 */
+static void test_station_timeout_requeues(void)
 {
     ksfx_run run;
     kos_shm *shm = NULL;
@@ -623,7 +623,7 @@ static void test_refusal_is_infeasible(void)
     size_t len = 0;
     int n;
 
-    printf("[test_sched_flow] 4. 到站后游戏不收：recipe_infeasible，不重试\n");
+    printf("[test_sched_flow] 4. 到站后超时：回队重试，不判订单失败\n");
     if (ksfx_init_ex(&run, 0) != 0 || write_orders(&run) != 0 ||
         write_recipes(&run, "CookDish", 1, 0) != 0) {
         expect(0, "refusal_fixture_init");
@@ -643,16 +643,14 @@ static void test_refusal_is_infeasible(void)
     expect(send_event(events, got[0].task_id, 0, KOS_EVT_FAILED,
                       "macro=pickup wait=holding timeout waited_ms=1500") == 0,
            "pickup_timeout_sent");
-    expect(ksfx_wait_events(&run, "\"event\":\"recipe_infeasible\"", 2000, NULL, 0) == 0,
-           "refusal_marks_recipe_infeasible");
-    expect(ksfx_wait_events(&run, "\"event\":\"order_failed\"", 1000, NULL, 0) == 0,
-           "refusal_fails_order");
-    n = collect_tasks(taskss, 1, got, 1, 500);
-    expect(n == 0, "refusal_is_not_requeued");
+    expect(ksfx_wait_events(&run, "\"reason\":\"macro-failed\"", 2000, NULL, 0) == 0,
+           "station_timeout_requeued");
+    n = collect_tasks(taskss, 1, got, 1, 4000);
+    expect(n == 1, "station_timeout_redispatched");
     events_text = read_events(&run, &len);
-    expect(contains(events_text, "game-refused") &&
-               !contains(events_text, "\"reason\":\"macro-failed\""),
-           "refusal_detail_names_reason_without_requeue");
+    expect(!contains(events_text, "\"event\":\"order_failed\"") &&
+               !contains(events_text, "game-refused"),
+           "station_timeout_does_not_fail_order");
     free(events_text);
     cleanup_run(&run, &shm, &events, 1);
 }
@@ -1454,7 +1452,7 @@ static void test_failed_order_releases_and_unbinds(void)
            "first_order_cut_dispatched");
     /* 模拟任务失败导致订单不可行 */
     expect(send_event(events, got[0].task_id, 0, KOS_EVT_FAILED,
-                      "macro=chop wait=progress=1 timeout") == 0,
+                      "macro=chop wait=progress=1 content-mismatch") == 0,
            "task_failure_sent");
     expect(ksfx_wait_events(&run, "\"event\":\"order_failed\"", 2000, NULL, 0) == 0,
            "order_failed_recorded");
@@ -1549,7 +1547,7 @@ static void test_board_gate_counts_wait(void)
     expect(ksfx_wait_events(&run, "\"event\":\"resource_wait\",\"kind\":\"board\"", 2000, NULL, 0) == 0,
            "board_gate_records_resource_wait");
     /* 任务失败使订单结束，验证等待任务不会在 metrics 中泄露幽灵等待时间 */
-    expect(send_event(events, got[0].task_id, 0, KOS_EVT_FAILED, "macro=chop timeout") == 0,
+    expect(send_event(events, got[0].task_id, 0, KOS_EVT_FAILED, "macro=chop content-mismatch") == 0,
            "board_gate_fail_sent");
     expect(ksfx_wait_events(&run, "\"event\":\"order_failed\"", 2000, NULL, 0) == 0,
            "board_gate_order_failed");
@@ -1561,7 +1559,7 @@ int main(void)
     printf("[test_sched_flow] 开始：派工看手持、失败分流、订单结果闭环\n");
     test_holding_and_candidates();
     test_retry_backoff();
-    test_refusal_is_infeasible();
+    test_station_timeout_requeues();
     test_delivered_vs_expired();
     test_score_delta_expiry();
     test_expiry_adopts_item();

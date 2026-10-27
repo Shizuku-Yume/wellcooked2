@@ -2042,9 +2042,11 @@ static int macro_fail_disposition(const char *detail)
     if (strstr(detail, "source-gone") != NULL || strstr(detail, "content-gone") != NULL) {
         return SCHED_FAIL_REQUEUE;
     }
-    /* 已经到站还等到超时：游戏不收这个动作（对错目标/工序图错），判不可行。 */
+    /* 到站后等到超时：实机 20261027-190659 里 chop/drop 超时多半是焦点或板上残留这类瞬时状态
+     * （scheduler.log:80/88/351 三单因此直接判死，锅留在火上烧糊）。按重试走退避，
+     * 连续 SCHED_TASK_MAX_RETRIES 次才判这道菜失败。 */
     if (strstr(detail, "timeout") != NULL) {
-        return SCHED_FAIL_INFEASIBLE;
+        return SCHED_FAIL_REQUEUE;
     }
     return SCHED_FAIL_ORDER;
 }

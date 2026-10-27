@@ -2026,7 +2026,7 @@ static void test_station_resource_mapping(void)
  * 允许 goto 到站完成并让 deliver 正常发出 INTERACT。其他工位仍保持门禁。
  */
 static void test_serving_facing_fallback(const kos_kitchen *kitchen, const char *serving,
-                                         const char *counter)
+                                         const char *counter, const char *plate_stack)
 {
     kos_world_state world;
     kos_macro macro;
@@ -2089,6 +2089,26 @@ static void test_serving_facing_fallback(const kos_kitchen *kitchen, const char 
     rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
     expect(rc == 0 && out.action != KOS_MACRO_ACT_INTERACT,
            "(c) counter deliver 不发出 INTERACT (保持门禁)");
+
+    /* (d) 盘堆：游戏同样不上报面前目标，plate 的 drop 必须按几何朝向放行。 */
+    base_world(&world);
+    chef = chef_at_station(&world, kitchen, plate_stack);
+    chef->facing_reported = 1;
+    chef->has_facing_target = 0;
+    expect(build(&macro, kitchen, "plate", "plate:Dish", plate_stack, "o-serve", 1000) == 0,
+           "(d) plate_stack plate 计划建成");
+    game_ms = 1000;
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 1, game_ms, &out);
+    for (i = 0; i < 5 && macro.step_index == 0 && rc == 0; i++) {
+        game_ms += 16;
+        rc = kos_macro_advance(&macro, kitchen, &world, 0, 1, game_ms, &out);
+    }
+    expect(rc == 0 && macro.step_index == 1, "(d) plate_stack goto 几 tick 内完成");
+    snprintf(chef->holding, sizeof chef->holding, "ChoppedSushiFish");
+    game_ms += 16;
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    expect(rc == 0 && out.action == KOS_MACRO_ACT_INTERACT,
+           "(d) plate_stack drop 发出 INTERACT");
 }
 
 int main(void)
@@ -2142,7 +2162,7 @@ int main(void)
     test_pour_legacy_no_evidence(&kitchen, cooker, container);
     test_pour_legacy_two_in_a_row(&kitchen, cooker, "cooker-1", container);
     test_deliver(&kitchen, serving);
-    test_serving_facing_fallback(&kitchen, serving, counter);
+    test_serving_facing_fallback(&kitchen, serving, counter, plate_stack);
     test_wash(&kitchen, sink);
     test_timeouts(&kitchen, dispenser, board);
     test_station_resource_mapping();
