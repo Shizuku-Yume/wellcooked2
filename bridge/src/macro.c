@@ -880,8 +880,8 @@ static int run_start_cook(kos_macro *macro, const kos_kitchen *kitchen,
         fail_step(macro, game_ms, "pot=cooking", "timeout");
         return -1;
     }
-    out->action = KOS_MACRO_ACT_INTERACT;
-    copy_str(out->target_object, sizeof out->target_object, step->station_id);
+    out->action = KOS_MACRO_ACT_STOP;
+    out->target_object[0] = '\0';
     return 0;
 }
 
