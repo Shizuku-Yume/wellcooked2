@@ -779,10 +779,7 @@ namespace WellCooked
             LinkRunner.ReportAction(action, slot, ok, detail, seq);
         }
 
-        /// <summary>
-        /// 两手同时写：我们占的虚拟手柄（设备层）+ 逻辑层（按厨师自己的游戏玩家号）。
-        /// 逻辑层激活时覆盖设备层的三个逻辑键与移动轴，所以两处必须是同一组值。
-        /// </summary>
+        // Eight headings with hysteresis stop path-following head wobble; direct bearing in the final 0.4 m keeps arrival convergent.
         private static Vector2 PathDirection(Vector2 offset, Command command)
         {
             if (offset.sqrMagnitude <= 0.16f) return offset.normalized;
@@ -795,6 +792,10 @@ namespace WellCooked
 
 
 
+        /// <summary>
+        /// 两手同时写：我们占的虚拟手柄（设备层）+ 逻辑层（按厨师自己的游戏玩家号）。
+        /// 逻辑层激活时覆盖设备层的三个逻辑键与移动轴，所以两处必须是同一组值。
+        /// </summary>
         private static void Feed(int slot, VirtualPad pad, Vector2 direction,
                                  bool pickup, bool dash, bool work)
         {
