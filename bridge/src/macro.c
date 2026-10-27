@@ -377,17 +377,18 @@ static int chop_content_renamed(const kos_macro *macro, const kos_resource *reso
     }
     return !content_matches(resource->content, macro->board_item_before);
 }
-static const char *strip_colon_prefix(const char *text)
-{
-    const char *colon;
+/* 定义在后面（倒料与烹饪共用同一套原料名规则）。 */
+static int ingredient_word_matches(const char *a, const char *b);
 
-    if (text == NULL) {
-        return "";
-    }
-    colon = strrchr(text, ':');
-    return colon == NULL ? text : colon + 1;
-}
-
+/*
+ * 锅里的内容里有没有这一味料。
+ *
+ * 按"原料词"比（最后一个 CamelCase 词、忽略大小写与复数 s），与倒料同一套规则：
+ * 游戏里同一味料在不同工序后的 prefab 名不同源，而锅里上报的是生料名。
+ * 实机 manual.log:1833 起：锅里是 [BurritoChicken]，菜谱节点叫 FriedChicken，
+ * 剥掉 Fried 得到 Chicken，按整名比永远对不上；[Mushroom] 与 FriedMushrooms 也
+ * 只是复数差异。整名相等仍然是成立的（cook_input 就是 BurritoChicken/Rice）。
+ */
 static int pot_contains_item(const kos_resource *resource, const char *item)
 {
     int i;
@@ -395,15 +396,13 @@ static int pot_contains_item(const kos_resource *resource, const char *item)
     if (resource == NULL || item == NULL || item[0] == '\0') {
         return 0;
     }
-    if (resource->content[0] != '\0' && content_matches(resource->content, item)) {
+    if (resource->content[0] != '\0' && ingredient_word_matches(resource->content, item)) {
         return 1;
     }
     for (i = 0; i < (int)resource->content_count && i < KOS_SHM_MAX_CONTENTS; i++) {
-        if (resource->contents[i][0] != '\0') {
-            const char *name = strip_colon_prefix(resource->contents[i]);
-            if (name_eq(name, item)) {
-                return 1;
-            }
+        if (resource->contents[i][0] != '\0' &&
+            ingredient_word_matches(resource->contents[i], item)) {
+            return 1;
         }
     }
     return 0;

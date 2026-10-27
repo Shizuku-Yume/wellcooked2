@@ -57,7 +57,10 @@ static const char *station_of_kind(const kos_kitchen *kitchen, const char *kind)
     return NULL;
 }
 
-static kos_resource *add_resource(kos_world_state *world, const char *name)
+/* noinline：GCC 在小函数被内联后会误报写越界（-Warray-bounds 的已知噪音，
+ * 目标数组其实是 kos_resource 的 32 字节字段）。测试辅助函数不需要内联。 */
+__attribute__((noinline)) static kos_resource *add_resource(kos_world_state *world,
+                                                            const char *name)
 {
     kos_resource *resource;
 
@@ -662,6 +665,57 @@ static void test_cook(const kos_kitchen *kitchen, const char *cooker)
     rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out); /* start_cook */
     expect(rc == -1 && strstr(kos_macro_fail_detail(&macro), "content-mismatch") != NULL,
            "S2 负例：锅内物料数量 0→1 但名字不对时判 content-mismatch");
+
+    /*
+     * 菜谱节点名与锅里上报的生料名不同源（实机 manual.log:1833 起：锅=[BurritoChicken]、
+     * [BurritoMeat]）。这里把四条真实工序逐条锁住，且**不填 cook_input**，走的是
+     * "节点名剥修饰语"的兜底路径：FriedChicken/BurritoChicken、FriedMushrooms/Mushroom
+     * （复数）、FriedBurritoMeat/BurritoMeat、BoiledRice/Rice。
+     */
+    {
+        static const struct {
+            const char *node;
+            const char *pot;
+        } cases[] = {
+            { "cook:FriedChicken", "BurritoChicken" },
+            { "cook:FriedBurritoMeat", "BurritoMeat" },
+            { "cook:FriedMushrooms", "Mushroom" },
+            { "cook:BoiledRice", "Rice" },
+        };
+        size_t c;
+
+        for (c = 0; c < sizeof cases / sizeof cases[0]; c++) {
+            kos_macro_plan plan;
+            char label[160];
+
+            base_world(&world);
+            game_ms = 1000;
+            chef = chef_at_station(&world, kitchen, cooker);
+            snprintf(chef->holding, sizeof chef->holding, "DicedMeat");
+            pot = add_resource(&world, "pot_0");
+            snprintf(pot->state, sizeof pot->state, "free");
+            kos_error_clear(&err);
+            expect(kos_macro_plan_build(kitchen, "cook", cases[c].node, cooker, "o1", 1000,
+                                        &plan, &err) == KOS_OK,
+                   "cook 名称规则：计划建成");
+            kos_macro_begin(&macro, &plan);
+            (void)finish_goto(&macro, kitchen, &world, &game_ms, &out);
+            game_ms += 16;
+            (void)kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out); /* drop */
+            chef->holding[0] = '\0';
+            snprintf(pot->content, sizeof pot->content, "%s", cases[c].pot);
+            pot->content_count = 1;
+            snprintf(pot->contents[0], sizeof pot->contents[0], "%s", cases[c].pot);
+            snprintf(pot->state, sizeof pot->state, "cooking");
+            game_ms += 16;
+            (void)kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out); /* drop done */
+            game_ms += 16;
+            rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out); /* start_cook */
+            snprintf(label, sizeof label, "cook 名称规则：%s 认 %s", cases[c].node,
+                     cases[c].pot);
+            expect(rc == 1, label);
+        }
+    }
 
     /* 实机/模拟器切配与菜谱名差异测试：厨师拿 DicedMeat，锅里上报 BurritoMeat */
     base_world(&world);
