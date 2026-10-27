@@ -239,82 +239,58 @@ namespace WellCooked
                 }
 
                 Command previous;
-                if (Commands.TryGetValue(m.chef_id, out previous) && previous.Kind == "path" && previous.Seq == m.seq)
+                bool hasPreviousPath = Commands.TryGetValue(m.chef_id, out previous) && previous.Kind == "path";
+                int inheritedDirection = -1;
+                bool sameGoal = hasPreviousPath && previous.Waypoints != null && previous.Waypoints.Count > 0
+                    && Vector2.Distance(previous.Waypoints[previous.Waypoints.Count - 1], newWps[newWps.Count - 1]) <= 0.01f;
+                if (sameGoal)
                 {
-                    if (previous.Waypoints != null)
+                    inheritedDirection = previous.PathDirection;
+                    int existingCount = previous.Waypoints.Count;
+                    int matchIndex = -1;
+                    if (previous.WaypointIndex >= 0 && previous.WaypointIndex < previous.Waypoints.Count)
                     {
-                        int existingCount = previous.Waypoints.Count;
-                        int matchIndex = -1;
-                        if (previous.WaypointIndex >= 0 && previous.WaypointIndex < previous.Waypoints.Count)
+                        Vector2 prevTarget = previous.Waypoints[previous.WaypointIndex];
+                        for (int i = 0; i < newWps.Count; i++)
                         {
-                            Vector2 prevTarget = previous.Waypoints[previous.WaypointIndex];
-                            for (int i = 0; i < newWps.Count; i++)
+                            if (Vector2.Distance(newWps[i], prevTarget) <= 0.01f)
                             {
-                                if (Vector2.Distance(newWps[i], prevTarget) <= 0.01f)
-                                {
-                                    matchIndex = i;
-                                    break;
-                                }
+                                matchIndex = i;
+                                break;
                             }
                         }
-
-                        if (matchIndex < 0)
-                        {
-                            matchIndex = 0;
-                            if (hasPos)
-                            {
-                                while (matchIndex < newWps.Count - 1 &&
-                                       Vector2.Distance(pos, newWps[matchIndex]) <= PathCornerTolerance)
-                                {
-                                    matchIndex++;
-                                }
-                            }
-                        }
-                        else if (hasPos)
-                        {
-                            while (matchIndex < newWps.Count - 1 &&
-                                   Vector2.Distance(pos, newWps[matchIndex]) <= PathCornerTolerance)
-                            {
-                                matchIndex++;
-                            }
-                        }
-
-                        previous.Waypoints = newWps;
-                        previous.WaypointIndex = matchIndex;
-                        previous.PathDirection = -1;
-                        previous.Done = false;
-                        int remaining = previous.Waypoints.Count - previous.WaypointIndex;
-                        previous.Deadline = now + Math.Max(MoveTimeout, remaining * 2.0f);
-                        if (newWps.Count != existingCount)
-                        {
-                            _log.LogInfo("action: 厨师位 " + (m.chef_id + 1) + " path seq="
-                                         + m.seq + " 更新路点 " + existingCount + "→"
-                                         + newWps.Count + " idx=" + matchIndex);
-                        }
+                    }
+                    if (matchIndex < 0) matchIndex = 0;
+                    if (hasPos) matchIndex = ForwardWaypoint(newWps, pos, matchIndex);
+                    LogPathSelection(m, chef, pos, hasPos, newWps, matchIndex, "updated");
+                    previous.Waypoints = newWps;
+                    previous.PathDirection = inheritedDirection;
+                    previous.WaypointIndex = matchIndex;
+                    previous.Done = false;
+                    int remaining = previous.Waypoints.Count - previous.WaypointIndex;
+                    previous.Deadline = now + Math.Max(MoveTimeout, remaining * 2.0f);
+                    if (newWps.Count != existingCount)
+                    {
+                        _log.LogInfo("action: 厨师位 " + (m.chef_id + 1) + " path seq="
+                                     + m.seq + " 更新路点 " + existingCount + "→"
+                                     + newWps.Count + " idx=" + matchIndex);
                     }
                     return null;
                 }
 
-                int startIdx = 0;
-                if (hasPos)
-                {
-                    while (startIdx < newWps.Count - 1 &&
-                           Vector2.Distance(pos, newWps[startIdx]) <= PathCornerTolerance)
-                    {
-                        startIdx++;
-                    }
-                }
-
+                int startIdx = hasPos ? ForwardWaypoint(newWps, pos, 0) : 0;
+                LogPathSelection(m, chef, pos, hasPos, newWps, startIdx, "new");
                 Commands[m.chef_id] = new Command
                 {
                     Kind = "path",
                     Seq = m.seq,
                     Waypoints = newWps,
                     WaypointIndex = startIdx,
+                    PathDirection = inheritedDirection,
                     StartedAt = now,
                     Deadline = now + Math.Max(MoveTimeout, newWps.Count * 2.0f)
                 };
-                _log.LogInfo("action: 厨师位 " + (m.chef_id + 1) + " path seq=" + m.seq + " 路点数=" + newWps.Count);
+
                 return null;
             }
 
@@ -522,11 +498,18 @@ namespace WellCooked
                 Vector2 currentTarget = command.Waypoints[idx];
                 float dist = Vector2.Distance(position, currentTarget);
 
-                while (idx < command.Waypoints.Count - 1 && dist <= PathCornerTolerance)
+                while (idx < command.Waypoints.Count - 1)
                 {
+                    currentTarget = command.Waypoints[idx];
+                    Vector2 segment = command.Waypoints[idx + 1] - currentTarget;
+                    Vector2 offset = position - currentTarget;
+                    bool reached = Vector2.Distance(position, currentTarget) <= PathCornerTolerance;
+                    float lengthSquared = segment.sqrMagnitude;
+                    bool passed = lengthSquared > 0.0001f
+                        && Vector2.Dot(offset, segment) / lengthSquared >= 1f;
+                    if (!reached && !passed) break;
                     idx++;
                     command.WaypointIndex = idx;
-                    command.PathDirection = -1;
                     currentTarget = command.Waypoints[idx];
                     dist = Vector2.Distance(position, currentTarget);
                 }
@@ -564,7 +547,7 @@ namespace WellCooked
                     return true;
                 }
 
-                Vector2 dir = PathDirection(currentTarget - position, command);
+                Vector2 dir = PathDirection(currentTarget - position, command, position, currentTarget, slot);
                 Feed(slot, pad, dir, false, false, false);
                 return true;
             }
@@ -779,12 +762,45 @@ namespace WellCooked
             LinkRunner.ReportAction(action, slot, ok, detail, seq);
         }
 
-        // Eight headings with hysteresis stop path-following head wobble; direct bearing in the final 0.4 m keeps arrival convergent.
-        private static Vector2 PathDirection(Vector2 offset, Command command)
+        private static void LogPathSelection(InboundMessage message, PlayerControls chef, Vector2 position,
+                                             bool hasPosition, List<Vector2> waypoints, int index, string kind)
+        {
+            Vector3 facing = hasPosition ? chef.transform.forward : Vector3.zero;
+            var parts = new List<string>(waypoints.Count);
+            for (int i = 0; i < waypoints.Count; i++)
+            {
+                parts.Add("(" + waypoints[i].x.ToString("F2") + "," + waypoints[i].y.ToString("F2") + ")");
+            }
+            _log.LogInfo("action: path " + kind + " chef=" + (message.chef_id + 1)
+                         + " pos=(" + position.x.ToString("F2") + "," + position.y.ToString("F2") + ")"
+                         + " forward=(" + facing.x.ToString("F2") + "," + facing.z.ToString("F2") + ")"
+                         + " seq=" + message.seq + " start=" + index + " waypoints=[" + string.Join(",", parts.ToArray()) + "]");
+        }
+
+        private static int ForwardWaypoint(List<Vector2> waypoints, Vector2 position, int index)
+        {
+            return PathArrival.ForwardWaypointIndex(waypoints, position, index, PathCornerTolerance);
+        }
+
+
+        private static Vector2 PathDirection(Vector2 offset, Command command, Vector2 position,
+                                             Vector2 target, int slot)
         {
             if (offset.sqrMagnitude <= 0.16f) return offset.normalized;
-            int direction = PathSteering.Quantize(offset.x, offset.y, command.PathDirection, offset.magnitude);
-            command.PathDirection = direction;
+            int oldDirection = command.PathDirection;
+            int direction = PathSteering.Quantize(offset.x, offset.y, oldDirection, offset.magnitude);
+            if (oldDirection >= 0 && direction >= 0)
+            {
+                int difference = Math.Abs(direction - oldDirection);
+                difference = Math.Min(difference, 8 - difference);
+                if (difference * 45 >= 135)
+                {
+                    _log.LogInfo("action: path direction-change chef=" + (slot + 1)
+                                 + " pos=(" + position.x.ToString("F2") + "," + position.y.ToString("F2") + ")"
+                                 + " target=(" + target.x.ToString("F2") + "," + target.y.ToString("F2") + ")"
+                                 + " direction=" + oldDirection + "->" + direction);
+                }
+            }
             if (direction < 0) return Vector2.zero;
             float angle = direction * 45f * Mathf.Deg2Rad;
             return new Vector2(Mathf.Cos(angle), Mathf.Sin(angle));

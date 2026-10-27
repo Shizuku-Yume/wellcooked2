@@ -32,9 +32,32 @@ internal static class Program
         CheckReplay("L turn 30fps", new[] { (2f, 0f), (2f, 2f) }, 0f, 0f, 30);
         CheckReplay("22 degree waypoint 60fps", new[] { (4f * (float)Math.Cos(22 * Math.PI / 180), 4f * (float)Math.Sin(22 * Math.PI / 180)) }, 0f, 0f, 60, 0);
         CheckReplay("22 degree waypoint 30fps", new[] { (4f * (float)Math.Cos(22 * Math.PI / 180), 4f * (float)Math.Sin(22 * Math.PI / 180)) }, 0f, 0f, 30, 0);
+        var selectionPath = new System.Collections.Generic.List<UnityEngine.Vector2>
+        {
+            new UnityEngine.Vector2(0.6f, 0f), new UnityEngine.Vector2(1.8f, 0f), new UnityEngine.Vector2(3.0f, 0f)
+        };
+        int selected = PathArrival.ForwardWaypointIndex(selectionPath, new UnityEngine.Vector2(1.0f, 0f), 0, 0.15f);
+        int baseIndex = LegacyStartIndex(selectionPath, new UnityEngine.Vector2(1.0f, 0f));
+        Check(selected == 1, "forward projection selects waypoint 1 for chef at (1,0) facing +x");
+        Check(baseIndex == 0, "base ActionDriver selector fails: starts at behind waypoint 0");
         return _failures == 0 ? 0 : 1;
     }
-
+    private static int LegacyStartIndex(System.Collections.Generic.List<UnityEngine.Vector2> path, UnityEngine.Vector2 position)
+    {
+        int index = 0;
+        while (index < path.Count - 1)
+        {
+            UnityEngine.Vector2 segment = path[index + 1] - path[index];
+            UnityEngine.Vector2 offset = position - path[index];
+            if (offset.sqrMagnitude <= 0.15f * 0.15f) { index++; continue; }
+            float lengthSquared = segment.sqrMagnitude;
+            float projection = UnityEngine.Vector2.Dot(offset, segment) / lengthSquared;
+            UnityEngine.Vector2 lateral = offset - segment * projection;
+            if (projection >= 1f && lateral.sqrMagnitude <= 0.09f) { index++; continue; }
+            break;
+        }
+        return index;
+    }
     private static void CheckReplay(string name, (float x, float y)[] waypoints, float startX, float startY, int fps, int initialHeading = -1)
     {
         float x = startX, y = startY;
@@ -69,6 +92,7 @@ internal static class Program
             heading = -1;
         }
     }
+
 
     private static float DeltaAngle(float from, float to)
     {
