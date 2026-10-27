@@ -836,7 +836,8 @@ static int worker_main(worker *w, const kos_child_opts *opts)
             } else if (force_publish || (slot_due && publish_allowed)) {
                 /* 没任务的人也可能被 navd 规划着让路。 */
                 if (have_world && world.has_round_time && world.round_time_left > 0.0f &&
-                    world.round_time_left < world.round_time_limit && plan_ok && plan_fresh &&
+                    (world.round_time_left < world.round_time_limit || world.game_time_ms > 0) &&
+                    plan_ok && plan_fresh &&
                     plan.status == KOS_NAV_MOVING && plan.waypoint_count > 0) {
                     publish_path(w, &plan);
                 } else {
