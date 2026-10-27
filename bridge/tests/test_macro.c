@@ -468,14 +468,45 @@ static void test_cook(const kos_kitchen *kitchen, const char *cooker)
            "放下后 drop 完成进入 start_cook");
     game_ms += 16;
     rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
-    expect(rc == 0 && macro.step_index == 2 && out.action == KOS_MACRO_ACT_INTERACT,
-           "start_cook 发 interact");
+    expect(rc == 0 && macro.step_index == 2 && out.action == KOS_MACRO_ACT_STOP,
+           "start_cook 不发 interact（空手等 cooking）");
     snprintf(pot->state, sizeof pot->state, "cooking");
     game_ms += 16;
     rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
     expect(rc == 1 && strcmp(pot->state, "cooking") == 0,
            "锅进入 cooking 后 cook 任务立即完成（不等 cooked）");
 
+    /* start_cook 等待 cooking 超时测试：必须绝不发 interact，超时报错明确 */
+    base_world(&world);
+    chef = chef_at_station(&world, kitchen, cooker);
+    snprintf(chef->holding, sizeof chef->holding, "ChoppedCarrot");
+    pot = add_resource(&world, "pot_0");
+    snprintf(pot->state, sizeof pot->state, "free");
+    expect(build(&macro, kitchen, "cook", "cook:CookedCarrot", cooker, "o1", 1000) == 0,
+           "cook timeout 计划建成");
+    (void)finish_goto(&macro, kitchen, &world, &game_ms, &out);
+    game_ms += 16;
+    (void)kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out); /* drop */
+    chef->holding[0] = '\0';
+    snprintf(pot->content, sizeof pot->content, "ChoppedCarrot");
+    game_ms += 16;
+    (void)kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out); /* drop 完成 */
+    /* 进入 start_cook，直到超时都不应输出 interact */
+    int saw_interact = 0;
+    for (int t = 0; t < 100; t++) {
+        game_ms += 16;
+        rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+        if (out.action == KOS_MACRO_ACT_INTERACT) {
+            saw_interact = 1;
+        }
+        if (rc != 0) {
+            break;
+        }
+    }
+    expect(saw_interact == 0, "start_cook 等待期间绝不发 interact");
+    expect(rc == -1 && strstr(kos_macro_fail_detail(&macro), "wait=pot=cooking") != NULL &&
+               strstr(kos_macro_fail_detail(&macro), "timeout") != NULL,
+           "start_cook 超时以 pot=cooking timeout 明确报错");
     /* G13：锅里是别的料——开火会被游戏接受，但做的不是本单的菜。 */
     base_world(&world);
     chef = chef_at_station(&world, kitchen, cooker);
@@ -1283,8 +1314,8 @@ static void test_station_resource_mapping(void)
     (void)kos_macro_advance(&macro, &kitchen, &world, 0, 0, game_ms, &out);
     game_ms += 16;
     rc = kos_macro_advance(&macro, &kitchen, &world, 0, 0, game_ms, &out);
-    expect(rc == 0 && out.action == KOS_MACRO_ACT_INTERACT,
-           "cooker-0 映射到 pot_0 并开始下锅");
+    expect(rc == 0 && out.action == KOS_MACRO_ACT_STOP,
+           "cooker-0 映射到 pot_0 并等待开火（不发 interact）");
 
     /* 反例：另一口锅的 pot_1 不能被 cooker-0 借用（序号必须对上）。 */
     one_station_kitchen(&kitchen, "cooker-0", "cooker");
