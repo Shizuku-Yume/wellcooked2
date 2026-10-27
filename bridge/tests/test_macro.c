@@ -2020,6 +2020,77 @@ static void test_station_resource_mapping(void)
            "cooker-0 不借用 pot_1，序号必须一致");
 }
 
+/*
+ * 出菜口（serving pass）：真机里游戏对出菜口永远上报 has_facing_target=0。
+ * 当 facing_reported=1 且 has_facing_target=0 时，出菜口必须回退到几何朝向判定，
+ * 允许 goto 到站完成并让 deliver 正常发出 INTERACT。其他工位仍保持门禁。
+ */
+static void test_serving_facing_fallback(const kos_kitchen *kitchen, const char *serving,
+                                         const char *counter)
+{
+    kos_world_state world;
+    kos_macro macro;
+    kos_macro_output out;
+    kos_chef *chef;
+    int64_t game_ms;
+    int rc;
+    int i;
+
+    printf("test_serving_facing_fallback\n");
+
+    /* (a) goto 到 serving 工位：到站且朝向出菜口，facing_reported=1, has_facing_target=0, nav_arrived=1。
+     * 应在数个 tick 内完成，不应超时。 */
+    base_world(&world);
+    chef = chef_at_station(&world, kitchen, serving);
+    chef->facing_reported = 1;
+    chef->has_facing_target = 0;
+    expect(build(&macro, kitchen, "deliver", "deliver:Dish", serving, "o-serve", 1000) == 0,
+           "(a) serving goto 计划建成");
+    game_ms = 1000;
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 1, game_ms, &out);
+    expect(rc == 0 && out.action == KOS_MACRO_ACT_FACE && macro.step_index == 0,
+           "(a) serving goto 到站先发 face");
+    for (i = 0; i < 5 && macro.step_index == 0 && rc == 0; i++) {
+        game_ms += 16;
+        rc = kos_macro_advance(&macro, kitchen, &world, 0, 1, game_ms, &out);
+    }
+    expect(rc == 0 && macro.step_index == 1,
+           "(a) serving goto 几 tick 内完成且未超时");
+
+    /* (b) serving 工位的 deliver 步骤：手持成品菜，有未完成订单，无交付结果，has_facing_target=0。
+     * 应发出 KOS_MACRO_ACT_INTERACT（修复前为 FACE 或 NAVIGATE）。 */
+    base_world(&world);
+    chef = chef_at_station(&world, kitchen, serving);
+    chef->facing_reported = 1;
+    chef->has_facing_target = 0;
+    snprintf(chef->holding, sizeof chef->holding, "Dish");
+    (void)add_order(&world, "o-serve");
+    expect(build(&macro, kitchen, "deliver", "deliver:Dish", serving, "o-serve", 1000) == 0,
+           "(b) serving deliver 计划建成");
+    macro.step_index = 1;
+    macro.step_started = 0;
+    game_ms = 2000;
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    expect(rc == 0 && out.action == KOS_MACRO_ACT_INTERACT,
+           "(b) serving deliver 发出 INTERACT");
+
+    /* (c) 对照组：非 serving 工位（counter），has_facing_target=0 时必须绝不发出 INTERACT。 */
+    base_world(&world);
+    chef = chef_at_station(&world, kitchen, counter);
+    chef->facing_reported = 1;
+    chef->has_facing_target = 0;
+    snprintf(chef->holding, sizeof chef->holding, "Dish");
+    (void)add_order(&world, "o-serve");
+    expect(build(&macro, kitchen, "deliver", "deliver:Dish", counter, "o-serve", 1000) == 0,
+           "(c) counter deliver 计划建成");
+    macro.step_index = 1;
+    macro.step_started = 0;
+    game_ms = 2000;
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    expect(rc == 0 && out.action != KOS_MACRO_ACT_INTERACT,
+           "(c) counter deliver 不发出 INTERACT (保持门禁)");
+}
+
 int main(void)
 {
     kos_kitchen kitchen;
@@ -2028,6 +2099,7 @@ int main(void)
     const char *container;
     const char *cooker;
     const char *plate_stack;
+    const char *counter;
     const char *serving;
     const char *sink;
     if (load_kitchen(&kitchen) != 0) {
@@ -2039,10 +2111,12 @@ int main(void)
     /* kitchen.example.json 是砧板还没导出时的旧快照；测试按 exporter 现在的输出补一块
      * board-0（坐标与站位格沿用 container），让 cut 走真实的 board-N ↔ cutting_board_N。 */
     if (container == NULL ||
-        add_station_clone(&kitchen, container, "board-0", "board") < 0) {
-        printf("FAIL cannot synthesize board-0 in config/kitchen.example.json\n");
+        add_station_clone(&kitchen, container, "board-0", "board") < 0 ||
+        add_station_clone(&kitchen, container, "counter-0", "counter") < 0) {
+        printf("FAIL cannot synthesize board-0/counter-0 in config/kitchen.example.json\n");
         return 1;
     }
+    counter = station_of_kind(&kitchen, "counter");
     board = station_of_kind(&kitchen, "board");
     cooker = station_of_kind(&kitchen, "cooker");
     serving = station_of_kind(&kitchen, "serving");
@@ -2068,6 +2142,7 @@ int main(void)
     test_pour_legacy_no_evidence(&kitchen, cooker, container);
     test_pour_legacy_two_in_a_row(&kitchen, cooker, "cooker-1", container);
     test_deliver(&kitchen, serving);
+    test_serving_facing_fallback(&kitchen, serving, counter);
     test_wash(&kitchen, sink);
     test_timeouts(&kitchen, dispenser, board);
     test_station_resource_mapping();
