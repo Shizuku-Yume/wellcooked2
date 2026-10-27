@@ -527,6 +527,28 @@ static void test_cook(const kos_kitchen *kitchen, const char *cooker)
     expect(rc == -1 && strstr(kos_macro_fail_detail(&macro), "content-mismatch") != NULL &&
                strstr(kos_macro_fail_detail(&macro), "macro=start_cook") != NULL,
            "锅里是别的料立即判 content-mismatch");
+
+    /* 实机/模拟器切配与菜谱名差异测试：厨师拿 DicedMeat，锅里上报 BurritoMeat */
+    base_world(&world);
+    chef = chef_at_station(&world, kitchen, cooker);
+    snprintf(chef->holding, sizeof chef->holding, "DicedMeat");
+    pot = add_resource(&world, "pot_0");
+    snprintf(pot->state, sizeof pot->state, "free");
+    expect(build(&macro, kitchen, "cook", "cook:FriedBurritoMeat", cooker, "o1", 1000) == 0,
+           "cook FriedBurritoMeat 计划建成");
+    (void)finish_goto(&macro, kitchen, &world, &game_ms, &out);
+    game_ms += 16;
+    (void)kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out); /* drop */
+    chef->holding[0] = '\0';
+    snprintf(pot->content, sizeof pot->content, "BurritoMeat");
+    pot->content_count = 1;
+    snprintf(pot->contents[0], sizeof pot->contents[0], "BurritoMeat");
+    snprintf(pot->state, sizeof pot->state, "cooking");
+    game_ms += 16;
+    (void)kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out); /* drop 完成 */
+    game_ms += 16;
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out); /* start_cook */
+    expect(rc == 1, "start_cook 识别 BurritoMeat 成功完成（不报 content-mismatch）");
 }
 
 static void test_plate(const kos_kitchen *kitchen, const char *cooker, const char *plate_stack)

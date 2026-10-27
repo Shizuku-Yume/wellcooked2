@@ -179,7 +179,7 @@ int kos_macro_plan_build_with_source(const kos_kitchen *kitchen, const char *op,
     } else if (strcmp(op, "cook") == 0) {
         (void)add_step(out, KOS_MACRO_GOTO, station_id, "", duration_ms);
         (void)add_step(out, KOS_MACRO_DROP, station_id, "", duration_ms);
-        (void)add_step(out, KOS_MACRO_START_COOK, station_id, "", duration_ms);
+        (void)add_step(out, KOS_MACRO_START_COOK, station_id, item, duration_ms);
     } else if (strcmp(op, "pour") == 0) {
         /* 端起源锅 → 到容器前按下 → 源锅里那味料消失 → 锅放回灶上。
          * 倒的时候锅一直在手上（实测），所以不能用 drop 的"手空"判完成。 */
@@ -350,6 +350,113 @@ static int content_is_expected(const kos_resource *resource, const kos_macro *ma
            (content_matches(resource->content, macro->dropped_item) ||
             content_matches(resource->content, step->item));
 }
+static const char *strip_colon_prefix(const char *text)
+{
+    const char *colon;
+
+    if (text == NULL) {
+        return "";
+    }
+    colon = strrchr(text, ':');
+    return colon == NULL ? text : colon + 1;
+}
+
+static int pot_contains_item(const kos_resource *resource, const char *item)
+{
+    int i;
+
+    if (resource == NULL || item == NULL || item[0] == '\0') {
+        return 0;
+    }
+    if (resource->content[0] != '\0' && content_matches(resource->content, item)) {
+        return 1;
+    }
+    for (i = 0; i < (int)resource->content_count && i < KOS_SHM_MAX_CONTENTS; i++) {
+        if (resource->contents[i][0] != '\0') {
+            const char *name = strip_colon_prefix(resource->contents[i]);
+            if (name_eq(name, item)) {
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
+static const char *cook_input_ingredient(const char *item)
+{
+    if (item == NULL) {
+        return "";
+    }
+    if (strncmp(item, "Fried", 5) == 0 && item[5] != '\0') {
+        return item + 5;
+    }
+    if (strncmp(item, "Boiled", 6) == 0 && item[6] != '\0') {
+        return item + 6;
+    }
+    if (strncmp(item, "Cooked", 6) == 0 && item[6] != '\0') {
+        return item + 6;
+    }
+    return item;
+}
+
+static int resource_content_count(const kos_resource *res)
+{
+    const char *p;
+    int count;
+
+    if (res == NULL) {
+        return 0;
+    }
+    if (res->content_count > 0) {
+        return (int)res->content_count;
+    }
+    if (res->content[0] == '\0') {
+        return 0;
+    }
+    count = 1;
+    for (p = res->content; *p != '\0'; p++) {
+        if (*p == '+' || *p == ',') {
+            count++;
+        }
+    }
+    return count;
+}
+
+static int start_cook_content_matches(const kos_resource *resource,
+                                      const kos_macro *macro,
+                                      const kos_macro_step *step)
+{
+    const char *ing;
+
+    if (resource == NULL || (resource->content[0] == '\0' && resource->content_count == 0)) {
+        return 0;
+    }
+
+    /* (a) the pot contents now include that held item */
+    if (macro->dropped_item[0] != '\0' && pot_contains_item(resource, macro->dropped_item)) {
+        return 1;
+    }
+
+    /* (b) the contents include step->item or the cook node's input ingredient */
+    if (step->item[0] != '\0' && pot_contains_item(resource, step->item)) {
+        return 1;
+    }
+    ing = cook_input_ingredient(step->item);
+    if (ing[0] != '\0' && pot_contains_item(resource, ing)) {
+        return 1;
+    }
+
+    /* (c) the pot's content count went up from before the drop */
+    if (macro->pot_content_count_valid) {
+        int current_count = resource_content_count(resource);
+        if (current_count > macro->pot_content_count_before) {
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
 
 /* 工位 id 末尾的序号（cooker-0 → 0）；没有数字返回 -1。 */
 static int station_ordinal(const char *id)
@@ -672,8 +779,16 @@ static int step_init(kos_macro *macro, const kos_kitchen *kitchen,
     macro->empty_hand_since_ms = 0;
     if (step->kind == KOS_MACRO_DROP && chef != NULL) {
         /* 后面 start_cook/chop 要核对锅/板上放的是不是这一份料。DROP 之后厨师
-         * 手就空了，所以只能在这里记。 */
+         * 手就空了，所以只能在这里记。同时记录投料前锅内已有物料数量。 */
         copy_str(macro->dropped_item, sizeof macro->dropped_item, chef->holding);
+        const kos_resource *res = find_station_resource(kitchen, step, world);
+        if (res != NULL) {
+            macro->pot_content_count_before = resource_content_count(res);
+            macro->pot_content_count_valid = 1;
+        } else {
+            macro->pot_content_count_before = 0;
+            macro->pot_content_count_valid = 1;
+        }
     }
     macro->counter_baseline[0] = '\0';
 
@@ -844,7 +959,7 @@ static int run_chop(kos_macro *macro, const kos_kitchen *kitchen,
 }
 
 static int run_start_cook(kos_macro *macro, const kos_kitchen *kitchen,
-                          const kos_world_state *world, int64_t game_ms,
+                          const kos_world_state *world, int chef_id, int64_t game_ms,
                           kos_macro_output *out)
 {
     const kos_macro_step *step = &macro->plan.steps[macro->step_index];
@@ -855,10 +970,18 @@ static int run_start_cook(kos_macro *macro, const kos_kitchen *kitchen,
         return -1;
     }
     if (strcmp(resource->state, "cooking") == 0 || strcmp(resource->state, "cooked") == 0) {
-        /* G13：锅里已经是别的料时，"开火"动作游戏会接受，但做出的不是本单的菜。 */
-        if (resource->content[0] != '\0' && !content_is_expected(resource, macro, step)) {
-            fail_step(macro, game_ms, "pot=cooking", "content-mismatch");
-            return -1;
+        /* G13：锅里已经是别的料时判 content-mismatch */
+        if (resource->content[0] != '\0' || resource->content_count > 0) {
+            if (!macro->content_checked) {
+                macro->content_checked = 1;
+                kos_log_info(macro->log, "start_cook_content",
+                             "chef=%d station=%s held_before=%s pot_contents_after=%s",
+                             chef_id, step->station_id, macro->dropped_item, resource->content);
+            }
+            if (!start_cook_content_matches(resource, macro, step)) {
+                fail_step(macro, game_ms, "pot=cooking", "content-mismatch");
+                return -1;
+            }
         }
         return next_step(macro, out) == 1 ? 1 : 0;
     }
@@ -866,9 +989,15 @@ static int run_start_cook(kos_macro *macro, const kos_kitchen *kitchen,
         fail_step(macro, game_ms, "pot=cooking", "burning");
         return -1;
     }
-    if (resource->content[0] != '\0') {
+    if (resource->content[0] != '\0' || resource->content_count > 0) {
         macro->saw_content = 1;
-        if (!content_is_expected(resource, macro, step)) {
+        if (!macro->content_checked) {
+            macro->content_checked = 1;
+            kos_log_info(macro->log, "start_cook_content",
+                         "chef=%d station=%s held_before=%s pot_contents_after=%s",
+                         chef_id, step->station_id, macro->dropped_item, resource->content);
+        }
+        if (!start_cook_content_matches(resource, macro, step)) {
             fail_step(macro, game_ms, "pot=cooking", "content-mismatch");
             return -1;
         }
@@ -1238,7 +1367,7 @@ int kos_macro_advance(kos_macro *macro, const kos_kitchen *kitchen,
     case KOS_MACRO_CHOP:
         return run_chop(macro, kitchen, world, game_ms, out);
     case KOS_MACRO_START_COOK:
-        return run_start_cook(macro, kitchen, world, game_ms, out);
+        return run_start_cook(macro, kitchen, world, chef_id, game_ms, out);
     case KOS_MACRO_POUR:
         return run_pour(macro, kitchen, world, chef_id, game_ms, out);
     case KOS_MACRO_WASH:
