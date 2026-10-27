@@ -258,7 +258,7 @@ def msg_state_update(n_chefs, frame_index, flat_xy=False, edge_fields=False):
 
 def msg_state_update_os(chefs, frame_index, cells, positions=None, game_ms=None,
                         resources=None, holdings=None, facings=None, orders=None,
-                        score=0):
+                        score=0, round_time_left=None, round_time_limit=120.0):
     """os-loop / macro 用：厨师站在 kitchen 网格里，订单用真实菜名。
 
     positions 给出时用它（NavSim 模拟的实时坐标）；否则按 picks 放进网格。
@@ -295,6 +295,9 @@ def msg_state_update_os(chefs, frame_index, cells, positions=None, game_ms=None,
         "resources": resources if resources is not None else
                      {"plate_stack": {"count": 5}},
     }
+    if round_time_left is not None:
+        msg["round_time_left"] = round_time_left
+        msg["round_time_limit"] = round_time_limit
     return jdump(msg)
 
 
@@ -4323,13 +4326,19 @@ def scenario_os_loop(ctx, checks):
                            {"id": "world-002", "recipe": "SteamedSpecial_Meat",
                             "time_remaining": 90, "ingredients": ["meat"]}])
     period_ms = 1000.0 / args.hz
+    started_at = time.monotonic()
 
     def builder(n, frame_index):
         game_ms = int(round(frame_index * period_ms))
         sim.process_actions(stats.actions, game_ms)
         game_ms = sim.tick(game_ms)
         sim.frame(game_ms)
-        return sim.message(n, frame_index, cells, game_ms)
+        round_left = 120.0 if time.monotonic() - started_at >= args.round_start_delay else 0.0
+        return msg_state_update_os(
+            n, frame_index, cells, positions=[tuple(p) for p in sim.positions],
+            game_ms=game_ms, resources=sim.resources_message(), holdings=sim.holdings,
+            facings=sim.facings, orders=sim.orders, score=sim.score,
+            round_time_left=round_left)
 
     link = Link(connect(args.host, port, args.ready_timeout))
     link.send_json(msg_hello())
@@ -6424,6 +6433,8 @@ def parse_args(argv):
     parser.add_argument("--nb-timeout-ms", type=int, default=800,
                         help="no-heartbeat 场景使用的心跳超时（要短，否则测试很慢）")
     parser.add_argument("--frame-timeout-ms", type=int, default=200, help="传给 Bridge 的帧屏障超时")
+    parser.add_argument("--round-start-delay", type=float, default=0.0,
+                        help="os-loop waits before emitting a running round clock")
     parser.add_argument("--min-actions", type=int, default=20,
                         help="happy 场景要求的最少 action 数（idle 降级路径下每帧只有 N 条）")
     parser.add_argument("--nav", choices=("pibt", "pa"), default="pibt",

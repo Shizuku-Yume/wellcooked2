@@ -205,6 +205,7 @@ typedef struct {
     unsigned char dish_feasible[KOS_RECIPE_MAX_DISHES];
     kos_world_state world;
     int world_valid;
+    int round_started;
     int64_t world_read_ms;
     int64_t next_plate_poll_ms;
     sched_wash wash;
@@ -3807,6 +3808,14 @@ static void dispatch_ready(scheduler *s, int64_t now)
         return;
     }
     world = scheduler_world(s, now);
+    if (world == NULL || !world->has_round_time || world->round_time_left <= 0.0f) {
+        return;
+    }
+    if (!s->round_started) {
+        s->round_started = 1;
+        kos_log_info(s->rt.log, "round_started", "game_time_ms=%lld",
+                     (long long)world->game_time_ms);
+    }
     /* 手上已经有某个待派工序的产物（上一次宏做完了，DONE/租约在崩溃/丢帧里没了）：
      * 直接把工序记成 DONE，别再把同一道工序派给他——他手不空，fetch 只会超时。
      * 这是 Worker 重启后 RECOVERED 重排走不通的那条路（os-loop）。 */
