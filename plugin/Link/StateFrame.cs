@@ -299,6 +299,7 @@ namespace WellCooked
                 b.Field("kind", "cooker");
                 WritePos(b, stations[i].Position);
                 b.Field("state", CookerState(itemGo, contents.Count > 0));
+                WriteFire(b, itemGo, station);
                 if (itemGo == null)
                 {
                     // 空灶台：明确报空数组，调度侧据此知道"这只锅现在不在灶上"
@@ -451,6 +452,17 @@ namespace WellCooked
             b.Field("content", string.Join("+", names.ToArray()));
         }
 
+        /// <summary>
+        /// 这条资源是否在着火：物体本身或它所在的工位带 `ClientFlammable` 且 OnFire()。
+        /// 每类资源都显式报 `fire`（false 也报）：调度侧要能区分"没着火"与"老插件没报"。
+        /// </summary>
+        private static void WriteFire(JsonBuilder b, GameObject item, Component station)
+        {
+            bool fire = Kitchen.IsOnFire(item)
+                        || (station != null && Kitchen.IsOnFire(station.gameObject));
+            b.FieldBool("fire", fire);
+        }
+
         /// <summary>砧板：`cutting_board_&lt;N&gt;`，有没有料看它自己挂的 `ClientAttachStation.m_item`。</summary>
         private static void AppendCuttingBoards(JsonBuilder b, HashSet<int> covered)
         {
@@ -475,6 +487,7 @@ namespace WellCooked
                 {
                     var item = WorldState.Get(attach, "m_item") as Component;
                     b.Field("state", item != null ? "occupied" : "free");
+                    WriteFire(b, item == null ? null : item.gameObject, unity);
                     if (item != null)
                     {
                         var itemGo = item.gameObject;
@@ -622,6 +635,7 @@ namespace WellCooked
                 b.Field("kind", "sink");
                 WritePos(b, new Vector2(p.x, p.z));
                 b.Field("state", isWashing ? "washing" : (plateCount > 0 ? "occupied" : "free"));
+                WriteFire(b, null, unity);
                 b.FieldInt("count", plateCount);
                 b.FieldNum("progress", prog);
                 b.EndObj();
@@ -676,6 +690,7 @@ namespace WellCooked
                 WritePos(b, entry.Key);
                 b.Field("state", "occupied");
                 b.Field("item", itemGo.name);
+                WriteFire(b, itemGo, entry.Value);
                 WriteContents(b, "contents", contents);
                 WriteContentCompat(b, contents);
                 covered.Add(itemGo.GetInstanceID());
@@ -725,6 +740,7 @@ namespace WellCooked
                 WritePos(b, new Vector2(p.x, p.z));
                 b.Field("state", "carried");
                 b.Field("item", itemGo.name);
+                WriteFire(b, itemGo, null);
                 WriteCooking(b, itemGo);
                 WriteContents(b, "contents", contents);
                 WriteContentCompat(b, contents);
@@ -772,6 +788,7 @@ namespace WellCooked
                 WritePos(b, entry.Key);
                 b.Field("state", contents.Count > 0 ? "occupied" : "empty");
                 b.Field("item", go.name);
+                WriteFire(b, go, null);
                 WriteContents(b, "contents", contents);
                 WriteContentCompat(b, contents);
                 b.EndObj();

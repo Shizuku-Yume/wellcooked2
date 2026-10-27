@@ -264,6 +264,26 @@ namespace WellCooked
         }
 
         /// <summary>
+        /// 这个物体/工位现在是否在着火。游戏里火挂在 `ClientFlammable` 上（decompiled
+        /// `ClientFlammable.OnFire()` 返回 `m_fireEffect != null`），料箱、台面、锅都可能
+        /// 带这个组件；火会沿 `Flammable.m_fireSpreadRadius` 蔓延到相邻台面（实机 _3
+        /// 烧起来的锅把旁边的台面点着了）。没有这个组件 = 不可燃 = 没着火。
+        /// </summary>
+        public static bool IsOnFire(GameObject gameObject)
+        {
+            if (gameObject == null)
+            {
+                return false;
+            }
+            var flammable = gameObject.GetComponent("ClientFlammable");
+            if (flammable == null)
+            {
+                return false;
+            }
+            return WorldState.Invoke(flammable, "OnFire") is bool on && on;
+        }
+
+        /// <summary>
         /// 一个物体"里面是什么"：盘子优先用 `ClientPlate.GetOrderComposition()`，
         /// 容器用 `ClientIngredientContainer.GetContents()`，都不是就把它自己当成内容。
         /// 返回空列表表示"是个空容器"，不会退回物体名（Tortilla 的名字不是它的内容）。
