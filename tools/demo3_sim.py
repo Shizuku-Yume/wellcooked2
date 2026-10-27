@@ -884,7 +884,13 @@ class Demo3World:
         self.last_action_ms[chef] = game_ms
         elapsed = game_ms - state["start_ms"]
         if state["pressed"] < 2 and elapsed >= RETRY_MS:
-            if self.retry_guard and self.holding_name(chef) != state["entry_holding"]:
+            station = self._resolve(chef, target, PRESS_CONE_DEG)
+            st_kind = station.get("kind") if station else ""
+            # 盘堆特殊规则：手上有菜按盘堆放下、手空按盘堆取盘。
+            # 第一下放下后手空（entry_holding 非空且当前为空），第二下是取盘意图而不是放菜重试。
+            is_plate_take = (st_kind in ("plate_stack", "clean_plate_stack")
+                             and state["entry_holding"] and not self.holding_name(chef))
+            if self.retry_guard and self.holding_name(chef) != state["entry_holding"] and not is_plate_take:
                 # ActionDriver：第一下已经生效（手上的东西变了）就不再补第二下，
                 # 否则补按会把刚放下的东西拿回手上（实测 `_3` 拿起→放回→再拿起）。
                 state["skipped_second"] = True
@@ -1308,3 +1314,34 @@ class Demo3World:
             "drift": len(self.drift_events),
             "pour": len(self.pour_events),
         }
+
+
+if __name__ == "__main__":
+    class _DummyMotion:
+        def __init__(self, positions):
+            self.positions = positions
+
+        def process_actions(self, actions, game_ms):
+            pass
+
+        def advance(self, game_ms):
+            pass
+
+    rules = Demo3Rules()
+    motion = _DummyMotion([[3.0, 1.2]])
+    kitchen = demo3_kitchen(clean_plates=5)
+    world = Demo3World(motion, kitchen["stations"], rules=rules)
+    world.holdings[0] = Item("ChoppedSushiFish")
+    ps = world.stations["plate_stack-0"]
+    world.positions[0] = list(ps["pos"])
+    world.facings[0] = 0.0
+    actions = []
+    for t in range(0, 640, 16):
+        actions.append({"chef_id": 0, "action": "interact", "target_object": "plate_stack-0"})
+        world.process_actions(actions, t)
+    effects = [(p["at_ms"], p["second"], p["effect"]) for p in world.presses]
+    assert len(effects) == 2 and effects[0][2] == "stacked-Sushi_PlainFish" and effects[1][2] == "took-plate", \
+        "Expected drop then take on plate_stack, got %s" % effects
+    assert world.holding_name(0) == "equipment_plate_01", \
+        "Expected chef to hold plate, got %s" % world.holding_name(0)
+    print("demo3_sim selftest PASS: plate_stack places then takes (effects=%s)" % effects)
