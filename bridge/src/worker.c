@@ -641,7 +641,25 @@ static int worker_main(worker *w, const kos_child_opts *opts)
         char text[256];
 
         if (path[0] == '\0') {
-            if (kos_child_default_config_path("recipes.example.json", recipes_path,
+            /* 先配 kitchen 同目录的 recipes.json（地图导出是 config/maps/<scene>/
+             * kitchen.json + recipes.json 成对出现），再退回默认 recipes.example.json。
+             * 拿 A 图的菜谱去核对 B 图锅里放的东西会得到假的 content-mismatch。 */
+            const char *slash = strrchr(w->kitchen_path, '/');
+
+            if (slash != NULL) {
+                size_t dir_len = (size_t)(slash - w->kitchen_path);
+
+                if (dir_len + sizeof "/recipes.json" <= sizeof recipes_path) {
+                    memcpy(recipes_path, w->kitchen_path, dir_len);
+                    snprintf(recipes_path + dir_len, sizeof recipes_path - dir_len,
+                             "/recipes.json");
+                    if (access(recipes_path, R_OK) == 0) {
+                        path = recipes_path;
+                    }
+                }
+            }
+            if (path[0] == '\0' &&
+                kos_child_default_config_path("recipes.example.json", recipes_path,
                                               sizeof recipes_path) == 0) {
                 path = recipes_path;
             }
