@@ -79,6 +79,11 @@ typedef struct {
     int step_count;
     kos_macro_step steps[KOS_MACRO_MAX_STEPS];
     char order_id[KOS_SHM_NAME_MAX];   /* deliver 判"订单消失"用 */
+    /* cook 这一步真正喂进锅的原料标签（菜谱里 cook 节点的子节点 label，例如
+     * BoiledRice ← Rice、FriedBurritoMeat ← BurritoMeat）。空串 = 调用方没给，
+     * start_cook 退回按修饰语剥前缀。Worker 从 recipes.json 的边推出来填，
+     * 不要求 Scheduler 另发字段。 */
+    char cook_input[KOS_SHM_NAME_MAX];
 } kos_macro_plan;
 
 typedef struct {
@@ -98,6 +103,14 @@ typedef struct {
     /* chop：第一次看到板上内容时核对过"是不是这一份料"。切完游戏会把物体换成
      * Chopped…/Diced… 名字，之后不能再按原始料名核对（G13 只抓放错料）。 */
     int content_checked;
+    /* chop：进入这一步时板上那个物体名（原料）。实机切完游戏会把 prefab 换成
+     * Chopped…/Diced…，而换过之后那只物体上已经没有 ClientWorkableItem，
+     * 进度字段读不到（一直是 0）。内容从记下的原料变成另一个名字与 progress=1
+     * 一样是完成判据（20261027 实机 + 手动局证据）。 */
+    char board_item_before[KOS_SHM_CONTENT_MAX];
+    /* pickup 的步骤 item 为空时（切好的 prefab 改名、端锅），记录进入这一步时
+     * 源工位上的物体名；拿到同名物品才算完成，避免"随手抓到别的东西"也算数。 */
+    char source_item[KOS_SHM_NAME_MAX];
     char entry_holding[KOS_SHM_NAME_MAX];
     int clean_baseline_valid;
     int32_t clean_baseline;

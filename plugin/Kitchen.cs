@@ -726,11 +726,18 @@ namespace WellCooked
         }
 
         /// <summary>
-        /// 加工进度：`m_progress / max(m_stages - 1, 1)`，0..1；读不到阶段数返回 -1
-        /// （调用方应省略字段，别用 0 假装"还没开始"）。实机这一版
-        /// `ClientWorkableItem.GetProgress()` 调不通（LogOutput: 没找到属性/字段
-        /// GetProgress），所以只能按字段读，且**只有这一份实现**：手动局日志
-        /// （`WorkState`）与 `state_update` 的砧板进度共用它。
+        /// 加工进度，0..1；读不到阶段数返回 -1（调用方省略字段，别用 0 假装"还没开始"）。
+        ///
+        /// 取值必须和游戏自己的进度条一致：`ClientWorkableItem.UpdateProgressVisuals`
+        /// 用的是 `(m_progress * m_chopsPerSlice + m_subProgress) / (m_chopsPerSlice * m_stages - 1)`。
+        /// 实机 `_3`（logs/manual/20261027-022317/manual.log:116 起）里 `m_progress`
+        /// 整段切菜都是 0、只有 `m_subProgress` 在走；只算 `m_progress / (m_stages-1)`
+        /// 会把整段加工都报成 0，run_chop 只能等超时（worker-0.log:21）。
+        ///
+        /// 切完那一刻游戏把板上 prefab 换成 `Chopped…`/`Diced…`，新 prefab 上没有
+        /// `ClientWorkableItem`，这里按"成品前缀 + 没有可加工组件"报 1：那是可确定的
+        /// 完成事实，不是猜测。**只有这一份实现**：手动局日志（`WorkState`）与
+        /// `state_update` 的砧板进度共用它。
         /// </summary>
         public static double WorkableProgress(GameObject item, out bool finished)
         {
@@ -738,6 +745,26 @@ namespace WellCooked
             int sub;
             int stages;
             return WorkableProgress(item, out finished, out progress, out sub, out stages);
+        }
+
+        /// <summary>游戏里切/搅完的 prefab 名一律带这个前缀（ChoppedSushiPrawn、DicedMeat）。</summary>
+        private static readonly string[] ProcessedPrefixes = { "Chopped", "Diced" };
+
+        private static bool IsProcessedName(GameObject item)
+        {
+            string name = item == null ? null : item.name;
+            if (string.IsNullOrEmpty(name))
+            {
+                return false;
+            }
+            for (int i = 0; i < ProcessedPrefixes.Length; i++)
+            {
+                if (name.StartsWith(ProcessedPrefixes[i], StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+            return false;
         }
 
         private static double WorkableProgress(GameObject item, out bool finished, out int progress,
@@ -755,6 +782,12 @@ namespace WellCooked
             var workableItem = item.GetComponent("ClientWorkableItem");
             if (workableItem == null)
             {
+                // 换过 prefab 的成品没有工作组件；名字已说明它切好了。
+                if (IsProcessedName(item))
+                {
+                    finished = true;
+                    return 1.0;
+                }
                 return -1.0;
             }
 
@@ -767,19 +800,32 @@ namespace WellCooked
                 sub = s;
             }
 
+            // m_stages 在 WorkableItem（ClientWorkableItem.m_workable）上，默认 8；
+            // m_chopsPerSlice 在客户端组件上（由玩家人数算出，1 人局会 > 1）。
+            int chopsPerSlice = 1;
             var workable = WorldState.Get(workableItem, "m_workable");
             if (workable != null && WorldState.Get(workable, "m_stages") is int stagesInt)
             {
                 stages = stagesInt;
             }
+            if (WorldState.Get(workableItem, "m_chopsPerSlice") is int chopsInt && chopsInt > 0)
+            {
+                chopsPerSlice = chopsInt;
+            }
 
             finished = WorldState.Get(workableItem, "HasFinished") is bool done && done;
-            if (stages < 2)
+            if (finished)
+            {
+                return 1.0;
+            }
+
+            int span = chopsPerSlice * stages - 1;
+            if (stages < 2 || span <= 0)
             {
                 return -1.0; // 阶段数读不到：宁可省略，也不能把原始阶段数钳成 1
             }
 
-            double value = (double)progress / (stages - 1);
+            double value = (double)(progress * chopsPerSlice + sub) / span;
             if (value < 0.0)
             {
                 return 0.0;

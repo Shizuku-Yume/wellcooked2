@@ -437,6 +437,76 @@ static void test_cut(const kos_kitchen *kitchen, const char *board_id)
            "砧板放了别的料立即判 content-mismatch");
 }
 
+/* 实机证据（logs/real-game/20261027-123220-3-4chefs worker-0.log:21 /
+ * worker-1.log:21，以及 logs/manual/20261027-022317/manual.log:116,531）：
+ * 4 人局切菜 4709/4794/4722 ms 后仍报 `wait=progress=1 timeout`，而砧板上已经
+ * 是切好的东西——游戏切完把物体换成 Chopped…，换过的物体上没有 ClientWorkableItem，
+ * 插件读不到进度（m_progress 一直是 0）。这里锁住"内容改名 = 切完"这条判据。 */
+static void test_chop_completion_by_rename(const kos_kitchen *kitchen, const char *board_id)
+{
+    kos_world_state world;
+    kos_macro macro;
+    kos_macro_output out;
+    kos_chef *chef;
+    kos_resource *board;
+    int64_t game_ms = 1000;
+    int rc;
+
+    printf("test_chop_completion_by_rename\n");
+    base_world(&world);
+    chef = chef_at_station(&world, kitchen, board_id);
+    snprintf(chef->holding, sizeof chef->holding, "SushiPrawn");
+    board = add_resource(&world, "cutting_board_0");
+    snprintf(board->content, sizeof board->content, "SushiPrawn");
+    expect(build(&macro, kitchen, "cut", "cut:ChoppedSushiPrawn", board_id, "o1", 1700) == 0,
+           "rename：cut 计划建成");
+    (void)finish_goto(&macro, kitchen, &world, &game_ms, &out);
+    game_ms += 16;
+    (void)kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out); /* drop interact */
+    chef->holding[0] = '\0';
+    game_ms += 16;
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    expect(rc == 0 && macro.step_index == 2, "rename：进入 chop");
+    game_ms += 16;
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    expect(rc == 0 && out.action == KOS_MACRO_ACT_WORK, "rename：进度字段缺失时按住 work");
+    expect(strcmp(macro.board_item_before, "SushiPrawn") == 0,
+           "rename：chop 开始记下板上的原料名");
+    /* 游戏切完：物体改名，进度字段仍然读不到（0）。 */
+    snprintf(board->content, sizeof board->content, "ChoppedSushiPrawn");
+    board->progress = 0.0f;
+    game_ms += 16;
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    expect(rc == 0 && macro.step_index == 3,
+           "rename：progress 缺失但板上物体改名后 chop 完成");
+    snprintf(chef->holding, sizeof chef->holding, "ChoppedSushiPrawn");
+    game_ms += 16;
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    expect(rc == 1, "rename：拿到切好的料后 cut 完成");
+
+    /* 板上的料没变（还是原料）时不因时间过去误判完成：继续等，最终超时。 */
+    base_world(&world);
+    chef = chef_at_station(&world, kitchen, board_id);
+    snprintf(chef->holding, sizeof chef->holding, "SushiPrawn");
+    board = add_resource(&world, "cutting_board_0");
+    snprintf(board->content, sizeof board->content, "SushiPrawn");
+    expect(build(&macro, kitchen, "cut", "cut:ChoppedSushiPrawn", board_id, "o1", 1700) == 0,
+           "rename negative：计划建成");
+    (void)finish_goto(&macro, kitchen, &world, &game_ms, &out);
+    game_ms += 16;
+    (void)kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    chef->holding[0] = '\0';
+    game_ms += 16;
+    (void)kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    game_ms += 16;
+    (void)kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    game_ms = macro.deadline_ms + 1;
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    expect(rc == -1 && strstr(kos_macro_fail_detail(&macro), "timeout") != NULL &&
+               strstr(kos_macro_fail_detail(&macro), "macro=chop") != NULL,
+           "rename negative：内容没变且没有进度时按原样超时");
+}
+
 static void test_cook(const kos_kitchen *kitchen, const char *cooker)
 {
     kos_world_state world;
@@ -1413,6 +1483,7 @@ int main(void)
     test_expansions(&kitchen);
     test_fetch(&kitchen, dispenser);
     test_cut(&kitchen, board);
+    test_chop_completion_by_rename(&kitchen, board);
     test_cook(&kitchen, cooker);
     test_plate(&kitchen, cooker, plate_stack);
     test_pour(&kitchen, cooker, container);

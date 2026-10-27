@@ -350,6 +350,23 @@ static int content_is_expected(const kos_resource *resource, const kos_macro *ma
            (content_matches(resource->content, macro->dropped_item) ||
             content_matches(resource->content, step->item));
 }
+
+/*
+ * 板上的内容是否已经从进入这一步时的原料变成了另一个名字。
+ * 实机切完游戏把物体换成 Chopped…/Diced…，换过的物体上没有 ClientWorkableItem，
+ * 进度读不到；内容改名是唯一还能看到的完成证据。内容可能是 "a+b" 拼串，按 token
+ * 比对：旧原料名还在就不算改名。
+ */
+static int chop_content_renamed(const kos_macro *macro, const kos_resource *resource)
+{
+    if (macro == NULL || resource == NULL) {
+        return 0;
+    }
+    if (macro->board_item_before[0] == '\0' || resource->content[0] == '\0') {
+        return 0;
+    }
+    return !content_matches(resource->content, macro->board_item_before);
+}
 static const char *strip_colon_prefix(const char *text)
 {
     const char *colon;
@@ -773,6 +790,8 @@ static int step_init(kos_macro *macro, const kos_kitchen *kitchen,
     macro->face_sent_ms = 0;
     macro->saw_content = 0;
     macro->content_checked = 0;
+    macro->board_item_before[0] = '\0';
+    macro->source_item[0] = '\0';
     macro->entry_holding[0] = '\0';
     macro->clean_baseline_valid = 0;
     macro->clean_baseline = 0;
@@ -788,6 +807,29 @@ static int step_init(kos_macro *macro, const kos_kitchen *kitchen,
         } else {
             macro->pot_content_count_before = 0;
             macro->pot_content_count_valid = 1;
+        }
+    }
+    if (step->kind == KOS_MACRO_CHOP) {
+        /* 实机切完游戏把板上物体换成 Chopped…/Diced…，换过之后那只物体上没有
+         * ClientWorkableItem，进度字段读不到。记下开机时的原料名，内容改名即完成。 */
+        const kos_resource *res = find_station_resource(kitchen, step, world);
+
+        if (res != NULL && res->content[0] != '\0') {
+            copy_str(macro->board_item_before, sizeof macro->board_item_before,
+                     res->content);
+        }
+    }
+    if (step->kind == KOS_MACRO_PICKUP) {
+        /* 步骤 item 为空时（切好的 prefab 改名、端锅）用源工位上的物体名判"拿到了
+         * 那件东西"。旧插件没有 item 字段时留空，退回"拿到任意物品"。 */
+        const kos_resource *res = find_station_resource(kitchen, step, world);
+
+        if (res != NULL) {
+            const char *label = res->item[0] != '\0' ? res->item : res->content;
+
+            if (label[0] != '\0' && strchr(label, '+') == NULL) {
+                copy_str(macro->source_item, sizeof macro->source_item, label);
+            }
         }
     }
     macro->counter_baseline[0] = '\0';
@@ -931,17 +973,22 @@ static int run_chop(kos_macro *macro, const kos_kitchen *kitchen,
          * 不要等 progress 超时后把坏菜送到装盘才暴露。只核对第一次看到的内容：
          * 切完游戏会把板上物体换成 Chopped…/Diced…，那正是本步的产物。 */
         if (!macro->content_checked) {
-            if (!content_is_expected(resource, macro, step)) {
+            if (content_is_expected(resource, macro, step)) {
+                macro->content_checked = 1;
+            } else if (!chop_content_renamed(macro, resource)) {
                 fail_step(macro, game_ms, "progress=1", "content-mismatch");
                 return -1;
             }
-            macro->content_checked = 1;
         }
     } else if (macro->saw_content) {
         fail_step(macro, game_ms, "progress=1", "content-gone");
         return -1;
     }
-    if (resource->progress >= MACRO_PROGRESS_DONE) {
+    /* 实机（20261027-123220/124810 的 _3 与手动局）切完是"物体改名"而不是
+     * progress=1：换过 prefab 的物体上没有 ClientWorkableItem，progress 一直读到 0。
+     * 两个判据任一成立即完成。 */
+    if (resource->progress >= MACRO_PROGRESS_DONE ||
+        (resource->content[0] != '\0' && chop_content_renamed(macro, resource))) {
         if (resource->content[0] == '\0') {
             /* 切完了但板上是空的：要么被拿走，要么本来就放错了，后面 pickup 只会空等。 */
             fail_step(macro, game_ms, "progress=1", "content-gone");
