@@ -345,14 +345,18 @@ state_mtime_ns() {
 }
 
 wait_load_stable() {
-    local before deadline streak i scene chefs stations left elapsed round mtime
+    local before deadline streak i scene chefs stations left elapsed round mtime wait_start
     before="$1"
     deadline=$((SECONDS + WAIT_SECONDS))
+    wait_start=$SECONDS
     streak=0
     while [ "$SECONDS" -lt "$deadline" ]; do
         if ! log_since | grep -aFq "指令: 已请求加载 $SCENE"; then
             sleep 1
             continue
+        fi
+        if [ "$((SECONDS - wait_start))" -ge 10 ] && [ "$(( (SECONDS - wait_start) % 15 ))" -eq 0 ]; then
+            say ">>> ENTER LEVEL NOW: 若未自动跳转，请在游戏内手动进入 $SCENE 关卡 <<<"
         fi
         mtime="$(state_mtime_ns)"
         read -r scene chefs stations left elapsed round <<<"$(state_probe)"
@@ -437,9 +441,9 @@ if [ "$REUSE_GAME" != 1 ]; then
     say "game: stopping any previous Overcooked2 before a fresh launch"
     stop_game
 fi
-pkill -TERM -f 'kitchenos-(supervisor|bridge|scheduler|worker|navd)' 2>/dev/null || true
+pkill -TERM -f "$BRIDGE_BIN_DIR/kitchenos-" 2>/dev/null || true
 sleep 2
-pkill -KILL -f 'kitchenos-(supervisor|bridge|scheduler|worker|navd)' 2>/dev/null || true
+pkill -KILL -f "$BRIDGE_BIN_DIR/kitchenos-" 2>/dev/null || true
 if ss -ltn 2>/dev/null | grep -q ":${PORT}\b"; then
     die "port $PORT is still in use"
 fi
