@@ -785,7 +785,8 @@ namespace WellCooked
         /// </summary>
         private static Vector2 PathDirection(Vector2 offset, Command command)
         {
-            int direction = PathSteering.Quantize(offset.x, offset.y, command.PathDirection);
+            if (offset.sqrMagnitude <= 0.16f) return offset.normalized;
+            int direction = PathSteering.Quantize(offset.x, offset.y, command.PathDirection, offset.magnitude);
             command.PathDirection = direction;
             if (direction < 0) return Vector2.zero;
             float angle = direction * 45f * Mathf.Deg2Rad;
