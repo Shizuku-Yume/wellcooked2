@@ -18,6 +18,7 @@
 #include <kitchenos/kitchen.h>
 #include <kitchenos/log.h>
 #include <kitchenos/macro.h>
+#include <kitchenos/recipes.h>
 #include <kitchenos/mq.h>
 #include <kitchenos/navtab.h>
 #include <kitchenos/shm.h>
@@ -42,6 +43,10 @@ typedef struct {
     kos_child_runtime rt;
     kos_kitchen kitchen;
     char kitchen_path[KOS_DAEMON_PATH_MAX];
+    /* 只读 recipe 边一张表：start_cook 要用"cook 节点的子节点 label"核对锅里
+     * 放的是不是这道菜要的原料（S2）。读不到菜谱时 start_cook 退回剥修饰语。 */
+    kos_recipes recipes;
+    int recipes_loaded;
     mqd_t task_queue;
     mqd_t events_queue;
     int queues_ready;
@@ -358,6 +363,43 @@ static void log_macro_start(worker *w, int step_index)
                  (long long)step->duration_ms);
 }
 
+/*
+ * 菜谱里喂给这个 cook 节点的原料 label。边是"子 → 父"：cook:FriedChicken 的子节点
+ * 是 cut:BurritoChicken（label BurritoChicken），cook:BoiledRice 的是 fetch:Rice
+ * （label Rice）。cook 节点只该有一个输入；多于一个说明菜谱形状不对，宁可留空让
+ * start_cook 退回保守判据，也不要猜。
+ */
+static void plan_set_cook_input(worker *w, const char *op, const char *node_id,
+                                kos_macro_plan *plan)
+{
+    int node;
+    int found = 0;
+    int i;
+
+    if (w == NULL || !w->recipes_loaded || op == NULL || strcmp(op, "cook") != 0) {
+        return;
+    }
+    node = kos_recipes_node_index(&w->recipes, node_id);
+    if (node < 0) {
+        return;
+    }
+    for (i = 0; i < w->recipes.edge_count; i++) {
+        if (w->recipes.edges[i].to != node) {
+            continue;
+        }
+        if (found) {
+            kos_log_warn(w->rt.log, "cook_input_ambiguous",
+                         "node=%s edge=%d extra_child=%d", node_id, node,
+                         w->recipes.edges[i].from);
+            return;
+        }
+        found = w->recipes.edges[i].from + 1;
+    }
+    if (found) {
+        kos_macro_plan_set_cook_input(plan, w->recipes.nodes[found - 1].label);
+    }
+}
+
 static int start_task(worker *w, const kos_mq_msg *msg)
 {
     kos_error err;
@@ -392,6 +434,7 @@ static int start_task(worker *w, const kos_mq_msg *msg)
         send_event(w, KOS_EVT_FAILED, detail);
         return -1;
     }
+    plan_set_cook_input(w, msg->op, msg->node_id, &plan);
     kos_macro_begin(&w->macro, &plan);
     w->macro.log = w->rt.log;
     w->target_seq++;
@@ -581,6 +624,34 @@ static int worker_main(worker *w, const kos_child_opts *opts)
         }
         kos_log_info(w->rt.log, "config_loaded", "kitchen=%s cells=%d stations=%d",
                      w->kitchen_path, w->kitchen.cell_count, w->kitchen.station_count);
+    }
+    {
+        char recipes_path[KOS_DAEMON_PATH_MAX];
+        const char *path = w->rt.opts.recipes_path;
+        kos_error err;
+        char text[256];
+
+        if (path[0] == '\0') {
+            if (kos_child_default_config_path("recipes.example.json", recipes_path,
+                                              sizeof recipes_path) == 0) {
+                path = recipes_path;
+            }
+        }
+        if (path[0] != '\0') {
+            kos_error_clear(&err);
+            if (kos_recipes_load(path, &w->recipes, &err) == KOS_OK) {
+                w->recipes_loaded = 1;
+                kos_log_info(w->rt.log, "recipes_loaded",
+                             "path=%s nodes=%d edges=%d dishes=%d", path,
+                             w->recipes.node_count, w->recipes.edge_count,
+                             w->recipes.dish_count);
+            } else {
+                error_text(&err, text, sizeof text);
+                kos_log_warn(w->rt.log, "recipes_load_failed",
+                             "path=%s error=%s (start_cook falls back to modifier strip)",
+                             path, text);
+            }
+        }
     }
 
     w->next_slot_ms = 0;

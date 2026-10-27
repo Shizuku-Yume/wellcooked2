@@ -514,6 +514,7 @@ static void test_cook(const kos_kitchen *kitchen, const char *cooker)
     kos_macro_output out;
     kos_chef *chef;
     kos_resource *pot;
+    kos_error err;
     int64_t game_ms = 1000;
     int rc;
 
@@ -597,6 +598,63 @@ static void test_cook(const kos_kitchen *kitchen, const char *cooker)
     expect(rc == -1 && strstr(kos_macro_fail_detail(&macro), "content-mismatch") != NULL &&
                strstr(kos_macro_fail_detail(&macro), "macro=start_cook") != NULL,
            "锅里是别的料立即判 content-mismatch");
+
+    /*
+     * S2：菜谱的原料 label 是权威判据。实机切块 prefab 与锅里上报的生料名不同源：
+     * 厨师拿 DicedMeat、锅里是 BurritoChicken（BurritoChicken 的切块 prefab 叫
+     * BurritoChoppedChicken）时，只有"菜谱里 cook:FriedChicken 的输入是
+     * BurritoChicken"能判对。这里锁住 plan.cook_input 生效。
+     */
+    base_world(&world);
+    chef = chef_at_station(&world, kitchen, cooker);
+    snprintf(chef->holding, sizeof chef->holding, "DicedMeat");
+    pot = add_resource(&world, "pot_0");
+    snprintf(pot->state, sizeof pot->state, "free");
+    {
+        kos_macro_plan plan;
+
+        kos_error_clear(&err);
+        expect(kos_macro_plan_build(kitchen, "cook", "cook:FriedChicken", cooker, "o1", 1000,
+                                    &plan, &err) == KOS_OK,
+               "S2：cook:FriedChicken 计划建成");
+        kos_macro_plan_set_cook_input(&plan, "BurritoChicken");
+        kos_macro_begin(&macro, &plan);
+    }
+    (void)finish_goto(&macro, kitchen, &world, &game_ms, &out);
+    game_ms += 16;
+    (void)kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out); /* drop interact */
+    chef->holding[0] = '\0';
+    snprintf(pot->content, sizeof pot->content, "BurritoChicken");
+    pot->content_count = 1;
+    snprintf(pot->contents[0], sizeof pot->contents[0], "BurritoChicken");
+    snprintf(pot->state, sizeof pot->state, "cooking");
+    game_ms += 16;
+    (void)kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out); /* drop 完成 */
+    game_ms += 16;
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out); /* start_cook */
+    expect(rc == 1, "S2：锅里是菜谱原料（BurritoChicken）时通过（手持物 DicedMeat 不参与判定）");
+
+    /* 负例：数量从 0 变 1 但这味料不是菜谱要的（旧实现按增量判成功）。 */
+    base_world(&world);
+    chef = chef_at_station(&world, kitchen, cooker);
+    snprintf(chef->holding, sizeof chef->holding, "Rice");
+    pot = add_resource(&world, "pot_0");
+    snprintf(pot->state, sizeof pot->state, "free");
+    expect(build(&macro, kitchen, "cook", "cook:BoiledRice", cooker, "o1", 1000) == 0,
+           "S2 负例：cook:BoiledRice 计划建成");
+    (void)finish_goto(&macro, kitchen, &world, &game_ms, &out);
+    game_ms += 16;
+    (void)kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out); /* drop interact */
+    chef->holding[0] = '\0';
+    snprintf(pot->content, sizeof pot->content, "Onion");
+    pot->content_count = 1;
+    snprintf(pot->contents[0], sizeof pot->contents[0], "Onion");
+    game_ms += 16;
+    (void)kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out); /* drop 完成 */
+    game_ms += 16;
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out); /* start_cook */
+    expect(rc == -1 && strstr(kos_macro_fail_detail(&macro), "content-mismatch") != NULL,
+           "S2 负例：锅内物料数量 0→1 但名字不对时判 content-mismatch");
 
     /* 实机/模拟器切配与菜谱名差异测试：厨师拿 DicedMeat，锅里上报 BurritoMeat */
     base_world(&world);

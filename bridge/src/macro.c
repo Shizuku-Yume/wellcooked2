@@ -257,6 +257,14 @@ int kos_macro_plan_build(const kos_kitchen *kitchen, const char *op, const char 
     return kos_macro_plan_build_with_source(kitchen, op, node_id, station_id, "", order_id,
                                             duration_ms, out, err);
 }
+
+void kos_macro_plan_set_cook_input(kos_macro_plan *plan, const char *label)
+{
+    if (plan == NULL) {
+        return;
+    }
+    copy_str(plan->cook_input, sizeof plan->cook_input, label);
+}
 void kos_macro_begin(kos_macro *macro, const kos_macro_plan *plan)
 {
     if (macro == NULL) {
@@ -439,6 +447,20 @@ static int resource_content_count(const kos_resource *res)
     return count;
 }
 
+/*
+ * start_cook 的内容身份（S2）：锅里放的必须就是这道菜要的原料。
+ *
+ * 权威来源是菜谱里 cook 节点的子节点 label（`plan->cook_input`，Worker 从
+ * recipes.json 的边推出）：cook:FriedChicken ← cut:BurritoChicken（BurritoChicken）、
+ * cook:FriedBurritoMeat ← cut:BurritoMeat、cook:BoiledRice ← fetch:Rice。
+ * 实机锅里上报的就是这些生料名（logs/manual/20261027-022317/manual.log:1833 起
+ * `锅=[BurritoChicken]`、`[BurritoMeat]`），而厨师手里是切块 prefab
+ * （DicedMeat / BurritoChoppedChicken）——拿手持物或"数量变多"当匹配都会认错料。
+ *
+ * 没有菜谱时退回两个保守来源：DROP 时记下的手持物（游戏确实接受了这次投料）和
+ * step->item 按烹饪修饰语（Fried/Boiled/Cooked）剥前缀。数量变化只写进日志当旁证，
+ * 绝不单独构成"匹配"：把别人锅里的一份料算成自己放对的，就会开火做错菜。
+ */
 static int start_cook_content_matches(const kos_resource *resource,
                                       const kos_macro *macro,
                                       const kos_macro_step *step)
@@ -449,12 +471,13 @@ static int start_cook_content_matches(const kos_resource *resource,
         return 0;
     }
 
-    /* (a) the pot contents now include that held item */
+    if (macro->plan.cook_input[0] != '\0' &&
+        pot_contains_item(resource, macro->plan.cook_input)) {
+        return 1;
+    }
     if (macro->dropped_item[0] != '\0' && pot_contains_item(resource, macro->dropped_item)) {
         return 1;
     }
-
-    /* (b) the contents include step->item or the cook node's input ingredient */
     if (step->item[0] != '\0' && pot_contains_item(resource, step->item)) {
         return 1;
     }
@@ -462,15 +485,6 @@ static int start_cook_content_matches(const kos_resource *resource,
     if (ing[0] != '\0' && pot_contains_item(resource, ing)) {
         return 1;
     }
-
-    /* (c) the pot's content count went up from before the drop */
-    if (macro->pot_content_count_valid) {
-        int current_count = resource_content_count(resource);
-        if (current_count > macro->pot_content_count_before) {
-            return 1;
-        }
-    }
-
     return 0;
 }
 
@@ -1022,8 +1036,12 @@ static int run_start_cook(kos_macro *macro, const kos_kitchen *kitchen,
             if (!macro->content_checked) {
                 macro->content_checked = 1;
                 kos_log_info(macro->log, "start_cook_content",
-                             "chef=%d station=%s held_before=%s pot_contents_after=%s",
-                             chef_id, step->station_id, macro->dropped_item, resource->content);
+                             "chef=%d station=%s held_before=%s pot_contents_after=%s "
+                             "expect=%s count_before=%d count_now=%d",
+                             chef_id, step->station_id, macro->dropped_item, resource->content,
+                             macro->plan.cook_input[0] != '\0' ? macro->plan.cook_input : "-",
+                             macro->pot_content_count_before,
+                             resource_content_count(resource));
             }
             if (!start_cook_content_matches(resource, macro, step)) {
                 fail_step(macro, game_ms, "pot=cooking", "content-mismatch");
@@ -1041,8 +1059,12 @@ static int run_start_cook(kos_macro *macro, const kos_kitchen *kitchen,
         if (!macro->content_checked) {
             macro->content_checked = 1;
             kos_log_info(macro->log, "start_cook_content",
-                         "chef=%d station=%s held_before=%s pot_contents_after=%s",
-                         chef_id, step->station_id, macro->dropped_item, resource->content);
+                         "chef=%d station=%s held_before=%s pot_contents_after=%s "
+                         "expect=%s count_before=%d count_now=%d",
+                         chef_id, step->station_id, macro->dropped_item, resource->content,
+                         macro->plan.cook_input[0] != '\0' ? macro->plan.cook_input : "-",
+                         macro->pot_content_count_before,
+                         resource_content_count(resource));
         }
         if (!start_cook_content_matches(resource, macro, step)) {
             fail_step(macro, game_ms, "pot=cooking", "content-mismatch");

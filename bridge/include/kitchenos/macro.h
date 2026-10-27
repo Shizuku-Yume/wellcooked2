@@ -147,6 +147,13 @@ int kos_macro_plan_build(const kos_kitchen *kitchen, const char *op, const char 
                          const char *station_id, const char *order_id, int duration_ms,
                          kos_macro_plan *out, kos_error *err);
 
+/*
+ * cook 的 start_cook 步骤用它核对锅里放的是不是菜谱要的原料（`plan.cook_input`）。
+ * Worker 在 kos_macro_plan_build* 之后从 recipes.json 的边推出"cook 节点的子节点
+ * label"再调用；不调或传空串时 start_cook 退回按修饰语剥前缀。
+ */
+void kos_macro_plan_set_cook_input(kos_macro_plan *plan, const char *label);
+
 /* 开始执行一份已建好的计划。 */
 void kos_macro_begin(kos_macro *macro, const kos_macro_plan *plan);
 
