@@ -867,9 +867,15 @@ static int order_has_done_all(const sched_order *order)
 
 static void mark_order_finished(sched_order *order, int status, int64_t now)
 {
+    int i;
+
     order->status = status;
     order->finished_ms = now;
     order->lateness_ms = now > order->deadline_ms ? now - order->deadline_ms : 0;
+    for (i = 0; i < order->task_count; i++) {
+        order->tasks[i].wait_logged = 0;
+        order->tasks[i].wait_started_ms = 0;
+    }
 }
 
 static void task_requeue(scheduler *s, int order_index, int task_index, const char *reason)
@@ -1467,9 +1473,23 @@ static void finish_order_with_outcome(scheduler *s, int order_index, int status,
     }
     release_order_cook_reservations(s, order);
     for (i = 0; i < order->task_count; i++) {
-        order->tasks[i].station_id[0] = '\0';
-        if (order->tasks[i].state == TASK_PENDING) {
-            order->tasks[i].state = TASK_FAILED;
+        sched_task *task = &order->tasks[i];
+
+        task->station_id[0] = '\0';
+        if (task->wait_logged && task->wait_started_ms > 0) {
+            int64_t wait_ms = now - task->wait_started_ms;
+            if (wait_ms > 0) {
+                const kos_recipe_node *node = &s->recipes.nodes[task->node_index];
+                sched_res_stat *stat = stat_find(s, node->resource);
+                if (stat != NULL) {
+                    stat->wait_ms += wait_ms;
+                }
+            }
+            task->wait_logged = 0;
+            task->wait_started_ms = 0;
+        }
+        if (task->state == TASK_PENDING) {
+            task->state = TASK_FAILED;
         }
     }
     mark_order_finished(order, status, now);
@@ -4449,15 +4469,18 @@ static void write_metrics_snapshot(scheduler *s, const char *reason)
         }
     }
 
-    /* 仍在等待的 pending 任务也要把已经等过的时间算进本次快照。 */
+    /* 仍在等待的 pending 任务也要把已经等过的时间算进本次快照。已结束订单不计入。 */
     for (i = 0; i < s->order_count; i++) {
         int j;
 
+        if (s->orders[i].status != KOS_ORDER_ACTIVE) {
+            continue;
+        }
         for (j = 0; j < s->orders[i].task_count; j++) {
             const sched_task *task = &s->orders[i].tasks[j];
             int k;
 
-            if (!task->wait_logged || task->wait_started_ms <= 0) {
+            if (task->state != TASK_PENDING || !task->wait_logged || task->wait_started_ms <= 0) {
                 continue;
             }
             for (k = 0; k < snapshot.resource_count; k++) {

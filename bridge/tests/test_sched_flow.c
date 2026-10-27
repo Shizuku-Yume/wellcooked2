@@ -1508,6 +1508,50 @@ static void test_cooker_pos_busy_and_order_release(void)
            "cooker_4_avoided_via_pos_match");
     cleanup_run(&run, &shm, &events, 1);
 }
+/* 砧板被占用挡下来的候选要进 resources[board].waits（resource_wait 事件）。 */
+static void test_board_gate_counts_wait(void)
+{
+    ksfx_run run;
+    kos_shm *shm = NULL;
+    kos_world_state world;
+    mqd_t events = (mqd_t)-1;
+    mqd_t taskss[KOS_SHM_MAX_CHEFS];
+    got_task got[4];
+    int n;
+
+    printf("[test_sched_flow] 21. 砧板占用等待进 resource_wait 事件统计\n");
+    ksfx_scene_override = "s_wellcooked_demo_3";
+    if (ksfx_init_ex(&run, 0) != 0 || write_orders(&run) != 0) {
+        expect(0, "board_gate_fixture_init");
+        ksfx_cleanup(&run);
+        ksfx_scene_override = NULL;
+        return;
+    }
+    ksfx_scene_override = NULL;
+    (void)write_recipe_node(&run, "CutOnly", "cut", "cut:C", "C", "board");
+    kos_world_state_reset(&world);
+    put_chef(&world, &run.kitchen, 0, 0, "Fish", "board");
+    put_chef(&world, &run.kitchen, 1, 1, "Fish", "board");
+    put_order(&world, "w1", "CutOnly", 80);
+    put_order(&world, "w2", "CutOnly", 80);
+    /* _3 地图有两块板 board-0 和 board-1；让 board-1 处于占用状态，只剩 1 块板供 2 个切菜任务争用 */
+    put_station_resource(&world, "cutting_board_1", "occupied", "Fish");
+    if (start_run(&run, &shm, &events, taskss, 2, &world) != 0) {
+        expect(0, "board_gate_scheduler_started");
+        cleanup_run(&run, &shm, &events, 2);
+        return;
+    }
+    n = collect_tasks(taskss, 2, got, 2, 3000);
+    expect(n == 1 && strcmp(got[0].op, "cut") == 0, "board_gate_one_cut_dispatched");
+    expect(ksfx_wait_events(&run, "\"event\":\"resource_wait\",\"kind\":\"board\"", 2000, NULL, 0) == 0,
+           "board_gate_records_resource_wait");
+    /* 任务失败使订单结束，验证等待任务不会在 metrics 中泄露幽灵等待时间 */
+    expect(send_event(events, got[0].task_id, 0, KOS_EVT_FAILED, "macro=chop timeout") == 0,
+           "board_gate_fail_sent");
+    expect(ksfx_wait_events(&run, "\"event\":\"order_failed\"", 2000, NULL, 0) == 0,
+           "board_gate_order_failed");
+    cleanup_run(&run, &shm, &events, 2);
+}
 
 int main(void)
 {
@@ -1530,6 +1574,7 @@ int main(void)
     test_cooker_gate_counts_wait();
     test_failed_order_releases_and_unbinds();
     test_cooker_pos_busy_and_order_release();
+    test_board_gate_counts_wait();
     printf("[test_sched_flow] 检查 %d 项，失败 %d 项\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;
 }
