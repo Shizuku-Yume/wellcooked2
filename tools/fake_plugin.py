@@ -4011,6 +4011,7 @@ def macro_configs(directory):
     stations = []
     for sid, kind, gives, x in (
             ("dispenser-0", "dispenser", "Tomato", 0.0),
+            ("dispenser-1", "dispenser", "Rice", 0.6),
             ("board-0", "board", "", 1.2),
             ("cooker-0", "cooker", "", 2.4),
             ("plate_stack-0", "plate_stack", "", 3.6),
@@ -4032,12 +4033,14 @@ def macro_configs(directory):
         "stations": stations,
     }
     nodes = [
+        {"id": "fetch:Rice", "op": "fetch", "label": "Rice",
+         "resource": "dispenser", "ingredient": "Rice", "duration": 5.0},
+        {"id": "cook:BoiledRice", "op": "cook", "label": "BoiledRice",
+         "resource": "cooker", "duration": 5.0},
         {"id": "fetch:Tomato", "op": "fetch", "label": "Tomato",
          "resource": "dispenser", "ingredient": "Tomato", "duration": 5.0},
         {"id": "cut:ChoppedTomato", "op": "cut", "label": "ChoppedTomato",
          "resource": "board", "duration": 5.0},
-        {"id": "cook:CookedTomato", "op": "cook", "label": "CookedTomato",
-         "resource": "cooker", "duration": 5.0},
         {"id": "plate:TomatoDish", "op": "plate", "label": "TomatoDish",
          "resource": "plate_stack", "duration": 5.0},
         {"id": "deliver:TomatoDish", "op": "deliver", "label": "TomatoDish",
@@ -4048,13 +4051,15 @@ def macro_configs(directory):
     recipes = {
         "scene": "macro",
         "nodes": nodes,
-        "edges": [["fetch:Tomato", "cut:ChoppedTomato"],
-                  ["cut:ChoppedTomato", "cook:CookedTomato"],
-                  ["cook:CookedTomato", "plate:TomatoDish"],
+        "edges": [["fetch:Rice", "cook:BoiledRice"],
+                  ["cook:BoiledRice", "deliver:TomatoDish"],
+                  ["fetch:Tomato", "cut:ChoppedTomato"],
+                  ["cut:ChoppedTomato", "plate:TomatoDish"],
                   ["plate:TomatoDish", "deliver:TomatoDish"]],
         "dishes": [
             {"dish": "TomatoSoup", "score": 80, "root": "deliver:TomatoDish",
-             "nodes": ["fetch:Tomato", "cut:ChoppedTomato", "cook:CookedTomato",
+             "nodes": ["fetch:Rice", "cook:BoiledRice",
+                       "fetch:Tomato", "cut:ChoppedTomato",
                        "plate:TomatoDish", "deliver:TomatoDish"]},
             {"dish": "CleanPlate", "score": 1, "root": "wash:CleanPlate",
              "nodes": ["wash:CleanPlate"]},
@@ -4069,7 +4074,7 @@ def macro_configs(directory):
         path = directory / name
         path.write_text(json.dumps(payload, ensure_ascii=False))
         paths[name] = str(path)
-    products = {"board-0": "ChoppedTomato", "cooker-0": "TomatoDish"}
+    products = {"board-0": "ChoppedTomato", "cooker-0": "BoiledRice"}
     return paths, cells, stations, products
 
 
@@ -4163,7 +4168,7 @@ def scenario_macro(ctx, checks):
 
         print("  -- macro: 完整一单")
         soup = _macro_run(ctx, checks, "macro-soup", paths, cells, stations, products,
-                          recipe="TomatoSoup", duration=20.0)
+                          recipe="TomatoSoup", duration=26.0)
         soup_rows = soup["rows"]
         started = {row["macro"] for row in soup_rows
                    if row["event"] == "start" and row["macro"]}
@@ -4224,7 +4229,7 @@ def scenario_macro(ctx, checks):
         print("  -- macro: 料箱不回料 → pickup 超时")
         stalled = _macro_run(ctx, checks, "macro-fail", paths, cells, stations,
                              products, recipe="TomatoSoup", duration=5.0,
-                             stalled=("dispenser-0",))
+                             stalled=("dispenser-0", "dispenser-1"))
         fail_rows = stalled["rows"]
         failures = [row for row in fail_rows if row["event"] == "failed"]
         task_failed = [e for e in stalled["events"] if e.get("event") == "task_failed"]
@@ -5697,7 +5702,9 @@ def scenario_demo3_regress_empty_pots(ctx, checks):
     result = _demo3_run(ctx, checks, "pots-legacy", chefs=1, kitchen=kitchen,
                         recipes=recipes, order_spec=order_spec, duration=16.0,
                         rules=legacy, positions=positions,
-                        stop_when=lambda world: world.game_ms >= 14000)
+                        stop_when=_demo3_stop_after(
+                            lambda world: world.cooker_state["cooker-1"]["state"] == "cooking",
+                            800, 16000))
     world = result["world"]
     rows = result["rows"]
     keys = [key for key in world.resources() if key.startswith("pot_")]
