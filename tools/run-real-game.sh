@@ -522,7 +522,6 @@ wait_frontend_off
 
 before="$(state_mtime_ns)"
 printf 'load=%s\n' "$SCENE" > "$COMMAND"
-wait_load_stable "$before" || die "scene $SCENE did not stay fresh/stable with $CHEFS chefs"
 export_map
 if [ "$EXPORT" = 1 ]; then
     KITCHEN="$MAP_DIR/$SCENE/kitchen.json"
@@ -541,12 +540,17 @@ say "supervisor: starting"
     >"$RT/supervisor.console.log" 2>&1 &
 SUPERVISOR_PID=$!
 say "supervisor: pid $SUPERVISOR_PID"
-
-for i in $(seq 1 30); do
-    kill -0 "$SUPERVISOR_PID" 2>/dev/null || die "supervisor exited during startup"
-    [ -f "$RT/status.json" ] && break
-    sleep 1
-done
+wait_load_stable "$before" || die "scene $SCENE did not stay fresh/stable with $CHEFS chefs"
+export_map
+if [ "$EXPORT" = 1 ]; then
+    KITCHEN="$MAP_DIR/$SCENE/kitchen.json"
+    RECIPES="$MAP_DIR/$SCENE/recipes.json"
+else
+    KITCHEN="$ROOT/config/maps/$SCENE/kitchen.json"
+    RECIPES="$ROOT/config/maps/$SCENE/recipes.json"
+fi
+[ -f "$KITCHEN" ] || die "kitchen config missing: $KITCHEN"
+[ -f "$RECIPES" ] || die "recipes config missing: $RECIPES"
 
 clock_ok=0
 for i in $(seq 1 30); do
