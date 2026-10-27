@@ -143,7 +143,7 @@
     },
     "resource": {
       "type": "object",
-      "description": "一个工位的状态。所有字段都可缺；has_time_left / has_chef_id / has_count / has_progress 在 C 侧区分『0』与『没上报』。",
+      "description": "一个工位的状态。所有字段都可缺；has_time_left / has_chef_id / has_count / has_progress / has_cooked / has_burning / has_burn_in / has_fire 在 C 侧区分『0』与『没上报』。state 是汇总字符串（burning > cooked > cooking > free），烹饪事实以 cooked/burning 布尔为准。",
       "properties": {
         "kind": {
           "type": "string",
@@ -188,6 +188,23 @@
         "step": {
           "type": "string",
           "description": "灶台的烹饪类型，Pot / FryingPan / DeepFatFryer；非灶台或空灶台省略。"
+        },
+        "cooked": {
+          "type": "boolean",
+          "description": "熟过（游戏 IsCooked / 烹饪进度 >= 烹饪时长）。烧焦的锅仍然 cooked=true；与 burning 分开报。"
+        },
+        "burning": {
+          "type": "boolean",
+          "description": "已烧焦（游戏 IsBurning：烹饪进度 > 2 × 烹饪时长）。可与 cooked 同时为 true。"
+        },
+        "burn_in": {
+          "type": "number",
+          "minimum": 0,
+          "description": "距烧焦还有多少秒（只在 cooked && !burning 时给）；熟到烧焦的窗口里倒锅用它。"
+        },
+        "fire": {
+          "type": "boolean",
+          "description": "这个工位/物体正在着火（ClientFlammable.OnFire）。火会蔓延；为 true 时调度侧应先灭火或放弃该工位。"
         }
       }
     }

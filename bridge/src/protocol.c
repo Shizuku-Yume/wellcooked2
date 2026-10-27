@@ -168,6 +168,17 @@ static int get_req_bool(const json_value *object, const char *key, int *dst)
     return map_status(json_object_get_bool(object, key, dst));
 }
 
+/* Optional boolean: absent or null leaves *dst untouched and returns PROTO_OK;
+ * a present member of the wrong type is an error, never a silent false. */
+static int get_opt_bool(const json_value *object, const char *key, int *dst)
+{
+    int rc = json_object_get_bool(object, key, dst);
+
+    if (rc == JSON_ERR_MISSING || json_is_null(json_object_get(object, key)))
+        return PROTO_OK;
+    return map_status(rc);
+}
+
 /* Optional string-array member (`contents`, `holding_contents`): absent or JSON
  * null means "nothing to say" and leaves the count at 0; a present member of the
  * wrong type is still an error. Entries that are not strings are dropped and
@@ -531,6 +542,35 @@ static int parse_resources(const json_value *root, proto_state_update *out,
                            &res->content_count, diag);
         if (rc != PROTO_OK)
             return rc;
+
+        /* Cooking flags (KOS_SHM_VERSION 3): `state` collapses cooked+burning into
+         * one string, so the pour gate reads these instead. */
+        if (json_object_get(entry, "cooked") != NULL) {
+            rc = get_opt_bool(entry, "cooked", &res->cooked);
+            if (rc != PROTO_OK)
+                return rc;
+            res->has_cooked = 1;
+        }
+        if (json_object_get(entry, "burning") != NULL) {
+            rc = get_opt_bool(entry, "burning", &res->burning);
+            if (rc != PROTO_OK)
+                return rc;
+            res->has_burning = 1;
+        }
+        if (json_object_get(entry, "burn_in") != NULL) {
+            rc = get_num(entry, "burn_in", &res->burn_in);
+            if (rc != PROTO_OK)
+                return rc;
+            if (res->burn_in < 0.0)
+                return PROTO_ERR_RANGE;
+            res->has_burn_in = 1;
+        }
+        if (json_object_get(entry, "fire") != NULL) {
+            rc = get_opt_bool(entry, "fire", &res->fire);
+            if (rc != PROTO_OK)
+                return rc;
+            res->has_fire = 1;
+        }
 
         out->resource_count++;
     }

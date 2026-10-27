@@ -52,10 +52,13 @@
 #define KOS_SHM_MAX_ORDERS 16
 #define KOS_SHM_MAX_ORDER_INGREDIENTS 6
 /*
- * 资源从 32 升到 48：锅/砧板/盘堆之外还要报台面上的容器、地板上的散件和
- * 厨师手上的锅（任务 09 状态审计 G1/G5）。`_3` 满负荷约 24 个；48 留一倍余量。
+ * 资源从 32 升到 48，再升到 96：锅/砧板/盘堆之外还要报台面上的容器、地板上的散件和
+ * 厨师手上的锅（任务 09 状态审计 G1/G5）。协议（protocol/protocol.md §3.1 与
+ * PROTO_MAX_RESOURCES）本来就允许 96 个键，而插件按 cookers → boards → plate_stack →
+ * dirty_plates → sinks → counters → carried → containers 的顺序上报：上限比协议小时
+ * 先被截断的正是 carried_<M>，调度侧就看不到"锅在谁手上"。两边取同一个数。
  */
-#define KOS_SHM_MAX_RESOURCES 48
+#define KOS_SHM_MAX_RESOURCES 96
 /* 一个容器/盘子里递归展开后的内容名（卷饼最多 2 样）。 */
 #define KOS_SHM_MAX_CONTENTS 4
 /* 最近结束的订单结果（交付/过期/失败），插件是环形快照，桥按 seq 去重。 */
@@ -77,8 +80,10 @@
  * 时一眼能看出这是不是我们的段。 */
 #define KOS_SHM_MAGIC 0x4b4f5331u
 /* 2：资源加 kind/pos/item/contents[]/step，厨师加手持内容，订单加 score，
- * 世界状态加回合剩余与订单结果表（任务 09 G1–G9）。旧读者会因版本不符拒绝挂接。 */
-#define KOS_SHM_VERSION 2u
+ * 世界状态加回合剩余与订单结果表（任务 09 G1–G9）。旧读者会因版本不符拒绝挂接。
+ * 3：资源上限 48 → 96（与协议一致，carried_* 不再被截断），资源加 cooked/burning/
+ * burn_in/fire —— 熟与烧焦必须同时可见，否则调度侧分不清"刚熟还能倒"和"已经烧起来"。 */
+#define KOS_SHM_VERSION 3u
 
 #define KOS_SHM_DEFAULT_NAME "/kitchenos_state"
 #define KOS_SHM_DEFAULT_SEM_NAME "/kitchenos_input_ready"
@@ -227,6 +232,19 @@ typedef struct {
     int32_t content_count;             /* 下面 contents[] 里有效的前 N 项 */
     /* 递归展开的内容名，深度优先；"cooked:<name>" 表示这层叶子外面还套了烹饪节点。 */
     char contents[KOS_SHM_MAX_CONTENTS][KOS_SHM_INGREDIENT_MAX];
+    /* ---- 任务 09 修复（KOS_SHM_VERSION 3） ----
+     * 烹饪的三个状态必须同时可见：`state` 只有一个字符串，`burning` 会盖掉
+     * `cooked`，调度侧就分不清"刚熟、还能倒"和"已经烧起来"。实机 _3 的锅在
+     * 24.0 秒时 cooked=true 且 burning=true（final-state.json），需要的是
+     * "熟过、正在烧"这两个事实分开报。 */
+    int32_t has_cooked;                /* 1 = cooked 有效 */
+    int32_t cooked;                    /* 熟过（游戏 IsCooked / progress >= 烹饪时长） */
+    int32_t has_burning;               /* 1 = burning 有效 */
+    int32_t burning;                   /* 已烧焦（游戏 IsBurning） */
+    float burn_in;                     /* 距烧焦还有多少秒（cooked 且未 burning 时有意义） */
+    int32_t has_burn_in;
+    int32_t has_fire;                  /* 1 = fire 有效 */
+    int32_t fire;                      /* 这个工位/物体正在着火（ClientFlammable.OnFire） */
 } kos_resource;
 
 /*
@@ -304,8 +322,12 @@ typedef struct {
  * 2026-10-27 从 16 KiB 提到 32 KiB：任务 09 G1–G9 要给每个资源带上 kind/pos/item/
  * 递归内容、给厨师带手持内容、给世界状态带订单结果表，当前 48 资源时整段 25 KB。
  * 5 个读者 × 60 帧/秒 ≈ 8 MB/s 的顺序拷贝，相比一次 recv 的系统调用可以忽略；
- * 再往上加字段前先算这笔账，别让它悄悄涨到几百 KB。 */
-typedef char kos_shm_segment_size_ok[(sizeof(kos_shm_segment) <= 32768) ? 1 : -1];
+ * 再往上加字段前先算这笔账，别让它悄悄涨到几百 KB。
+ *
+ * 2026-10-27 再从 32 KiB 提到 64 KiB：资源上限 48 → 96（与协议的 96 个键一致，
+ * carried_<M> 不再被截断），kos_resource 约 0.5 KB，整段约 50 KB。这是一次
+ * 有意的"数量"增长而不是"每帧多算"，拷贝带宽仍是同一个量级。 */
+typedef char kos_shm_segment_size_ok[(sizeof(kos_shm_segment) <= 65536) ? 1 : -1];
 
 /* ============================================================== 句柄 */
 

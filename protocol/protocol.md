@@ -139,7 +139,7 @@ C 侧 `bridge/include/kitchenos/protocol.h` + `bridge/src/protocol.c`，
 |---|---|---|---|---|
 | `kind` | string | 否 | `kind_name` | `cooker` / `board` / `plate_stack` / `dirty_plates` / `sink` / `counter` / `container` / `carried` |
 | `pos` | object `{x,y}` | 否 | `x`/`y` + `has_pos` | 工位/物品的世界坐标（游戏 x/z 平面）；用来按位置找工位，别依赖枚举序号 |
-| `state` | string | 否 | `state` | `free` / `empty` / `occupied` / `cooking` / `cooked` / `burning` / `washing` / `carried` |
+| `state` | string | 否 | `state` | `free` / `empty` / `occupied` / `cooking` / `cooked` / `burning` / `washing` / `carried`。汇总串，优先级 `burning` > `cooked` > `cooking` > `free`；烹饪事实以 `cooked`/`burning` 两个布尔为准（烧焦的锅两者同时为 true） |
 | `item` | string \| null | 否 | `item` | 工位上那个物体 / 容器自己的名字，例如 `utensil_pot_01`、`Tortilla`、`equipment_plate_01` |
 | `content` | string \| null | 否 | `content` | `contents` 的兼容拼串形式（`"a+b"`），C 侧只有 32 字节，超长截断；新代码读 `contents` |
 | `contents` | string[] | 否 | `contents[]` + `content_count` | 递归内容名，最多 8 个（C 侧留 4 个），编码见下 |
@@ -148,6 +148,10 @@ C 侧 `bridge/include/kitchenos/protocol.h` + `bridge/src/protocol.c`，
 | `chef_id` | integer | 否 | `chef_id` + `has_chef_id` | 占用/手持该资源的厨师；`carried_<M>` 上必填 |
 | `count` | integer | 否 | `count` + `has_count` | 计数类资源的数量（`plate_stack` / `dirty_plates` / 水槽上的盘子）；`0` 与"没这个字段"不同，靠 `has_count` 区分 |
 | `step` | string | 否 | `step` | 灶台的烹饪类型：`Pot` / `FryingPan` / `DeepFatFryer`；非灶台或空灶台省略 |
+| `cooked` | boolean | 否 | `cooked` + `has_cooked` | 熟过（游戏 `IsCooked`：烹饪进度 ≥ 烹饪时长）。烧焦的锅仍然为 `true` |
+| `burning` | boolean | 否 | `burning` + `has_burning` | 已烧焦（游戏 `IsBurning`：烹饪进度 > 2 × 烹饪时长）；可与 `cooked` 同时为 `true` |
+| `burn_in` | number | 否 | `burn_in` + `has_burn_in` | 距烧焦还有多少秒（只在 `cooked && !burning` 时给）：熟到烧焦的窗口里倒锅用它 |
+| `fire` | boolean | 否 | `fire` + `has_fire` | 这个工位/物体正在着火（`ClientFlammable.OnFire`，火会蔓延到台面） |
 
 `contents[]` 的编码（G3/G4）：容器、盘子、手持物都递归展开成**叶子名**，深度优先：
 
@@ -303,7 +307,7 @@ C 侧错误码：`bridge/include/kitchenos/json.h` 的 `JSON_ERR_*`、
 | `chefs` | 16 | 丢弃多出的条目并计数 |
 | `orders` | 32 | 同上 |
 | 每张订单的 `ingredients` | 8 | 同上 |
-| `resources` 键 | 48 | 同上 |
+| `resources` 键 | 96 | 同上 |
 | `hello.actions` | 32 | 同上 |
 | 字符串字段 | 64 字节（`PROTO_STR_MAX`），资源键/原料名 32 字节（`PROTO_KEY_MAX`） | 截断并计数 |
 | JSON 嵌套深度 | 64 | 解析错误，丢弃该消息 |

@@ -8,6 +8,7 @@
 #ifndef KITCHENOS_STATE_H
 #define KITCHENOS_STATE_H
 
+#include <kitchenos/log.h>
 #include <kitchenos/protocol.h>
 #include <kitchenos/shm.h>
 
@@ -16,6 +17,21 @@
  * 纯函数，不分配内存，不碰 IPC。数组超限时只丢超出部分（与协议声明的行为一致）。
  */
 void kos_state_from_update(const proto_state_update *up, kos_world_state *world);
+
+/*
+ * 同上，但资源数超过共享内存布局上限时打一行 `resource_truncated`（数量变化时
+ * 才打）。截断是真实的丢数据：插件按 cookers → … → carried → containers 的顺序
+ * 上报，超限时先丢 carried_<M>。log 传 NULL 时静默（测试用）。
+ */
+void kos_state_from_update_logged(const proto_state_update *up, kos_world_state *world,
+                                  kos_log *log);
+
+/*
+ * 这一帧有多少个资源键因为共享内存布局的上限被丢掉。0 表示整帧都落下了。
+ * 插件按固定顺序上报、`carried_<M>` 靠后，所以被丢的正是"锅在谁手上"这类信息；
+ * bridge 用它在丢的时候打一行 `resource_truncated`，别让截断静默发生。
+ */
+size_t kos_state_resources_dropped(const proto_state_update *up);
 
 /*
  * 线上 double → 共享内存数值的唯一一套规则（NaN/越界取 0 或饱和、四舍五入）。

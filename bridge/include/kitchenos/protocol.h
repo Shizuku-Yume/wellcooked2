@@ -179,6 +179,17 @@ typedef struct {
     char step[PROTO_KEY_MAX]; /* cooker only: "Pot" / "FryingPan" / "DeepFatFryer" */
     size_t content_count;
     char contents[PROTO_MAX_CONTENTS][PROTO_KEY_MAX];
+    /* Cooking state the scheduler needs but `state` cannot carry alone: a burnt pot
+     * is still `cooked`, and the pour gate has to know both. Optional; has_* tells
+     * "reported false" from "not reported". */
+    int has_cooked;
+    int cooked;
+    int has_burning;
+    int burning;
+    double burn_in; /* seconds until it catches fire; only while cooked && !burning */
+    int has_burn_in;
+    int has_fire;
+    int fire; /* ClientFlammable.OnFire() on the item or on its station */
 } proto_resource;
 
 typedef struct {

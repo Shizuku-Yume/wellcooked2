@@ -79,7 +79,17 @@ static void copy_contents(char dst[][KOS_SHM_INGREDIENT_MAX], size_t cap,
     }
 }
 
+/* 截断只在数量变化时打一行：每帧一条会把日志冲掉，而 0.25 s 重建的资源块
+ * 本来就可能忽多忽少——变化时打一次足够看出"哪一帧开始丢 carried_*"。 */
+static size_t g_resources_dropped_logged;
+
 void kos_state_from_update(const proto_state_update *up, kos_world_state *world)
+{
+    kos_state_from_update_logged(up, world, NULL);
+}
+
+void kos_state_from_update_logged(const proto_state_update *up, kos_world_state *world,
+                                  kos_log *log)
 {
     size_t chefs;
     size_t orders;
@@ -155,9 +165,26 @@ void kos_state_from_update(const proto_state_update *up, kos_world_state *world)
     /* resources are keyed by name on the wire (pot_0, cutting_board_1,
      * plate_stack, and whatever the game grows later); the layout keeps the key
      * verbatim in `name` and classifies by prefix only, so an unknown key is
-     * carried through instead of rejected. */
+     * carried through instead of rejected.
+     *
+     * The plugin reports in a fixed order and `carried_<M>` is near the end, so a
+     * layout cap below the protocol cap silently drops exactly the thing the pour
+     * step needs. 96 == PROTO_MAX_RESOURCES now; if the two ever drift apart again
+     * the caller must still see it, hence kos_state_resources_dropped(). */
     resources = capped(up->resource_count, KOS_SHM_MAX_RESOURCES);
     world->resource_count = (uint32_t)resources;
+    if (up->resource_count > KOS_SHM_MAX_RESOURCES) {
+        size_t dropped = up->resource_count - KOS_SHM_MAX_RESOURCES;
+
+        if (dropped != g_resources_dropped_logged) {
+            g_resources_dropped_logged = dropped;
+            kos_log_warn(log, "resource_truncated",
+                         "have=%zu kept=%d dropped=%zu carried_may_be_missing=1",
+                         up->resource_count, (int)KOS_SHM_MAX_RESOURCES, dropped);
+        }
+    } else {
+        g_resources_dropped_logged = 0;
+    }
     for (i = 0; i < resources; i++) {
         const proto_resource *src = &up->resources[i];
         kos_resource *dst = &world->resources[i];
@@ -180,5 +207,22 @@ void kos_state_from_update(const proto_state_update *up, kos_world_state *world)
         copy_contents(dst->contents, KOS_SHM_MAX_CONTENTS,
                       src->contents, src->content_count);
         dst->content_count = (int32_t)capped(src->content_count, KOS_SHM_MAX_CONTENTS);
+        /* Cooking flags: keep "reported false" and "not reported" apart. */
+        dst->has_cooked = src->has_cooked;
+        dst->cooked = src->has_cooked ? (src->cooked != 0) : 0;
+        dst->has_burning = src->has_burning;
+        dst->burning = src->has_burning ? (src->burning != 0) : 0;
+        dst->has_burn_in = src->has_burn_in;
+        dst->burn_in = src->has_burn_in ? kos_state_double_to_float(src->burn_in) : 0.0f;
+        dst->has_fire = src->has_fire;
+        dst->fire = src->has_fire ? (src->fire != 0) : 0;
     }
+}
+
+size_t kos_state_resources_dropped(const proto_state_update *up)
+{
+    if (up == NULL || up->resource_count <= KOS_SHM_MAX_RESOURCES) {
+        return 0;
+    }
+    return up->resource_count - KOS_SHM_MAX_RESOURCES;
 }

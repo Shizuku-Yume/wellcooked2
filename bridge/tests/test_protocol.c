@@ -331,6 +331,68 @@ static void test_dynamic_resources(void)
     json_free(root);
 }
 
+/*
+ * cooked / burning / burn_in / fire（KOS_SHM_VERSION 3）：一个烧焦的锅仍然"熟过"，
+ * state 只有一个字符串，两个事实必须能同时报（实机 20261027-123220 final-state.json：
+ * cooked=true、burning=true、progress 24.0 s）。
+ */
+static void test_cooking_flags(void)
+{
+    static const char sample[] =
+        "{\"type\":\"state_update\",\"game_time_ms\":1,\"resources\":{"
+        "\"pot_4\":{\"state\":\"burning\",\"cooked\":true,\"burning\":true},"
+        "\"pot_5\":{\"state\":\"cooked\",\"cooked\":true,\"burning\":false,"
+        "\"burn_in\":6.5,\"fire\":false}}}";
+    static const char negative[] =
+        "{\"type\":\"state_update\",\"game_time_ms\":1,\"resources\":{"
+        "\"pot_4\":{\"state\":\"cooked\",\"burn_in\":-1}}}";
+    static const char wrong_type[] =
+        "{\"type\":\"state_update\",\"game_time_ms\":1,\"resources\":{"
+        "\"pot_4\":{\"cooked\":\"yes\"}}}";
+    json_value *root;
+    proto_state_update state;
+    const proto_resource *pot;
+
+    root = parse_ok(sample, sizeof sample - 1);
+    CHECK(root != NULL);
+    if (root == NULL)
+        return;
+    CHECK_INT(protocol_parse_state_update(root, &state, NULL), PROTO_OK);
+    pot = find_resource(&state, "pot_4");
+    CHECK(pot != NULL);
+    if (pot != NULL) {
+        CHECK_INT(pot->has_cooked, 1);
+        CHECK_INT(pot->cooked, 1);
+        CHECK_INT(pot->has_burning, 1);
+        CHECK_INT(pot->burning, 1);
+    }
+    pot = find_resource(&state, "pot_5");
+    CHECK(pot != NULL);
+    if (pot != NULL) {
+        CHECK_INT(pot->cooked, 1);
+        CHECK_INT(pot->burning, 0);
+        CHECK_INT(pot->has_burn_in, 1);
+        CHECK_DBL(pot->burn_in, 6.5);
+        CHECK_INT(pot->has_fire, 1);
+        CHECK_INT(pot->fire, 0); /* reported false != not reported */
+    }
+    json_free(root);
+
+    root = parse_ok(negative, sizeof negative - 1);
+    CHECK(root != NULL);
+    if (root != NULL) {
+        CHECK_INT(protocol_parse_state_update(root, &state, NULL), PROTO_ERR_RANGE);
+        json_free(root);
+    }
+
+    root = parse_ok(wrong_type, sizeof wrong_type - 1);
+    CHECK(root != NULL);
+    if (root != NULL) {
+        CHECK_INT(protocol_parse_state_update(root, &state, NULL), PROTO_ERR_RANGE);
+        json_free(root);
+    }
+}
+
 /* 任务 09 G1–G9：灶台槽位、递归内容、手持内容、每单分值、回合时钟、订单结果。 */
 static void test_state_audit_fields(void)
 {
@@ -1176,6 +1238,7 @@ int main(void)
     test_state_new_fields();
     test_dynamic_resources();
     test_state_audit_fields();
+    test_cooking_flags();
     test_state_field_errors();
     test_heartbeat();
     test_hello();

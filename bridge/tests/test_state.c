@@ -222,7 +222,7 @@ static void test_mapping_caps(void)
     proto_state_update up;
     kos_world_state world;
 
-    printf("[test_state] 上限截断：资源 48 / 结果 16 / 内容 4\n");
+    printf("[test_state] 上限截断：资源 96（= 协议上限）/ 结果 16 / 内容 4\n");
 
     pos += (size_t)snprintf(sample + pos, sizeof sample - pos,
                             "{\"type\":\"state_update\",\"game_time_ms\":1,\"chefs\":["
@@ -235,7 +235,7 @@ static void test_mapping_caps(void)
                                 i == 0 ? "" : ",", i + 1, i);
     }
     pos += (size_t)snprintf(sample + pos, sizeof sample - pos, "],\"resources\":{");
-    for (i = 0; i < 60; i++) {
+    for (i = 0; i < 120; i++) {
         pos += (size_t)snprintf(sample + pos, sizeof sample - pos,
                                 "%s\"pot_%d\":{\"kind\":\"cooker\",\"pos\":{\"x\":%d,\"y\":0},"
                                 "\"contents\":[\"1\",\"2\",\"3\",\"4\",\"5\",\"6\",\"7\",\"8\"]}",
@@ -245,7 +245,7 @@ static void test_mapping_caps(void)
     CHECK(pos < sizeof sample);
 
     CHECK_INT(parse_and_map(sample, pos, &up, &world), PROTO_OK);
-    CHECK_INT(up.resource_count, 60);
+    CHECK_INT(up.resource_count, KOS_SHM_MAX_RESOURCES); /* 协议与布局同一个上限 */
     CHECK_INT(up.order_result_count, 18);
     CHECK_INT(up.chefs[0].holding_content_count, 8);
 
@@ -255,8 +255,92 @@ static void test_mapping_caps(void)
     CHECK_STR(world.chefs[0].holding_contents[3], "d"); /* 前 4 条保留 */
     CHECK_STR(world.resources[0].contents[3], "4");
     CHECK_INT(world.resources[0].content_count, KOS_SHM_MAX_CONTENTS);
-    CHECK_STR(world.resources[47].name, "pot_47");       /* 第 48 个资源还在 */
+    CHECK_STR(world.resources[95].name, "pot_95");       /* 第 96 个资源还在 */
+    CHECK_INT(kos_state_resources_dropped(&up), 0);
     CHECK_INT(world.order_results[15].seq, 16);
+}
+
+/*
+ * cooked / burning / burn_in / fire（KOS_SHM_VERSION 3）：实机 _3 的锅在
+ * final-state.json 里是 cooked=true 且 burning=true（progress 24.0 s），
+ * 调度侧必须两个事实都看得到，"熟、还能倒"和"已经烧起来"不能混成一个 state。
+ */
+static void test_cooking_flags(void)
+{
+    static const char sample[] =
+        "{\"type\":\"state_update\",\"game_time_ms\":1,\"resources\":{"
+        "\"pot_0\":{\"kind\":\"cooker\",\"state\":\"burning\","
+        "\"cooked\":true,\"burning\":true},"
+        "\"pot_1\":{\"kind\":\"cooker\",\"state\":\"cooked\","
+        "\"cooked\":true,\"burning\":false,\"burn_in\":6.5,\"fire\":true},"
+        "\"pot_2\":{\"kind\":\"cooker\",\"state\":\"cooking\"},"
+        "\"pot_3\":{\"kind\":\"cooker\",\"state\":\"burning\","
+        "\"cooked\":true,\"burning\":false}}}";
+    proto_state_update up;
+    kos_world_state world;
+
+    printf("[test_state] 烹饪标志：cooked 与 burning 分开\n");
+    CHECK_INT(parse_and_map(sample, sizeof sample - 1, &up, &world), PROTO_OK);
+    CHECK_INT(world.resource_count, 4);
+
+    CHECK_INT(world.resources[0].has_cooked, 1);
+    CHECK_INT(world.resources[0].cooked, 1);
+    CHECK_INT(world.resources[0].has_burning, 1);
+    CHECK_INT(world.resources[0].burning, 1);
+    CHECK_INT(world.resources[0].has_burn_in, 0);
+
+    CHECK_INT(world.resources[1].cooked, 1);
+    CHECK_INT(world.resources[1].burning, 0);
+    CHECK_INT(world.resources[1].has_burn_in, 1);
+    CHECK_DBL(world.resources[1].burn_in, 6.5);
+    CHECK_INT(world.resources[1].has_fire, 1);
+    CHECK_INT(world.resources[1].fire, 1);
+
+    /* 老插件不发这两个字段：has_* = 0，不能当成 false 来用。 */
+    CHECK_INT(world.resources[2].has_cooked, 0);
+    CHECK_INT(world.resources[2].has_burning, 0);
+    CHECK_INT(world.resources[2].has_fire, 0);
+
+    /* state 与 flags 不一致时以 flags 为准（burning=true 但 cooked 说不熟）。 */
+    CHECK_INT(world.resources[3].cooked, 1);
+    CHECK_INT(world.resources[3].burning, 0);
+}
+
+/*
+ * 资源上限必须与协议一致：插件按固定顺序上报，carried_<M> 排在后面，上限低一格
+ * 就先丢"锅在谁手上"。这里锁住 96（PROTO_MAX_RESOURCES），并验证截断计数可见。
+ */
+static void test_resource_cap_matches_protocol(void)
+{
+    static char sample[4096];
+    size_t pos = 0;
+    proto_state_update up;
+    proto_state_update oversize;
+    kos_world_state world;
+    int i;
+
+    printf("[test_state] 资源上限与协议一致\n");
+    CHECK_INT(KOS_SHM_MAX_RESOURCES, PROTO_MAX_RESOURCES);
+    pos += (size_t)snprintf(sample + pos, sizeof sample - pos,
+                            "{\"type\":\"state_update\",\"game_time_ms\":1,\"resources\":{");
+    for (i = 0; i < KOS_SHM_MAX_RESOURCES; i++) {
+        pos += (size_t)snprintf(sample + pos, sizeof sample - pos,
+                                "%s\"pot_%d\":{\"state\":\"free\"}", i == 0 ? "" : ",", i);
+    }
+    pos += (size_t)snprintf(sample + pos, sizeof sample - pos, "}}");
+    CHECK_INT(parse_and_map(sample, pos, &up, &world), PROTO_OK);
+    CHECK_INT(world.resource_count, KOS_SHM_MAX_RESOURCES);
+    CHECK_INT(kos_state_resources_dropped(&up), 0);
+
+    /* 布局上限再被调低时，截断必须可见（carried_* 排在上报顺序末尾）。 */
+    memset(&oversize, 0, sizeof oversize);
+    oversize.resource_count = KOS_SHM_MAX_RESOURCES + 3;
+    for (i = 0; i < (int)oversize.resource_count; i++) {
+        snprintf(oversize.resources[i].key, sizeof oversize.resources[i].key, "pot_%d", i);
+    }
+    kos_state_from_update(&oversize, &world);
+    CHECK_INT(world.resource_count, KOS_SHM_MAX_RESOURCES);
+    CHECK_INT(kos_state_resources_dropped(&oversize), 3);
 }
 
 static void test_mapping_defaults(void)
@@ -294,6 +378,8 @@ int main(void)
 
     test_mapping_basic();
     test_mapping_caps();
+    test_cooking_flags();
+    test_resource_cap_matches_protocol();
     test_mapping_defaults();
     test_numeric_helpers();
 

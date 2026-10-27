@@ -498,9 +498,10 @@ static int parse_args(int argc, char **argv, bridge *b)
  * The mapping itself lives in state.c so tests can link it without this
  * daemon's main().
  */
-static void world_from_state_update(const proto_state_update *up, kos_world_state *world)
+static void world_from_state_update(const proto_state_update *up, kos_world_state *world,
+                                    kos_log *log)
 {
-    kos_state_from_update(up, world);
+    kos_state_from_update_logged(up, world, log);
 }
 
 /* ======================================================== 帧屏障 */
@@ -837,7 +838,7 @@ static void on_state_update(bridge *b, const proto_state_update *up, const proto
     kos_world_state world;
     int64_t now;
 
-    world_from_state_update(up, &world);
+    world_from_state_update(up, &world, b->log);
     if (kos_shm_world_write(b->shm, &world) != KOS_OK) {
         kos_log_warn(b->log, "frame_error", "stage=shm_world_write frame=%" PRId64
                                             " state=%s",

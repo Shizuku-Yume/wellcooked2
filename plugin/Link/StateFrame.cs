@@ -349,7 +349,16 @@ namespace WellCooked
             return "free";
         }
 
-        /// <summary>锅的进度/剩余/类型（G6）。没有 `ClientCookingHandler` 就什么都不写。</summary>
+        /// <summary>
+        /// 锅的进度/剩余/类型（G6）与"熟 / 烧焦"两个独立事实（KOS_SHM_VERSION 3）。
+        ///
+        /// 游戏自己的定义（decompiled `ServerCookingHandler` / `ClientCookingHandler`）：
+        /// `IsCooked` = 进度 ≥ 烹饪时长，`IsBurning` = 进度 &gt; 2 × 烹饪时长。熟到烧焦
+        /// 之间有一整段（_3 是 12.1 s）可以倒锅；`state` 只能是一个字符串，烧焦会把
+        /// "熟过"盖掉，所以 cooked / burning 分开报，`burn_in` 是离烧焦还有几秒。
+        /// 实机 20261027-123220 的 final-state.json 里两口锅是 cooked=true 且
+        /// burning=true（progress 24.0 s），调度侧必须能同时看到这两个事实。
+        /// </summary>
         private static void WriteCooking(JsonBuilder b, GameObject item)
         {
             if (item == null)
@@ -365,11 +374,28 @@ namespace WellCooked
 
             double raw = ToDouble(WorldState.Invoke(handler, "GetCookingProgress"));
             double total = ToDouble(WorldState.Get(handler, "AccessCookingTime"));
-            double progress = total > 0.0001 ? raw / total : raw;
+            bool hasTotal = total > 0.0001;
+            double progress = hasTotal ? raw / total : raw;
+            bool burning = IsTrue(WorldState.Invoke(handler, "IsBurning"));
+            // 没有总时长时无法自己算"熟"，退回游戏自己的判定（Raw=0/Cooked=1/Burnt=2）。
+            bool cooked = hasTotal
+                ? raw >= total - 0.001
+                : ToDouble(WorldState.Invoke(handler, "GetCookedOrderState")) >= 1.0;
+
             b.FieldNum("progress", Clamp01(progress));
-            if (total > raw + 0.001)
+            if (!cooked && hasTotal && total > raw + 0.001)
             {
                 b.FieldNum("time_left", total - raw);
+            }
+            b.FieldBool("cooked", cooked);
+            b.FieldBool("burning", burning);
+            if (cooked && !burning && hasTotal)
+            {
+                double burnIn = 2.0 * total - raw;
+                if (burnIn > 0.0)
+                {
+                    b.FieldNum("burn_in", burnIn);
+                }
             }
 
             var step = StepName(WorldState.Get(handler, "AccessCookingType"));
