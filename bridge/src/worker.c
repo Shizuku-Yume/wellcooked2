@@ -301,7 +301,7 @@ static void publish_path(worker *w, const kos_nav_plan *plan)
     publish_action(w, &action);
 }
 
-static void publish_macro_action(worker *w, const kos_macro_output *out, int64_t game_ms,
+static void publish_macro_action(worker *w, const kos_macro_output *out,
                                  const kos_nav_plan *plan, int plan_fresh,
                                  int plan_matches)
 {
@@ -800,7 +800,7 @@ static int worker_main(worker *w, const kos_child_opts *opts)
             } else if (w->have_task) {
                 if (have_world) {
                     if (force_publish || (slot_due && publish_allowed)) {
-                        publish_macro_action(w, &out, game_ms, &plan, plan_fresh,
+                        publish_macro_action(w, &out, &plan, plan_fresh,
                                              plan_matches);
                     }
                 } else if (slot_due && publish_allowed) {
