@@ -520,12 +520,44 @@ wait_pads || die "only joined slots: $(cat "$RT/pads-joined.txt" 2>/dev/null || 
 write_takeover false
 wait_frontend_off
 
+start_supervisor() {
+    say "supervisor: starting"
+    "$SUPERVISOR" --foreground --verbose --runtime-dir "$RT" \
+        --workers "$CHEFS" --bridge-host "$HOST" --bridge-port "$PORT" \
+        --kitchen "$KITCHEN" --recipes "$RECIPES" \
+        --orders "$ROOT/config/orders.world.json" --runs-dir "$RT/runs" \
+        >"$RT/supervisor.console.log" 2>&1 &
+    SUPERVISOR_PID=$!
+    say "supervisor: pid $SUPERVISOR_PID"
+}
+
+if [ "$EXPORT" = 1 ]; then
+    KITCHEN="$MAP_DIR/$SCENE/kitchen.json"
+    RECIPES="$MAP_DIR/$SCENE/recipes.json"
+else
+    KITCHEN="$ROOT/config/maps/$SCENE/kitchen.json"
+    RECIPES="$ROOT/config/maps/$SCENE/recipes.json"
+    [ -f "$KITCHEN" ] || die "kitchen config missing: $KITCHEN"
+    [ -f "$RECIPES" ] || die "recipes config missing: $RECIPES"
+fi
 before="$(state_mtime_ns)"
 printf 'load=%s\n' "$SCENE" > "$COMMAND"
-wait_load_stable "$before" || die "scene $SCENE did not stay fresh/stable with $CHEFS chefs"
+if [ "$EXPORT" = 1 ]; then
+    wait_load_stable "$before" || die "scene $SCENE did not stay fresh/stable with $CHEFS chefs"
+    export_map
+    KITCHEN="$MAP_DIR/$SCENE/kitchen.json"
+    RECIPES="$MAP_DIR/$SCENE/recipes.json"
+    say "supervisor: early start skipped because exported configs require load completion"
+else
+    start_supervisor
+    wait_load_stable "$before" || die "scene $SCENE did not stay fresh/stable with $CHEFS chefs"
+fi
+[ -f "$KITCHEN" ] || die "kitchen config missing: $KITCHEN"
+[ -f "$RECIPES" ] || die "recipes config missing: $RECIPES"
+if [ "$EXPORT" = 1 ]; then
+    start_supervisor
+fi
 
-# A scene with the right chef count can still be stuck in LoadKitchen (the old
-# false-positive).  Do not start a Supervisor until the round clock is moving.
 clock_ok=0
 for i in $(seq 1 30); do
     read -r scene chefs stations left elapsed round <<<"$(state_probe)"
@@ -536,34 +568,11 @@ for i in $(seq 1 30); do
     fi
     sleep 1
 done
-[ "$clock_ok" = 1 ] || die "round clock stayed at 0 after load (scene is stuck before RunKitchen)"
-
-export_map
-if [ "$EXPORT" = 1 ]; then
-    KITCHEN="$MAP_DIR/$SCENE/kitchen.json"
-    RECIPES="$MAP_DIR/$SCENE/recipes.json"
-else
-    KITCHEN="$ROOT/config/maps/$SCENE/kitchen.json"
-    RECIPES="$ROOT/config/maps/$SCENE/recipes.json"
+if [ "$clock_ok" != 1 ]; then
+    stop_supervisor
+    die "round clock stayed at 0 after load (scene is stuck before RunKitchen)"
 fi
-[ -f "$KITCHEN" ] || die "kitchen config missing: $KITCHEN"
-[ -f "$RECIPES" ] || die "recipes config missing: $RECIPES"
 
-say "supervisor: starting"
-"$SUPERVISOR" --foreground --verbose --runtime-dir "$RT" \
-    --workers "$CHEFS" --bridge-host "$HOST" --bridge-port "$PORT" \
-    --kitchen "$KITCHEN" --recipes "$RECIPES" \
-    --orders "$ROOT/config/orders.world.json" --runs-dir "$RT/runs" \
-    >"$RT/supervisor.console.log" 2>&1 &
-SUPERVISOR_PID=$!
-say "supervisor: pid $SUPERVISOR_PID"
-
-for i in $(seq 1 30); do
-    kill -0 "$SUPERVISOR_PID" 2>/dev/null || die "supervisor exited during startup"
-    [ -f "$RT/status.json" ] && break
-    sleep 1
-done
-sleep 2
 
 say "round: waiting up to ${GAME_SECONDS}s for round end"
 deadline=$((SECONDS + GAME_SECONDS))

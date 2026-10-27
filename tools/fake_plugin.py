@@ -66,7 +66,7 @@ EXIT_SKIP = 77
 
 SCENARIOS = ("happy", "one-slot", "no-heartbeat", "bad-frames", "connect-mode",
              "reconnect-storm", "silent-connect", "data-shapes", "second-peer",
-             "pickup-dash", "path-face-work", "input-grace", "os-loop", "os-resources",
+             "pickup-dash", "path-face-work", "input-grace", "os-loop", "round-start", "os-resources",
              "nav-corridor", "nav-stuck", "nav-crash", "nav-ring", "macro",
              "demo3-rules", "demo3-sushi-1chef", "demo3-4chef-5dish",
              "demo3-regress-goto-drift", "demo3-regress-grid-offset",
@@ -258,7 +258,7 @@ def msg_state_update(n_chefs, frame_index, flat_xy=False, edge_fields=False):
 
 def msg_state_update_os(chefs, frame_index, cells, positions=None, game_ms=None,
                         resources=None, holdings=None, facings=None, orders=None,
-                        score=0):
+                        score=0, round_time_left=None, round_time_limit=120.0):
     """os-loop / macro 用：厨师站在 kitchen 网格里，订单用真实菜名。
 
     positions 给出时用它（NavSim 模拟的实时坐标）；否则按 picks 放进网格。
@@ -295,6 +295,9 @@ def msg_state_update_os(chefs, frame_index, cells, positions=None, game_ms=None,
         "resources": resources if resources is not None else
                      {"plate_stack": {"count": 5}},
     }
+    if round_time_left is not None:
+        msg["round_time_left"] = round_time_left
+        msg["round_time_limit"] = round_time_limit
     return jdump(msg)
 
 
@@ -362,6 +365,7 @@ class Stats:
         self.label = label
         self.actions = []
         self.bad_actions = []
+        self.action_times = []
         self.by_type = Counter()
         self.echo_replies = []
         self.bridge_acks = []
@@ -746,6 +750,7 @@ def _absorb(msg, stats, link, ack_actions, chefs):
         if errs:
             stats.bad_actions.append((msg, errs))
         stats.actions.append(msg)
+        stats.action_times.append(time.monotonic())
         if ack_actions and link is not None:
             chef_id = msg.get("chef_id")
             ok = not errs
@@ -4329,7 +4334,12 @@ def scenario_os_loop(ctx, checks):
         sim.process_actions(stats.actions, game_ms)
         game_ms = sim.tick(game_ms)
         sim.frame(game_ms)
-        return sim.message(n, frame_index, cells, game_ms)
+        round_left = max(0.0, 120.0 - game_ms / 1000.0)
+        return msg_state_update_os(
+            n, frame_index, cells, positions=[tuple(p) for p in sim.positions],
+            game_ms=game_ms, resources=sim.resources_message(), holdings=sim.holdings,
+            facings=sim.facings, orders=sim.orders, score=sim.score,
+            round_time_left=round_left)
 
     link = Link(connect(args.host, port, args.ready_timeout))
     link.send_json(msg_hello())
@@ -6038,6 +6048,70 @@ def scenario_demo3_regress_deliver_expired(ctx, checks):
             (expired_score, world.score,
              [(entry["outcome"], entry.get("score")) for entry in world.order_results]))
 
+def scenario_round_start(ctx, checks):
+    """Round clock opens after three fake seconds; task dispatch must follow within 300 ms."""
+    args = ctx.args
+    args.round_start_delay = args.round_start_delay or 3.0
+    chefs = args.chefs or 2
+    ctx.clear_stale_shm()
+    port = args.listen_port or pick_free_port(args.host)
+    ctx.start_supervisor(port=port, chefs=chefs, orders=REPO_ROOT / "config" / "orders.world.json")
+    if not ctx.wait_supervisor_ready(port, chefs, args.ready_timeout):
+        raise InfraError("Supervisor tree did not start")
+    kitchen = json.loads(Path(args.kitchen).read_text())
+    cells = kitchen["grid"]["cells"]
+    starts = [tuple(cells[i % len(cells)]) for i in range(chefs)]
+    sim = WorldSim(starts, cells, kitchen.get("stations", []),
+                   resources={"plate_stack": {"count": 5}},
+                   orders=[{"id": "world-start", "recipe": "SteamedSpecial_Fish",
+                            "time_remaining": 90, "ingredients": ["fish"]}])
+    link = Link(connect(args.host, port, args.ready_timeout))
+    link.send_json(msg_hello())
+    stats = Stats("round-start")
+    fake_start = time.monotonic()
+    round_started_at = None
+    round_started_wall = None
+    pre_start_task_actions = 0
+
+    def builder(n, frame_index):
+        nonlocal round_started_at, round_started_wall, pre_start_task_actions
+        now = time.monotonic()
+        if round_started_at is None and now - fake_start >= args.round_start_delay:
+            round_started_at = now
+            round_started_wall = now
+        elapsed_round = 0.0 if round_started_at is None else now - round_started_at
+        game_ms = int(elapsed_round * 1000)
+        sim.process_actions(stats.actions, game_ms)
+        game_ms = sim.tick(game_ms)
+        sim.frame(game_ms)
+        pre_start_task_actions = sum(
+            1 for action, received_at in zip(stats.actions, stats.action_times)
+            if action.get("action") != "stop" and
+            (round_started_wall is None or received_at < round_started_wall))
+        left = 120.0 if round_started_at is None else max(0.0, 120.0 - elapsed_round)
+        return msg_state_update_os(n, frame_index, cells,
+                                   positions=[tuple(p) for p in sim.positions],
+                                   game_ms=game_ms, resources=sim.resources_message(),
+                                   holdings=sim.holdings, facings=sim.facings,
+                                   orders=sim.orders, score=sim.score,
+                                   round_time_left=left)
+
+    run_exchange(link, stats, args.round_start_delay + 1.5, chefs=chefs, hz=args.hz,
+                 heartbeat_ms=args.heartbeat_ms, ack_actions=True, state_builder=builder)
+    link.close()
+    first_task_action_at = next((t for action, t in zip(stats.actions, stats.action_times)
+                                 if action.get("action") != "stop"), None)
+    action_gap_ms = ((first_task_action_at - round_started_wall) * 1000
+                     if first_task_action_at is not None and round_started_wall is not None else None)
+    checks.hard("no_task_action_before_round_start", pre_start_task_actions == 0,
+                "pre_start_task_actions=%d" % pre_start_task_actions)
+    checks.hard("first_action_within_300ms",
+                action_gap_ms is not None and 0 <= action_gap_ms <= 300,
+                "first_action_gap_ms=%s" % ("%.1f" % action_gap_ms if action_gap_ms is not None else "none"))
+    return "round-start action gap=%s ms, pre-start task actions=%d" % (
+        "%.1f" % action_gap_ms if action_gap_ms is not None else "none", pre_start_task_actions)
+
+
 SCENARIO_IMPL = {
     "happy": scenario_happy,
     "one-slot": scenario_one_slot,
@@ -6052,6 +6126,7 @@ SCENARIO_IMPL = {
     "path-face-work": scenario_path_face_work,
     "input-grace": scenario_input_grace,
     "os-loop": scenario_os_loop,
+    "round-start": scenario_round_start,
     "os-resources": scenario_os_resources,
     "nav-corridor": scenario_nav_corridor,
     "nav-stuck": scenario_nav_stuck,
@@ -6424,6 +6499,8 @@ def parse_args(argv):
     parser.add_argument("--nb-timeout-ms", type=int, default=800,
                         help="no-heartbeat 场景使用的心跳超时（要短，否则测试很慢）")
     parser.add_argument("--frame-timeout-ms", type=int, default=200, help="传给 Bridge 的帧屏障超时")
+    parser.add_argument("--round-start-delay", type=float, default=0.0,
+                        help="os-loop waits before emitting a running round clock")
     parser.add_argument("--min-actions", type=int, default=20,
                         help="happy 场景要求的最少 action 数（idle 降级路径下每帧只有 N 条）")
     parser.add_argument("--nav", choices=("pibt", "pa"), default="pibt",

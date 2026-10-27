@@ -878,6 +878,10 @@ namespace WellCooked
         /// </summary>
         private static void Drive(float now)
         {
+            if (!StateFrame.RoundRunning())
+            {
+                return;
+            }
             float elapsed = now - _drivingSince;
             bool action = elapsed % ActionPeriod < ActionLength;
             ScanChefPositions(now);

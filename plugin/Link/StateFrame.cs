@@ -103,6 +103,16 @@ namespace WellCooked
             return elapsed == null ? 0f : (float)ToDouble(elapsed);
         }
 
+        public static bool RoundRunning()
+        {
+            object flow = WorldState.Flow();
+            object timer = flow == null ? null : WorldState.Get(flow, "RoundTimer");
+            object left = timer == null ? null : WorldState.Get(timer, "m_timeLeft");
+            object limit = timer == null ? null : WorldState.Get(timer, "m_timeLimit");
+            return left != null && limit != null && ToDouble(limit) > 0.0 && ToDouble(left) > 0.0
+                && ToDouble(left) < ToDouble(limit);
+        }
+
         /// <summary>
         /// 回合剩余与上限（G8）：`ServerRoundTimer.m_timeLeft/m_timeLimit`。两个数一起给，
         /// 缺一个就当没有——只报剩余会让调度侧以为"局时未知"。
