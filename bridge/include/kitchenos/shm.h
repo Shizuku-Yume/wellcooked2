@@ -208,6 +208,7 @@ typedef struct {
      * 插件按 `InteractWithItemHelper.GetFacingGridOccupant` 取"厨师面前那一格上的
      * 物体"，报它的名字与位置。坐标是权威判据：厨师站在哪个格子、朝哪边，都不如
      * "游戏按 A 会作用到谁"直接。名字只进日志。 */
+    int32_t facing_reported;        /* 1 = 插件做过这次查询（空面前也报） */
     int32_t has_facing_target;      /* 1 = facing_x/facing_y 有效 */
     float facing_x;
     float facing_y;

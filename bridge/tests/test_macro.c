@@ -487,8 +487,8 @@ static void test_chop_completion_by_rename(const kos_kitchen *kitchen, const cha
     snprintf(chef->holding, sizeof chef->holding, "Carrot");
     game_ms += 16;
     rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
-    expect(rc == 0 && macro.step_index == 3,
-           "pickup：拿到别的料不算完成（item 为空时按源工位物体名判）");
+    expect(rc == -1 && strstr(kos_macro_fail_detail(&macro), "hands-not-empty") != NULL,
+           "pickup：手上不是要拿的东西时拒绝按键（hands-not-empty）");
     snprintf(chef->holding, sizeof chef->holding, "ChoppedSushiPrawn");
     game_ms += 16;
     rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
@@ -959,6 +959,26 @@ static void drive_to_pour(const kos_kitchen *kitchen, kos_world_state *world, ko
  * G1/G5 的状态模型：锅端在手上，灶台槽位（pot_N）里已经没有内容；倒料完成要按
  * 手上 `carried_<chefId>` 的内容判——既不能因为槽位空就提前收工，也不能卡到超时。
  */
+/*
+ * 倒料失败且手里端着锅：宏会先回源灶台把锅放下，再按原失败原因收尾。
+ * 这个辅助函数走完"开始回收 → 放锅 → 失败"，返回最终 rc，并断言步骤停在倒料。
+ */
+static int pour_fail_with_recovery(kos_macro *macro, kos_world_state *world,
+                                   const kos_kitchen *kitchen, int64_t *game_ms,
+                                   kos_macro_output *out, const char *what)
+{
+    kos_chef *chef = chef_find(world, 0);
+    int rc;
+
+    rc = kos_macro_advance(macro, kitchen, world, 0, 0, *game_ms, out);
+    expect(rc == 0 && out->action == KOS_MACRO_ACT_STOP, what);
+    if (chef != NULL) {
+        chef->holding[0] = '\0';
+    }
+    *game_ms += 16;
+    return kos_macro_advance(macro, kitchen, world, 0, 0, *game_ms, out);
+}
+
 static void test_pour_by_carried(const kos_kitchen *kitchen, const char *cooker,
                                  const char *container)
 {
@@ -1010,7 +1030,8 @@ static void test_pour_wrong_content(const kos_kitchen *kitchen, const char *cook
                   &out);
     expect(macro.step_index == 3, "wrong-content：进入倒料");
     game_ms += 16;
-    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    rc = pour_fail_with_recovery(&macro, &world, kitchen, &game_ms, &out,
+                                 "wrong-content：料对不上时先回灶放锅");
     expect(rc < 0 && macro.step_index == 3,
            "wrong-content：料对不上时停在倒料这一步并失败");
     expect(strstr(macro.fail_detail, "macro=pour") != NULL &&
@@ -1087,7 +1108,8 @@ static void test_pour_tolerant_matching(const kos_kitchen *kitchen, const char *
     drive_to_pour_item(kitchen, &world, &macro, cooker, container, "pour:TacoBeef",
                        "cooked:BoiledRice", &game_ms, &out);
     game_ms += 16;
-    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    rc = pour_fail_with_recovery(&macro, &world, kitchen, &game_ms, &out,
+                                 "tolerant：Beef 装 Rice 先回灶放锅");
     expect(rc < 0 && macro.step_index == 3 && strstr(macro.fail_detail, "wrong-item") != NULL,
            "tolerant：未在预设列表的 Beef 装入 Rice 判定 wrong-item 失败");
 }
@@ -1116,7 +1138,8 @@ static void test_pour_exact_tokens(const kos_kitchen *kitchen, const char *cooke
     drive_to_pour_item(kitchen, &world, &macro, cooker, container, "pour:Tomato",
                        "cooked:Potato", &game_ms, &out);
     game_ms += 16;
-    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    rc = pour_fail_with_recovery(&macro, &world, kitchen, &game_ms, &out,
+                                 "exact：Tomato/Potato 先回灶放锅");
     expect(rc < 0 && strstr(macro.fail_detail, "wrong-item") != NULL,
            "exact：Tomato 倒 Potato 判 wrong-item");
 
@@ -1146,7 +1169,8 @@ static void test_pour_exact_tokens(const kos_kitchen *kitchen, const char *cooke
     drive_to_pour_item(kitchen, &world, &macro, cooker, container,
                        "pour:BurritoChicken", "cooked:Rice+cooked:Tortilla", &game_ms, &out);
     game_ms += 16;
-    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    rc = pour_fail_with_recovery(&macro, &world, kitchen, &game_ms, &out,
+                                 "exact：两项锅不含目标料先回灶放锅");
     expect(rc < 0 && strstr(macro.fail_detail, "wrong-item") != NULL,
            "exact：两项锅都不含目标料判 wrong-item");
 
@@ -1200,8 +1224,99 @@ static void test_pour_carried_without_contents(const kos_kitchen *kitchen, const
     rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
     expect(rc == 0 && macro.step_index == 3, "carried 空：没有兜底窗口，继续按");
     game_ms = macro.deadline_ms + 1;
-    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    rc = pour_fail_with_recovery(&macro, &world, kitchen, &game_ms, &out,
+                                 "carried 空：超时后先回灶放锅");
     expect(rc == -1, "carried 空且台面无料：超时失败");
+}
+
+/*
+ * 倒料前先等锅熟：端走生料锅会把锅从灶上拿走（run 3 worker-1.log:32-38），
+ * 后面这口灶就没有锅了。等的时候在灶边保持焦点、只发 STOP，超时以 pot-cooked 失败。
+ */
+static void test_pour_waits_for_cooked(const kos_kitchen *kitchen, const char *cooker,
+                                       const char *container)
+{
+    kos_world_state world;
+    kos_macro_plan plan;
+    kos_macro macro;
+    kos_macro_output out;
+    kos_error err;
+    kos_resource *pot;
+    int64_t game_ms = 1000;
+    int rc;
+
+    printf("test_pour_waits_for_cooked\n");
+    base_world(&world);
+    (void)chef_at_station(&world, kitchen, cooker);
+    pot = add_resource(&world, "pot_0");
+    snprintf(pot->state, sizeof pot->state, "cooking");
+    snprintf(pot->content, sizeof pot->content, "Rice");
+    pot->has_cooked = 1;
+    pot->cooked = 0;
+    pot->time_left = 5.0f;
+    kos_error_clear(&err);
+    expect(kos_macro_plan_build_with_source(kitchen, "pour", "pour:Rice", container,
+                                            cooker, "o1", 100, &plan, &err) == KOS_OK,
+           "pour-wait：计划建成");
+    kos_macro_begin(&macro, &plan);
+    (void)finish_goto(&macro, kitchen, &world, &game_ms, &out);
+    expect(macro.step_index == 1, "pour-wait：goto 完成进入端锅");
+    game_ms += 16;
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    expect(rc == 0 && macro.step_index == 1 && out.action == KOS_MACRO_ACT_STOP,
+           "pour-wait：锅没熟时只等，不端锅、不按键");
+    game_ms += 4000;
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    expect(rc == 0 && out.action == KOS_MACRO_ACT_STOP, "pour-wait：还没熟继续等");
+    pot->cooked = 1;
+    pot->burning = 0;
+    pot->time_left = 0.0f;
+    game_ms += 16;
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    expect(rc == 0 && out.action == KOS_MACRO_ACT_INTERACT, "pour-wait：熟了才端锅");
+
+}
+
+/*
+ * 1.2 m 的邻灶：facing_pos 落在 1.2 m 外的另一个工位上（实机 run 3 的 cooker-4/5
+ * 距离），必须按键前拦住；只有焦点回到目标工位才发 interact。
+ */
+static void test_focus_neighbour_cooker(const kos_kitchen *kitchen, const char *dispenser)
+{
+    kos_world_state world;
+    kos_macro macro;
+    kos_macro_output out;
+    kos_chef *chef;
+    kos_resource *disp;
+    int index = kos_kitchen_station_index(kitchen, dispenser);
+    int64_t game_ms = 1000;
+    int rc;
+
+    printf("test_focus_neighbour_cooker\n");
+    base_world(&world);
+    chef = chef_at_station(&world, kitchen, dispenser);
+    disp = add_resource(&world, "dispenser_0");
+    disp->has_pos = 1;
+    disp->pos_x = kitchen->stations[index].x;
+    disp->pos_y = kitchen->stations[index].z;
+    snprintf(disp->content, sizeof disp->content, "SushiFish");
+    expect(build(&macro, kitchen, "fetch", "fetch:SushiFish", dispenser, "o1", 100) == 0,
+           "focus neighbour：计划建成");
+    (void)finish_goto(&macro, kitchen, &world, &game_ms, &out);
+    chef->facing_reported = 1;
+    chef->has_facing_target = 1;
+    chef->facing_x = kitchen->stations[index].x + 1.2f;
+    chef->facing_y = kitchen->stations[index].z;
+    game_ms += 16;
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    expect(rc == 0 && macro.step_index == 1 && out.action == KOS_MACRO_ACT_FACE,
+           "focus neighbour：选中的是 1.2 m 外的邻位时不发 interact");
+    chef->facing_x = kitchen->stations[index].x;
+    chef->facing_y = kitchen->stations[index].z;
+    game_ms += 16;
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    expect(rc == 0 && out.action == KOS_MACRO_ACT_INTERACT,
+           "focus neighbour：焦点回到目标工位才发 interact");
 }
 
 /*
@@ -1245,6 +1360,7 @@ static void test_facing_authority(const kos_kitchen *kitchen, const char *dispen
     expect(macro.step_index == 1, "focus：goto 完成进入 pickup");
 
     /* 几何朝向正确，但游戏选中的是隔壁（0.6 m 外）的台面：不许按键。 */
+    chef->facing_reported = 1;
     chef->has_facing_target = 1;
     chef->facing_x = sx + 0.6f;
     chef->facing_y = sz;
@@ -1279,6 +1395,7 @@ static void test_facing_authority(const kos_kitchen *kitchen, const char *dispen
     chef->holding[0] = '\0';
     game_ms += 16;
     (void)kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out); /* drop 完成 */
+    chef->facing_reported = 1;
     chef->has_facing_target = 1;
     chef->facing_x = kitchen->stations[kos_kitchen_station_index(kitchen, board_id)].x;
     chef->facing_y = kitchen->stations[kos_kitchen_station_index(kitchen, board_id)].z;
@@ -1343,7 +1460,8 @@ static void test_pour_legacy_no_evidence(const kos_kitchen *kitchen, const char 
            "legacy-no-evidence：900 ms 没有证据仍停在倒料（旧实现在这里判完成）");
 
     game_ms = macro.deadline_ms + 1;
-    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    rc = pour_fail_with_recovery(&macro, &world, kitchen, &game_ms, &out,
+                                 "legacy-no-evidence：超时后先回灶放锅");
     expect(rc == -1 && strstr(macro.fail_detail, "source-empty") != NULL &&
                strstr(macro.fail_detail, "macro=pour") != NULL,
            "legacy-no-evidence：超时以 source-empty 失败");
@@ -1880,6 +1998,8 @@ int main(void)
     test_cut(&kitchen, board);
     test_chop_completion_by_rename(&kitchen, board);
     test_facing_authority(&kitchen, dispenser, board);
+    test_focus_neighbour_cooker(&kitchen, dispenser);
+    test_pour_waits_for_cooked(&kitchen, cooker, container);
     test_cook(&kitchen, cooker);
     test_plate(&kitchen, cooker, plate_stack);
     test_pour(&kitchen, cooker, container);

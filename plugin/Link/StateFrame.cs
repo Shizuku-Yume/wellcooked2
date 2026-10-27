@@ -150,6 +150,9 @@ namespace WellCooked
                 // 游戏自己选中的交互对象（InteractWithItemHelper.GetFacingGridOccupant）：
                 // 坐标是"按 A 会作用到谁"的权威判据，宏只在它与目标工位一致时才按键。
                 // 名字只进日志，台面/砧板会重名（多个 countertop_01_standard_wood）。
+                // 这个字段说明"本插件会做这次查询"：空面前也算查过（下面没有 facing_pos）。
+                // 宏用它区分"老插件没这个能力"与"游戏现在没选中任何东西"。
+                b.FieldBool("facing_reported", true);
                 var facingTarget = Kitchen.FacingOccupant(chef);
                 if (facingTarget != null)
                 {

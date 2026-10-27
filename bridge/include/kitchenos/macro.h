@@ -114,6 +114,15 @@ typedef struct {
     /* 本步第一次发现"游戏选中的交互对象不是目标工位"的时刻：先转身，超过
      * MACRO_FOCUS_RETRY_MS 还不对就重新走位（站位格或朝向选错了）。 */
     int64_t focus_lost_since_ms;
+    /* DROP 开始时手上确实有东西（否则交给 run_drop 判 empty-hand，不能靠一帧空手
+     * 状态就判"放好了"）。 */
+    int saw_holding;
+    /* 倒料前的等锅熟：从哪一刻开始等（毫秒），以及端锅失败后的回灶恢复。 */
+    int64_t pour_wait_since_ms;
+    int pour_recovery;
+    int64_t pour_recovery_since_ms;
+    char pour_fail_wait[32];
+    char pour_fail_reason[32];
     char entry_holding[KOS_SHM_NAME_MAX];
     int clean_baseline_valid;
     int32_t clean_baseline;

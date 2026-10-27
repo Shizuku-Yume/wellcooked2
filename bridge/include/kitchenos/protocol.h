@@ -119,6 +119,7 @@ typedef struct {
     /* The game's own selected interactable (InteractWithItemHelper facing cell):
      * its world position is the authority for "pressing A acts on this station",
      * the name is for logs only. */
+    int facing_reported; /* the plugin does the lookup at all (even when nothing is faced) */
     int has_facing_target;
     double facing_x;
     double facing_y;

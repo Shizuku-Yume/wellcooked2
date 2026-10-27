@@ -26,6 +26,10 @@
 #define MACRO_FOCUS_TOL 0.35f
 /* 焦点不对时先原地转身；这么久还不对说明站位格本身错了，重新走位。 */
 #define MACRO_FOCUS_RETRY_MS 500
+/* 倒料前等锅熟的兜底上限（拿不到 time_left 时）。 */
+#define MACRO_POUR_WAIT_MS 15000
+/* 倒料失败后把锅送回灶上的上限。 */
+#define MACRO_POUR_RECOVER_MS 3000
 
 /* 超时表：与 spec L2 的表格一一对应。 */
 #define MACRO_PICKUP_TIMEOUT_MS 1500
@@ -682,11 +686,17 @@ static int station_in_focus(const kos_kitchen *kitchen, const kos_macro_step *st
     if (index < 0) {
         return 0;
     }
-    if (chef != NULL && chef->has_facing_target) {
-        float dx = chef->facing_x - kitchen->stations[index].x;
-        float dz = chef->facing_y - kitchen->stations[index].z;
+    if (chef != NULL && chef->facing_reported) {
+        /* 新插件：没选中任何东西 = 眼前没有可交互对象，不能按键（几何朝向再对也不行）。 */
+        if (!chef->has_facing_target) {
+            return 0;
+        }
+        {
+            float dx = chef->facing_x - kitchen->stations[index].x;
+            float dz = chef->facing_y - kitchen->stations[index].z;
 
-        return dx * dx + dz * dz <= MACRO_FOCUS_TOL * MACRO_FOCUS_TOL;
+            return dx * dx + dz * dz <= MACRO_FOCUS_TOL * MACRO_FOCUS_TOL;
+        }
     }
     return facing_towards(kitchen, step, chef);
 }
@@ -704,6 +714,10 @@ static int ensure_focus(kos_macro *macro, const kos_kitchen *kitchen,
 
     if (station_in_focus(kitchen, step, chef)) {
         macro->focus_lost_since_ms = 0;
+    macro->saw_holding = chef != NULL && chef->holding[0] != '\0';
+    macro->pour_wait_since_ms = 0;
+    macro->pour_recovery = 0;
+    macro->pour_recovery_since_ms = 0;
         return 1;
     }
     if (macro->focus_lost_since_ms == 0) {
@@ -836,9 +850,18 @@ static void fail_step(kos_macro *macro, int64_t game_ms, const char *condition,
     if (waited < 0) {
         waited = 0;
     }
-    snprintf(macro->fail_detail, sizeof macro->fail_detail,
-             "macro=%s wait=%s %s waited_ms=%lld", kos_macro_kind_name(step->kind),
-             condition, reason != NULL ? reason : "", (long long)waited);
+    /* 分两段写，保证不会因为编译器算不出上界而报警；两段都远小于 96 字节。 */
+    {
+        size_t used = (size_t)snprintf(macro->fail_detail, sizeof macro->fail_detail,
+                                       "macro=%s wait=%.20s %.20s waited_ms=",
+                                       kos_macro_kind_name(step->kind), condition,
+                                       reason != NULL ? reason : "");
+
+        if (used < sizeof macro->fail_detail) {
+            snprintf(macro->fail_detail + used, sizeof macro->fail_detail - used, "%lld",
+                     (long long)waited);
+        }
+    }
 }
 
 /* 进入下一步；全部完成时返回 1。 */
@@ -864,6 +887,10 @@ static int step_init(kos_macro *macro, const kos_kitchen *kitchen,
     macro->saw_content = 0;
     macro->content_checked = 0;
     macro->focus_lost_since_ms = 0;
+    macro->saw_holding = chef != NULL && chef->holding[0] != '\0';
+    macro->pour_wait_since_ms = 0;
+    macro->pour_recovery = 0;
+    macro->pour_recovery_since_ms = 0;
     macro->board_item_before[0] = '\0';
     macro->source_item[0] = '\0';
     macro->entry_holding[0] = '\0';
@@ -981,8 +1008,16 @@ static int run_goto(kos_macro *macro, const kos_kitchen *kitchen,
     if (game_ms > macro->face_sent_ms && station_in_focus(kitchen, step, chef)) {
         return next_step(macro, out) == 1 ? 1 : 0;
     }
-    out->action = KOS_MACRO_ACT_FACE;
     copy_str(out->target_object, sizeof out->target_object, step->station_id);
+    if (!station_in_focus(kitchen, step, chef) &&
+        game_ms > macro->face_sent_ms + MACRO_FOCUS_RETRY_MS) {
+        /* 转身这么久仍选不中目标：站位格不对，重新走位（清掉 face_sent，
+         * navd 给新的路点）。 */
+        macro->face_sent = 0;
+        out->action = KOS_MACRO_ACT_NAVIGATE;
+    } else {
+        out->action = KOS_MACRO_ACT_FACE;
+    }
     if (game_ms >= macro->deadline_ms) {
         fail_step(macro, game_ms, "arrived+face", "timeout");
         return -1;
@@ -1012,6 +1047,46 @@ static int run_pickup(kos_macro *macro, const kos_kitchen *kitchen,
     }
     if (got) {
         return next_step(macro, out) == 1 ? 1 : 0;
+    }
+    if (holding) {
+        /* 手上已经有东西：游戏不会从料箱/台面再给一件。以前照按 1.5 s 才超时，
+         * 还会把手里那件放到料箱上（run 3 LogOutput:2533 的平底锅）。 */
+        fail_step(macro, game_ms, "hands-not-empty", "hand-occupied");
+        return -1;
+    }
+    /* 倒料的第 2 步（端锅）必须先等锅熟：端走生料/烧焦的锅会把它从灶上拿走，
+     * 后面这口灶就没锅可用了（run 3 worker-1.log:32-38 端走了生米锅）。 */
+    if (macro->step_index == 1 && macro->plan.step_count > 3 &&
+        macro->plan.steps[3].kind == KOS_MACRO_POUR) {
+        const kos_resource *pot = find_station_resource(kitchen, step, world);
+
+        if (pot != NULL && (pot->has_cooked || pot->has_burning || pot->has_fire)) {
+            int ready = pot->has_cooked && pot->cooked &&
+                        !(pot->has_burning && pot->burning) &&
+                        !(pot->has_fire && pot->fire);
+            int64_t limit = pot->time_left > 0.0f
+                                ? (int64_t)((double)pot->time_left * 1000.0) + 3000
+                                : MACRO_POUR_WAIT_MS;
+
+            if (!ready) {
+                if (macro->pour_wait_since_ms == 0) {
+                    macro->pour_wait_since_ms = game_ms;
+                }
+                /* 等锅熟的时间不算进 pickup 的 1.5 s 超时：上限就是 time_left + 3 s。 */
+                if (macro->deadline_ms < macro->pour_wait_since_ms + limit) {
+                    macro->deadline_ms = macro->pour_wait_since_ms + limit;
+                }
+                if (game_ms - macro->pour_wait_since_ms >= limit) {
+                    fail_step(macro, game_ms, "pot-cooked", "timeout");
+                    return -1;
+                }
+                if (!ensure_focus(macro, kitchen, world, chef_id, step, game_ms, out)) {
+                    return 0;
+                }
+                out->action = KOS_MACRO_ACT_STOP; /* 在灶边等，不端锅 */
+                return 0;
+            }
+        }
     }
     if (!ensure_focus(macro, kitchen, world, chef_id, step, game_ms, out)) {
         if (game_ms >= macro->deadline_ms) {
@@ -1356,13 +1431,61 @@ static int resource_has_item(const kos_resource *resource, const char *item)
  * 按键往返，倒没倒过去它并不知道，早年那条"时间到了就算倒完"会把没倒成的料当成功，
  * 后面装盘/交付全部连锁失败。没有证据就等到步超时，失败原因是 source-empty。
  */
+/*
+ * 倒料失败但手里还端着锅：先回源灶台放下再收尾。端着锅直接失败会把锅留在手上/
+ * 台面上，那口灶后面就没有锅可用了（run 3 的 cooker-4 就是这样废掉的）。
+ * 返回 1 = 已进入回收（调用方本帧返回 0），0 = 已失败（调用方返回 -1）。
+ */
+static int pour_fail(kos_macro *macro, const kos_chef *chef, int64_t game_ms,
+                     const char *condition, const char *reason)
+{
+    if (chef != NULL && chef->holding[0] != '\0' && !macro->pour_recovery) {
+        macro->pour_recovery = 1;
+        macro->pour_recovery_since_ms = game_ms;
+        macro->focus_lost_since_ms = 0;
+        copy_str(macro->pour_fail_wait, sizeof macro->pour_fail_wait, condition);
+        copy_str(macro->pour_fail_reason, sizeof macro->pour_fail_reason, reason);
+        return 1;
+    }
+    fail_step(macro, game_ms, condition, reason);
+    return 0;
+}
+
+/* 回收：回到源灶台（plan 的第 1 步）把锅放下，再按原失败原因收尾。 */
+static int run_pour_recovery(kos_macro *macro, const kos_kitchen *kitchen,
+                             const kos_world_state *world, int chef_id, int64_t game_ms,
+                             kos_macro_output *out)
+{
+    const kos_chef *chef = find_chef(world, chef_id);
+    const kos_macro_step *home = &macro->plan.steps[0];
+
+    if (chef == NULL || chef->holding[0] == '\0' ||
+        game_ms - macro->pour_recovery_since_ms > MACRO_POUR_RECOVER_MS) {
+        fail_step(macro, game_ms, macro->pour_fail_wait, macro->pour_fail_reason);
+        return -1;
+    }
+    if (!ensure_focus(macro, kitchen, world, chef_id, home, game_ms, out)) {
+        return 0;
+    }
+    out->action = KOS_MACRO_ACT_INTERACT;
+    copy_str(out->target_object, sizeof out->target_object, home->station_id);
+    return 0;
+}
+
 static int run_pour(kos_macro *macro, const kos_kitchen *kitchen, const kos_world_state *world,
                     int chef_id, int64_t game_ms, kos_macro_output *out)
 {
     const kos_macro_step *step = &macro->plan.steps[macro->step_index];
-    const kos_resource *carried = find_carried_resource(world, chef_id);
-    const kos_resource *counter = find_station_resource(kitchen, step, world);
+    const kos_chef *chef = find_chef(world, chef_id);
+    const kos_resource *carried;
+    const kos_resource *counter;
     int done = 0;
+
+    if (macro->pour_recovery) {
+        return run_pour_recovery(macro, kitchen, world, chef_id, game_ms, out);
+    }
+    carried = find_carried_resource(world, chef_id);
+    counter = find_station_resource(kitchen, step, world);
 
     if (carried != NULL) {
         if (carried->content[0] != '\0' || carried->content_count > 0) {
@@ -1376,7 +1499,10 @@ static int run_pour(kos_macro *macro, const kos_kitchen *kitchen, const kos_worl
              * 用 contents[] 的 token 认（content 只有 32 字节，两项内容会被截断），
              * content 只是兼容拼串。 */
             if (!resource_has_item(carried, step->item)) {
-                fail_step(macro, game_ms, "content", "wrong-item");
+                if (pour_fail(macro, chef, game_ms, "content", "wrong-item")) {
+                    out->action = KOS_MACRO_ACT_STOP;
+                    return 0;
+                }
                 return -1;
             }
             macro->saw_content = 1;
@@ -1431,13 +1557,19 @@ static int run_pour(kos_macro *macro, const kos_kitchen *kitchen, const kos_worl
     }
     if (!ensure_focus(macro, kitchen, world, chef_id, step, game_ms, out)) {
         if (game_ms >= macro->deadline_ms) {
-            fail_step(macro, game_ms, "source-empty", "focus");
+            if (pour_fail(macro, chef, game_ms, "source-empty", "focus")) {
+                out->action = KOS_MACRO_ACT_STOP;
+                return 0;
+            }
             return -1;
         }
         return 0;
     }
     if (game_ms >= macro->deadline_ms) {
-        fail_step(macro, game_ms, "source-empty", "timeout");
+        if (pour_fail(macro, chef, game_ms, "source-empty", "timeout")) {
+            out->action = KOS_MACRO_ACT_STOP;
+            return 0;
+        }
         return -1;
     }
     out->action = KOS_MACRO_ACT_INTERACT;

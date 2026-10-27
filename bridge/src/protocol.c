@@ -335,6 +335,11 @@ static int parse_chefs(const json_value *root, proto_state_update *out, proto_di
         if (rc != PROTO_OK)
             return rc;
 
+        if (json_object_get(entry, "facing_reported") != NULL) {
+            rc = get_opt_bool(entry, "facing_reported", &chef->facing_reported);
+            if (rc != PROTO_OK)
+                return rc;
+        }
         facing = json_object_get(entry, "facing_pos");
         if (facing != NULL && json_typeof(facing) != JSON_NULL) {
             if (json_typeof(facing) != JSON_OBJECT)
