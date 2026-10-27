@@ -802,8 +802,10 @@ static void write_plan(navd *n, nav_agent *agent, int status)
         agent->have_written = 1;
         (void)kos_navtab_write_plan(n->tab, agent->chef_id, &plan);
         if (content_changed) {
-            /* 实机验收要把 Worker 的 macro goto 和 navd 放行的 path 对上（任务 09）。 */
-            kos_log_info(n->rt.log, "nav_plan",
+            /* 实机验收要把 Worker 的 macro goto 和 navd 放行的 path 对上（任务 09）。
+             * 每次内容变化一条，实机 4 人局每秒数条，会冲掉结果行；要看时用
+             * --verbose（DEBUG）。 */
+            kos_log_debug(n->rt.log, "nav_plan",
                          "chef=%d seq=%u status=%s waypoints=%d released=%d target_seq=%u",
                          agent->chef_id, plan.plan_seq, kos_nav_status_name(status),
                          plan.waypoint_count, agent->released, plan.target_seq);
