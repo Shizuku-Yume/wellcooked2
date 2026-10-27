@@ -5688,11 +5688,19 @@ def scenario_demo3_regress_grid_offset(ctx, checks):
                 "macro=pickup detail=%s" % details[:2])
 
     fixed_rules = _demo3.Demo3Rules(turn_drift=0.0)
+    def pickup_done(world):
+        if world.holding_name(0) != "SushiPrawn":
+            return False
+        worker_log = (ctx.runtime_dir / "logs" / "worker-0.log") if ctx.runtime_dir else None
+        if worker_log and worker_log.exists():
+            return "pickup" in _demo3_done(_macro_log_rows(worker_log))
+        return False
+
+    stop = _demo3_stop_after(pickup_done, grace_ms=200, max_ms=10000)
     result = _demo3_run(ctx, checks, "offset-fixed", chefs=1, kitchen=kitchen,
                         recipes=recipes, order_spec=order_spec, duration=12.0,
                         rules=fixed_rules, positions=positions,
-                        stop_when=lambda world: world.holding_name(0) == "SushiPrawn"
-                        or world.game_ms >= 10000)
+                        stop_when=stop)
     world = result["world"]
     rows = result["rows"]
     checks.hard("offset_fixed_takes_right_crate",
