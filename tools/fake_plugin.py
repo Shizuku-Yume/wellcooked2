@@ -5484,6 +5484,17 @@ def scenario_demo3_4chef_5dish(ctx, checks):
     checks.note("five_sim", json.dumps(world.summary(), ensure_ascii=False))
     checks.note("five_rejections",
                 json.dumps(world.rejected[:10], ensure_ascii=False))
+    run_dir = ctx.run_dir()
+    if run_dir and (run_dir / "metrics.json").exists():
+        try:
+            metrics_payload = json.loads((run_dir / "metrics.json").read_text())
+            res_map = {r.get("kind"): r for r in metrics_payload.get("resources", [])}
+            checks.note("five_resource_waits", json.dumps({
+                k: {f: res_map[k].get(f, 0) for f in ("waits", "wait_ms", "acquires")}
+                for k in ("cooker", "board") if k in res_map
+            }, ensure_ascii=False))
+        except Exception:
+            pass
 
     delivered = [entry["dish"] for entry in world.delivered]
     checks.hard("five_each_dish_delivered_once",
