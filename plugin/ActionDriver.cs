@@ -62,6 +62,7 @@ namespace WellCooked
             public long Seq;
             public List<Vector2> Waypoints;
             public int WaypointIndex;
+            public int PathDirection = -1;
         }
 
         private static ManualLogSource _log;
@@ -280,6 +281,7 @@ namespace WellCooked
 
                         previous.Waypoints = newWps;
                         previous.WaypointIndex = matchIndex;
+                        previous.PathDirection = -1;
                         previous.Done = false;
                         int remaining = previous.Waypoints.Count - previous.WaypointIndex;
                         previous.Deadline = now + Math.Max(MoveTimeout, remaining * 2.0f);
@@ -524,6 +526,7 @@ namespace WellCooked
                 {
                     idx++;
                     command.WaypointIndex = idx;
+                    command.PathDirection = -1;
                     currentTarget = command.Waypoints[idx];
                     dist = Vector2.Distance(position, currentTarget);
                 }
@@ -561,7 +564,7 @@ namespace WellCooked
                     return true;
                 }
 
-                Vector2 dir = (currentTarget - position).normalized;
+                Vector2 dir = PathDirection(currentTarget - position, command);
                 Feed(slot, pad, dir, false, false, false);
                 return true;
             }
@@ -780,6 +783,17 @@ namespace WellCooked
         /// 两手同时写：我们占的虚拟手柄（设备层）+ 逻辑层（按厨师自己的游戏玩家号）。
         /// 逻辑层激活时覆盖设备层的三个逻辑键与移动轴，所以两处必须是同一组值。
         /// </summary>
+        private static Vector2 PathDirection(Vector2 offset, Command command)
+        {
+            int direction = PathSteering.Quantize(offset.x, offset.y, command.PathDirection);
+            command.PathDirection = direction;
+            if (direction < 0) return Vector2.zero;
+            float angle = direction * 45f * Mathf.Deg2Rad;
+            return new Vector2(Mathf.Cos(angle), Mathf.Sin(angle));
+        }
+
+
+
         private static void Feed(int slot, VirtualPad pad, Vector2 direction,
                                  bool pickup, bool dash, bool work)
         {

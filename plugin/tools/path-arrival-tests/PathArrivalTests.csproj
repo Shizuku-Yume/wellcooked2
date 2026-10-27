@@ -7,5 +7,6 @@
   <ItemGroup>
     <Compile Include="Program.cs" />
     <Compile Include="../../PathArrival.cs" Link="PathArrival.cs" />
+    <Compile Include="../../PathSteering.cs" Link="PathSteering.cs" />
   </ItemGroup>
 </Project>
