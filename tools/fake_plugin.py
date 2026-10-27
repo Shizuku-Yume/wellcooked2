@@ -5488,13 +5488,46 @@ def scenario_demo3_4chef_5dish(ctx, checks):
     if run_dir and (run_dir / "metrics.json").exists():
         try:
             metrics_payload = json.loads((run_dir / "metrics.json").read_text())
-            res_map = {r.get("kind"): r for r in metrics_payload.get("resources", [])}
+            resources = metrics_payload.get("resources", [])
+            per_resource = {}
+            kind_totals = {}
+            for idx, r in enumerate(resources):
+                name = r.get("name") or r.get("id") or r.get("kind") or f"resource_{idx}"
+                if name in per_resource:
+                    name = f"{name}_{idx}"
+                res_stats = {
+                    "kind": r.get("kind", ""),
+                    "waits": r.get("waits", 0),
+                    "wait_ms": r.get("wait_ms", 0),
+                    "acquires": r.get("acquires", 0),
+                    "in_use": r.get("in_use", 0),
+                    "capacity": r.get("capacity", 0),
+                }
+                per_resource[name] = res_stats
+                k = r.get("kind", "")
+                if k not in kind_totals:
+                    kind_totals[k] = {"waits": 0, "wait_ms": 0, "acquires": 0}
+                kind_totals[k]["waits"] += r.get("waits", 0)
+                kind_totals[k]["wait_ms"] += r.get("wait_ms", 0)
+                kind_totals[k]["acquires"] += r.get("acquires", 0)
+            checks.note("five_metrics_raw_resources", json.dumps(resources, ensure_ascii=False))
+            checks.note("five_resource_per_item", json.dumps(per_resource, ensure_ascii=False))
+            checks.note("five_resource_kind_totals", json.dumps(kind_totals, ensure_ascii=False))
             checks.note("five_resource_waits", json.dumps({
-                k: {f: res_map[k].get(f, 0) for f in ("waits", "wait_ms", "acquires")}
-                for k in ("cooker", "board") if k in res_map
+                k: kind_totals[k] for k in ("cooker", "board") if k in kind_totals
             }, ensure_ascii=False))
-        except Exception:
-            pass
+            if ctx.log_path and ctx.runtime_dir:
+                stem = ctx.log_path.stem
+                if stem.startswith("bridge-"):
+                    stem = stem[len("bridge-"):]
+                target_metrics = ctx.log_path.parent / ("metrics-%s.json" % stem)
+                target_metrics.write_text(json.dumps(metrics_payload, indent=2, ensure_ascii=False))
+                sched_log = ctx.runtime_dir / "logs" / "scheduler.log"
+                if sched_log.exists():
+                    target_sched = ctx.log_path.parent / ("scheduler-%s.log" % stem)
+                    shutil.copyfile(sched_log, target_sched)
+        except Exception as exc:
+            checks.note("five_resource_metrics_error", "%s: %s" % (type(exc).__name__, exc))
 
     delivered = [entry["dish"] for entry in world.delivered]
     checks.hard("five_each_dish_delivered_once",
