@@ -334,9 +334,10 @@ static void publish_macro_action(worker *w, const kos_macro_output *out, int64_t
         if (out->action == KOS_MACRO_ACT_WORK) {
             action.kind = KOS_ACTION_WORK;
         } else {
-            /* Keep the intent through ActionDriver's immediate and retry A pulses; wait for state change after. */
-            if (w->interact_window_step != w->macro.step_index ||
-                game_ms > w->interact_until_game_ms) {
+            /* 窗口由 update_macro 在宏仍要 interact 时续期；这里只管"这一步没要过"。
+             * 不在这里判 player 过期：过期的窗口已经续过，判了会让宏剩下的等待时间
+             * 全变成 stop（实机 _3 pickup 只按一次的原因之一）。 */
+            if (w->interact_window_step != w->macro.step_index) {
                 publish_stop(w);
                 return;
             }
@@ -579,7 +580,10 @@ static int advance_macro(worker *w, const kos_world_state *world, int64_t game_m
         }
     }
     if (out->action == KOS_MACRO_ACT_INTERACT &&
-        w->interact_window_step != w->macro.step_index) {
+        kos_worker_interact_should_rearm(w->interact_window_step, w->macro.step_index,
+                                         game_ms, w->interact_until_game_ms)) {
+        /* 窗口用完就续：宏还在等游戏状态变化，插件靠 1 s 的重发窗口自己去重，
+         * 超出窗口的意图每 1 s 会再按一轮（PulseInterval 0.6 s × 2）。 */
         w->interact_window_step = w->macro.step_index;
         w->interact_until_game_ms = game_ms + WORKER_INTERACT_WINDOW_MS;
     }
