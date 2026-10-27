@@ -342,6 +342,8 @@ static void test_synthetic(void)
     char no_stand_path[256];
     char control_path[256];
     char line_path[256];
+    char far_path[256];
+    char edge_path[256];
     static kos_kitchen kitchen;
     kos_error err;
     int rc;
@@ -355,6 +357,8 @@ static void test_synthetic(void)
     snprintf(no_stand_path, sizeof no_stand_path, "%s/no-stand.json", dir);
     snprintf(control_path, sizeof control_path, "%s/control.json", dir);
     snprintf(line_path, sizeof line_path, "%s/line.json", dir);
+    snprintf(far_path, sizeof far_path, "%s/far.json", dir);
+    snprintf(edge_path, sizeof edge_path, "%s/edge.json", dir);
 
     /*
      * 一个可走格，两个工位分别在它上下：两个工位共用同一站位格，朝向相反。
@@ -417,6 +421,42 @@ static void test_synthetic(void)
     kos_error_clear(&err);
     expect(kos_kitchen_load(control_path, &kitchen, &err) == KOS_OK,
            "移到同一行后能算出站位格（失败不是 JSON 造成）");
+    expect(kitchen.stand_fallback_count == 1 && kitchen.stand_warning[0] != '\0',
+           "1.8 m 的远距离兜底被记录（不用 stderr）");
+    expect(strstr(kitchen.stand_warning, "boxed-0") != NULL &&
+               strstr(kitchen.stand_warning, "dist=1.80m") != NULL,
+           "兜底记录里有工位 id 与实际距离");
+
+    /*
+     * 站位格兜底的上限是交互半径：2.4 m 之外按不到工位，宁可加载失败，
+     * 也不要把"看起来能站"的格当成可交互位置（厨师会站在那儿一直按不到）。
+     */
+    expect(write_file(far_path,
+                      "{\"scene\":\"far\",\"grid\":{\"step\":0.6,"
+                      "\"cells\":[[0,0]],\"mask\":[0]},"
+                      "\"stations\":[{\"id\":\"far-0\",\"kind\":\"counter\","
+                      "\"pos\":[2.4,0.0]}]}") == 0,
+           "far.json 写入");
+    memset(&kitchen, 0, sizeof kitchen);
+    kos_error_clear(&err);
+    rc = kos_kitchen_load(far_path, &kitchen, &err);
+    expect(rc == KOS_ERR_MISSING, "2.4 m 外的工位没有站位格，加载失败");
+    expect(strstr(err.context, "far-0") != NULL, "超距错误里带工位 id");
+
+    /* 2.0 m 整（上限边上）：仍然接受，并记录兜底。 */
+    expect(write_file(edge_path,
+                      "{\"scene\":\"edge\",\"grid\":{\"step\":0.6,"
+                      "\"cells\":[[0,0]],\"mask\":[0]},"
+                      "\"stations\":[{\"id\":\"edge-0\",\"kind\":\"counter\","
+                      "\"pos\":[2.0,0.0]}]}") == 0,
+           "edge.json 写入");
+    memset(&kitchen, 0, sizeof kitchen);
+    kos_error_clear(&err);
+    rc = kos_kitchen_load(edge_path, &kitchen, &err);
+    expect(rc == KOS_OK, "正好 2.0 m（交互半径上限）仍算可站");
+    if (rc == KOS_OK) {
+        expect(kitchen.stand_fallback_count == 1, "2.0 m 的站位格记为兜底");
+    }
 
     /*
      * 一维三格，工位在中间格下方：距离场必须是 1 / 0 / 1。
@@ -448,6 +488,8 @@ static void test_synthetic(void)
     unlink(no_stand_path);
     unlink(control_path);
     unlink(line_path);
+    unlink(far_path);
+    unlink(edge_path);
     rmdir(dir);
 }
 static void test_demo3_cooker_stands(void)
@@ -459,7 +501,7 @@ static void test_demo3_cooker_stands(void)
     int j;
     int k;
 
-    printf("[test_stand] demo3 cooker 站位格几何断言 (距离 <= 1.2m 且更靠近自身工位)\n");
+    printf("[test_stand] demo3 全部工位站位格几何断言（<= 2.0m；cooker <= 1.2m 且更近自身工位）\n");
     if (!find_config("maps/s_wellcooked_demo_3/kitchen.json", kitchen_path, sizeof kitchen_path)) {
         expect(0, "demo3: 找不到 kitchen.json");
         return;
@@ -471,16 +513,16 @@ static void test_demo3_cooker_stands(void)
         return;
     }
 
+    expect(kitchen.stand_fallback_count == 0,
+           "demo3 的每个工位都有正对站位格（没有用到兜底）");
     for (i = 0; i < kitchen.station_count; i++) {
         const kos_station *station = &kitchen.stations[i];
         const kos_station_stands *stands;
         char label[256];
 
-        if (strcmp(station->kind, "cooker") != 0) {
-            continue;
-        }
         stands = kos_stand_cells(&kitchen, i);
-        snprintf(label, sizeof label, "demo3/%s: 有站位格", station->id);
+        snprintf(label, sizeof label, "demo3/%s(kind=%s): 有站位格", station->id,
+                 station->kind);
         expect(stands != NULL && stands->count > 0, label);
         if (stands == NULL) {
             continue;
@@ -494,7 +536,15 @@ static void test_demo3_cooker_stands(void)
             float dz = cz - station->z;
             float dist = sqrtf(dx * dx + dz * dz);
 
-            snprintf(label, sizeof label, "demo3/%s: 站位格 cell=%d 距离 <= 1.2m (实际 %.2fm)",
+            snprintf(label, sizeof label,
+                     "demo3/%s(kind=%s): 站位格 cell=%d 在交互半径内 <= 2.0m (实际 %.2fm)",
+                     station->id, station->kind, cell_idx, dist);
+            expect(dist <= 2.0f + 1e-3f, label);
+
+            if (strcmp(station->kind, "cooker") != 0) {
+                continue;
+            }
+            snprintf(label, sizeof label, "demo3/%s: 灶台站位格 cell=%d 距离 <= 1.2m (实际 %.2fm)",
                      station->id, cell_idx, dist);
             expect(dist <= 1.2f + 1e-3f, label);
 

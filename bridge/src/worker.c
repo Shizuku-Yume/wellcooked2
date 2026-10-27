@@ -628,6 +628,11 @@ static int worker_main(worker *w, const kos_child_opts *opts)
         }
         kos_log_info(w->rt.log, "config_loaded", "kitchen=%s cells=%d stations=%d",
                      w->kitchen_path, w->kitchen.cell_count, w->kitchen.station_count);
+        /* 站位格兜底是加载器记下来的：它自己不碰 stderr，由拿到地图的进程打日志。 */
+        if (w->kitchen.stand_warning[0] != '\0') {
+            kos_log_warn(w->rt.log, "stand_fallback", "%s count=%d",
+                         w->kitchen.stand_warning, w->kitchen.stand_fallback_count);
+        }
     }
     {
         char recipes_path[KOS_DAEMON_PATH_MAX];

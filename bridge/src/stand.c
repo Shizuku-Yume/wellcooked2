@@ -30,8 +30,12 @@
 /* 跳过工位自己所在的那一格（工位偶尔压在可走格上，实机 sink 偏 0.01 m），
  * 但不跳过与工位相距四分之一格以上的相邻格。 */
 #define STAND_MIN_ALONG_FACTOR 0.25f
-/* 兜底允许侧向偏移至 1.5 格，并记录 WARN 日志。 */
+/* 兜底允许侧向偏移至 1.5 格。 */
 #define STAND_FALLBACK_PERP_FACTOR 1.5f
+/* 兜底的最大距离：游戏交互半径约 1.2 m（站位格）、最远吃到 1.8–2.0 m。
+ * 超过这个距离按不到工位，宁可加载失败（站位格为 0 会让厨师永远走不到），
+ * 也不要把一个"看起来能站"的格当成可交互位置。 */
+#define STAND_FALLBACK_MAX_DIST 2.0f
 typedef struct {
     int axis;     /* 0 = x, 1 = z */
     int sign;     /* 站位格在工位的哪一侧 */
@@ -209,6 +213,23 @@ static void fill_distance_field(kos_kitchen *kitchen, int station_index,
     }
 }
 
+/*
+ * 记一次站位格兜底。不用 stderr：加载发生在 worker/scheduler/navd 各自的进程里，
+ * 那三处都有自己的日志文件；加载器只把第一例写成一行说明，调用方读完地图后
+ * 用 kos_log_warn 打出来。
+ */
+static void record_stand_fallback(kos_kitchen *kitchen, const kos_station *station, int cell,
+                                  float dist, const char *how)
+{
+    kitchen->stand_fallback_count++;
+    if (kitchen->stand_warning[0] == '\0') {
+        snprintf(kitchen->stand_warning, sizeof kitchen->stand_warning,
+                 "station=%s kind=%s cell=%d dist=%.2fm %s (cap %.2f m)",
+                 station->id, station->kind, cell, dist, how,
+                 (double)STAND_FALLBACK_MAX_DIST);
+    }
+}
+
 int kos_stand_build(kos_kitchen *kitchen, kos_error *err)
 {
     uint8_t degree[KOS_KITCHEN_MAX_CELLS];
@@ -284,10 +305,12 @@ int kos_stand_build(kos_kitchen *kitchen, kos_error *err)
                     }
                 }
             }
+            if (best_cell >= 0 && sqrtf(best_dist) > STAND_FALLBACK_MAX_DIST) {
+                best_cell = -1; /* 够不着：交给下面报"没有可站的格" */
+            }
             if (best_cell >= 0) {
-                fprintf(stderr,
-                        "WARN  stand_fallback station=%s kind=%s cell=%d (sideways offset used, dist=%.2fm)\n",
-                        station->id, station->kind, best_cell, sqrtf(best_dist));
+                record_stand_fallback(kitchen, station, best_cell, sqrtf(best_dist),
+                                      "sideways offset");
                 stands->cells[stands->count].cell = best_cell;
                 stands->cells[stands->count].facing = best_facing;
                 stands->count++;
@@ -308,10 +331,12 @@ int kos_stand_build(kos_kitchen *kitchen, kos_error *err)
                         }
                     }
                 }
+                if (best_cell >= 0 && sqrtf(best_dist) > STAND_FALLBACK_MAX_DIST) {
+                    best_cell = -1; /* 超过交互半径：不拿假站位格骗调用方 */
+                }
                 if (best_cell >= 0) {
-                    fprintf(stderr,
-                            "WARN  stand_fallback station=%s kind=%s cell=%d (distance %.2fm > 1.2m)\n",
-                            station->id, station->kind, best_cell, sqrtf(best_dist));
+                    record_stand_fallback(kitchen, station, best_cell, sqrtf(best_dist),
+                                          "far cell in the facing direction");
                     stands->cells[stands->count].cell = best_cell;
                     stands->cells[stands->count].facing = best_facing;
                     stands->count++;

@@ -83,6 +83,12 @@ typedef struct {
     kos_grid_cell cells[KOS_KITCHEN_MAX_CELLS];
     kos_station stations[KOS_KITCHEN_MAX_STATIONS];
     kos_stand_map stand;
+    /* 站位格兜底记录（stand.c 写，调用方读完地图后用自己的 logger 打一行）。
+     * 空串 = 每个工位都有正对的站位格；非空 = 至少一个工位用了侧向/远距离兜底，
+     * 内容是第一例的一句话说明（含工位 id、距离与上限），count 是总例数。
+     * 加载器不碰 stderr：worker/scheduler/navd 各有自己的日志文件。 */
+    char stand_warning[192];
+    int stand_fallback_count;
 } kos_kitchen;
 
 /* 读整个文件并解析；失败时 err 带文件名/字段。 */
