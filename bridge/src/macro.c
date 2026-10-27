@@ -1098,82 +1098,105 @@ static const char *content_name(const char *text)
 }
 
 /*
- * 计算 a 与 b 忽略大小写的最长公共后缀长度。
+ * 名字的"原料词"：剥掉 proto/工序前缀（cooked: / pour:）后取最后一个 CamelCase 词，
+ * 再忽略大小写的复数 's'。实机已知的改名链：
+ *   BurritoMeat    → DicedMeat              (Meat)
+ *   BurritoChicken → BurritoChoppedChicken  (Chicken)
+ *   Mushroom       → ChoppedMushroom        (Mushroom)
+ *   SushiFish      → ChoppedSushiFish       (Fish)
+ *   Rice           → BoiledRice             (Rice)
+ * 五个菜名去掉修饰语后词尾互不相同（Fish/Prawn/Chicken/Meat/Rice/Mushroom/Tortilla），
+ * 所以整词相等就足够；不要再退回"公共后缀"，Tomato 与 Potato 会因共享 "ato" 被判成
+ * 同一味料，把别的料倒进锅里。
  */
-static int common_suffix_length(const char *a, size_t len_a, const char *b, size_t len_b)
+static const char *ingredient_word(const char *name)
 {
-    size_t match = 0;
+    const char *text = content_name(name);
+    const char *start = text;
+    const char *p;
 
-    while (len_a > 0 && len_b > 0) {
-        char ca = a[len_a - 1];
-        char cb = b[len_b - 1];
+    for (p = text; *p != '\0'; p++) {
+        if (p != text && *p >= 'A' && *p <= 'Z') {
+            start = p;
+        }
+    }
+    return start;
+}
+
+static size_t ingredient_word_len(const char *word)
+{
+    size_t len = strlen(word);
+
+    if (len > 0 && (word[len - 1] == 's' || word[len - 1] == 'S')) {
+        len--;
+    }
+    return len;
+}
+
+/* 两个名字的原料词是否逐字符相等（忽略大小写，'-' 与 '_' 等价）。 */
+static int ingredient_word_matches(const char *a, const char *b)
+{
+    const char *wa = ingredient_word(a);
+    const char *wb = ingredient_word(b);
+    size_t la = ingredient_word_len(wa);
+    size_t lb = ingredient_word_len(wb);
+    size_t i;
+
+    if (la == 0 || la != lb) {
+        return 0;
+    }
+    for (i = 0; i < la; i++) {
+        char ca = wa[i];
+        char cb = wb[i];
 
         if (ca >= 'A' && ca <= 'Z') ca = (char)(ca - 'A' + 'a');
         if (cb >= 'A' && cb <= 'Z') cb = (char)(cb - 'A' + 'a');
-        if (ca != cb) break;
-        match++;
-        len_a--;
-        len_b--;
+        if (ca == '_' || ca == '-') ca = '_';
+        if (cb == '_' || cb == '-') cb = '_';
+        if (ca != cb) {
+            return 0;
+        }
     }
-    return (int)match;
+    return 1;
 }
 
 /*
- * 比较倒料目标原料与锅内内容是否匹配。
- * [推断] 实机在开局时所有锅内 contents=[]（见 /tmp/kc-fixtures/demo3/wellcooked-state.json），
- * 锅内内容可能以熟料名（FriedChicken / FriedBurritoMeat 等）、切块 prefab 名
- * （BurritoChoppedChicken / DicedMeat 等）或生料名（BurritoChicken 等）上报。
- * 这里不硬编码任何固定原料列表，而是动态推导两者共享的原料词根（shared stem）：
- * 1. 子串包含（kos_kitchen_name_matches）：覆盖名称互为子串的情形（如 BurritoMeat ↔ FriedBurritoMeat、
- *    Rice ↔ BoiledRice、Mushroom ↔ FriedMushrooms）；
- * 2. 动态词尾原料词根：游戏工序名按 PascalCase 命名，前缀为工序/料理修饰语（Burrito/Fried/Diced/Boiled），
- *    词尾为核心原料名词（Chicken/Meat/Rice/Beef/Cheese 等）。计算两者忽略大小写且去除末尾复数 's' 后的
- *    最长公共后缀，若长度 ≥ 3 字符，即视为同一种原料的合法流转。新菜品无需修改 C 代码。
- * 若内容属于其他无关原料（如倒鸡肉时锅里是米饭），公共后缀长度 < 3，判定为 wrong-item。
+ * 比较倒料目标原料与容器里的一项内容是否匹配。
+ *
+ * `content` 是 contents[] 的 "+" 拼串兼容形式，所以先按 '+'/',' 拆成 token 再比：
+ * 绝不拿 "a+b" 整体去比。每一项比的是"原料词"（见 ingredient_word），
+ * 生料 / 熟料 / 切块 prefab 名都能对上同一味料。
  */
 static int poured_content_matches(const char *node_id, const char *content)
 {
-    const char *name_a = content_name(node_id);
-    const char *name_b = content_name(content);
-    size_t len_a;
-    size_t len_b;
-
-    if (kos_kitchen_name_matches(name_a, name_b)) {
-        return 1;
-    }
-    len_a = strlen(name_a);
-    len_b = strlen(name_b);
-    if (len_a > 0 && (name_a[len_a - 1] == 's' || name_a[len_a - 1] == 'S')) {
-        len_a--;
-    }
-    if (len_b > 0 && (name_b[len_b - 1] == 's' || name_b[len_b - 1] == 'S')) {
-        len_b--;
-    }
-    return common_suffix_length(name_a, len_a, name_b, len_b) >= 3;
-}
-
-static int counter_has_content(const char *counter_content, const char *item)
-{
-    char buf[KOS_SHM_NAME_MAX];
+    char buf[KOS_SHM_CONTENT_MAX];
     char *token;
     char *saveptr = NULL;
 
-    if (counter_content == NULL || counter_content[0] == '\0' ||
-        item == NULL || item[0] == '\0') {
+    if (node_id == NULL || content == NULL || content[0] == '\0') {
         return 0;
     }
-    if (poured_content_matches(item, counter_content)) {
-        return 1;
+    if (content_name(node_id)[0] == '\0') {
+        return 0;
     }
-    copy_str(buf, sizeof buf, counter_content);
+    copy_str(buf, sizeof buf, content);
     token = strtok_r(buf, "+,", &saveptr);
     while (token != NULL) {
-        if (poured_content_matches(item, token)) {
+        if (ingredient_word_matches(node_id, token)) {
             return 1;
         }
         token = strtok_r(NULL, "+,", &saveptr);
     }
     return 0;
+}
+
+static int counter_has_content(const char *counter_content, const char *item)
+{
+    if (counter_content == NULL || counter_content[0] == '\0' ||
+        item == NULL || item[0] == '\0') {
+        return 0;
+    }
+    return poured_content_matches(item, counter_content);
 }
 
 /*
@@ -1228,9 +1251,10 @@ static int run_pour(kos_macro *macro, const kos_kitchen *kitchen, const kos_worl
                              chef_id, step->item, macro->plan.steps[0].station_id, carried->content);
             }
             /* 手里这口锅装的必须是这道工序要的料：派错锅/没熟就倒会把别的东西
-             * 倒进玉米饼，而且倒完内容变空，只按"变空"判完成会当成成功。 */
-            if (carried->content[0] != '\0' &&
-                !poured_content_matches(step->item, carried->content)) {
+             * 倒进玉米饼，而且倒完内容变空，只按"变空"判完成会当成成功。
+             * 用 contents[] 的 token 认（content 只有 32 字节，两项内容会被截断），
+             * content 只是兼容拼串。 */
+            if (!resource_has_item(carried, step->item)) {
                 fail_step(macro, game_ms, "content", "wrong-item");
                 return -1;
             }

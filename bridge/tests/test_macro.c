@@ -793,7 +793,31 @@ static void drive_to_pour_item(const kos_kitchen *kitchen, kos_world_state *worl
         kos_resource *carried = add_resource(world, "carried_0");
 
         if (carried != NULL) {
+            const char *plus;
+
             snprintf(carried->content, sizeof carried->content, "%s", carried_content);
+            /* content 是 contents[] 的兼容拼串；两项内容时按 '+' 拆进 contents[]，
+             * 模拟插件的真实上报（content 只有 32 字节会截断）。 */
+            plus = strchr(carried_content, '+');
+            if (plus != NULL && carried->content_count < KOS_SHM_MAX_CONTENTS) {
+                const char *start = carried_content;
+
+                for (;;) {
+                    const char *end = strchr(start, '+');
+                    size_t len = end == NULL ? strlen(start) : (size_t)(end - start);
+
+                    if (len >= sizeof carried->contents[0]) {
+                        len = sizeof carried->contents[0] - 1;
+                    }
+                    memcpy(carried->contents[carried->content_count], start, len);
+                    carried->contents[carried->content_count][len] = '\0';
+                    carried->content_count++;
+                    if (end == NULL || carried->content_count >= KOS_SHM_MAX_CONTENTS) {
+                        break;
+                    }
+                    start = end + 1;
+                }
+            }
         }
     }
     *game_ms += 16;
@@ -947,6 +971,88 @@ static void test_pour_tolerant_matching(const kos_kitchen *kitchen, const char *
     rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
     expect(rc < 0 && macro.step_index == 3 && strstr(macro.fail_detail, "wrong-item") != NULL,
            "tolerant：未在预设列表的 Beef 装入 Rice 判定 wrong-item 失败");
+}
+
+/*
+ * 倒料的内容身份按 contents[] 的 token 比，不按拼串整体比，也不用"公共后缀"
+ * （Tomato 与 Potato 共享 "ato"，旧实现会把土豆倒进番茄里）。
+ * 实机已知的改名链见 macro.c 的 ingredient_word：生料 / 熟料 / 切块 prefab 名
+ * 都要能对上同一味料，两个料的锅只认里面真有的那一味。
+ */
+static void test_pour_exact_tokens(const kos_kitchen *kitchen, const char *cooker,
+                                   const char *container)
+{
+    kos_world_state world;
+    kos_macro macro;
+    kos_macro_output out;
+    kos_resource *carried;
+    int64_t game_ms = 1000;
+    int rc;
+
+    printf("test_pour_exact_tokens\n");
+
+    /* 1. Tomato 倒入 Potato：共享后缀 "ato" 不算同一味料。 */
+    base_world(&world);
+    (void)chef_at_station(&world, kitchen, cooker);
+    drive_to_pour_item(kitchen, &world, &macro, cooker, container, "pour:Tomato",
+                       "cooked:Potato", &game_ms, &out);
+    game_ms += 16;
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    expect(rc < 0 && strstr(macro.fail_detail, "wrong-item") != NULL,
+           "exact：Tomato 倒 Potato 判 wrong-item");
+
+    /* 2. 两项内容的锅：BurritoChicken 在里面（第二项），必须认得出来。 */
+    base_world(&world);
+    (void)chef_at_station(&world, kitchen, cooker);
+    game_ms = 1000;
+    drive_to_pour_item(kitchen, &world, &macro, cooker, container,
+                       "pour:BurritoChicken", "cooked:Rice+cooked:BurritoChicken", &game_ms,
+                       &out);
+    carried = resource_by_name(&world, "carried_0");
+    expect(macro.step_index == 3 && carried != NULL, "exact：两项锅进入倒料");
+    game_ms += 16;
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    expect(rc == 0 && macro.step_index == 3 && out.action == KOS_MACRO_ACT_INTERACT,
+           "exact：两项锅按 token 命中第二项并继续倒");
+    carried->content[0] = '\0';
+    carried->content_count = 0; /* 插件倒空时 content 与 contents[] 一起变空 */
+    game_ms += 16;
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    expect(rc == 0 && macro.step_index == 4, "exact：两项锅倒空后回灶");
+
+    /* 3. 两项内容的锅，两样都不是要倒的料：不能因为"有两项"就放行。 */
+    base_world(&world);
+    (void)chef_at_station(&world, kitchen, cooker);
+    game_ms = 1000;
+    drive_to_pour_item(kitchen, &world, &macro, cooker, container,
+                       "pour:BurritoChicken", "cooked:Rice+cooked:Tortilla", &game_ms, &out);
+    game_ms += 16;
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    expect(rc < 0 && strstr(macro.fail_detail, "wrong-item") != NULL,
+           "exact：两项锅都不含目标料判 wrong-item");
+
+    /* 4. 肉的两条改名链：BurritoMeat ↔ DicedMeat、Mushroom ↔ ChoppedMushroom。 */
+    base_world(&world);
+    (void)chef_at_station(&world, kitchen, cooker);
+    game_ms = 1000;
+    drive_to_pour_item(kitchen, &world, &macro, cooker, container, "pour:BurritoMeat",
+                       "cooked:DicedMeat", &game_ms, &out);
+    expect(macro.step_index == 3, "exact：DicedMeat 进入倒料");
+    game_ms += 16;
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    expect(rc == 0 && out.action == KOS_MACRO_ACT_INTERACT,
+           "exact：BurritoMeat ↔ DicedMeat 是同一味料");
+
+    base_world(&world);
+    (void)chef_at_station(&world, kitchen, cooker);
+    game_ms = 1000;
+    drive_to_pour_item(kitchen, &world, &macro, cooker, container, "pour:Mushroom",
+                       "cooked:ChoppedMushroom", &game_ms, &out);
+    expect(macro.step_index == 3, "exact：ChoppedMushroom 进入倒料");
+    game_ms += 16;
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    expect(rc == 0 && out.action == KOS_MACRO_ACT_INTERACT,
+           "exact：Mushroom ↔ ChoppedMushroom 是同一味料");
 }
 
 /* 没有任何信号（carried_ 空、台面也没多料）时不再有 800 ms 兜底：一直按到步超时，
@@ -1490,6 +1596,7 @@ int main(void)
     test_pour_by_carried(&kitchen, cooker, container);
     test_pour_wrong_content(&kitchen, cooker, container);
     test_pour_tolerant_matching(&kitchen, cooker, container);
+    test_pour_exact_tokens(&kitchen, cooker, container);
     test_pour_carried_without_contents(&kitchen, cooker, container);
     test_pour_legacy_two_in_a_row(&kitchen, cooker, "cooker-1", container);
     test_deliver(&kitchen, serving);
