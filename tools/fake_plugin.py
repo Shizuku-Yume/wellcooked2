@@ -4561,10 +4561,54 @@ def scenario_os_resources(ctx, checks):
         stats = Stats("os-resources")
         period_ms = 1000.0 / args.hz
 
+        run_dir = None
+        events_f = None
+
+        def clear_finished_cookers():
+            nonlocal events_f, run_dir
+            if run_dir is None:
+                run_dir = ctx.run_dir()
+                if run_dir is None:
+                    return
+            if events_f is None:
+                events_path = run_dir / "events.jsonl"
+                if not events_path.exists():
+                    return
+                try:
+                    events_f = open(events_path, "r", encoding="utf-8", errors="replace")
+                except OSError:
+                    return
+            while True:
+                line = events_f.readline()
+                if not line:
+                    break
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    ev = json.loads(line)
+                except ValueError:
+                    continue
+                is_cook_done = (ev.get("event") == "task_done" and
+                                ev.get("node") == "cook:SteamedSpecial_Fish")
+                is_order_fin = ev.get("event") in ("order_completed", "order_failed")
+                if is_cook_done or is_order_fin:
+                    oid = ev.get("order_id", "")
+                    if is_cook_done and oid.startswith("world-"):
+                        sim.orders = [o for o in sim.orders if o.get("id") != oid]
+                        sim.score += 10
+                    for s in sim.stations.values():
+                        if s.get("kind") == "cooker":
+                            res = sim.station_resource(s)
+                            res["content"] = ""
+                            res["state"] = "free"
+                            res["progress"] = 0.0
+
         def builder(n, frame_index):
             game_ms = int(round(frame_index * period_ms))
             sim.process_actions(stats.actions, game_ms)
             game_ms = sim.tick(game_ms)
+            clear_finished_cookers()
             sim.frame(game_ms)
             return sim.message(n, frame_index, cells, game_ms)
         link = Link(connect(args.host, port, args.ready_timeout))
@@ -4670,6 +4714,11 @@ def scenario_os_resources(ctx, checks):
                             if e.get("event") in ("order_completed", "order_failed")]),
                        drained))
         link.close()
+        if events_f is not None:
+            try:
+                events_f.close()
+            except OSError:
+                pass
         time.sleep(0.5)
 
         code, seconds = ctx.stop_supervisor()
