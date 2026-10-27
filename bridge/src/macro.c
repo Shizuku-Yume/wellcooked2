@@ -30,9 +30,6 @@
 #define MACRO_CHOP_MARGIN_MS 3000
 #define MACRO_WASH_MARGIN_MS 3000
 #define MACRO_POUR_MARGIN_MS 3000
-/* 倒料时看不到源锅（旧插件没上报那只锅）时的兜底交互窗口：一次 interact 就够把料倒过去，
- * 800 ms 只用来覆盖按键与状态上报的往返。 */
-#define MACRO_POUR_FALLBACK_MS 800
 /* 交付时盘子先消失、游戏的订单结果（order_results）与 m_activeOrders 移除都要晚
  * 几百毫秒；手空后等这么久还没有结果才判 holding-lost。 */
 #define MACRO_DELIVER_LOST_GRACE_MS 1000
@@ -1254,8 +1251,10 @@ static int resource_has_item(const kos_resource *resource, const char *item)
  *   2. 资源块是 0.25 s 重建的，端起→倒完整段可能落在两个资源帧之间，carried_ 一次
  *      都没出现过。这时看**目的台面**：玉米饼里多出这一味料（contents[] 命中
  *      step->item）就是完成——它比"锅空了"更直接，也不会被同一张台面上别的锅骗到。
- * 源槽位在锅被端走后没有内容可看；旧状态没有 carried_ 时退回扫描 pot_* 与 800 ms 兜底，
- * 保证与 legacy 路径兼容。
+ * 源槽位在锅被端走后没有内容可看；旧状态没有 carried_ 时退回扫描 pot_* 的内容与
+ * 目的台面的新增内容。两条来源都没有证据时**不判完成**：800 ms 的兜底交互只覆盖
+ * 按键往返，倒没倒过去它并不知道，早年那条"时间到了就算倒完"会把没倒成的料当成功，
+ * 后面装盘/交付全部连锁失败。没有证据就等到步超时，失败原因是 source-empty。
  */
 static int run_pour(kos_macro *macro, const kos_kitchen *kitchen, const kos_world_state *world,
                     int chef_id, int64_t game_ms, kos_macro_output *out)
@@ -1325,10 +1324,6 @@ static int run_pour(kos_macro *macro, const kos_kitchen *kitchen, const kos_worl
             if (now_has && !baseline_had) {
                 done = 1;
             }
-        }
-        if (!done && !macro->saw_content &&
-            game_ms - macro->step_start_ms >= MACRO_POUR_FALLBACK_MS) {
-            done = 1;
         }
     }
     if (done) {

@@ -1113,8 +1113,10 @@ static void test_pour_exact_tokens(const kos_kitchen *kitchen, const char *cooke
            "exact：Mushroom ↔ ChoppedMushroom 是同一味料");
 }
 
-/* 没有任何信号（carried_ 空、台面也没多料）时不再有 800 ms 兜底：一直按到步超时，
- * 让失败原因停在 source-empty 而不是把没倒成的料当成倒完了。 */
+/*
+ * 有 carried_ 这只锅、但它的内容一直是空（端起时锅就空了）：没有"内容变空"可看，
+ * 也没有台面新增，只能按到步超时，失败原因停在 source-empty。
+ */
 static void test_pour_carried_without_contents(const kos_kitchen *kitchen, const char *cooker,
                                                const char *container)
 {
@@ -1139,6 +1141,46 @@ static void test_pour_carried_without_contents(const kos_kitchen *kitchen, const
     game_ms = macro.deadline_ms + 1;
     rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
     expect(rc == -1, "carried 空且台面无料：超时失败");
+}
+
+/*
+ * S3：旧状态完全没有 carried_、源 pot_* 也看不到这味料、台面也没有新增内容——
+ * 三个来源都没有证据。旧实现（119423f）在 800 ms 后按"时间到了"判完成，等于把
+ * 没倒成的料当成倒完了，后面装盘/交付连锁失败。现在必须等到步超时并以
+ * source-empty 失败。
+ */
+static void test_pour_legacy_no_evidence(const kos_kitchen *kitchen, const char *cooker,
+                                         const char *container)
+{
+    kos_world_state world;
+    kos_macro macro;
+    kos_macro_output out;
+    int64_t game_ms = 1000;
+    int rc;
+
+    printf("test_pour_legacy_no_evidence\n");
+    base_world(&world);
+    (void)chef_at_station(&world, kitchen, cooker);
+    drive_to_pour_item(kitchen, &world, &macro, cooker, container, "pour:BurritoChicken",
+                       NULL, &game_ms, &out); /* 不挂 carried_ */
+    expect(macro.step_index == 3 && resource_by_name(&world, "carried_0") == NULL,
+           "legacy-no-evidence：进入倒料且没有 carried_");
+
+    game_ms += 16;
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    expect(rc == 0 && macro.step_index == 3 && out.action == KOS_MACRO_ACT_INTERACT,
+           "legacy-no-evidence：先按一次 interact");
+
+    game_ms += 900; /* 超过旧的 800 ms 兜底：没有证据不能推进 */
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    expect(rc == 0 && macro.step_index == 3,
+           "legacy-no-evidence：900 ms 没有证据仍停在倒料（旧实现在这里判完成）");
+
+    game_ms = macro.deadline_ms + 1;
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    expect(rc == -1 && strstr(macro.fail_detail, "source-empty") != NULL &&
+               strstr(macro.fail_detail, "macro=pour") != NULL,
+           "legacy-no-evidence：超时以 source-empty 失败");
 }
 
 /*
@@ -1656,6 +1698,7 @@ int main(void)
     test_pour_tolerant_matching(&kitchen, cooker, container);
     test_pour_exact_tokens(&kitchen, cooker, container);
     test_pour_carried_without_contents(&kitchen, cooker, container);
+    test_pour_legacy_no_evidence(&kitchen, cooker, container);
     test_pour_legacy_two_in_a_row(&kitchen, cooker, "cooker-1", container);
     test_deliver(&kitchen, serving);
     test_wash(&kitchen, sink);
