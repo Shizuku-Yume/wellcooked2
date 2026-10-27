@@ -520,15 +520,26 @@ wait_pads || die "only joined slots: $(cat "$RT/pads-joined.txt" 2>/dev/null || 
 write_takeover false
 wait_frontend_off
 
+start_supervisor() {
+    say "supervisor: starting"
+    "$SUPERVISOR" --foreground --verbose --runtime-dir "$RT" \
+        --workers "$CHEFS" --bridge-host "$HOST" --bridge-port "$PORT" \
+        --kitchen "$KITCHEN" --recipes "$RECIPES" \
+        --orders "$ROOT/config/orders.world.json" --runs-dir "$RT/runs" \
+        >"$RT/supervisor.console.log" 2>&1 &
+    SUPERVISOR_PID=$!
+    say "supervisor: pid $SUPERVISOR_PID"
+}
+
 if [ "$EXPORT" = 1 ]; then
     KITCHEN="$MAP_DIR/$SCENE/kitchen.json"
     RECIPES="$MAP_DIR/$SCENE/recipes.json"
 else
     KITCHEN="$ROOT/config/maps/$SCENE/kitchen.json"
     RECIPES="$ROOT/config/maps/$SCENE/recipes.json"
+    [ -f "$KITCHEN" ] || die "kitchen config missing: $KITCHEN"
+    [ -f "$RECIPES" ] || die "recipes config missing: $RECIPES"
 fi
-[ -f "$KITCHEN" ] || die "kitchen config missing: $KITCHEN"
-[ -f "$RECIPES" ] || die "recipes config missing: $RECIPES"
 before="$(state_mtime_ns)"
 printf 'load=%s\n' "$SCENE" > "$COMMAND"
 if [ "$EXPORT" = 1 ]; then
@@ -538,27 +549,13 @@ if [ "$EXPORT" = 1 ]; then
     RECIPES="$MAP_DIR/$SCENE/recipes.json"
     say "supervisor: early start skipped because exported configs require load completion"
 else
-    say "supervisor: starting"
-    "$SUPERVISOR" --foreground --verbose --runtime-dir "$RT" \
-        --workers "$CHEFS" --bridge-host "$HOST" --bridge-port "$PORT" \
-        --kitchen "$KITCHEN" --recipes "$RECIPES" \
-        --orders "$ROOT/config/orders.world.json" --runs-dir "$RT/runs" \
-        >"$RT/supervisor.console.log" 2>&1 &
-    SUPERVISOR_PID=$!
-    say "supervisor: pid $SUPERVISOR_PID"
+    start_supervisor
     wait_load_stable "$before" || die "scene $SCENE did not stay fresh/stable with $CHEFS chefs"
 fi
 [ -f "$KITCHEN" ] || die "kitchen config missing: $KITCHEN"
 [ -f "$RECIPES" ] || die "recipes config missing: $RECIPES"
 if [ "$EXPORT" = 1 ]; then
-    say "supervisor: starting"
-    "$SUPERVISOR" --foreground --verbose --runtime-dir "$RT" \
-        --workers "$CHEFS" --bridge-host "$HOST" --bridge-port "$PORT" \
-        --kitchen "$KITCHEN" --recipes "$RECIPES" \
-        --orders "$ROOT/config/orders.world.json" --runs-dir "$RT/runs" \
-        >"$RT/supervisor.console.log" 2>&1 &
-    SUPERVISOR_PID=$!
-    say "supervisor: pid $SUPERVISOR_PID"
+    start_supervisor
 fi
 
 clock_ok=0
