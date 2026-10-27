@@ -334,10 +334,12 @@ static void test_resource_cap_matches_protocol(void)
 
     /* 布局上限再被调低时，截断必须可见（carried_* 排在上报顺序末尾）。 */
     memset(&oversize, 0, sizeof oversize);
-    oversize.resource_count = KOS_SHM_MAX_RESOURCES + 3;
-    for (i = 0; i < (int)oversize.resource_count; i++) {
+    /* 只填布局放得下的前 N 项：多的那 3 项在真实链路上被协议层先丢，
+     * 这里模拟"计数超过布局"的快照，不能写到数组之外。 */
+    for (i = 0; i < KOS_SHM_MAX_RESOURCES; i++) {
         snprintf(oversize.resources[i].key, sizeof oversize.resources[i].key, "pot_%d", i);
     }
+    oversize.resource_count = KOS_SHM_MAX_RESOURCES + 3;
     kos_state_from_update(&oversize, &world);
     CHECK_INT(world.resource_count, KOS_SHM_MAX_RESOURCES);
     CHECK_INT(kos_state_resources_dropped(&oversize), 3);
