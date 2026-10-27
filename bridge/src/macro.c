@@ -1263,8 +1263,12 @@ static int run_wash(kos_macro *macro, const kos_kitchen *kitchen,
         return -1;
     }
     have_clean = clean_plate_count(world, &clean);
+    if (resource->progress < MACRO_PROGRESS_DONE) {
+        macro->saw_content = 1;
+    }
     if (resource->progress >= MACRO_PROGRESS_DONE &&
-        (!macro->clean_baseline_valid || (have_clean && clean > macro->clean_baseline))) {
+        (macro->saw_content ||
+         (!macro->clean_baseline_valid || (have_clean && clean > macro->clean_baseline)))) {
         return next_step(macro, out) == 1 ? 1 : 0;
     }
     if (game_ms >= macro->deadline_ms) {

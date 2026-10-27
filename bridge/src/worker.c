@@ -195,6 +195,18 @@ static void send_event(worker *w, int event, const char *detail)
     }
 }
 
+static const char *current_target_station(const worker *w)
+{
+    if (w->have_task && w->macro.plan.step_count > 0 &&
+        w->macro.step_index < w->macro.plan.step_count) {
+        const char *step_station = w->macro.plan.steps[w->macro.step_index].station_id;
+        if (step_station != NULL && step_station[0] != '\0') {
+            return step_station;
+        }
+    }
+    return w->current.station_id;
+}
+
 static void write_target(worker *w, int has_target, int pinned)
 {
     kos_nav_target target;
@@ -211,7 +223,7 @@ static void write_target(worker *w, int has_target, int pinned)
                                                    : 0)
                                   : 0;
     if (has_target) {
-        copy_str(target.station_id, sizeof target.station_id, w->current.station_id);
+        copy_str(target.station_id, sizeof target.station_id, current_target_station(w));
     }
     target.station_id[KOS_SHM_NAME_MAX - 1] = '\0';
     (void)kos_navtab_write_target(w->nav, w->rt.opts.chef_id, &target);
@@ -512,6 +524,16 @@ static int advance_macro(worker *w, const kos_world_state *world, int64_t game_m
         log_macro_start(w, w->macro.step_index);
         w->interact_window_step = -1;
         w->interact_until_game_ms = 0;
+        if (w->macro.step_index < w->macro.plan.step_count) {
+            const kos_macro_step *new_step = &w->macro.plan.steps[w->macro.step_index];
+            const kos_macro_step *old_step = &w->macro.plan.steps[prev_index];
+            if (strcmp(new_step->station_id, old_step->station_id) != 0 ||
+                new_step->kind == KOS_MACRO_GOTO) {
+                w->target_seq++;
+                w->pinned = 0;
+                write_target(w, 1, 0);
+            }
+        }
     }
     if (out->action == KOS_MACRO_ACT_INTERACT &&
         w->interact_window_step != w->macro.step_index) {
@@ -519,7 +541,7 @@ static int advance_macro(worker *w, const kos_world_state *world, int64_t game_m
         w->interact_until_game_ms = game_ms + WORKER_INTERACT_WINDOW_MS;
     }
 
-    if (nav_arrived && !w->pinned) {
+    if (w->macro.step_index == prev_index && nav_arrived && !w->pinned) {
         w->pinned = 1;
         write_target(w, 1, 1);
     }

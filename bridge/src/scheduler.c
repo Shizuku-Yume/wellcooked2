@@ -1649,12 +1649,34 @@ static void mark_ancestors_done(scheduler *s, sched_order *order, int node, int6
  * 名下（连同它的祖先链），让这个厨师接着往下做，而不是把东西丢在地上重做。
  * 匹配按产物名（fetch/cut/mix）或盘内容（plate），不跨菜乱认。
  */
+static int chef_holding_for_active_order(const scheduler *s, int chef)
+{
+    int i, j;
+
+    for (i = 0; i < s->order_count; i++) {
+        const sched_order *order = &s->orders[i];
+
+        if (order->status != KOS_ORDER_ACTIVE) {
+            continue;
+        }
+        for (j = 0; j < order->task_count; j++) {
+            if (task_holder_chef(s, order, j) == chef) {
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
 static int try_adopt_holding(scheduler *s, int chef, const char *reason, int64_t now)
 {
     const kos_chef *state = world_chef(&s->world, chef);
     int i;
 
     if (state == NULL || state->holding[0] == '\0') {
+        return 0;
+    }
+    if (chef_holding_for_active_order(s, chef)) {
         return 0;
     }
     for (i = 0; i < s->order_count; i++) {
@@ -4139,16 +4161,6 @@ static void dispatch_ready(scheduler *s, int64_t now)
         copy_str(msg.station_id, sizeof msg.station_id, station->id);
         copy_str(msg.source_station_id, sizeof msg.source_station_id, source_station_id);
 
-        kos_error_clear(&err);
-        if (kos_mq_send(s->tasks[chef], &msg, (unsigned)msg.priority, 20, &err) != KOS_OK) {
-            char text[256];
-
-            error_text(&err, text, sizeof text);
-            kos_log_warn(s->rt.log, "task_send_failed", "order=%s node=%s chef=%d error=%s",
-                         order_id, node_id, chef, text);
-            (void)kos_resource_release(&s->resources, kind);
-            continue;
-        }
         {
             int64_t wait_ms = task != NULL && task->wait_started_ms > 0
                                   ? now - task->wait_started_ms
@@ -4165,6 +4177,19 @@ static void dispatch_ready(scheduler *s, int64_t now)
                 (void)kos_resource_release(&s->resources, kind);
                 continue;
             }
+
+            kos_error_clear(&err);
+            if (kos_mq_send(s->tasks[chef], &msg, (unsigned)msg.priority, 20, &err) != KOS_OK) {
+                char text[256];
+
+                error_text(&err, text, sizeof text);
+                kos_log_warn(s->rt.log, "task_send_failed", "order=%s node=%s chef=%d error=%s",
+                             order_id, node_id, chef, text);
+                (void)kos_lease_remove(&s->leases, msg.task_id);
+                (void)kos_resource_release(&s->resources, kind);
+                continue;
+            }
+
             if (stat != NULL) {
                 stat->acquires++;
                 if (was_waiting && wait_ms > 0) {
