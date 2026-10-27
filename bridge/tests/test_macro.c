@@ -479,6 +479,13 @@ static void test_chop_completion_by_rename(const kos_kitchen *kitchen, const cha
     rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
     expect(rc == 0 && macro.step_index == 3,
            "rename：progress 缺失但板上物体改名后 chop 完成");
+    /* pickup 的 item 是空的：要拿到"源工位上那件东西"（这里记成 ChoppedSushiPrawn），
+     * 随手抓到别的料不算完成。 */
+    snprintf(chef->holding, sizeof chef->holding, "Carrot");
+    game_ms += 16;
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    expect(rc == 0 && macro.step_index == 3,
+           "pickup：拿到别的料不算完成（item 为空时按源工位物体名判）");
     snprintf(chef->holding, sizeof chef->holding, "ChoppedSushiPrawn");
     game_ms += 16;
     rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
@@ -1314,6 +1321,7 @@ static void test_deliver(const kos_kitchen *kitchen, const char *serving)
     base_world(&world);
     chef = chef_at_station(&world, kitchen, serving);
     snprintf(chef->holding, sizeof chef->holding, "Dish");
+    world.score = 100;
     (void)add_order(&world, "world-1");
     expect(build(&macro, kitchen, "deliver", "deliver:Dish", serving, "world-1", 1000) == 0,
            "deliver 计划建成");
@@ -1323,9 +1331,31 @@ static void test_deliver(const kos_kitchen *kitchen, const char *serving)
     expect(rc == 0 && macro.step_index == 1 && out.action == KOS_MACRO_ACT_INTERACT,
            "deliver 发 interact");
     world.order_count = 0;
+    world.score = 180;
     game_ms += 16;
     rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
-    expect(rc == 1, "订单从世界状态消失后 deliver 完成");
+    expect(rc == 1, "订单消失且分数上涨后 deliver 完成（交付有证据）");
+
+    /* 订单消失但分数没动、也没有订单结果：不是交付证据，等到超时失败。 */
+    base_world(&world);
+    world.score = 100;
+    chef = chef_at_station(&world, kitchen, serving);
+    snprintf(chef->holding, sizeof chef->holding, "Dish");
+    (void)add_order(&world, "world-1b");
+    expect(build(&macro, kitchen, "deliver", "deliver:Dish", serving, "world-1b", 1000) == 0,
+           "deliver no-evidence 计划建成");
+    (void)finish_goto(&macro, kitchen, &world, &game_ms, &out);
+    game_ms += 16;
+    (void)kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    world.order_count = 0;
+    game_ms += 16;
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    expect(rc == 0 && macro.step_index == 1,
+           "订单消失但分数没动：不立刻判成功，继续等结果");
+    game_ms = macro.deadline_ms + 1;
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    expect(rc == -1 && strstr(kos_macro_fail_detail(&macro), "no-evidence") != NULL,
+           "订单消失且没有分数/结果证据：超时以 no-evidence 失败");
 
     /* 手上东西没了：完成条件被打破，应在 1.5 s 之前失败。 */
     base_world(&world);

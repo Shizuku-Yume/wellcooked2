@@ -830,9 +830,13 @@ static int step_init(kos_macro *macro, const kos_kitchen *kitchen,
                      res->content);
         }
     }
-    if (step->kind == KOS_MACRO_PICKUP) {
-        /* 步骤 item 为空时（切好的 prefab 改名、端锅）用源工位上的物体名判"拿到了
-         * 那件东西"。旧插件没有 item 字段时留空，退回"拿到任意物品"。 */
+    if (step->kind == KOS_MACRO_PICKUP && macro->step_index > 0 &&
+        macro->plan.steps[macro->step_index - 1].kind == KOS_MACRO_CHOP) {
+        /* 紧跟在切/搅之后的 pickup：板上那个物体已经改名（Chopped…/Diced…），
+         * 步骤 item 是空的。记下源工位的物体名，拿到同名物品才算完成（手动局
+         * manual.log:619 手=「ChoppedSushiPrawn」）。旧插件没有 item 字段时退回
+         * content 的单个 token，再没有就退回"拿到任意物品"。
+         * 端锅的 pickup 不走这条：源灶位上报的是锅名而不是里面的料。 */
         const kos_resource *res = find_station_resource(kitchen, step, world);
 
         if (res != NULL) {
@@ -930,10 +934,20 @@ static int run_pickup(kos_macro *macro, const kos_kitchen *kitchen,
     const kos_macro_step *step = &macro->plan.steps[macro->step_index];
     const kos_chef *chef = find_chef(world, chef_id);
     const kos_resource *resource = find_station_resource(kitchen, step, world);
-    /* 空的 item = 拿到任意物品（切完的 prefab 改了名、端起锅时手上是锅）。 */
+    /* 空的 item = "拿到源工位上那件东西"：切完 prefab 改了名、端起锅时手上是锅。
+     * 进这一步时记下源工位的物体名（macro->source_item），拿到同名物品才算完成；
+     * 旧插件没有 item 字段时 source_item 为空，退回"拿到任意物品"。 */
     int holding = chef != NULL && chef->holding[0] != '\0';
+    int got = 0;
 
-    if (step->item[0] == '\0' ? holding : holding_is(chef, step->item)) {
+    if (step->item[0] != '\0') {
+        got = holding_is(chef, step->item);
+    } else if (macro->source_item[0] != '\0') {
+        got = holding_is(chef, macro->source_item);
+    } else {
+        got = holding;
+    }
+    if (got) {
         return next_step(macro, out) == 1 ? 1 : 0;
     }
     if (resource != NULL) {
@@ -1392,16 +1406,31 @@ static int run_deliver(kos_macro *macro, const kos_world_state *world,
     }
     if (!order_present(world, macro->plan.order_id)) {
         /* 订单消失有两种：交付成功（分数上涨）或到期（分数下降/不变）。以前只看
-         * "订单不在了"，过期也被当成交付，W11 实机把扣分记成过完成（G9）。 */
+         * "订单不在了"，过期也被当成交付，W11 实机把扣分记成过完成（G9）。
+         * 现在成功必须有证据：游戏结果 delivered 或分数上涨。分数没动（可能是
+         * 结果帧还没到）就继续等，等到步超时仍无证据才失败——"订单不见了"本身
+         * 不是交付证据。 */
         if (macro->score_base_valid) {
             int64_t delta = world->score - macro->score_base;
 
+            if (delta > 0) {
+                return next_step(macro, out) == 1 ? 1 : 0;
+            }
             if (delta < 0) {
                 fail_step(macro, game_ms, "order-gone", "expired");
                 return -1;
             }
+        } else {
+            /* 老插件/模拟器没报分数：没有可比对的基准，保留原来的完成路径。 */
+            return next_step(macro, out) == 1 ? 1 : 0;
         }
-        return next_step(macro, out) == 1 ? 1 : 0;
+        if (game_ms >= macro->deadline_ms) {
+            fail_step(macro, game_ms, "order-gone", "no-evidence");
+            return -1;
+        }
+        out->action = KOS_MACRO_ACT_STOP;
+        out->target_object[0] = '\0';
+        return 0;
     }
     /* 手上本来拿着菜，等订单消失时菜先没了：可能是交付成功（盘子先消失、结果晚到），
      * 也可能是菜掉了。先等 grace，结果/订单消失会先返回；一直没有才判 holding-lost。 */
