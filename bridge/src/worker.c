@@ -579,6 +579,15 @@ static int advance_macro(worker *w, const kos_world_state *world, int64_t game_m
             }
         }
     }
+    if (kos_worker_nav_should_replan(out->action, nav_arrived, w->pinned)) {
+        /* 宏认为还没到（离站位格太远/焦点不对），但 navd 还停在 ARRIVED 且 worker
+         * 把它 pin 住了：解 pin 并重写目标，navd 才会重新规划。 */
+        w->pinned = 0;
+        write_target(w, 1, 0);
+        kos_log_info(w->rt.log, "nav_replan",
+                     "task=%llu station=%s reason=macro-not-arrived",
+                     (unsigned long long)w->current.task_id, w->current.station_id);
+    }
     if (out->action == KOS_MACRO_ACT_INTERACT &&
         kos_worker_interact_should_rearm(w->interact_window_step, w->macro.step_index,
                                          game_ms, w->interact_until_game_ms)) {

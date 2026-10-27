@@ -1278,6 +1278,62 @@ static void test_pour_waits_for_cooked(const kos_kitchen *kitchen, const char *c
 }
 
 /*
+ * goto 的到达不能只信 navd 的 ARRIVED：run 3 的 board-0 在厨师离站位格 2.7 m
+ * 时被判到达（worker-2.log:20，LogOutput:1740-1787）。这里锁住"太远不算到达、
+ * 500 ms 后改发 NAVIGATE 重新走位"，并验证站回站位格后能正常完成。
+ */
+static void test_goto_requires_stand_distance(const kos_kitchen *kitchen, const char *dispenser)
+{
+    kos_world_state world;
+    kos_macro macro;
+    kos_macro_output out;
+    kos_chef *chef;
+    kos_resource *disp;
+    int index = kos_kitchen_station_index(kitchen, dispenser);
+    const kos_station_stands *stands = kos_stand_cells(kitchen, index);
+    int64_t game_ms = 1000;
+    int rc;
+
+    printf("test_goto_requires_stand_distance\n");
+    if (stands == NULL || stands->count <= 0) {
+        expect(0, "goto-distance：工位没有站位格（夹具坏了）");
+        return;
+    }
+    base_world(&world);
+    chef = chef_at_station(&world, kitchen, dispenser);
+    disp = add_resource(&world, "dispenser_0");
+    disp->has_pos = 1;
+    disp->pos_x = kitchen->stations[index].x;
+    disp->pos_y = kitchen->stations[index].z;
+    snprintf(disp->content, sizeof disp->content, "SushiFish");
+    expect(build(&macro, kitchen, "fetch", "fetch:SushiFish", dispenser, "o1", 100) == 0,
+           "goto-distance：计划建成");
+    game_ms += 16;
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 1, game_ms, &out);
+    expect(rc == 0 && macro.step_index == 0 && out.action == KOS_MACRO_ACT_FACE,
+           "goto-distance：到站先发 face");
+    /* 厨师被推到 2.7 m 外（run 3 的实际距离），navd 仍说 arrived。 */
+    chef->x = kitchen->stations[index].x + 2.7f;
+    chef->y = kitchen->stations[index].z + 0.0f;
+    game_ms += 600;
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 1, game_ms, &out);
+    expect(rc == 0 && macro.step_index == 0 && out.action == KOS_MACRO_ACT_NAVIGATE,
+           "goto-distance：离站位格 2.7 m 不算到达，改发 NAVIGATE 重走");
+    /* 回到站位格：face 后完成 goto。 */
+    chef->x = kitchen->cells[stands->cells[0].cell].x;
+    chef->y = kitchen->cells[stands->cells[0].cell].z;
+    chef->facing = atan2f(kitchen->stations[index].x - chef->x,
+                          kitchen->stations[index].z - chef->y);
+    game_ms += 16;
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 1, game_ms, &out);
+    expect(rc == 0 && macro.step_index == 0 && out.action == KOS_MACRO_ACT_FACE,
+           "goto-distance：回到站位格先转身");
+    game_ms += 16;
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 1, game_ms, &out);
+    expect(rc == 0 && macro.step_index == 1, "goto-distance：站稳后才进入下一个宏动作");
+}
+
+/*
  * 1.2 m 的邻灶：facing_pos 落在 1.2 m 外的另一个工位上（实机 run 3 的 cooker-4/5
  * 距离），必须按键前拦住；只有焦点回到目标工位才发 interact。
  */
@@ -1999,6 +2055,7 @@ int main(void)
     test_chop_completion_by_rename(&kitchen, board);
     test_facing_authority(&kitchen, dispenser, board);
     test_focus_neighbour_cooker(&kitchen, dispenser);
+    test_goto_requires_stand_distance(&kitchen, dispenser);
     test_pour_waits_for_cooked(&kitchen, cooker, container);
     test_cook(&kitchen, cooker);
     test_plate(&kitchen, cooker, plate_stack);

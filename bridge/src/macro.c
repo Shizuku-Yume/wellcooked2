@@ -26,6 +26,10 @@
 #define MACRO_FOCUS_TOL 0.35f
 /* 焦点不对时先原地转身；这么久还不对说明站位格本身错了，重新走位。 */
 #define MACRO_FOCUS_RETRY_MS 500
+/* goto 完成还必须真的站在该工位的站位格附近（格心 ±0.6 m）。navd 的到达是按
+ * 0.3 m 判的，但 target_seq/pin 的一帧时序可能把一个旧到达落到新目标上；实机
+ * run 3 的 board-0 就在 2.7 m 外被判到达（worker-2.log:20）。 */
+#define MACRO_STAND_ARRIVE_TOL 0.6f
 /* 倒料前等锅熟的兜底上限（拿不到 time_left 时）。 */
 #define MACRO_POUR_WAIT_MS 15000
 /* 倒料失败后把锅送回灶上的上限。 */
@@ -975,6 +979,37 @@ static int step_init(kos_macro *macro, const kos_kitchen *kitchen,
     return 0;
 }
 
+/* 厨师到该工位最近站位格的平面距离是否在到达容差内。 */
+static int near_station_stand(const kos_kitchen *kitchen, const kos_macro_step *step,
+                              const kos_chef *chef)
+{
+    int index = kos_kitchen_station_index(kitchen, step->station_id);
+    const kos_station_stands *stands;
+    float best = 1e9f;
+    int i;
+
+    if (index < 0 || chef == NULL) {
+        return 0;
+    }
+    stands = kos_stand_cells(kitchen, index);
+    if (stands == NULL || stands->count <= 0) {
+        /* 没有站位格数据（合成测试厨房）：无从判断，不拦。真实地图加载时
+         * kos_stand_build 保证每个工位至少一格，否则加载就失败了。 */
+        return 1;
+    }
+    for (i = 0; i < stands->count; i++) {
+        int cell = stands->cells[i].cell;
+        float dx = kitchen->cells[cell].x - chef->x;
+        float dz = kitchen->cells[cell].z - chef->y;
+        float d2 = dx * dx + dz * dz;
+
+        if (d2 < best) {
+            best = d2;
+        }
+    }
+    return best <= MACRO_STAND_ARRIVE_TOL * MACRO_STAND_ARRIVE_TOL;
+}
+
 static int run_goto(kos_macro *macro, const kos_kitchen *kitchen,
                     const kos_world_state *world, int chef_id, int nav_arrived,
                     int64_t game_ms, kos_macro_output *out)
@@ -1005,18 +1040,23 @@ static int run_goto(kos_macro *macro, const kos_kitchen *kitchen,
         return 0;
     }
 
-    if (game_ms > macro->face_sent_ms && station_in_focus(kitchen, step, chef)) {
-        return next_step(macro, out) == 1 ? 1 : 0;
-    }
-    copy_str(out->target_object, sizeof out->target_object, step->station_id);
-    if (!station_in_focus(kitchen, step, chef) &&
-        game_ms > macro->face_sent_ms + MACRO_FOCUS_RETRY_MS) {
-        /* 转身这么久仍选不中目标：站位格不对，重新走位（清掉 face_sent，
-         * navd 给新的路点）。 */
-        macro->face_sent = 0;
-        out->action = KOS_MACRO_ACT_NAVIGATE;
-    } else {
-        out->action = KOS_MACRO_ACT_FACE;
+    {
+        int near = near_station_stand(kitchen, step, chef);
+
+        if (near && game_ms > macro->face_sent_ms &&
+            station_in_focus(kitchen, step, chef)) {
+            return next_step(macro, out) == 1 ? 1 : 0;
+        }
+        copy_str(out->target_object, sizeof out->target_object, step->station_id);
+        if ((!near || !station_in_focus(kitchen, step, chef)) &&
+            game_ms > macro->face_sent_ms + MACRO_FOCUS_RETRY_MS) {
+            /* 离站位格太远，或转身这么久仍选不中目标：清掉 face_sent 让 worker
+             * 重新出 path（navd 可能还停在 ARRIVED）。 */
+            macro->face_sent = 0;
+            out->action = KOS_MACRO_ACT_NAVIGATE;
+        } else {
+            out->action = KOS_MACRO_ACT_FACE;
+        }
     }
     if (game_ms >= macro->deadline_ms) {
         fail_step(macro, game_ms, "arrived+face", "timeout");

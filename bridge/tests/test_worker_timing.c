@@ -56,6 +56,17 @@ int main(void)
         }
         printf("4.7 s wait re-armed interact %d times, never expired\n", rearm_count);
     }
+    if (!kos_worker_nav_should_replan(3, 1, 1)) {
+        fprintf(stderr, "macro NAVIGATE after a pinned arrival must replan\n");
+        return 1;
+    }
+    if (kos_worker_nav_should_replan(3, 0, 1) ||
+        kos_worker_nav_should_replan(3, 1, 0) ||
+        kos_worker_nav_should_replan(0, 1, 1)) {
+        fprintf(stderr, "replan must need NAVIGATE + arrived + pinned\n");
+        return 1;
+    }
+    printf("nav replan fires only for NAVIGATE + arrived + pinned\n");
     printf("250 ms window rejects; 1000 ms window covers both plugin pulse edges\n");
     return 0;
 }
