@@ -450,6 +450,82 @@ static void test_synthetic(void)
     unlink(line_path);
     rmdir(dir);
 }
+static void test_demo3_cooker_stands(void)
+{
+    static kos_kitchen kitchen;
+    char kitchen_path[KOS_DAEMON_PATH_MAX];
+    kos_error err;
+    int i;
+    int j;
+    int k;
+
+    printf("[test_stand] demo3 cooker 站位格几何断言 (距离 <= 1.2m 且更靠近自身工位)\n");
+    if (!find_config("maps/s_wellcooked_demo_3/kitchen.json", kitchen_path, sizeof kitchen_path)) {
+        expect(0, "demo3: 找不到 kitchen.json");
+        return;
+    }
+    memset(&kitchen, 0, sizeof kitchen);
+    kos_error_clear(&err);
+    if (kos_kitchen_load(kitchen_path, &kitchen, &err) != KOS_OK) {
+        expect(0, "demo3: 加载 kitchen.json 失败");
+        return;
+    }
+
+    for (i = 0; i < kitchen.station_count; i++) {
+        const kos_station *station = &kitchen.stations[i];
+        const kos_station_stands *stands;
+        char label[256];
+
+        if (strcmp(station->kind, "cooker") != 0) {
+            continue;
+        }
+        stands = kos_stand_cells(&kitchen, i);
+        snprintf(label, sizeof label, "demo3/%s: 有站位格", station->id);
+        expect(stands != NULL && stands->count > 0, label);
+        if (stands == NULL) {
+            continue;
+        }
+
+        for (j = 0; j < stands->count; j++) {
+            int cell_idx = stands->cells[j].cell;
+            float cx = kitchen.cells[cell_idx].x;
+            float cz = kitchen.cells[cell_idx].z;
+            float dx = cx - station->x;
+            float dz = cz - station->z;
+            float dist = sqrtf(dx * dx + dz * dz);
+
+            snprintf(label, sizeof label, "demo3/%s: 站位格 cell=%d 距离 <= 1.2m (实际 %.2fm)",
+                     station->id, cell_idx, dist);
+            expect(dist <= 1.2f + 1e-3f, label);
+
+            for (k = 0; k < kitchen.station_count; k++) {
+                const kos_station *other = &kitchen.stations[k];
+                float odx;
+                float odz;
+                float odist;
+
+                if (k == i) {
+                    continue;
+                }
+                odx = cx - other->x;
+                odz = cz - other->z;
+                odist = sqrtf(odx * odx + odz * odz);
+
+                if (strcmp(other->kind, "cooker") == 0) {
+                    snprintf(label, sizeof label,
+                             "demo3/%s: 站位格 cell=%d (距离 %.2fm) 比 %s (距离 %.2fm) 更近",
+                             station->id, cell_idx, dist, other->id, odist);
+                    expect(dist < odist - 1e-3f, label);
+                }
+                snprintf(label, sizeof label,
+                         "demo3/%s: 站位格 cell=%d 不比其他工位 %s 更远",
+                         station->id, cell_idx, other->id);
+                expect(dist <= odist + 1e-3f, label);
+            }
+        }
+    }
+}
+
 
 int main(void)
 {
@@ -466,6 +542,7 @@ int main(void)
         test_one_map(scenes[i]);
     }
     test_synthetic();
+    test_demo3_cooker_stands();
     printf("[test_stand] 检查 %d 项，失败 %d 项\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;
 }

@@ -112,6 +112,8 @@ typedef struct {
      * 先等结果/订单消失，超过 grace 才判 holding-lost。 */
     int64_t empty_hand_since_ms;
     char counter_baseline[KOS_SHM_NAME_MAX];
+    int pot_content_count_before;
+    int pot_content_count_valid;
     char fail_detail[KOS_MACRO_DETAIL_MAX];
     kos_log *log;                      /* 模块 logger，NULL 时不输出 */
 } kos_macro;

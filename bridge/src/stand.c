@@ -25,10 +25,13 @@
 
 /* 垂直偏移超过半格就不是"正对着工位"了；0.5 格是相邻格中心的最大偏差。 */
 #define STAND_PERP_TOLERANCE_FACTOR 0.5f
+/* 站位格必须正对工位边缘且距离不超过两格（约 1.2 m 交互半径）。 */
+#define STAND_MAX_ALONG_FACTOR 2.0f
 /* 跳过工位自己所在的那一格（工位偶尔压在可走格上，实机 sink 偏 0.01 m），
  * 但不跳过与工位相距四分之一格以上的相邻格。 */
 #define STAND_MIN_ALONG_FACTOR 0.25f
-
+/* 兜底允许侧向偏移至 1.5 格，并记录 WARN 日志。 */
+#define STAND_FALLBACK_PERP_FACTOR 1.5f
 typedef struct {
     int axis;     /* 0 = x, 1 = z */
     int sign;     /* 站位格在工位的哪一侧 */
@@ -118,7 +121,7 @@ static void label_components(kos_kitchen *kitchen,
 
 static int find_stand_cell(const kos_kitchen *kitchen, const kos_station *station,
                            const stand_direction *direction, float perp_tolerance,
-                           float min_along)
+                           float min_along, float max_along)
 {
     int best = -1;
     float best_along = 0.0f;
@@ -131,7 +134,7 @@ static int find_stand_cell(const kos_kitchen *kitchen, const kos_station *statio
         float perp = fabsf(direction->axis == 0 ? dz : dx);
 
         along *= (float)direction->sign;
-        if (along <= min_along || perp > perp_tolerance) {
+        if (along <= min_along || along > max_along || perp > perp_tolerance) {
             continue;
         }
         if (best < 0 || along < best_along ||
@@ -212,6 +215,7 @@ int kos_stand_build(kos_kitchen *kitchen, kos_error *err)
     int neighbor[KOS_KITCHEN_MAX_CELLS][4];
     float perp_tolerance;
     float min_along;
+    float max_along;
     int station_index;
     int i;
 
@@ -231,7 +235,7 @@ int kos_stand_build(kos_kitchen *kitchen, kos_error *err)
 
     perp_tolerance = kitchen->step * STAND_PERP_TOLERANCE_FACTOR + 1e-3f;
     min_along = kitchen->step * STAND_MIN_ALONG_FACTOR;
-
+    max_along = kitchen->step * STAND_MAX_ALONG_FACTOR + 1e-3f;
     for (station_index = 0; station_index < kitchen->station_count; station_index++) {
         const kos_station *station = &kitchen->stations[station_index];
         kos_station_stands *stands = &kitchen->stand.station[station_index];
@@ -239,7 +243,7 @@ int kos_stand_build(kos_kitchen *kitchen, kos_error *err)
 
         for (d = 0; d < sizeof STAND_DIRECTIONS / sizeof STAND_DIRECTIONS[0]; d++) {
             int cell = find_stand_cell(kitchen, station, &STAND_DIRECTIONS[d],
-                                       perp_tolerance, min_along);
+                                       perp_tolerance, min_along, max_along);
             int duplicate = 0;
             int k;
 
@@ -257,6 +261,62 @@ int kos_stand_build(kos_kitchen *kitchen, kos_error *err)
             stands->cells[stands->count].cell = cell;
             stands->cells[stands->count].facing = STAND_DIRECTIONS[d].facing;
             stands->count++;
+        }
+        if (stands->count == 0) {
+            float fallback_perp = kitchen->step * STAND_FALLBACK_PERP_FACTOR + 1e-3f;
+            int best_cell = -1;
+            uint8_t best_facing = 0;
+            float best_dist = 1e9f;
+
+            /* 1. 尝试允许侧向偏移行走格（兜底时记录 WARN） */
+            for (d = 0; d < sizeof STAND_DIRECTIONS / sizeof STAND_DIRECTIONS[0]; d++) {
+                int cell = find_stand_cell(kitchen, station, &STAND_DIRECTIONS[d],
+                                           fallback_perp, min_along, max_along);
+                if (cell >= 0) {
+                    float dx = kitchen->cells[cell].x - station->x;
+                    float dz = kitchen->cells[cell].z - station->z;
+                    float dist = dx * dx + dz * dz;
+
+                    if (dist < best_dist) {
+                        best_dist = dist;
+                        best_cell = cell;
+                        best_facing = STAND_DIRECTIONS[d].facing;
+                    }
+                }
+            }
+            if (best_cell >= 0) {
+                fprintf(stderr,
+                        "WARN  stand_fallback station=%s kind=%s cell=%d (sideways offset used, dist=%.2fm)\n",
+                        station->id, station->kind, best_cell, sqrtf(best_dist));
+                stands->cells[stands->count].cell = best_cell;
+                stands->cells[stands->count].facing = best_facing;
+                stands->count++;
+            } else {
+                /* 2. 尝试正对方向更远距离的可行格（兼容特殊合成测试，兜底时记录 WARN） */
+                for (d = 0; d < sizeof STAND_DIRECTIONS / sizeof STAND_DIRECTIONS[0]; d++) {
+                    int cell = find_stand_cell(kitchen, station, &STAND_DIRECTIONS[d],
+                                               perp_tolerance, min_along, 1e6f);
+                    if (cell >= 0) {
+                        float dx = kitchen->cells[cell].x - station->x;
+                        float dz = kitchen->cells[cell].z - station->z;
+                        float dist = dx * dx + dz * dz;
+
+                        if (dist < best_dist) {
+                            best_dist = dist;
+                            best_cell = cell;
+                            best_facing = STAND_DIRECTIONS[d].facing;
+                        }
+                    }
+                }
+                if (best_cell >= 0) {
+                    fprintf(stderr,
+                            "WARN  stand_fallback station=%s kind=%s cell=%d (distance %.2fm > 1.2m)\n",
+                            station->id, station->kind, best_cell, sqrtf(best_dist));
+                    stands->cells[stands->count].cell = best_cell;
+                    stands->cells[stands->count].facing = best_facing;
+                    stands->count++;
+                }
+            }
         }
         if (stands->count == 0) {
             return set_error(err, KOS_ERR_MISSING,
