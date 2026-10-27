@@ -109,7 +109,8 @@ namespace WellCooked
             object timer = flow == null ? null : WorldState.Get(flow, "RoundTimer");
             object left = timer == null ? null : WorldState.Get(timer, "m_timeLeft");
             object limit = timer == null ? null : WorldState.Get(timer, "m_timeLimit");
-            return left != null && limit != null && ToDouble(limit) > 0.0 && ToDouble(left) > 0.0;
+            return left != null && limit != null && ToDouble(limit) > 0.0 && ToDouble(left) > 0.0
+                && ToDouble(left) < ToDouble(limit);
         }
 
         /// <summary>

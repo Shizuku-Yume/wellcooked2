@@ -474,8 +474,8 @@ __attribute__((unused)) static int ksfx_spawn_ex(ksfx_run *r, const char *strate
             kos_world_state_reset(&world);
             world.has_round_time = 1;
             world.round_time_limit = 120.0f;
-            world.round_time_left = 119.0f;
-            world.game_time_ms = 1000;
+            world.round_time_left = 120.0f;
+            world.game_time_ms = 0;
             if (kos_shm_world_write(shm, &world) != KOS_OK) {
                 (void)kos_shm_close(shm, NULL);
                 return -1;

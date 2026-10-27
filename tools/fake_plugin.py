@@ -4328,7 +4328,6 @@ def scenario_os_loop(ctx, checks):
                            {"id": "world-002", "recipe": "SteamedSpecial_Meat",
                             "time_remaining": 90, "ingredients": ["meat"]}])
     period_ms = 1000.0 / args.hz
-    started_at = time.monotonic()
 
     def builder(n, frame_index):
         game_ms = int(round(frame_index * period_ms))
