@@ -65,8 +65,8 @@ PEER_EXE="plugin/tools/conformance/bin/PluginPeer.exe"
 MESSAGES_SRC="plugin/WellCooked.Plugin/Protocol/Messages.cs"
 TCPLINK_SRC="plugin/WellCooked.Plugin/Net/TcpLink.cs"
 
-BRIDGE_BIN="bridge/build/kitchenos-bridge"
-STUB_BIN="bridge/build/kitchenos-worker-stub"
+BRIDGE_BIN="bridge/build/wellcooked-bridge"
+STUB_BIN="bridge/build/wellcooked-worker-stub"
 
 # ---- 证据文件（logs/ 已 gitignore：这些都是运行产物）------------------------
 LOG="logs/conformance-bridge.log"
@@ -75,8 +75,8 @@ STUB_OUT="logs/conformance-stub.out"
 PEER_OUT="logs/conformance-peer.out"
 CSC_OUT="logs/conformance-csc.out"   # written by run-conformance.ps1
 
-STATE="/kitchenos_conformance"
-SEM="/kitchenos_conformance_sem"
+STATE="/wellcooked_conformance"
+SEM="/wellcooked_conformance_sem"
 STUB_HZ=120            # above the peer's 60 Hz, so slot 0 is ready for most frames
 STUB_SECONDS=$((STREAM_SECONDS + 60))
 

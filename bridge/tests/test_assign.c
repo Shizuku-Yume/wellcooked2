@@ -3,7 +3,7 @@
  *
  * 配对用例都把代价放进 travel_s（w_d = 1，其余权重 0），于是矩阵每个元素就是手算
  * 的代价；2 厨师 × 3 工序的最优解另用全排列暴力核对。决策日志的检查启动真实的
- * kitchenos-scheduler（临时地图、kind 带 pid 后缀，资源信号量不撞名），跑几秒后
+ * wellcooked-scheduler（临时地图、kind 带 pid 后缀，资源信号量不撞名），跑几秒后
  * 逐行解析 decisions.jsonl：dispatch 行有 w_d/w_t/w_c/w_u/w_z 且 cost = 五项之和，
  * 三次 SIGHUP 依次切到 EDF → LLF → HRRN。
  */
@@ -11,13 +11,13 @@
 #define _POSIX_C_SOURCE 200809L
 #endif
 
-#include "kitchenos/assign.h"
-#include "kitchenos/child.h"
-#include "kitchenos/json.h"
-#include "kitchenos/recipes.h"
-#include "kitchenos/shm.h"
-#include "kitchenos/stand.h"
-#include "kitchenos/zones.h"
+#include "wellcooked/assign.h"
+#include "wellcooked/child.h"
+#include "wellcooked/json.h"
+#include "wellcooked/recipes.h"
+#include "wellcooked/shm.h"
+#include "wellcooked/stand.h"
+#include "wellcooked/zones.h"
 #include "scheduler_fixture.h"
 
 #include <math.h>

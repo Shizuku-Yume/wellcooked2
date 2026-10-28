@@ -1,7 +1,7 @@
 #ifndef KOS_NAVD_PLAN_H
 #define KOS_NAVD_PLAN_H
 
-#include <kitchenos/navtab.h>
+#include <wellcooked/navtab.h>
 #include <math.h>
 
 #define NAVD_ARRIVE_EPS 0.3f

@@ -5,7 +5,7 @@
  * null), the escapes, and the malformed inputs the bridge must survive: a bad
  * frame may cost one message but never the process.
  */
-#include <kitchenos/json.h>
+#include <wellcooked/json.h>
 
 #include <stdio.h>
 #include <string.h>

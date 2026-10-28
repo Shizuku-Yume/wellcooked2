@@ -20,7 +20,7 @@
 三个部分，各自只依赖下一层的文件契约：
 
 1. **Scheduler 策略（C）。** `policy` 模块加 SJF，四种主键并列都退化为 FCFS；SIGHUP 轮换为 FCFS→EDF→LLF→HRRN→SJF→FCFS。Scheduler 新增 `--task-policy fifo|cp|cost`，Supervisor 原样透传，和 `--strategy` 同一条路。运行中指定策略：往 `<runtime-dir>/strategy.request` 写一行 `order=<名> task=<名>`（两键都可选），再发 SIGHUP；文件存在就按文件切并删除，不存在就照旧轮换，内容不合法写 WARN、删除、不切。Scheduler 启动和每次切换后原子写 `<runtime-dir>/policy.json`（`{"order","task","since_ms"}`），`decisions.jsonl` 的 `kind=strategy` 带 `policy` 与 `task_policy`。
-2. **`kitchenos-monitor`（C，只读）。** 新进程，只读映射 Bridge 写的 shm 世界状态，按现有读者的同步方式取一致快照，每 200 ms 原子写 `<runtime-dir>/live.json`（厨师、订单、工位/锅、分数、计时、资源占用，shm 里没有的字段不写）。shm 未就绪时写 `{"ok":false}` 继续重试；SIGTERM 干净退出。它不是 Supervisor 的子进程，由 `run-real-game.sh` 在 Supervisor 起来后拉起、退出时停掉。
+2. **`wellcooked-monitor`（C，只读）。** 新进程，只读映射 Bridge 写的 shm 世界状态，按现有读者的同步方式取一致快照，每 200 ms 原子写 `<runtime-dir>/live.json`（厨师、订单、工位/锅、分数、计时、资源占用，shm 里没有的字段不写）。shm 未就绪时写 `{"ok":false}` 继续重试；SIGTERM 干净退出。它不是 Supervisor 的子进程，由 `run-real-game.sh` 在 Supervisor 起来后拉起、退出时停掉。
 3. **浏览器控制台（Python 标准库 + 原生 HTML/JS）。** `tools/webui/server.py` 只监听 127.0.0.1。`POST /api/run` 在后台跑 `tools/run-real-game.sh`（策略经环境变量 `STRATEGY`/`TASK_POLICY`/`DISPATCH` 传入，白名单校验，列表参数调用不拼 shell），同时只允许一局；`GET /api/stream` 用 SSE 每 500 ms 推 live.json、status.json、policy.json、events/decisions 的增量尾部和 metrics；`POST /api/strategy` 写 strategy.request 后对 status.json 里的 scheduler pid 发 SIGHUP；`POST /api/kill-scheduler` 发 SIGKILL；`GET /api/runs` 解析历史局的 summary.txt（脚本新增 `policy:` 一行）。
 
 ## What it must not do

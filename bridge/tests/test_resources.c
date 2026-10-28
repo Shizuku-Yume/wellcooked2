@@ -10,8 +10,8 @@
 #define _POSIX_C_SOURCE 200809L
 #endif
 
-#include "kitchenos/kitchen.h"
-#include "kitchenos/resource.h"
+#include "wellcooked/kitchen.h"
+#include "wellcooked/resource.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -83,13 +83,13 @@ int main(void)
     expect(set.count == 1 && set.items[0].capacity == 2, "one_kind_capacity_two");
     expect(sem_value(&set, kind) == 2, "initial_value_equals_capacity");
     expect(kos_resource_name(kind, KOS_INSTANCE_NONE, name, sizeof name) != NULL &&
-               strncmp(name, "/kitchenos_res_", 15) == 0,
+               strncmp(name, "/wellcooked_res_", 15) == 0,
            "named_sem_prefix");
     {
         char suffixed[KOS_RES_NAME_MAX];
         char expected[KOS_RES_NAME_MAX];
 
-        snprintf(expected, sizeof expected, "/kitchenos_res_%s_3", kind);
+        snprintf(expected, sizeof expected, "/wellcooked_res_%s_3", kind);
         expect(kos_resource_name(kind, 3, suffixed, sizeof suffixed) != NULL &&
                    strcmp(suffixed, expected) == 0,
                "instance_appends_suffix");

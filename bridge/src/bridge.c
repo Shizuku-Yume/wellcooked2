@@ -1,9 +1,9 @@
 /*
- * bridge.c -- the KitchenOS Bridge process.
+ * bridge.c -- the WellCooked Bridge process.
  *
  * The bridge is the only process that talks to the game (TCP) and the only
  * writer of the shared world state (shm.h). It owns no policy: it carries the
- * state the plugin reports into /kitchenos_state, turns every state_update into
+ * state the plugin reports into /wellcooked_state, turns every state_update into
  * one frame, waits (with an upper bound) for the N Chef Workers to publish their
  * input slots, aggregates those slots into `action` messages and sends them
  * back. Choosing who cooks what is the Scheduler's job; planning a path is navd's
@@ -45,13 +45,13 @@
 #include <time.h>
 #include <unistd.h>
 
-#include <kitchenos/framing.h>
-#include <kitchenos/json.h>
-#include <kitchenos/log.h>
-#include <kitchenos/net.h>
-#include <kitchenos/protocol.h>
-#include <kitchenos/shm.h>
-#include <kitchenos/state.h>
+#include <wellcooked/framing.h>
+#include <wellcooked/json.h>
+#include <wellcooked/log.h>
+#include <wellcooked/net.h>
+#include <wellcooked/protocol.h>
+#include <wellcooked/shm.h>
+#include <wellcooked/state.h>
 
 /* ============================================================== 常量 */
 
@@ -237,7 +237,7 @@ enum { ARG_OK = 0, ARG_ERR = 1, ARG_HELP = 2, ARG_VERSION = 3 };
 static void print_usage(FILE *out)
 {
     fprintf(out,
-            "usage: kitchenos-bridge [--link listen|connect] [--host H] [--port P]\n"
+            "usage: wellcooked-bridge [--link listen|connect] [--host H] [--port P]\n"
             "                        [--chefs N] [--state-name NAME] [--sem-name NAME]\n"
             "                        [--log FILE] [--frame-timeout-ms M]\n"
             "                        [--heartbeat-timeout-ms M] [--heartbeat-interval-ms M]\n"
@@ -249,7 +249,7 @@ static void print_help(void)
 {
     print_usage(stdout);
     printf("\n"
-           "The KitchenOS Bridge: the only process that talks to the game plugin.\n"
+           "The WellCooked Bridge: the only process that talks to the game plugin.\n"
            "It maps every state_update to one frame, waits for the Chef Workers' input\n"
            "slots (bounded by --frame-timeout-ms), and answers with one action per chef,\n"
            "falling back to idle \"stop\" for any slot that is missing.\n"
@@ -1316,8 +1316,8 @@ static int open_link(bridge *b)
 /*
  * One byte per interval tells the Supervisor this process is still running its loop.
  * A broken pipe means the Supervisor is gone; the Bridge then exits like any other
- * child instead of becoming an orphan holding /kitchenos_state. Only active when the
- * Supervisor passed the fd, so a standalone `kitchenos-bridge` is unchanged.
+ * child instead of becoming an orphan holding /wellcooked_state. Only active when the
+ * Supervisor passed the fd, so a standalone `wellcooked-bridge` is unchanged.
  */
 static void beat_supervisor(bridge *b)
 {
@@ -1446,7 +1446,7 @@ static int bridge_main(bridge *b)
     kos_error err;
 
     if (install_signal_handlers() != 0) {
-        fprintf(stderr, "kitchenos-bridge: cannot install signal handlers: %s\n",
+        fprintf(stderr, "wellcooked-bridge: cannot install signal handlers: %s\n",
                 strerror(errno));
         return 1;
     }
@@ -1457,7 +1457,7 @@ static int bridge_main(bridge *b)
         char text[ERR_BUF];
 
         kos_error_format(&err, text, sizeof text);
-        fprintf(stderr, "kitchenos-bridge: cannot open log %s: %s\n", b->log_path, text);
+        fprintf(stderr, "wellcooked-bridge: cannot open log %s: %s\n", b->log_path, text);
         return 1;
     }
 
@@ -1494,7 +1494,7 @@ int main(int argc, char **argv)
         return 0;
     }
     if (rc == ARG_VERSION) {
-        printf("kitchenos-bridge %s\n", BRIDGE_VERSION);
+        printf("wellcooked-bridge %s\n", BRIDGE_VERSION);
         return 0;
     }
     if (rc != ARG_OK) {

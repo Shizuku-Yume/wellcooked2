@@ -1,5 +1,5 @@
 /*
- * shm.c —— /kitchenos_state 的布局、seqlock、输入槽与就绪信号量。
+ * shm.c —— /wellcooked_state 的布局、seqlock、输入槽与就绪信号量。
  *
  * 这个文件里只有两件值得记住的事：
  *   1. 世界状态与每格输入槽各有一个 seqlock，写者与读者只通过它交换一致性；
@@ -15,7 +15,7 @@
 #define _POSIX_C_SOURCE 200809L
 #endif
 
-#include "kitchenos/shm.h"
+#include "wellcooked/shm.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -736,7 +736,7 @@ static int check_object_name(const char *name, const char *what, kos_error *err)
         return KOS_ERR_INVAL;
     }
     if (name[0] != '/') {
-        set_error(err, KOS_ERR_INVAL, 0, "%s '%.*s' 必须以 '/' 开头（如 /kitchenos_state）", what,
+        set_error(err, KOS_ERR_INVAL, 0, "%s '%.*s' 必须以 '/' 开头（如 /wellcooked_state）", what,
                   KOS_NAME_SHOWN, name);
         return KOS_ERR_INVAL;
     }
@@ -761,7 +761,7 @@ static int check_object_name(const char *name, const char *what, kos_error *err)
 }
 
 /*
- * opts 字段 → 环境变量 → 常量。允许空串当"没设置"，因为 `KITCHENOS_SHM_NAME= cmd`
+ * opts 字段 → 环境变量 → 常量。允许空串当"没设置"，因为 `WELLCOOKED_SHM_NAME= cmd`
  * 这种写法在脚本里很常见，把它当成合法名字会得到一句莫名其妙的错误。
  */
 static const char *pick(const char *from_opts, const char *env_name, const char *fallback)
@@ -826,7 +826,7 @@ static int join_path(char *dst, size_t cap, const char *dir, const char *name)
  * 确认对象真的落在配置的目录里。
  *
  * POSIX 命名共享内存只有**一个**落点（Linux 是 /dev/shm），名字选不了目录；所以
- * KITCHENOS_SHM_DIR 的用处不是"把段放到别处"，而是断言"它应该在这个 tmpfs 里"。
+ * WELLCOOKED_SHM_DIR 的用处不是"把段放到别处"，而是断言"它应该在这个 tmpfs 里"。
  * 目录配错时 shm_open 不会报错，只会把段放到 /dev/shm —— 于是写的人以为在别处、
  * 清的人去别处删，这类问题查起来最费劲，所以在打开路径上就核对 stat 的 inode。
  */
@@ -851,7 +851,7 @@ static int verify_object_dir(int fd, const char *dir, const char *object_name, k
 
         set_error(err, KOS_ERR_DIR, e,
                   "对象 '%.*s' 没出现在配置目录 '%.*s' 里：POSIX shm_open 只把命名对象放在"
-                  "/dev/shm，请把 KITCHENOS_SHM_DIR 指向真正承载它的 tmpfs",
+                  "/dev/shm，请把 WELLCOOKED_SHM_DIR 指向真正承载它的 tmpfs",
                   KOS_NAME_SHOWN, object_name, KOS_NAME_SHOWN, dir);
         return KOS_ERR_DIR;
     }
@@ -890,7 +890,7 @@ static int validate_header(kos_shm *shm, kos_error *err)
 
     if (g->magic != KOS_SHM_MAGIC) {
         set_error(err, KOS_ERR_MAGIC, 0,
-                  "'%.*s' 段头魔数 0x%08lx 不是 KitchenOS 段（应为 0x%08lx）：名字撞了别的对象",
+                  "'%.*s' 段头魔数 0x%08lx 不是 WellCooked 段（应为 0x%08lx）：名字撞了别的对象",
                   KOS_NAME_SHOWN, shm->object_name, (unsigned long)g->magic,
                   (unsigned long)KOS_SHM_MAGIC);
         return KOS_ERR_MAGIC;

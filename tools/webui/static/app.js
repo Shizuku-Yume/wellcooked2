@@ -1,4 +1,4 @@
-// KitchenOS 控制台前端：原生 JS，SSE 收快照，所有文本走 textContent，不拼 HTML。
+// WellCooked 控制台前端：原生 JS，SSE 收快照，所有文本走 textContent，不拼 HTML。
 "use strict";
 const $ = (id) => document.getElementById(id);
 const ORDER_LABEL = { fcfs: "FCFS 先来先做", sjf: "SJF 最短优先", llf: "LLF 最小松弛", hrrn: "HRRN 响应比", edf: "EDF 最早截止" };

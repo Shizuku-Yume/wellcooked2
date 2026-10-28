@@ -1,5 +1,5 @@
 /*
- * navtab.c -- /kitchenos_nav 的创建、挂接与两槽读写。
+ * navtab.c -- /wellcooked_nav 的创建、挂接与两槽读写。
  *
  * 每槽单写者 + seqlock：写者把序号改奇数、写载荷、改偶数；读者只接受两次序号
  * 相同且载荷校验通过的快照。命名信号量只协调写者，读侧不拿锁——否则一个在
@@ -10,7 +10,7 @@
 #define _POSIX_C_SOURCE 200809L
 #endif
 
-#include <kitchenos/navtab.h>
+#include <wellcooked/navtab.h>
 
 #include <errno.h>
 #include <fcntl.h>
@@ -94,12 +94,12 @@ void kos_navtab_opts_init(kos_navtab_opts *opts)
     memset(opts, 0, sizeof *opts);
     opts->perm = 0600;
     {
-        const char *env = getenv("KITCHENOS_NAV_NAME");
+        const char *env = getenv("WELLCOOKED_NAV_NAME");
 
         opts->object_name = (env != NULL && env[0] != '\0') ? env : KOS_NAV_DEFAULT_NAME;
     }
     {
-        const char *env = getenv("KITCHENOS_NAV_SEM_NAME");
+        const char *env = getenv("WELLCOOKED_NAV_SEM_NAME");
 
         opts->sem_name =
             (env != NULL && env[0] != '\0') ? env : KOS_NAV_DEFAULT_SEM_NAME;

@@ -10,8 +10,8 @@
 #define _POSIX_C_SOURCE 200809L
 #endif
 
-#include "kitchenos/json.h"
-#include "kitchenos/metrics.h"
+#include "wellcooked/json.h"
+#include "wellcooked/metrics.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -179,7 +179,7 @@ int main(void)
     expect(json_parse_ex(body, strlen(body), &doc, NULL) == JSON_OK, "metrics_json_parses");
     expect(json_object_get_int(doc, "schema", &number) != JSON_OK &&
                json_object_get_string(doc, "schema", &text, &text_len) == JSON_OK &&
-               strcmp(text, "kitchenos.metrics.v1") == 0,
+               strcmp(text, "wellcooked.metrics.v1") == 0,
            "schema_field");
     expect(json_object_get_int(doc, "t_ms", &number) == JSON_OK && number == 19000,
            "t_ms_field");

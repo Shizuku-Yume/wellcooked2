@@ -5,7 +5,7 @@
 
 ## What this is for
 
-KitchenOS 的 OS 核心要和 Windows 上跑的游戏说话，但仓库里没有任何一条已验证的链路：插件的
+WellCooked 的 OS 核心要和 Windows 上跑的游戏说话，但仓库里没有任何一条已验证的链路：插件的
 TCP 连出去没有对端，插件上报的状态没有人收，调度决策没有路回到游戏。没有 Bridge，整个项目
 只能演示插件本身，阶段 A 之后的 Supervisor/Scheduler/Worker 全都无处落脚。
 
@@ -15,13 +15,13 @@ effort 里不成立，跨端契约的基准是 `protocol/`。）
 
 ## What it does
 
-一个独立进程 `kitchenos-bridge`，跑在 WSL2/Linux 侧，是唯一与游戏通信的进程。
+一个独立进程 `wellcooked-bridge`，跑在 WSL2/Linux 侧，是唯一与游戏通信的进程。
 
 - 默认以 TCP **服务端**监听 `127.0.0.1:14455`，接受插件连入；`--link connect` 时可切换为
   客户端，主动去连插件开的服务端（`--host` / `--port`，默认同样是 14455）。两种模式跑同一套
   协议，谁在听由模式表达，端口号不负责区分方向（`decisions.md: 2026-10-15 - 端口按组员决策
   统一成 14455`）。绑 loopback 是默认值：链路没有认证，跨机演示要显式传 `--host 0.0.0.0`。
-- 收插件上报的 `state_update`，把世界状态写进共享内存 `/kitchenos_state`。
+- 收插件上报的 `state_update`，把世界状态写进共享内存 `/wellcooked_state`。
 - 把每个 `state_update` 当作一帧：等全部 N 个输入槽就绪（有超时上限），汇总成动作下发插件；
   槽缺失或超时的厨师下发 idle，并记录是哪几个。
 - 当 Scheduler/Worker 根本不存在或中途死掉时，Bridge 照常连接游戏、照常按帧下发 idle，
@@ -34,7 +34,7 @@ effort 里不成立，跨端契约的基准是 `protocol/`。）
 
 ## How it is built
 
-模块与各自职责（头文件在 `bridge/include/kitchenos/`，即模块契约；表里的 `bridge` 是可执行
+模块与各自职责（头文件在 `bridge/include/wellcooked/`，即模块契约；表里的 `bridge` 是可执行
 程序而不是库模块，所以没有 `bridge.h` —— 它的契约是命令行开关加 `logs/bridge.log` 的事件名）：
 
 | 模块 | 负责 | 不负责 |
@@ -42,7 +42,7 @@ effort 里不成立，跨端契约的基准是 `protocol/`。）
 | `json` | 递归下降解析与写入，覆盖对象/数组/字符串/数字/布尔/null 子集 | schema 校验、流式解析 |
 | `framing` | 一行一条 UTF-8 JSON、`\n` 结尾的分帧与解帧，单行 1 MiB 上限 | 语义、重传 |
 | `protocol` | 消息类型常量；解析 `state_update`/`hello`/`ack`/`heartbeat`/`echo`/`config`；构造 `action`（`move`/`stop`/`interact`/`pickup`/`dash` 五种）、`ack`/`echo_reply`/`heartbeat`/`hello` | 业务决策 |
-| `shm` | `/kitchenos_state` 的布局、seqlock、输入槽与就绪信号量 `/kitchenos_input_ready` | 谁该占哪口锅（Scheduler 的事） |
+| `shm` | `/wellcooked_state` 的布局、seqlock、输入槽与就绪信号量 `/wellcooked_input_ready` | 谁该占哪口锅（Scheduler 的事） |
 | `net` | TCP 监听/连接、断线重连、把 socket 接进 `framing` | 消息语义 |
 | `log` | `bridge.log` 追加写、时间戳、事件类别 | 日志轮转 |
 | `bridge` | 主循环：select/poll 收包 → 分派 → 写 shm → 帧屏障 → 下发 | 上面任何模块的内部 |
@@ -103,7 +103,7 @@ effort 里不成立，跨端契约的基准是 `protocol/`。）
 - **W5.** 异常输入：>1 MiB 的行、非法 JSON、截断行各来一次 → Bridge 记录并丢弃，进程存活，
   之后仍能正常处理一帧。
 - **W6.** SIGTERM：发信号后进程在 1 秒内退出，日志有退出事件，`/dev/shm` 下不残留
-  `/kitchenos_state` 与信号量，立刻重启能成功 bind 同一端口。
+  `/wellcooked_state` 与信号量，立刻重启能成功 bind 同一端口。
 - **W7.** 双拓扑：`--link listen --port 14455` 与 `--link connect --host 127.0.0.1 --port 14455`
   两种模式各完成一次完整帧交换。
 - **W8.** 实机：Windows 游戏启动后，Bridge 日志出现 `hello` 与 `state_update`（**唯一需要
@@ -119,7 +119,7 @@ effort 里不成立，跨端契约的基准是 `protocol/`。）
 测试层次：`bridge/tests/` 是 C 单元测试，覆盖纯函数与共享内存原语（W1）；协议级端到端由
 `tools/fake_plugin.py` 驱动（W2–W5、W7，含动作枚举五个的端到端：`pickup-dash` 场景让两个
 Worker 分别写 `pickup`/`dash`，断言它们原样到达对端），它替代反复启动游戏；游戏实机只留 W8
-一次。出问题时的可观察信号：Bridge 进程退出码非 0、日志停止增长、`/dev/shm/kitchenos*` 残留、
+一次。出问题时的可观察信号：Bridge 进程退出码非 0、日志停止增长、`/dev/shm/wellcooked*` 残留、
 `ss -ltnp` 看不到 14455 监听。
 
 值得测的边界：空 `chefs` 数组、`resources` 里出现未知键（如 `pot_7`）、超大 `orders`、
@@ -162,7 +162,7 @@ Worker 分别写 `pickup`/`dash`，断言它们原样到达对端），它替代
 | 文档位置 | 要求 | 实现 |
 |---|---|---|
 | §834-842「Bridge 进程」 | 唯一连游戏的进程、按帧写共享内存、读输入槽汇总下发、按帧同步、崩溃时发 idle 保持连接 | 全部实现；其中"阻塞等待"实现为**有界等待**，理由见下 |
-| §543-553「共享内存 + 信号量」 | `shm_open("/kitchenos_state")` | 默认名一致 |
+| §543-553「共享内存 + 信号量」 | `shm_open("/wellcooked_state")` | 默认名一致 |
 | §6.2.3（951-966） | "使用 **seqlock 或** 读写信号量保护"；Bridge 独占写、Scheduler/Worker 并发读、Worker 独占写各自输入槽；"这是典型的读者写者问题" | 选 seqlock；权限划分与文档逐条一致 |
 | §6.2.4（968-975） | "BepInEx 插件在游戏进程内启动 TCP 服务器（localhost:14455）；Linux 侧 Bridge 作为客户端连接" | 反向模式：Bridge `--link connect` 默认拨 `127.0.0.1:14455` 实测 PASS，插件 server 模式监听 `Network.ServerPort`（默认 14455）。插件这一半是静态对齐，未实机跑过 |
 | §2.2.1 / §5.1 | Bridge 作 TCP 服务端（样例代码写 `0.0.0.0:12345`） | `--link listen` 实测 PASS；默认端口按组员决策统一成 **14455**、默认绑 **loopback**（`decisions.md: 2026-10-15 - 端口按组员决策统一成 14455`），与课程文档样例的 12345 / `INADDR_ANY` 不同，跨机时用 `--host 0.0.0.0` 覆盖 |
@@ -179,9 +179,9 @@ Worker 分别写 `pickup`/`dash`，断言它们原样到达对端），它替代
    已记入 `.workflow/decisions.md`（帧屏障以 `state_update` 为帧边界）。实现手段是**不阻塞
    探测 + 帧截止时间**（反复 `kos_shm_wait_frame_after(..., 0, ...)` 核对），不是
    `sem_timedwait`：信号量只当门铃，用来知道"可能有人写了"，真值仍回槽里读。
-2. **`/kitchenos_sem` 未被采用为默认名。** 文档 553 行那个初始值为 1 的信号量是**保护临界区的
+2. **`/wellcooked_sem` 未被采用为默认名。** 文档 553 行那个初始值为 1 的信号量是**保护临界区的
    互斥量**，而 §6.2.3 允许用 seqlock 替代，本文选的就是 seqlock；"通知 Bridge 本帧输入已就绪"
-   的信号量（869 行）文档**没有给名字**，故用 `/kitchenos_input_ready`。
+   的信号量（869 行）文档**没有给名字**，故用 `/wellcooked_input_ready`。
 
 **过程中发现的两个真实缺陷**（都会在实机上静默劣化，不崩溃）：
 

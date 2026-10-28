@@ -8,7 +8,7 @@
 #define _POSIX_C_SOURCE 200809L
 #endif
 
-#include <kitchenos/nav.h>
+#include <wellcooked/nav.h>
 
 #include <math.h>
 

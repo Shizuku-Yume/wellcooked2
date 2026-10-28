@@ -9,7 +9,7 @@
 #define _POSIX_C_SOURCE 200809L
 #endif
 
-#include <kitchenos/resource.h>
+#include <wellcooked/resource.h>
 
 #include <errno.h>
 #include <fcntl.h>
@@ -55,7 +55,7 @@ const char *kos_resource_name(const char *kind, int instance, char *buf, size_t 
     if (kind == NULL || buf == NULL || len == 0 || kind[0] == '\0') {
         return NULL;
     }
-    if (snprintf(base, sizeof base, "/kitchenos_res_%s", kind) >= (int)sizeof base) {
+    if (snprintf(base, sizeof base, "/wellcooked_res_%s", kind) >= (int)sizeof base) {
         return NULL;
     }
     if (kos_name_instance(base, instance, buf, len) != KOS_OK) {

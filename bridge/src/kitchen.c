@@ -10,8 +10,8 @@
 #define _POSIX_C_SOURCE 200809L
 #endif
 
-#include <kitchenos/kitchen.h>
-#include <kitchenos/zones.h>
+#include <wellcooked/kitchen.h>
+#include <wellcooked/zones.h>
 
 #include <ctype.h>
 #include <errno.h>
@@ -21,8 +21,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include <kitchenos/json.h>
-#include <kitchenos/stand.h>
+#include <wellcooked/json.h>
+#include <wellcooked/stand.h>
 
 static void copy_str(char *dst, size_t cap, const char *src)
 {

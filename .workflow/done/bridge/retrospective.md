@@ -2,8 +2,8 @@
 
 ## Goal
 
-让 KitchenOS 的 OS 核心能和 Windows 上跑的游戏说话：交付一个 Linux/WSL2 侧的
-`kitchenos-bridge` 进程，独占与游戏的 TCP+JSON 链路，把世界状态写进共享内存、按帧汇总
+让 WellCooked 的 OS 核心能和 Windows 上跑的游戏说话：交付一个 Linux/WSL2 侧的
+`wellcooked-bridge` 进程，独占与游戏的 TCP+JSON 链路，把世界状态写进共享内存、按帧汇总
 Worker 的输入槽并下发动作，同时作为阶段 A 之后 Supervisor/Scheduler/Worker 的落脚点
 （`.workflow/specs/bridge.md`）。
 
@@ -11,7 +11,7 @@ Worker 的输入槽并下发动作，同时作为阶段 A 之后 Supervisor/Sche
 
 一条跑得通的链路，以及证明它跑得通的四层检查。用户可以：
 
-- 起 `kitchenos-bridge --link listen`（默认 `0.0.0.0:12345`）或 `--link connect`
+- 起 `wellcooked-bridge --link listen`（默认 `0.0.0.0:12345`）或 `--link connect`
   （默认 dial 14455），两种拓扑一份协议；
 - 用 `python3 tools/fake_plugin.py --scenario <name>` 在**不开游戏**的前提下跑协议级联调，
   `bash tools/run-bridge-scenarios.sh` 一条命令跑完 10 个场景；
@@ -105,7 +105,7 @@ CONVENTIONS §7 要求的 `Review boundary` 行在 5 个任务的 `## Progress` 
 没有遗留的 hotfix follow-up 任务。
 
 **未覆盖、也不算债务的两件事**（写在这里以免被当成已验证）：链路上**没有任何认证** ——
-默认 `0.0.0.0:12345` 下能连上的局域网对端会成为被服务的插件并能向 `/kitchenos_state` 写入
+默认 `0.0.0.0:12345` 下能连上的局域网对端会成为被服务的插件并能向 `/wellcooked_state` 写入
 伪造状态，未认证的 connect 对端可以让插件执行任意动作；单机课设可接受，已记入 spec。以及
 **W8 的关卡内一半**：`chefs`/`orders` 非空从未被观察到，补齐只需进一次关卡 —— 但也因为插件
 是本 effort 自己写的，那次实机连同一致性对端才是仅有的两条独立证据。

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# One-command real-game iteration for KitchenOS.
+# One-command real-game iteration for WellCooked.
 #
 #   SCENE=s_wellcooked_demo_3 CHEFS=4 bash tools/run-real-game.sh
 #
@@ -66,8 +66,8 @@ DISPATCH="${DISPATCH:-flexible}"
 SOURCE_ROOT="${SOURCE_ROOT:-$ROOT}"
 PLUGIN_DLL="${PLUGIN_DLL:-$SOURCE_ROOT/plugin/bin/Release/net35/WellCooked.Smoke.dll}"
 BRIDGE_BIN_DIR="${BRIDGE_BIN_DIR:-$SOURCE_ROOT/bridge/build}"
-SUPERVISOR="$BRIDGE_BIN_DIR/kitchenos-supervisor"
-MONITOR="$BRIDGE_BIN_DIR/kitchenos-monitor"
+SUPERVISOR="$BRIDGE_BIN_DIR/wellcooked-supervisor"
+MONITOR="$BRIDGE_BIN_DIR/wellcooked-monitor"
 BUNDLE_SRC="${BUNDLE_SRC:-}"
 BUNDLE_REF="${BUNDLE_REF:-origin/main}"
 
@@ -548,9 +548,9 @@ say "runtime: $RT"
 
 # Stop leftovers only after owning the lock.  Whether the game itself is stopped
 # is decided after the build: a kept game is reused only when it still fits.
-pkill -TERM -f "$BRIDGE_BIN_DIR/kitchenos-" 2>/dev/null || true
+pkill -TERM -f "$BRIDGE_BIN_DIR/wellcooked-" 2>/dev/null || true
 sleep 2
-pkill -KILL -f "$BRIDGE_BIN_DIR/kitchenos-" 2>/dev/null || true
+pkill -KILL -f "$BRIDGE_BIN_DIR/wellcooked-" 2>/dev/null || true
 if ss -ltn 2>/dev/null | grep -q ":${PORT}\b"; then
     die "port $PORT is still in use"
 fi
@@ -577,7 +577,7 @@ if [ "$BUILD_BRIDGE" = 1 ]; then
     make -C "$SOURCE_ROOT/bridge" -j"$(nproc)" >"$RT/build-bridge.log" 2>&1 \
         || die "bridge build failed (see $RT/build-bridge.log)"
 fi
-for bin in kitchenos-supervisor kitchenos-bridge kitchenos-scheduler kitchenos-worker kitchenos-navd kitchenos-monitor; do
+for bin in wellcooked-supervisor wellcooked-bridge wellcooked-scheduler wellcooked-worker wellcooked-navd wellcooked-monitor; do
     [ -x "$BRIDGE_BIN_DIR/$bin" ] || die "missing bridge binary: $BRIDGE_BIN_DIR/$bin"
 done
 

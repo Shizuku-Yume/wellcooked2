@@ -459,7 +459,7 @@ class Instance:
             log("  实例 %d 注意：当前 navd 只实现 pibt，忽略 nav=%s" % (self.index, nav))
         dispatch_opt = "zoned" if dispatch in ("zoned", "zone") else "flexible"
         argv = [
-            str(bridge_binary("kitchenos-supervisor")),
+            str(bridge_binary("wellcooked-supervisor")),
             "--foreground",
             "--runtime-dir", str(self.runtime),
             "--instance", str(self.index),

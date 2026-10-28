@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:kitchenos:schema:echo_reply",
+  "$id": "urn:wellcooked:schema:echo_reply",
   "title": "echo_reply",
   "description": "双向：echo 的应答，token 与收到的 echo 完全一致。",
   "type": "object",

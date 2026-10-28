@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:kitchenos:schema:ack",
+  "$id": "urn:wellcooked:schema:ack",
   "title": "ack",
   "description": "双向：对一条 action 的执行回执。ok 必须是 JSON 布尔，不接受字符串 \"true\"。",
   "type": "object",

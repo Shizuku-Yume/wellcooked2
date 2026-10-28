@@ -44,8 +44,8 @@ Dirty at start: none
   `tools/instances.py`（目录/符号链接/端口/Proton 启动/关停）、`tools/batch.py`
   （CSV 清单、三实例并行、整局等待、results.csv、掉线重试）、插件 `window=WxH` +
   `window_pos=x,y`。`cd bridge && make test` 通过；两棵 `--instance 1/2` 的 Supervisor
-  实测 IPC 名字为 `kitchenos_events_1/2`、`kitchenos_tasks_0_1/2`、`kitchenos_state_1/2`、
-  `sem.kitchenos_input_ready_1/2`、`kitchenos_nav_1/2`、`sem.kitchenos_res_*_1/2`。
+  实测 IPC 名字为 `wellcooked_events_1/2`、`wellcooked_tasks_0_1/2`、`wellcooked_state_1/2`、
+  `sem.wellcooked_input_ready_1/2`、`wellcooked_nav_1/2`、`sem.wellcooked_res_*_1/2`。
 - 实机（2026-10-25 16:16–17:15，持 `/tmp/wellcooked-game.lock`）：`instances.py up 3` 起了
   3 个 640×360 实例（日志 `takeover: 窗口 = 640x360（全屏=False）`），端口 14456/14457/14458；
   `/dev/mqueue` 与 `/dev/shm` 里 3 组名字各带 `_1/_2/_3`；GPU 7.5/8.2 GB、可用内存约 2 GB。
@@ -68,4 +68,4 @@ Dirty at start: none
   `wellcooked-orders.json` 已恢复为取锁前内容，`wellcooked-command.txt` 已删除，
   `/tmp/wellcooked-game.lock` 已移除。工作区改动已提交到本分支，PR #34 已转为最终状态。
 
-- Review boundary: `87b68f3..HEAD` + `tools/{instances,batch}.py`、`plugin/{Takeover,ActionDriver}.cs`、`bridge/{include/kitchenos,src,tests}` 的 instance 改动；round: 1；briefs: 手动 review + 安全边界；boundaries: 本地批跑脚本的文件路径/子进程、`--instance` IPC 名字；findings: 0 blocking / 0 nonblocking（受硬预算未起 flow-verify 子代理，任务结束时如实记录）。
+- Review boundary: `87b68f3..HEAD` + `tools/{instances,batch}.py`、`plugin/{Takeover,ActionDriver}.cs`、`bridge/{include/wellcooked,src,tests}` 的 instance 改动；round: 1；briefs: 手动 review + 安全边界；boundaries: 本地批跑脚本的文件路径/子进程、`--instance` IPC 名字；findings: 0 blocking / 0 nonblocking（受硬预算未起 flow-verify 子代理，任务结束时如实记录）。

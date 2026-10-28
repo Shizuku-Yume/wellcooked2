@@ -1,4 +1,4 @@
-# KitchenOS core -- GNU make, no cmake (the course machines have gcc/make only).
+# WellCooked core -- GNU make, no cmake (the course machines have gcc/make only).
 #
 # Everything is discovered with wildcard, so adding src/*.c, tests/test_*.c or a
 # new tests/test_foo.c suite never requires editing this file. Source files that
@@ -33,37 +33,37 @@ DEPS      := $(OBJS:.o=.d)
 ifeq ($(wildcard src/bridge.c),)
 BRIDGE_BIN :=
 else
-BRIDGE_BIN := $(BUILD)/kitchenos-bridge
+BRIDGE_BIN := $(BUILD)/wellcooked-bridge
 endif
 
 ifeq ($(wildcard src/supervisor.c),)
 SUPERVISOR_BIN :=
 else
-SUPERVISOR_BIN := $(BUILD)/kitchenos-supervisor
+SUPERVISOR_BIN := $(BUILD)/wellcooked-supervisor
 endif
 
 ifeq ($(wildcard src/scheduler.c),)
 SCHEDULER_BIN :=
 else
-SCHEDULER_BIN := $(BUILD)/kitchenos-scheduler
+SCHEDULER_BIN := $(BUILD)/wellcooked-scheduler
 endif
 
 ifeq ($(wildcard src/worker.c),)
 WORKER_BIN :=
 else
-WORKER_BIN := $(BUILD)/kitchenos-worker
+WORKER_BIN := $(BUILD)/wellcooked-worker
 endif
 
 ifeq ($(wildcard src/navd.c),)
 NAVD_BIN :=
 else
-NAVD_BIN := $(BUILD)/kitchenos-navd
+NAVD_BIN := $(BUILD)/wellcooked-navd
 endif
 
 ifeq ($(wildcard src/monitor_main.c),)
 MONITOR_BIN :=
 else
-MONITOR_BIN := $(BUILD)/kitchenos-monitor
+MONITOR_BIN := $(BUILD)/wellcooked-monitor
 endif
 
 # tools/ holds test-only binaries that are not part of the daemon: worker_stub
@@ -71,10 +71,10 @@ endif
 # the game or a real Scheduler. Conditional for the same reason as bridge.c.
 TOOL_BINS :=
 ifneq ($(wildcard tools/worker_stub.c),)
-TOOL_BINS += $(BUILD)/kitchenos-worker-stub
+TOOL_BINS += $(BUILD)/wellcooked-worker-stub
 endif
 ifneq ($(wildcard tools/silent_child.c),)
-TOOL_BINS += $(BUILD)/kitchenos-silent-child
+TOOL_BINS += $(BUILD)/wellcooked-silent-child
 endif
 
 .PHONY: all test test-san clean
@@ -85,30 +85,30 @@ endif
 all: $(OBJS) $(TEST_BINS) $(BRIDGE_BIN) $(SUPERVISOR_BIN) $(SCHEDULER_BIN) $(WORKER_BIN) $(NAVD_BIN) $(MONITOR_BIN) $(TOOL_BINS)
 	@echo "built: $(notdir $(TEST_BINS) $(BRIDGE_BIN) $(SUPERVISOR_BIN) $(SCHEDULER_BIN) $(WORKER_BIN) $(NAVD_BIN) $(MONITOR_BIN) $(TOOL_BINS))"
 
-$(BUILD)/kitchenos-worker-stub: tools/worker_stub.c $(LINK_OBJS) | $(BUILD)
+$(BUILD)/wellcooked-worker-stub: tools/worker_stub.c $(LINK_OBJS) | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ $< $(LINK_OBJS) $(LDFLAGS)
 
-$(BUILD)/kitchenos-silent-child: tools/silent_child.c | $(BUILD)
+$(BUILD)/wellcooked-silent-child: tools/silent_child.c | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
 
 # Each daemon links its own main object plus every non-main module. Linking all
 # of $(OBJS) would drag the other three main()s in and fail.
-$(BUILD)/kitchenos-bridge: $(OBJ_DIR)/bridge.o $(LINK_OBJS) | $(BUILD)
+$(BUILD)/wellcooked-bridge: $(OBJ_DIR)/bridge.o $(LINK_OBJS) | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
-$(BUILD)/kitchenos-supervisor: $(OBJ_DIR)/supervisor.o $(LINK_OBJS) | $(BUILD)
+$(BUILD)/wellcooked-supervisor: $(OBJ_DIR)/supervisor.o $(LINK_OBJS) | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
-$(BUILD)/kitchenos-scheduler: $(OBJ_DIR)/scheduler.o $(LINK_OBJS) | $(BUILD)
+$(BUILD)/wellcooked-scheduler: $(OBJ_DIR)/scheduler.o $(LINK_OBJS) | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
-$(BUILD)/kitchenos-worker: $(OBJ_DIR)/worker.o $(LINK_OBJS) | $(BUILD)
+$(BUILD)/wellcooked-worker: $(OBJ_DIR)/worker.o $(LINK_OBJS) | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
-$(BUILD)/kitchenos-navd: $(OBJ_DIR)/navd.o $(LINK_OBJS) | $(BUILD)
+$(BUILD)/wellcooked-navd: $(OBJ_DIR)/navd.o $(LINK_OBJS) | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
-$(BUILD)/kitchenos-monitor: $(OBJ_DIR)/monitor_main.o $(LINK_OBJS) | $(BUILD)
+$(BUILD)/wellcooked-monitor: $(OBJ_DIR)/monitor_main.o $(LINK_OBJS) | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 # One binary per tests/test_*.c suite, linked against every non-main module object.

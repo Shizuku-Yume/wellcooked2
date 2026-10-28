@@ -1,5 +1,5 @@
 /*
- * supervisor.c -- KitchenOS 守护进程。
+ * supervisor.c -- WellCooked 守护进程。
  *
  * 它只做三件事，任何一件都不属于 Scheduler：
  *   1. 在完整 daemon 环境里保持单实例（pid 文件 fcntl 锁）；
@@ -20,17 +20,17 @@
 #define _XOPEN_SOURCE 700
 #endif
 
-#include <kitchenos/child.h>
-#include <kitchenos/daemon.h>
-#include <kitchenos/kitchen.h>
-#include <kitchenos/log.h>
-#include <kitchenos/mq.h>
-#include <kitchenos/navtab.h>
-#include <kitchenos/policy.h>
-#include <kitchenos/resource.h>
-#include <kitchenos/shm.h>
-#include <kitchenos/supervise.h>
-#include <kitchenos/zones.h>
+#include <wellcooked/child.h>
+#include <wellcooked/daemon.h>
+#include <wellcooked/kitchen.h>
+#include <wellcooked/log.h>
+#include <wellcooked/mq.h>
+#include <wellcooked/navtab.h>
+#include <wellcooked/policy.h>
+#include <wellcooked/resource.h>
+#include <wellcooked/shm.h>
+#include <wellcooked/supervise.h>
+#include <wellcooked/zones.h>
 
 #include <errno.h>
 #include <fcntl.h>
@@ -531,11 +531,11 @@ static int spawn_child(supervisor *s, int index)
     }
 
     argv[ac++] = (char *)(sc->kind == SPEC_BRIDGE
-                              ? "kitchenos-bridge"
+                              ? "wellcooked-bridge"
                               : (sc->kind == SPEC_SCHEDULER
-                                     ? "kitchenos-scheduler"
-                                     : (sc->kind == SPEC_NAVD ? "kitchenos-navd"
-                                                              : "kitchenos-worker")));
+                                     ? "wellcooked-scheduler"
+                                     : (sc->kind == SPEC_NAVD ? "wellcooked-navd"
+                                                              : "wellcooked-worker")));
 
     if (sc->kind == SPEC_BRIDGE) {
         snprintf(port_buf, sizeof port_buf, "%d", s->bridge_port);
@@ -905,11 +905,11 @@ static void unlink_resources(supervisor *s)
     kos_error_clear(&err);
     rc = kos_resources_unlink(&s->kitchen, s->instance, &err);
     if (rc == KOS_OK) {
-        kos_log_info(s->log, "resource_unlink", "prefix=/kitchenos_res_ result=ok");
+        kos_log_info(s->log, "resource_unlink", "prefix=/wellcooked_res_ result=ok");
     } else {
         error_text(&err, text, sizeof text);
         kos_log_warn(s->log, "resource_unlink",
-                     "prefix=/kitchenos_res_ result=failed error=%s", text);
+                     "prefix=/wellcooked_res_ result=failed error=%s", text);
     }
 }
 
@@ -1156,7 +1156,7 @@ static int resolve_bin(const char *dir, const char *override, const char *name, 
 static void print_usage(FILE *out)
 {
     fprintf(out,
-            "usage: kitchenos-supervisor [--foreground] [--runtime-dir DIR]\n"
+            "usage: wellcooked-supervisor [--foreground] [--runtime-dir DIR]\n"
             "                            [--workers N] [--bridge-host H] [--bridge-port P]\n"
             "                            [--no-bridge] [--no-scheduler]\n"
             "                            [--bin-dir DIR] [--bridge-bin FILE]\n"
@@ -1177,12 +1177,12 @@ static void print_help(void)
 {
     print_usage(stdout);
     printf("\n"
-           "KitchenOS Supervisor: the daemon that owns the process tree and nothing else.\n"
+           "WellCooked Supervisor: the daemon that owns the process tree and nothing else.\n"
            "\n"
            "Options:\n"
            "  --foreground             stay in the foreground (tests, debugging)\n"
            "  --runtime-dir DIR        pid/logs/status directory (default: $XDG_RUNTIME_DIR/\n"
-           "                           kitchenos, else /tmp/kitchenos-<uid>)\n"
+           "                           wellcooked, else /tmp/wellcooked-<uid>)\n"
            "  --instance N             multi-instance suffix: IPC names get _N, runtime\n"
            "                           dir becomes <base>/instance-N (default: none)\n"
            "  --workers N              number of Chef Worker processes (default %d, max %d)\n"
@@ -1204,7 +1204,7 @@ static void print_help(void)
            "  --scheduler-bin FILE     explicit Scheduler binary\n"
            "  --worker-bin FILE        explicit Worker binary\n"
            "  --navd-bin FILE          explicit navigation daemon binary\n"
-           "  --nav-name NAME          /kitchenos_nav name (default: derived from --state-name)\n"
+           "  --nav-name NAME          /wellcooked_nav name (default: derived from --state-name)\n"
            "  --nav-sem-name NAME      nav table lock name (same derivation)\n"
            "  --nav pibt|pa            navd planner (default pibt; pa = comparison baseline)\n"
            "  --health-interval-ms M   SIGALRM health tick period (default %d)\n"
@@ -1615,7 +1615,7 @@ static int supervisor_main(supervisor *s)
     /*
      * 自定义 shm 名的运行（场景 harness、多个 batch）通常不传 --instance：Scheduler
      * 与 Worker 的 mq/资源信号量就会退回默认名，同机并行的两棵树会互相收对方的事件
-     * （os-loop 的 RECOVERED 丢在另一棵树的 /kitchenos_events 上）。用本进程 pid
+     * （os-loop 的 RECOVERED 丢在另一棵树的 /wellcooked_events 上）。用本进程 pid
      * 派生一个实例号：同一棵树内所有子进程一致，不同运行互不相同。
      */
     if (s->instance == KOS_INSTANCE_NONE && (s->state_name_set || s->sem_name_set)) {
@@ -1640,14 +1640,14 @@ static int supervisor_main(supervisor *s)
                                  s->instance, s->runtime_dir, sizeof s->runtime_dir,
                                  &err) != KOS_OK) {
         error_text(&err, text, sizeof text);
-        fprintf(stderr, "kitchenos-supervisor: 运行目录不可用: %s\n", text);
+        fprintf(stderr, "wellcooked-supervisor: 运行目录不可用: %s\n", text);
         return EXIT_STARTUP;
     }
     if (kos_runtime_log_path(s->runtime_dir, "supervisor.log", s->supervisor_log_path,
                              sizeof s->supervisor_log_path, &err) != KOS_OK ||
         snprintf(s->status_path, sizeof s->status_path, "%s/status.json",
                  s->runtime_dir) >= (int)sizeof s->status_path) {
-        fprintf(stderr, "kitchenos-supervisor: 状态/日志路径不可用\n");
+        fprintf(stderr, "wellcooked-supervisor: 状态/日志路径不可用\n");
         return EXIT_STARTUP;
     }
 
@@ -1655,48 +1655,48 @@ static int supervisor_main(supervisor *s)
         char resolved[KOS_DAEMON_PATH_MAX];
 
         if (realpath(s->bin_dir, resolved) == NULL) {
-            fprintf(stderr, "kitchenos-supervisor: bin-dir 不存在: %s\n", s->bin_dir);
+            fprintf(stderr, "wellcooked-supervisor: bin-dir 不存在: %s\n", s->bin_dir);
             return EXIT_STARTUP;
         }
         copy_str(s->bin_dir, sizeof s->bin_dir, resolved);
     } else if (self_dir(dir, sizeof dir) == NULL) {
-        fprintf(stderr, "kitchenos-supervisor: 无法确定自身目录（/proc/self/exe）\n");
+        fprintf(stderr, "wellcooked-supervisor: 无法确定自身目录（/proc/self/exe）\n");
         return EXIT_STARTUP;
     } else {
         copy_str(s->bin_dir, sizeof s->bin_dir, dir);
     }
 
     if (!s->no_bridge &&
-        resolve_bin(s->bin_dir, s->bridge_bin_opt, "kitchenos-bridge", s->bridge_bin,
+        resolve_bin(s->bin_dir, s->bridge_bin_opt, "wellcooked-bridge", s->bridge_bin,
                     sizeof s->bridge_bin, &err) != KOS_OK) {
         error_text(&err, text, sizeof text);
-        fprintf(stderr, "kitchenos-supervisor: Bridge 不可用: %s\n", text);
+        fprintf(stderr, "wellcooked-supervisor: Bridge 不可用: %s\n", text);
         return EXIT_STARTUP;
     }
     if (!s->no_scheduler &&
-        resolve_bin(s->bin_dir, s->scheduler_bin_opt, "kitchenos-scheduler",
+        resolve_bin(s->bin_dir, s->scheduler_bin_opt, "wellcooked-scheduler",
                     s->scheduler_bin, sizeof s->scheduler_bin, &err) != KOS_OK) {
         error_text(&err, text, sizeof text);
-        fprintf(stderr, "kitchenos-supervisor: Scheduler 不可用: %s\n", text);
+        fprintf(stderr, "wellcooked-supervisor: Scheduler 不可用: %s\n", text);
         return EXIT_STARTUP;
     }
     if (s->workers > 0 &&
-        resolve_bin(s->bin_dir, s->worker_bin_opt, "kitchenos-worker", s->worker_bin,
+        resolve_bin(s->bin_dir, s->worker_bin_opt, "wellcooked-worker", s->worker_bin,
                     sizeof s->worker_bin, &err) != KOS_OK) {
         error_text(&err, text, sizeof text);
-        fprintf(stderr, "kitchenos-supervisor: Worker 不可用: %s\n", text);
+        fprintf(stderr, "wellcooked-supervisor: Worker 不可用: %s\n", text);
         return EXIT_STARTUP;
     }
     if (s->workers > 0 &&
-        resolve_bin(s->bin_dir, s->navd_bin_opt, "kitchenos-navd", s->navd_bin,
+        resolve_bin(s->bin_dir, s->navd_bin_opt, "wellcooked-navd", s->navd_bin,
                     sizeof s->navd_bin, &err) != KOS_OK) {
         error_text(&err, text, sizeof text);
-        fprintf(stderr, "kitchenos-supervisor: navd 不可用: %s\n", text);
+        fprintf(stderr, "wellcooked-supervisor: navd 不可用: %s\n", text);
         return EXIT_STARTUP;
     }
     if (kos_navtab_default_names(s->state_name, s->nav_name, sizeof s->nav_name,
                                  s->nav_sem_name, sizeof s->nav_sem_name) != 0) {
-        fprintf(stderr, "kitchenos-supervisor: 导航表名字过长\n");
+        fprintf(stderr, "wellcooked-supervisor: 导航表名字过长\n");
         return EXIT_STARTUP;
     }
     if (s->nav_name_opt != NULL) {
@@ -1707,15 +1707,15 @@ static int supervisor_main(supervisor *s)
     }
     if (s->instance >= 0) {
         if (!s->nav_name_set &&
-            snprintf(s->nav_name, sizeof s->nav_name, "/kitchenos_nav_%d", s->instance) >=
+            snprintf(s->nav_name, sizeof s->nav_name, "/wellcooked_nav_%d", s->instance) >=
                 (int)sizeof s->nav_name) {
-            fprintf(stderr, "kitchenos-supervisor: 导航表名字过长\n");
+            fprintf(stderr, "wellcooked-supervisor: 导航表名字过长\n");
             return EXIT_STARTUP;
         }
         if (!s->nav_sem_name_set &&
-            snprintf(s->nav_sem_name, sizeof s->nav_sem_name, "/kitchenos_nav_lock_%d",
+            snprintf(s->nav_sem_name, sizeof s->nav_sem_name, "/wellcooked_nav_lock_%d",
                      s->instance) >= (int)sizeof s->nav_sem_name) {
-            fprintf(stderr, "kitchenos-supervisor: 导航表锁名字过长\n");
+            fprintf(stderr, "wellcooked-supervisor: 导航表锁名字过长\n");
             return EXIT_STARTUP;
         }
     }
@@ -1724,7 +1724,7 @@ static int supervisor_main(supervisor *s)
         char resolved[KOS_DAEMON_PATH_MAX];
 
         if (realpath(s->kitchen_path, resolved) == NULL) {
-            fprintf(stderr, "kitchenos-supervisor: kitchen 文件不存在: %s\n",
+            fprintf(stderr, "wellcooked-supervisor: kitchen 文件不存在: %s\n",
                     s->kitchen_path);
             return EXIT_STARTUP;
         }
@@ -1732,7 +1732,7 @@ static int supervisor_main(supervisor *s)
         s->kitchen_path = s->kitchen_file;
     } else if (kos_child_default_config_path("kitchen.example.json", s->kitchen_file,
                                               sizeof s->kitchen_file) != 0) {
-        fprintf(stderr, "kitchenos-supervisor: 找不到 kitchen.example.json\n");
+        fprintf(stderr, "wellcooked-supervisor: 找不到 kitchen.example.json\n");
         return EXIT_STARTUP;
     } else {
         s->kitchen_path = s->kitchen_file;
@@ -1744,12 +1744,12 @@ static int supervisor_main(supervisor *s)
             char cwd[KOS_DAEMON_PATH_MAX];
 
             if (getcwd(cwd, sizeof cwd) == NULL) {
-                fprintf(stderr, "kitchenos-supervisor: 无法获取当前工作目录\n");
+                fprintf(stderr, "wellcooked-supervisor: 无法获取当前工作目录\n");
                 return EXIT_STARTUP;
             }
             if (snprintf(s->runs_dir_buf, sizeof s->runs_dir_buf, "%s/%s", cwd, s->runs_dir) >=
                 (int)sizeof s->runs_dir_buf) {
-                fprintf(stderr, "kitchenos-supervisor: runs-dir 路径过长\n");
+                fprintf(stderr, "wellcooked-supervisor: runs-dir 路径过长\n");
                 return EXIT_STARTUP;
             }
         }
@@ -1760,7 +1760,7 @@ static int supervisor_main(supervisor *s)
         kos_error_clear(&err);
         if (kos_daemonize(&s->daemon, &err) != KOS_OK) {
             error_text(&err, text, sizeof text);
-            fprintf(stderr, "kitchenos-supervisor: daemonize 失败: %s\n", text);
+            fprintf(stderr, "wellcooked-supervisor: daemonize 失败: %s\n", text);
             return EXIT_STARTUP;
         }
     }
@@ -1773,13 +1773,13 @@ static int supervisor_main(supervisor *s)
         snprintf(pid_path, sizeof pid_path, "%s/%s", s->runtime_dir, KOS_PIDFILE_NAME);
         rc = kos_pidfile_acquire(pid_path, &s->pidfile, &err);
         if (rc == KOS_ERR_EXISTS) {
-            fprintf(stderr, "kitchenos-supervisor: 已在运行（%s 被锁定）\n", pid_path);
+            fprintf(stderr, "wellcooked-supervisor: 已在运行（%s 被锁定）\n", pid_path);
             kos_daemon_ready(&s->daemon, EXIT_RUNNING);
             return EXIT_RUNNING;
         }
         if (rc != KOS_OK) {
             error_text(&err, text, sizeof text);
-            fprintf(stderr, "kitchenos-supervisor: pid 文件不可用: %s\n", text);
+            fprintf(stderr, "wellcooked-supervisor: pid 文件不可用: %s\n", text);
             kos_daemon_ready(&s->daemon, EXIT_STARTUP);
             return EXIT_STARTUP;
         }
@@ -1789,7 +1789,7 @@ static int supervisor_main(supervisor *s)
     if (kos_log_open(s->supervisor_log_path, s->verbose ? KOS_LOG_DEBUG : KOS_LOG_INFO,
                      &s->log, &err) != KOS_OK) {
         error_text(&err, text, sizeof text);
-        fprintf(stderr, "kitchenos-supervisor: 打不开日志 %s: %s\n", s->supervisor_log_path,
+        fprintf(stderr, "wellcooked-supervisor: 打不开日志 %s: %s\n", s->supervisor_log_path,
                 text);
         kos_pidfile_release(&s->pidfile, 1);
         kos_daemon_ready(&s->daemon, EXIT_STARTUP);
@@ -1945,7 +1945,7 @@ int main(int argc, char **argv)
         return EXIT_OK;
     }
     if (parsed == ARG_VERSION) {
-        printf("kitchenos-supervisor %s\n", SUPERVISOR_VERSION);
+        printf("wellcooked-supervisor %s\n", SUPERVISOR_VERSION);
         return EXIT_OK;
     }
     if (parsed != ARG_OK) {

@@ -1,5 +1,5 @@
 /*
- * kitchenos-worker-stub -- 一个 Chef Worker 的替身。
+ * wellcooked-worker-stub -- 一个 Chef Worker 的替身。
  *
  * Bridge 的帧屏障要成立，必须有人往输入槽里写东西，而真正的 Worker 还没实现。
  * 这个程序按固定频率把 "move" 动作发布进指定的一格，于是屏障、就绪信号量和
@@ -21,7 +21,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#include <kitchenos/shm.h>
+#include <wellcooked/shm.h>
 
 /* 让 move 的目标真的在动：恒定目标看不出"这一帧和上一帧不是同一份输入"。
  * 用三角波而不是 cos/sin —— libm 不在 Makefile 的 LDFLAGS 里，而一个替身
@@ -46,7 +46,7 @@ static void usage(FILE *out, const char *argv0)
             "          [--target X,Y] [--waypoints N]\n"
             "\n"
             "Publishes one Chef Worker's worth of input into slot K of an existing\n"
-            "KitchenOS shared segment. The segment must already exist (start the\n"
+            "WellCooked shared segment. The segment must already exist (start the\n"
             "Bridge first); this program never creates it.\n"
             "\n"
             "move sends a triangular wave between STUB_X0 and STUB_X1 by default;\n"

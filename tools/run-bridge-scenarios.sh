@@ -18,11 +18,11 @@ set -u -o pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 PY=${PYTHON:-python3}
-BRIDGE=${KITCHENOS_BRIDGE:-$ROOT/bridge/build/kitchenos-bridge}
-STUB=${KITCHENOS_WORKER_STUB:-$ROOT/bridge/build/kitchenos-worker-stub}
-LOGDIR=${KITCHENOS_LOG_DIR:-$ROOT/logs}
-PREFIX=kitchenos_c04
-RUN_ID=${KITCHENOS_RUN_ID:-$$}
+BRIDGE=${WELLCOOKED_BRIDGE:-$ROOT/bridge/build/wellcooked-bridge}
+STUB=${WELLCOOKED_WORKER_STUB:-$ROOT/bridge/build/wellcooked-worker-stub}
+LOGDIR=${WELLCOOKED_LOG_DIR:-$ROOT/logs}
+PREFIX=wellcooked_c04
+RUN_ID=${WELLCOOKED_RUN_ID:-$$}
 SCENARIOS=(happy one-slot no-heartbeat bad-frames connect-mode reconnect-storm
            silent-connect data-shapes second-peer pickup-dash path-face-work
            input-grace os-loop round-start os-resources nav-corridor nav-stuck nav-crash
@@ -49,8 +49,8 @@ usage() {
 选项:
   --only NAME        只跑指定场景（可重复，也可用逗号分隔）
   --timeout SECS     单个场景的超时（默认 90，用 timeout 兜底，缺 Bridge 也不会挂住）
-  --bridge PATH      kitchenos-bridge 路径
-  --worker-stub PATH kitchenos-worker-stub 路径
+  --bridge PATH      wellcooked-bridge 路径
+  --worker-stub PATH wellcooked-worker-stub 路径
   --log-dir DIR      场景日志目录（默认 <repo>/logs）
   --strict           透传 --strict 给 fake_plugin：soft 检查升级为硬断言
   --allow-skip       有场景被跳过时仍然退出 0（默认跳过算未通过）
@@ -128,7 +128,7 @@ mkdir -p "$LOGDIR"
 
 if [ ! -f "$BRIDGE" ]; then
     echo "FAIL: Bridge 二进制不存在: $BRIDGE" >&2
-    echo "      先构建: cd bridge && make   （或 --bridge PATH / KITCHENOS_BRIDGE 指定）" >&2
+    echo "      先构建: cd bridge && make   （或 --bridge PATH / WELLCOOKED_BRIDGE 指定）" >&2
     exit 2
 fi
 if [ ! -x "$BRIDGE" ]; then
@@ -163,7 +163,7 @@ SKIPPED=0
 FAILED_NAMES=()
 
 # 只清掉本场景自己的进程和 IPC 对象。
-# 模式必须以二进制路径开头（^）：否则 "kitchenos-bridge .*--state-name X" 会连
+# 模式必须以二进制路径开头（^）：否则 "wellcooked-bridge .*--state-name X" 会连
 # 正在跑这个场景的 python3 一起匹配上（它的命令行里既有 --bridge 路径又有
 # --state-name），自己把自己的场景 SIGKILL 掉，症状是"场景 0 秒超时"。
 cleanup_scenario() {
@@ -214,7 +214,7 @@ run_one() {
     local name=$1
     local limit
     limit=$(scenario_limit "$name")
-    # 前导 '/' 与 shm.h 的默认名 "/kitchenos_state" 一致；glibc 只接受单个前导斜杠
+    # 前导 '/' 与 shm.h 的默认名 "/wellcooked_state" 一致；glibc 只接受单个前导斜杠
     local state="/${PREFIX}_${RUN_ID}_${name}"
     local sem="${state}_ready"
     local log="$LOGDIR/bridge-${RUN_ID}-${name}.log"
@@ -326,12 +326,12 @@ if [ -n "$leftover" ]; then
 else
     echo "/dev/shm: 本次运行的 IPC 对象已清空"
 fi
-stray=$(pgrep -af "kitchenos-(bridge|worker-stub)" || true)
+stray=$(pgrep -af "wellcooked-(bridge|worker-stub)" || true)
 if [ -n "$stray" ]; then
-    echo "注意: 仍有 kitchenos 进程在跑（不一定是本工具的，可能属于其他 agent 的测试）:"
+    echo "注意: 仍有 wellcooked 进程在跑（不一定是本工具的，可能属于其他 agent 的测试）:"
     echo "$stray"
 else
-    echo "进程: 没有残留的 kitchenos-bridge / kitchenos-worker-stub"
+    echo "进程: 没有残留的 wellcooked-bridge / wellcooked-worker-stub"
 fi
 
 if [ "$FAILED" -gt 0 ]; then

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:kitchenos:schema:hello",
+  "$id": "urn:wellcooked:schema:hello",
   "title": "hello",
   "description": "双向：连接建立后说明身份。Bridge 的 instance 固定为 linux-bridge。",
   "type": "object",

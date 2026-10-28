@@ -1,5 +1,5 @@
 /*
- * test_monitor.c -- live.json 编码与 kitchenos-monitor 进程。
+ * test_monitor.c -- live.json 编码与 wellcooked-monitor 进程。
  *
  * 控制台只看 live.json：字段缺了、计时器/位置的"有效"位被忽略、段不存在时不报
  * ok:false，网页就会画出假画面。这里用固定世界状态证明编码，再起真进程挂一个
@@ -9,9 +9,9 @@
 #define _POSIX_C_SOURCE 200809L
 #endif
 
-#include "kitchenos/json.h"
-#include "kitchenos/monitor.h"
-#include "kitchenos/shm.h"
+#include "wellcooked/json.h"
+#include "wellcooked/monitor.h"
+#include "wellcooked/shm.h"
 
 #include <signal.h>
 #include <stdio.h>
@@ -179,7 +179,7 @@ static void resolve_binary(void)
         return;
     }
     *slash = '\0';
-    snprintf(g_monitor_bin, sizeof g_monitor_bin, "%s/kitchenos-monitor", exe);
+    snprintf(g_monitor_bin, sizeof g_monitor_bin, "%s/wellcooked-monitor", exe);
 }
 
 static pid_t spawn_monitor(const char *dir, const char *state_name, const char *sem_name)
@@ -187,8 +187,8 @@ static pid_t spawn_monitor(const char *dir, const char *state_name, const char *
     pid_t pid = fork();
 
     if (pid == 0) {
-        setenv("KITCHENOS_SEM_NAME", sem_name, 1);
-        execl(g_monitor_bin, "kitchenos-monitor", "--runtime-dir", dir, "--state-name",
+        setenv("WELLCOOKED_SEM_NAME", sem_name, 1);
+        execl(g_monitor_bin, "wellcooked-monitor", "--runtime-dir", dir, "--state-name",
               state_name, "--interval-ms", "50", (char *)NULL);
         _exit(127);
     }
@@ -246,16 +246,16 @@ static void test_process(void)
     json_value *doc;
     pid_t pid;
 
-    printf("[test_monitor] 2. kitchenos-monitor 进程\n");
+    printf("[test_monitor] 2. wellcooked-monitor 进程\n");
     resolve_binary();
     expect(access(g_monitor_bin, X_OK) == 0, "monitor_binary_built");
     if (mkdtemp(dir) == NULL) {
         expect(0, "mkdtemp");
         return;
     }
-    snprintf(shm_name, sizeof shm_name, "/kitchenos_test_monitor_%ld", (long)getpid());
-    snprintf(sem_name, sizeof sem_name, "/kitchenos_test_sem_monitor_%ld", (long)getpid());
-    snprintf(missing, sizeof missing, "/kitchenos_test_monitor_missing_%ld", (long)getpid());
+    snprintf(shm_name, sizeof shm_name, "/wellcooked_test_monitor_%ld", (long)getpid());
+    snprintf(sem_name, sizeof sem_name, "/wellcooked_test_sem_monitor_%ld", (long)getpid());
+    snprintf(missing, sizeof missing, "/wellcooked_test_monitor_missing_%ld", (long)getpid());
 
     /* 段不存在：照样写 live.json，但 ok=false，网页据此显示"等待游戏"。 */
     pid = spawn_monitor(dir, missing, sem_name);

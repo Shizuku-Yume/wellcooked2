@@ -1,5 +1,5 @@
-#include <kitchenos/json.h>
-#include <kitchenos/metrics.h>
+#include <wellcooked/json.h>
+#include <wellcooked/metrics.h>
 
 #include <errno.h>
 #include <fcntl.h>
@@ -72,7 +72,7 @@ int kos_metrics_write(const char *path, const kos_metrics_snapshot *snapshot, ch
 
     json_writer_object_begin(&writer);
     json_writer_key(&writer, "schema");
-    json_writer_string(&writer, "kitchenos.metrics.v1");
+    json_writer_string(&writer, "wellcooked.metrics.v1");
     json_writer_key(&writer, "t_ms");
     json_writer_int(&writer, snapshot->t_ms);
     json_writer_key(&writer, "reason");

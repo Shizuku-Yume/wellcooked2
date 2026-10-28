@@ -5,7 +5,7 @@
  * cannot be assumed to have network access for a package, and the game plugin
  * only ever emits this subset.
  */
-#include <kitchenos/json.h>
+#include <wellcooked/json.h>
 
 #include <errno.h>
 #include <float.h>

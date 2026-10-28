@@ -1,11 +1,11 @@
 /*
- * kitchenos-monitor：只读挂接世界状态共享内存，周期性把一致快照写成
+ * wellcooked-monitor：只读挂接世界状态共享内存，周期性把一致快照写成
  * <runtime>/live.json（原子 rename），给 Web 控制台画实时画面。
  * 不写共享内存、不碰输入槽；段不存在时写 {"ok":false,...} 并继续重试挂接。
  *
- *   kitchenos-monitor --runtime-dir DIR [--state-name /name] [--interval-ms 200]
+ *   wellcooked-monitor --runtime-dir DIR [--state-name /name] [--interval-ms 200]
  */
-#include <kitchenos/monitor.h>
+#include <wellcooked/monitor.h>
 #include <fcntl.h>
 #include <signal.h>
 #include <stdio.h>
@@ -65,7 +65,7 @@ static void write_unavailable(const char *dir, const char *reason)
 
 static void usage(void)
 {
-    fprintf(stderr, "usage: kitchenos-monitor --runtime-dir DIR [--state-name /name] "
+    fprintf(stderr, "usage: wellcooked-monitor --runtime-dir DIR [--state-name /name] "
                     "[--interval-ms N]\n");
 }
 

@@ -12,11 +12,11 @@
 `wash` 工序；每次决策的各分量写进 `decisions.jsonl`。
 
 **Blocked by:** 03
-**Files:** `bridge/include/kitchenos/{assign,policy}.h`、`bridge/src/{assign,policy,scheduler}.c`、
+**Files:** `bridge/include/wellcooked/{assign,policy}.h`、`bridge/src/{assign,policy,scheduler}.c`、
 `bridge/tests/test_assign.c`、`bridge/tests/test_policy.c`
 
 **Read first:** `.workflow/specs/kitchen-control.md` 的"L3 调度"、W7、W8；
-`.workflow/specs/os-core.md` 的 Scheduler 段；`bridge/include/kitchenos/{policy,recipes,resource}.h`
+`.workflow/specs/os-core.md` 的 Scheduler 段；`bridge/include/wellcooked/{policy,recipes,resource}.h`
 **Covers:** W7, W8
 
 **Check:** `cd bridge && make test` → `test_assign`：2 个空闲厨师 × 3 道工序的配对与手算匈牙利
@@ -39,7 +39,7 @@ LLF/HRRN 不在 `policy.h`，Scheduler 仍是"每个空闲厨师挑策略选中�
 
 **实现（2026-10-25）**
 
-- `bridge/include/kitchenos/assign.h`、`bridge/src/assign.c`：派工代价（五项带符号分量）、
+- `bridge/include/wellcooked/assign.h`、`bridge/src/assign.c`：派工代价（五项带符号分量）、
   矩形匈牙利配对（厨师多于工序时转置；不可达配对用 `unreachable` 标记并在求解后丢弃）、
   锅链标记（cook 及其全部前置）、洗盘判定、`<kitchen.json 同目录>/schedule.json` 读取。
 - `policy.h/policy.c`：新增 LLF 与 HRRN，四种策略主键并列时都退化为 FCFS；名字/轮换/CLI
@@ -65,7 +65,7 @@ LLF/HRRN 不在 `policy.h`，Scheduler 仍是"每个空闲厨师挑策略选中�
 
 - `cd bridge && make test`：13 个套件、0 失败；`test_assign` 54 项、`test_policy` 53 项全过。
 - `cd bridge && make test-san`：13 个套件、0 失败（ASan/UBSan）。
-- 真实路径：`test_assign` 第 9 节启动 `build/kitchenos-scheduler`（临时地图、真实资源信号量、
+- 真实路径：`test_assign` 第 9 节启动 `build/wellcooked-scheduler`（临时地图、真实资源信号量、
   真实 mq），`decisions.jsonl` 每条都有五个分量、派工行 `cost = 五项之和`，三次 SIGHUP 依次
   出现 EDF/LLF/HRRN；第 10 节写入带 2 个厨师坐标与 `dirty_plates=2` 的 shm 世界状态，Scheduler
   生成并派出一道 `wash`，`travel_cells > 0`，事件流有 `wash_generated`。`test_policy` 第 5 节
@@ -81,7 +81,7 @@ LLF/HRRN 不在 `policy.h`，Scheduler 仍是"每个空闲厨师挑策略选中�
 
 **Review**
 
-`Review boundary: d98cf7a + bridge/{include/kitchenos/{assign,child,metrics,policy}.h,src/{assign,child,metrics,policy,scheduler,supervisor}.c,tests/{test_assign,test_policy,scheduler_fixture.h}}, config/maps/*/schedule.json, .workflow/{specs,glossary,decisions,tasks}; round: 1–3; briefs: A,B; boundaries: schedule JSON、shm 世界状态、Scheduler↔Worker mq；findings: 8 blocking / 3 nonblocking（round 3 后无 blocking 遗留）`。
+`Review boundary: d98cf7a + bridge/{include/wellcooked/{assign,child,metrics,policy}.h,src/{assign,child,metrics,policy,scheduler,supervisor}.c,tests/{test_assign,test_policy,scheduler_fixture.h}}, config/maps/*/schedule.json, .workflow/{specs,glossary,decisions,tasks}; round: 1–3; briefs: A,B; boundaries: schedule JSON、shm 世界状态、Scheduler↔Worker mq；findings: 8 blocking / 3 nonblocking（round 3 后无 blocking 遗留）`。
 
 - **blocking（已修）匈牙利矩阵行距。** `solve_rows` 按实际 `cols` 读紧凑矩阵，调用方却传了
   `[33][33]` 二维数组。改成 `matrix[r * cols + c]` 的一维缓冲；`scheduler.c` 的 terms/

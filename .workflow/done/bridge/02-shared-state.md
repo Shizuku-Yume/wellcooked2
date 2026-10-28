@@ -4,9 +4,9 @@
 **Blocked by:** None
 **Task type:** feature
 **Covers:** W1, W3
-**Delivers:** `bridge/` 的 `shm` 模块：`/kitchenos_state` 布局、世界状态 seqlock、每厨师一个
-输入槽、就绪信号量 `/kitchenos_input_ready`，以及把它单独跑起来的单元测试。
-**Files:** `bridge/include/kitchenos/shm.h`, `bridge/src/shm.c`, `bridge/tests/test_shm.c`
+**Delivers:** `bridge/` 的 `shm` 模块：`/wellcooked_state` 布局、世界状态 seqlock、每厨师一个
+输入槽、就绪信号量 `/wellcooked_input_ready`，以及把它单独跑起来的单元测试。
+**Files:** `bridge/include/wellcooked/shm.h`, `bridge/src/shm.c`, `bridge/tests/test_shm.c`
 **Read first:** `.workflow/specs/bridge.md`（How it is built 的并发规则）,
 `overcooked_os_course_project.md` §5.1「共享内存 + 信号量」与 §6.1 Bridge 职责。
 **Done when:**
@@ -50,19 +50,19 @@ run3: 检查 87 项，失败 2 项
 修好抖动后暴露出第二个缺陷：**每次 `make test` 都泄漏共享内存对象**。
 
 ```
-$ rm -f /dev/shm/kitchenos* /dev/shm/sem.kitchenos*
-$ ls /dev/shm | grep -c kitchenos
+$ rm -f /dev/shm/wellcooked* /dev/shm/sem.wellcooked*
+$ ls /dev/shm | grep -c wellcooked
 0
 $ cd bridge && make test; echo "exit=$?"
 exit=0
-$ ls /dev/shm | grep -c kitchenos
+$ ls /dev/shm | grep -c wellcooked
 6
-kitchenos_test_open_<pid> / kitchenos_test_seq_<pid> / kitchenos_test_slots_<pid>
-sem.kitchenos_test_sem_open_<pid> / _seq_<pid> / _slots_<pid>
+wellcooked_test_open_<pid> / wellcooked_test_seq_<pid> / wellcooked_test_slots_<pid>
+sem.wellcooked_test_sem_open_<pid> / _seq_<pid> / _slots_<pid>
 ```
 
 三个 fixture 各泄漏一内存对象 + 一信号量；实测累积到 30 个。`/dev/shm` 是 tmpfs，
-这就是实打实占着内存直到重启；而且 `ls /dev/shm | grep kitchenos` 为空是 task 03 的
+这就是实打实占着内存直到重启；而且 `ls /dev/shm | grep wellcooked` 为空是 task 03 的
 字面 Check，这个泄漏会让它因为无关原因失败。修复后实测：
 
 ```
@@ -106,19 +106,19 @@ make test exit=0
 ### 对 task 03 Check 的一条重要限定
 
 `make test` 自身残留为 0（逐套件实测 `test_framing/json/protocol/net/shm` 各自 残留=0）。
-但**裸跑 `ls /dev/shm | grep -c kitchenos` 在别人有 Bridge 活着时不会是 0** —— 那些对象属于
+但**裸跑 `ls /dev/shm | grep -c wellcooked` 在别人有 Bridge 活着时不会是 0** —— 那些对象属于
 并发运行的 harness。所以这条 Check 要么按本次运行使用的 `--state-name` 限定，要么在没有其他
-KitchenOS 进程时取。
+WellCooked 进程时取。
 
 ### worker stub（integrator 补交付）
 
 
 `bridge/tools/worker_stub.c` 原属本任务，但长时间未交付；而 `tools/fake_plugin.py` 只认
-`bridge/build/kitchenos-worker-stub` 这一个真槽写入者、没有 Python 兜底，缺了它 W3 无法复现
+`bridge/build/wellcooked-worker-stub` 这一个真槽写入者、没有 Python 兜底，缺了它 W3 无法复现
 （一次 `make clean` 就把它连同证据一起删掉，且无法重建 —— 源文件不存在）。由 integrator
 按冻结 CLI 补写：
 
-    kitchenos-worker-stub --state-name NAME --sem-name NAME --chefs N --slot K --hz H --duration S
+    wellcooked-worker-stub --state-name NAME --sem-name NAME --chefs N --slot K --hz H --duration S
 
 只挂接、绝不创建段（段不存在时明确报错并提示先启动 Bridge，退出码 1）。补写过程中发现并
 修掉了自己的一个真缺陷：原实现用绝对时刻睡眠，被抢占落后时会**突发追赶**，用远少于

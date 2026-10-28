@@ -1,0 +1,858 @@
+{
+  "schema": "ppt-master.svg-quality-report.v1",
+  "stage": "final",
+  "target": "/home/shizuku/.agents/projects/wellcooked_report_20260930",
+  "source_fingerprint": {
+    "algorithm": "sha256",
+    "digest": "928f393b361d7127d4c5f9732d93a9106bdcce727baec493a0fb07fdc8fbd27f",
+    "file_count": 8,
+    "files": [
+      {
+        "file": "01_slide.svg",
+        "sha256": "c04bc87fdd49c18e2bd1e95638531d15428e815432c0b068b3f24f00229dc59f"
+      },
+      {
+        "file": "02_slide.svg",
+        "sha256": "862632d5cc5ac8e031f3f72e40f0f29a7d76eb72b00ba151de4ce47d29f29299"
+      },
+      {
+        "file": "03_slide.svg",
+        "sha256": "e0114c0541cc1bdfc731a9ab0057243a24984bc1c504dadd0dd7c34e1bc70e63"
+      },
+      {
+        "file": "04_slide.svg",
+        "sha256": "dabf8d191831055c84468f45a38407a35a04ef6fdd4fd3b456446049a68072d7"
+      },
+      {
+        "file": "05_slide.svg",
+        "sha256": "cdacb1d7fb6413540be1404a44293ef1e973b1ed7d90c9289d63a34af08461eb"
+      },
+      {
+        "file": "06_slide.svg",
+        "sha256": "d7fe573f56916558b01479c0d27f7eff2f362acee843ea1487a3a34435974b7c"
+      },
+      {
+        "file": "07_slide.svg",
+        "sha256": "80899131751eba831ea76e69021b2f509c19be9cd2c8639b049b04408ee8a885"
+      },
+      {
+        "file": "08_slide.svg",
+        "sha256": "2e78eb0b4db0084363e5444800472c13be1e94c932476caed56f1e0f1dcba3e2"
+      }
+    ]
+  },
+  "summary": {
+    "total": 8,
+    "passed": 0,
+    "warnings": 8,
+    "errors": 0
+  },
+  "issue_types": {},
+  "categories": {
+    "blocking": {
+      "count": 0,
+      "issues": []
+    },
+    "introduced": {
+      "count": 12,
+      "issues": [
+        {
+          "file": "01_slide.svg",
+          "message": "Noncanonical compact authoring: Authoring SVG contains noncanonical or redundant inherited style declarations (18 change(s)); examples (group:attr None -> value hoists the shared value onto that group; child:attr value -> None drops the copy the child now inherits): text[14]:font-family 'Microsoft YaHei, Arial' -> None; text[15]:font-family 'Microsoft YaHei, Arial' -> None; text[16]:font-family 'Microsoft YaHei, Arial' -> None (advisory; normalize with `python3 scripts/compact_svg_styles.py <svg_output> --inplace`, re-stamp pages that carry Chart/Table fallbacks, and rerun the final gate, or leave the explicit form)"
+        },
+        {
+          "file": "01_slide.svg",
+          "message": "4 ungrouped top-level Slide-local element(s) in svg_output (<circle> #2, <circle> #3, <text> #6, ...); group only logical content units in a top-level <g id=\"...\">. Keep genuine static page framing as a root primitive and declare a supported data-pptx-role such as \"background\" or \"decoration\""
+        },
+        {
+          "file": "02_slide.svg",
+          "message": "Noncanonical compact authoring: Authoring SVG contains noncanonical or redundant inherited style declarations (33 change(s)); examples (group:attr None -> value hoists the shared value onto that group; child:attr value -> None drops the copy the child now inherits): text[9]:font-family 'Microsoft YaHei, Arial' -> None; text[10]:font-family 'Microsoft YaHei, Arial' -> None; footer:fill None -> '#64748B' (advisory; normalize with `python3 scripts/compact_svg_styles.py <svg_output> --inplace`, re-stamp pages that carry Chart/Table fallbacks, and rerun the final gate, or leave the explicit form)"
+        },
+        {
+          "file": "03_slide.svg",
+          "message": "Noncanonical compact authoring: Authoring SVG contains noncanonical or redundant inherited style declarations (33 change(s)); examples (group:attr None -> value hoists the shared value onto that group; child:attr value -> None drops the copy the child now inherits): text[9]:font-family 'Microsoft YaHei, Arial' -> None; text[10]:font-family 'Microsoft YaHei, Arial' -> None; footer:fill None -> '#64748B' (advisory; normalize with `python3 scripts/compact_svg_styles.py <svg_output> --inplace`, re-stamp pages that carry Chart/Table fallbacks, and rerun the final gate, or leave the explicit form)"
+        },
+        {
+          "file": "04_slide.svg",
+          "message": "Noncanonical compact authoring: Authoring SVG contains noncanonical or redundant inherited style declarations (23 change(s)); examples (group:attr None -> value hoists the shared value onto that group; child:attr value -> None drops the copy the child now inherits): text[9]:font-family 'Microsoft YaHei, Arial' -> None; text[10]:font-family 'Microsoft YaHei, Arial' -> None; footer:fill None -> '#64748B' (advisory; normalize with `python3 scripts/compact_svg_styles.py <svg_output> --inplace`, re-stamp pages that carry Chart/Table fallbacks, and rerun the final gate, or leave the explicit form)"
+        },
+        {
+          "file": "04_slide.svg",
+          "message": "21 ungrouped top-level Slide-local element(s) in svg_output (<rect> #4, <rect> #5, <text> #6, ...); group only logical content units in a top-level <g id=\"...\">. Keep genuine static page framing as a root primitive and declare a supported data-pptx-role such as \"background\" or \"decoration\""
+        },
+        {
+          "file": "05_slide.svg",
+          "message": "Noncanonical compact authoring: Authoring SVG contains noncanonical or redundant inherited style declarations (36 change(s)); examples (group:attr None -> value hoists the shared value onto that group; child:attr value -> None drops the copy the child now inherits): text[9]:font-family 'Microsoft YaHei, Arial' -> None; text[10]:font-family 'Microsoft YaHei, Arial' -> None; footer:fill None -> '#64748B' (advisory; normalize with `python3 scripts/compact_svg_styles.py <svg_output> --inplace`, re-stamp pages that carry Chart/Table fallbacks, and rerun the final gate, or leave the explicit form)"
+        },
+        {
+          "file": "06_slide.svg",
+          "message": "Noncanonical compact authoring: Authoring SVG contains noncanonical or redundant inherited style declarations (47 change(s)); examples (group:attr None -> value hoists the shared value onto that group; child:attr value -> None drops the copy the child now inherits): text[9]:font-family 'Microsoft YaHei, Arial' -> None; text[10]:font-family 'Microsoft YaHei, Arial' -> None; footer:fill None -> '#64748B' (advisory; normalize with `python3 scripts/compact_svg_styles.py <svg_output> --inplace`, re-stamp pages that carry Chart/Table fallbacks, and rerun the final gate, or leave the explicit form)"
+        },
+        {
+          "file": "06_slide.svg",
+          "message": "<text> (x=770, y=166; text='Supervisor生命周期') exceeds <g id=\"daemon-flow\"> data-pptx-bounds on the vertical axis: content (770.0, 149.0)-(972.3, 173.0), container (770.0, 160.0)-(1220.0, 630.0), overflow horizontal 0.0%, vertical 2.3% (error above 5%); expand the root module bounds into available non-overlapping space; otherwise reflow the text"
+        },
+        {
+          "file": "07_slide.svg",
+          "message": "Noncanonical compact authoring: Authoring SVG contains noncanonical or redundant inherited style declarations (49 change(s)); examples (group:attr None -> value hoists the shared value onto that group; child:attr value -> None drops the copy the child now inherits): text[9]:font-family 'Microsoft YaHei, Arial' -> None; text[10]:font-family 'Microsoft YaHei, Arial' -> None; footer:fill None -> '#64748B' (advisory; normalize with `python3 scripts/compact_svg_styles.py <svg_output> --inplace`, re-stamp pages that carry Chart/Table fallbacks, and rerun the final gate, or leave the explicit form)"
+        },
+        {
+          "file": "07_slide.svg",
+          "message": "Detected 2 paragraph-like line run(s) split across sibling <text> elements (<g id=\"prototype\"> x=108.0, y=552.0..574.0, 2 lines; <g id=\"prototype\"> x=456.0, y=562.0..582.0, 2 lines). If each run is one prose paragraph, combine it into one <text>: keep its first line as direct text and use direct <tspan> children with the parent x and positive relative dy values for later lines. An all-<tspan> form may start with dy=\"0\". Keep semantically independent text frames separate."
+        },
+        {
+          "file": "08_slide.svg",
+          "message": "Noncanonical compact authoring: Authoring SVG contains noncanonical or redundant inherited style declarations (31 change(s)); examples (group:attr None -> value hoists the shared value onto that group; child:attr value -> None drops the copy the child now inherits): text[9]:font-family 'Microsoft YaHei, Arial' -> None; text[10]:font-family 'Microsoft YaHei, Arial' -> None; footer:fill None -> '#64748B' (advisory; normalize with `python3 scripts/compact_svg_styles.py <svg_output> --inplace`, re-stamp pages that carry Chart/Table fallbacks, and rerun the final gate, or leave the explicit form)"
+        }
+      ]
+    },
+    "inherited": {
+      "count": 0,
+      "issues": []
+    },
+    "source-import": {
+      "count": 0,
+      "summary": {
+        "warning_count": 0,
+        "by_code": {}
+      }
+    }
+  },
+  "drift": {
+    "colors": {
+      "#020617": [
+        "01_slide.svg"
+      ],
+      "#0B1220": [
+        "07_slide.svg"
+      ],
+      "#111827": [
+        "07_slide.svg"
+      ],
+      "#1D4ED8": [
+        "01_slide.svg"
+      ],
+      "#1F2937": [
+        "07_slide.svg"
+      ],
+      "#334155": [
+        "01_slide.svg",
+        "07_slide.svg"
+      ],
+      "#60A5FA": [
+        "01_slide.svg"
+      ],
+      "#6366F1": [
+        "04_slide.svg"
+      ],
+      "#7C3AED": [
+        "01_slide.svg",
+        "02_slide.svg",
+        "03_slide.svg",
+        "05_slide.svg",
+        "06_slide.svg",
+        "08_slide.svg"
+      ],
+      "#86EFAC": [
+        "07_slide.svg"
+      ],
+      "#93C5FD": [
+        "07_slide.svg"
+      ],
+      "#94A3B8": [
+        "01_slide.svg",
+        "07_slide.svg"
+      ],
+      "#A7F3D0": [
+        "08_slide.svg"
+      ],
+      "#BFDBFE": [
+        "01_slide.svg",
+        "02_slide.svg",
+        "03_slide.svg",
+        "05_slide.svg",
+        "07_slide.svg"
+      ],
+      "#CBD5E1": [
+        "01_slide.svg",
+        "04_slide.svg",
+        "07_slide.svg",
+        "08_slide.svg"
+      ],
+      "#D1FAE5": [
+        "01_slide.svg"
+      ],
+      "#DBEAFE": [
+        "01_slide.svg"
+      ],
+      "#ECFDF5": [
+        "04_slide.svg",
+        "08_slide.svg"
+      ],
+      "#EEF2FF": [
+        "04_slide.svg"
+      ],
+      "#EFF6FF": [
+        "03_slide.svg",
+        "04_slide.svg",
+        "05_slide.svg",
+        "07_slide.svg"
+      ],
+      "#F1F5F9": [
+        "06_slide.svg"
+      ],
+      "#F59E0B": [
+        "01_slide.svg"
+      ],
+      "#F8FAFC": [
+        "01_slide.svg"
+      ],
+      "#FECACA": [
+        "06_slide.svg"
+      ],
+      "#FED7AA": [
+        "03_slide.svg"
+      ],
+      "#FEF2F2": [
+        "06_slide.svg"
+      ],
+      "#FEF3C7": [
+        "01_slide.svg"
+      ],
+      "#FFF7ED": [
+        "03_slide.svg",
+        "04_slide.svg"
+      ]
+    },
+    "fonts": {},
+    "sizes": {
+      "64": [
+        "01_slide.svg"
+      ]
+    }
+  },
+  "carrier_receipt": {
+    "scope": "informational-not-a-quota",
+    "pages": 8,
+    "totals": {
+      "text_elements": 216,
+      "image_placements": 0,
+      "icons": 0,
+      "svg_geometry_elements": 155,
+      "preset_shapes": 0,
+      "page_frame_elements": 8,
+      "marker_uses": 11,
+      "inline_emphasis_runs": 0,
+      "gradient_uses": 1,
+      "filter_uses": 0,
+      "text_effects": 0
+    },
+    "pages_with": {
+      "images": 0,
+      "icons": 0,
+      "presets": 0,
+      "charts": 0,
+      "tables": 0,
+      "formulas": 0,
+      "inline_emphasis_runs": 0,
+      "gradient_uses": 1,
+      "filter_uses": 0,
+      "text_effects": 0
+    },
+    "relationship_pages": 0,
+    "geometry_elements": {
+      "circle": 52,
+      "ellipse": 0,
+      "line": 33,
+      "path": 0,
+      "polygon": 0,
+      "polyline": 0,
+      "rect": 70
+    },
+    "preset_names": {},
+    "native_objects": {
+      "chart": 0,
+      "formula_block": 0,
+      "formula_inline": 0,
+      "other": 0,
+      "table": 0
+    },
+    "image_page_max_frame_share_range": []
+  },
+  "project_issues": {
+    "template": [],
+    "animation": [],
+    "illustration": [],
+    "communication_trace": [],
+    "pptx_structure": []
+  },
+  "files": [
+    {
+      "file": "01_slide.svg",
+      "path": "/home/shizuku/.agents/projects/wellcooked_report_20260930/svg_output/01_slide.svg",
+      "exists": true,
+      "errors": [],
+      "warnings": [
+        "Noncanonical compact authoring: Authoring SVG contains noncanonical or redundant inherited style declarations (18 change(s)); examples (group:attr None -> value hoists the shared value onto that group; child:attr value -> None drops the copy the child now inherits): text[14]:font-family 'Microsoft YaHei, Arial' -> None; text[15]:font-family 'Microsoft YaHei, Arial' -> None; text[16]:font-family 'Microsoft YaHei, Arial' -> None (advisory; normalize with `python3 scripts/compact_svg_styles.py <svg_output> --inplace`, re-stamp pages that carry Chart/Table fallbacks, and rerun the final gate, or leave the explicit form)",
+        "4 ungrouped top-level Slide-local element(s) in svg_output (<circle> #2, <circle> #3, <text> #6, ...); group only logical content units in a top-level <g id=\"...\">. Keep genuine static page framing as a root primitive and declare a supported data-pptx-role such as \"background\" or \"decoration\""
+      ],
+      "info": {
+        "viewbox": "0 0 1280 720",
+        "carrier_receipt": {
+          "text_elements": 18,
+          "images": {
+            "placements": 0,
+            "files": [],
+            "max_frame_share": 0.0
+          },
+          "icons": 0,
+          "effects": {
+            "inline_emphasis_runs": 0,
+            "gradient_uses": 1,
+            "filter_uses": 0,
+            "text_effects": 0
+          },
+          "geometry": {
+            "svg_elements": {
+              "rect": 10,
+              "circle": 9,
+              "ellipse": 0,
+              "line": 4,
+              "polyline": 0,
+              "polygon": 0,
+              "path": 0
+            },
+            "preset_shapes": 0,
+            "preset_names": {},
+            "page_frame_elements": 1,
+            "marker_uses": {
+              "start": 0,
+              "mid": 0,
+              "end": 4
+            }
+          },
+          "native_objects": {
+            "chart": 0,
+            "table": 0,
+            "formula_block": 0,
+            "formula_inline": 0,
+            "other": 0
+          }
+        },
+        "fonts": [
+          "Microsoft YaHei, Arial"
+        ],
+        "text_elements": 18,
+        "tspan_elements": 2,
+        "contextual_values": {
+          "colors": [
+            "#020617",
+            "#1D4ED8",
+            "#334155",
+            "#60A5FA",
+            "#7C3AED",
+            "#94A3B8",
+            "#BFDBFE",
+            "#CBD5E1",
+            "#D1FAE5",
+            "#DBEAFE",
+            "#F59E0B",
+            "#F8FAFC",
+            "#FEF3C7"
+          ]
+        },
+        "sparse_typography_sizes": {
+          "64": 1
+        }
+      },
+      "passed": true,
+      "source_sha256": "c04bc87fdd49c18e2bd1e95638531d15428e815432c0b068b3f24f00229dc59f"
+    },
+    {
+      "file": "02_slide.svg",
+      "path": "/home/shizuku/.agents/projects/wellcooked_report_20260930/svg_output/02_slide.svg",
+      "exists": true,
+      "errors": [],
+      "warnings": [
+        "Noncanonical compact authoring: Authoring SVG contains noncanonical or redundant inherited style declarations (33 change(s)); examples (group:attr None -> value hoists the shared value onto that group; child:attr value -> None drops the copy the child now inherits): text[9]:font-family 'Microsoft YaHei, Arial' -> None; text[10]:font-family 'Microsoft YaHei, Arial' -> None; footer:fill None -> '#64748B' (advisory; normalize with `python3 scripts/compact_svg_styles.py <svg_output> --inplace`, re-stamp pages that carry Chart/Table fallbacks, and rerun the final gate, or leave the explicit form)"
+      ],
+      "info": {
+        "viewbox": "0 0 1280 720",
+        "carrier_receipt": {
+          "text_elements": 25,
+          "images": {
+            "placements": 0,
+            "files": [],
+            "max_frame_share": 0.0
+          },
+          "icons": 0,
+          "effects": {
+            "inline_emphasis_runs": 0,
+            "gradient_uses": 0,
+            "filter_uses": 0,
+            "text_effects": 0
+          },
+          "geometry": {
+            "svg_elements": {
+              "rect": 7,
+              "circle": 4,
+              "ellipse": 0,
+              "line": 1,
+              "polyline": 0,
+              "polygon": 0,
+              "path": 0
+            },
+            "preset_shapes": 0,
+            "preset_names": {},
+            "page_frame_elements": 1,
+            "marker_uses": {
+              "start": 0,
+              "mid": 0,
+              "end": 0
+            }
+          },
+          "native_objects": {
+            "chart": 0,
+            "table": 0,
+            "formula_block": 0,
+            "formula_inline": 0,
+            "other": 0
+          }
+        },
+        "fonts": [
+          "Microsoft YaHei, Arial"
+        ],
+        "text_elements": 25,
+        "tspan_elements": 0,
+        "contextual_values": {
+          "colors": [
+            "#7C3AED",
+            "#BFDBFE"
+          ]
+        }
+      },
+      "passed": true,
+      "source_sha256": "862632d5cc5ac8e031f3f72e40f0f29a7d76eb72b00ba151de4ce47d29f29299"
+    },
+    {
+      "file": "03_slide.svg",
+      "path": "/home/shizuku/.agents/projects/wellcooked_report_20260930/svg_output/03_slide.svg",
+      "exists": true,
+      "errors": [],
+      "warnings": [
+        "Noncanonical compact authoring: Authoring SVG contains noncanonical or redundant inherited style declarations (33 change(s)); examples (group:attr None -> value hoists the shared value onto that group; child:attr value -> None drops the copy the child now inherits): text[9]:font-family 'Microsoft YaHei, Arial' -> None; text[10]:font-family 'Microsoft YaHei, Arial' -> None; footer:fill None -> '#64748B' (advisory; normalize with `python3 scripts/compact_svg_styles.py <svg_output> --inplace`, re-stamp pages that carry Chart/Table fallbacks, and rerun the final gate, or leave the explicit form)"
+      ],
+      "info": {
+        "viewbox": "0 0 1280 720",
+        "carrier_receipt": {
+          "text_elements": 25,
+          "images": {
+            "placements": 0,
+            "files": [],
+            "max_frame_share": 0.0
+          },
+          "icons": 0,
+          "effects": {
+            "inline_emphasis_runs": 0,
+            "gradient_uses": 0,
+            "filter_uses": 0,
+            "text_effects": 0
+          },
+          "geometry": {
+            "svg_elements": {
+              "rect": 7,
+              "circle": 10,
+              "ellipse": 0,
+              "line": 4,
+              "polyline": 0,
+              "polygon": 0,
+              "path": 0
+            },
+            "preset_shapes": 0,
+            "preset_names": {},
+            "page_frame_elements": 1,
+            "marker_uses": {
+              "start": 0,
+              "mid": 0,
+              "end": 3
+            }
+          },
+          "native_objects": {
+            "chart": 0,
+            "table": 0,
+            "formula_block": 0,
+            "formula_inline": 0,
+            "other": 0
+          }
+        },
+        "fonts": [
+          "Microsoft YaHei, Arial"
+        ],
+        "text_elements": 25,
+        "tspan_elements": 0,
+        "contextual_values": {
+          "colors": [
+            "#7C3AED",
+            "#BFDBFE",
+            "#EFF6FF",
+            "#FED7AA",
+            "#FFF7ED"
+          ]
+        }
+      },
+      "passed": true,
+      "source_sha256": "e0114c0541cc1bdfc731a9ab0057243a24984bc1c504dadd0dd7c34e1bc70e63"
+    },
+    {
+      "file": "04_slide.svg",
+      "path": "/home/shizuku/.agents/projects/wellcooked_report_20260930/svg_output/04_slide.svg",
+      "exists": true,
+      "errors": [],
+      "warnings": [
+        "Noncanonical compact authoring: Authoring SVG contains noncanonical or redundant inherited style declarations (23 change(s)); examples (group:attr None -> value hoists the shared value onto that group; child:attr value -> None drops the copy the child now inherits): text[9]:font-family 'Microsoft YaHei, Arial' -> None; text[10]:font-family 'Microsoft YaHei, Arial' -> None; footer:fill None -> '#64748B' (advisory; normalize with `python3 scripts/compact_svg_styles.py <svg_output> --inplace`, re-stamp pages that carry Chart/Table fallbacks, and rerun the final gate, or leave the explicit form)",
+        "21 ungrouped top-level Slide-local element(s) in svg_output (<rect> #4, <rect> #5, <text> #6, ...); group only logical content units in a top-level <g id=\"...\">. Keep genuine static page framing as a root primitive and declare a supported data-pptx-role such as \"background\" or \"decoration\""
+      ],
+      "info": {
+        "viewbox": "0 0 1280 720",
+        "carrier_receipt": {
+          "text_elements": 15,
+          "images": {
+            "placements": 0,
+            "files": [],
+            "max_frame_share": 0.0
+          },
+          "icons": 0,
+          "effects": {
+            "inline_emphasis_runs": 0,
+            "gradient_uses": 0,
+            "filter_uses": 0,
+            "text_effects": 0
+          },
+          "geometry": {
+            "svg_elements": {
+              "rect": 11,
+              "circle": 0,
+              "ellipse": 0,
+              "line": 5,
+              "polyline": 0,
+              "polygon": 0,
+              "path": 0
+            },
+            "preset_shapes": 0,
+            "preset_names": {},
+            "page_frame_elements": 1,
+            "marker_uses": {
+              "start": 0,
+              "mid": 0,
+              "end": 4
+            }
+          },
+          "native_objects": {
+            "chart": 0,
+            "table": 0,
+            "formula_block": 0,
+            "formula_inline": 0,
+            "other": 0
+          }
+        },
+        "fonts": [
+          "Microsoft YaHei, Arial"
+        ],
+        "text_elements": 15,
+        "tspan_elements": 0,
+        "contextual_values": {
+          "colors": [
+            "#6366F1",
+            "#CBD5E1",
+            "#ECFDF5",
+            "#EEF2FF",
+            "#EFF6FF",
+            "#FFF7ED"
+          ]
+        }
+      },
+      "passed": true,
+      "source_sha256": "dabf8d191831055c84468f45a38407a35a04ef6fdd4fd3b456446049a68072d7"
+    },
+    {
+      "file": "05_slide.svg",
+      "path": "/home/shizuku/.agents/projects/wellcooked_report_20260930/svg_output/05_slide.svg",
+      "exists": true,
+      "errors": [],
+      "warnings": [
+        "Noncanonical compact authoring: Authoring SVG contains noncanonical or redundant inherited style declarations (36 change(s)); examples (group:attr None -> value hoists the shared value onto that group; child:attr value -> None drops the copy the child now inherits): text[9]:font-family 'Microsoft YaHei, Arial' -> None; text[10]:font-family 'Microsoft YaHei, Arial' -> None; footer:fill None -> '#64748B' (advisory; normalize with `python3 scripts/compact_svg_styles.py <svg_output> --inplace`, re-stamp pages that carry Chart/Table fallbacks, and rerun the final gate, or leave the explicit form)"
+      ],
+      "info": {
+        "viewbox": "0 0 1280 720",
+        "carrier_receipt": {
+          "text_elements": 28,
+          "images": {
+            "placements": 0,
+            "files": [],
+            "max_frame_share": 0.0
+          },
+          "icons": 0,
+          "effects": {
+            "inline_emphasis_runs": 0,
+            "gradient_uses": 0,
+            "filter_uses": 0,
+            "text_effects": 0
+          },
+          "geometry": {
+            "svg_elements": {
+              "rect": 6,
+              "circle": 5,
+              "ellipse": 0,
+              "line": 5,
+              "polyline": 0,
+              "polygon": 0,
+              "path": 0
+            },
+            "preset_shapes": 0,
+            "preset_names": {},
+            "page_frame_elements": 1,
+            "marker_uses": {
+              "start": 0,
+              "mid": 0,
+              "end": 0
+            }
+          },
+          "native_objects": {
+            "chart": 0,
+            "table": 0,
+            "formula_block": 0,
+            "formula_inline": 0,
+            "other": 0
+          }
+        },
+        "fonts": [
+          "Microsoft YaHei, Arial"
+        ],
+        "text_elements": 28,
+        "tspan_elements": 0,
+        "contextual_values": {
+          "colors": [
+            "#7C3AED",
+            "#BFDBFE",
+            "#EFF6FF"
+          ]
+        }
+      },
+      "passed": true,
+      "source_sha256": "cdacb1d7fb6413540be1404a44293ef1e973b1ed7d90c9289d63a34af08461eb"
+    },
+    {
+      "file": "06_slide.svg",
+      "path": "/home/shizuku/.agents/projects/wellcooked_report_20260930/svg_output/06_slide.svg",
+      "exists": true,
+      "errors": [],
+      "warnings": [
+        "Noncanonical compact authoring: Authoring SVG contains noncanonical or redundant inherited style declarations (47 change(s)); examples (group:attr None -> value hoists the shared value onto that group; child:attr value -> None drops the copy the child now inherits): text[9]:font-family 'Microsoft YaHei, Arial' -> None; text[10]:font-family 'Microsoft YaHei, Arial' -> None; footer:fill None -> '#64748B' (advisory; normalize with `python3 scripts/compact_svg_styles.py <svg_output> --inplace`, re-stamp pages that carry Chart/Table fallbacks, and rerun the final gate, or leave the explicit form)",
+        "<text> (x=770, y=166; text='Supervisor生命周期') exceeds <g id=\"daemon-flow\"> data-pptx-bounds on the vertical axis: content (770.0, 149.0)-(972.3, 173.0), container (770.0, 160.0)-(1220.0, 630.0), overflow horizontal 0.0%, vertical 2.3% (error above 5%); expand the root module bounds into available non-overlapping space; otherwise reflow the text"
+      ],
+      "info": {
+        "viewbox": "0 0 1280 720",
+        "carrier_receipt": {
+          "text_elements": 39,
+          "images": {
+            "placements": 0,
+            "files": [],
+            "max_frame_share": 0.0
+          },
+          "icons": 0,
+          "effects": {
+            "inline_emphasis_runs": 0,
+            "gradient_uses": 0,
+            "filter_uses": 0,
+            "text_effects": 0
+          },
+          "geometry": {
+            "svg_elements": {
+              "rect": 10,
+              "circle": 7,
+              "ellipse": 0,
+              "line": 7,
+              "polyline": 0,
+              "polygon": 0,
+              "path": 0
+            },
+            "preset_shapes": 0,
+            "preset_names": {},
+            "page_frame_elements": 1,
+            "marker_uses": {
+              "start": 0,
+              "mid": 0,
+              "end": 0
+            }
+          },
+          "native_objects": {
+            "chart": 0,
+            "table": 0,
+            "formula_block": 0,
+            "formula_inline": 0,
+            "other": 0
+          }
+        },
+        "fonts": [
+          "Microsoft YaHei, Arial"
+        ],
+        "text_elements": 39,
+        "tspan_elements": 0,
+        "contextual_values": {
+          "colors": [
+            "#7C3AED",
+            "#F1F5F9",
+            "#FECACA",
+            "#FEF2F2"
+          ]
+        }
+      },
+      "passed": true,
+      "source_sha256": "d7fe573f56916558b01479c0d27f7eff2f362acee843ea1487a3a34435974b7c"
+    },
+    {
+      "file": "07_slide.svg",
+      "path": "/home/shizuku/.agents/projects/wellcooked_report_20260930/svg_output/07_slide.svg",
+      "exists": true,
+      "errors": [],
+      "warnings": [
+        "Noncanonical compact authoring: Authoring SVG contains noncanonical or redundant inherited style declarations (49 change(s)); examples (group:attr None -> value hoists the shared value onto that group; child:attr value -> None drops the copy the child now inherits): text[9]:font-family 'Microsoft YaHei, Arial' -> None; text[10]:font-family 'Microsoft YaHei, Arial' -> None; footer:fill None -> '#64748B' (advisory; normalize with `python3 scripts/compact_svg_styles.py <svg_output> --inplace`, re-stamp pages that carry Chart/Table fallbacks, and rerun the final gate, or leave the explicit form)",
+        "Detected 2 paragraph-like line run(s) split across sibling <text> elements (<g id=\"prototype\"> x=108.0, y=552.0..574.0, 2 lines; <g id=\"prototype\"> x=456.0, y=562.0..582.0, 2 lines). If each run is one prose paragraph, combine it into one <text>: keep its first line as direct text and use direct <tspan> children with the parent x and positive relative dy values for later lines. An all-<tspan> form may start with dy=\"0\". Keep semantically independent text frames separate."
+      ],
+      "info": {
+        "viewbox": "0 0 1280 720",
+        "carrier_receipt": {
+          "text_elements": 43,
+          "images": {
+            "placements": 0,
+            "files": [],
+            "max_frame_share": 0.0
+          },
+          "icons": 0,
+          "effects": {
+            "inline_emphasis_runs": 0,
+            "gradient_uses": 0,
+            "filter_uses": 0,
+            "text_effects": 0
+          },
+          "geometry": {
+            "svg_elements": {
+              "rect": 15,
+              "circle": 9,
+              "ellipse": 0,
+              "line": 2,
+              "polyline": 0,
+              "polygon": 0,
+              "path": 0
+            },
+            "preset_shapes": 0,
+            "preset_names": {},
+            "page_frame_elements": 1,
+            "marker_uses": {
+              "start": 0,
+              "mid": 0,
+              "end": 0
+            }
+          },
+          "native_objects": {
+            "chart": 0,
+            "table": 0,
+            "formula_block": 0,
+            "formula_inline": 0,
+            "other": 0
+          }
+        },
+        "fonts": [
+          "Consolas, Courier New",
+          "Microsoft YaHei, Arial"
+        ],
+        "text_elements": 43,
+        "tspan_elements": 0,
+        "contextual_values": {
+          "colors": [
+            "#0B1220",
+            "#111827",
+            "#1F2937",
+            "#334155",
+            "#86EFAC",
+            "#93C5FD",
+            "#94A3B8",
+            "#BFDBFE",
+            "#CBD5E1",
+            "#EFF6FF"
+          ]
+        }
+      },
+      "passed": true,
+      "source_sha256": "80899131751eba831ea76e69021b2f509c19be9cd2c8639b049b04408ee8a885"
+    },
+    {
+      "file": "08_slide.svg",
+      "path": "/home/shizuku/.agents/projects/wellcooked_report_20260930/svg_output/08_slide.svg",
+      "exists": true,
+      "errors": [],
+      "warnings": [
+        "Noncanonical compact authoring: Authoring SVG contains noncanonical or redundant inherited style declarations (31 change(s)); examples (group:attr None -> value hoists the shared value onto that group; child:attr value -> None drops the copy the child now inherits): text[9]:font-family 'Microsoft YaHei, Arial' -> None; text[10]:font-family 'Microsoft YaHei, Arial' -> None; footer:fill None -> '#64748B' (advisory; normalize with `python3 scripts/compact_svg_styles.py <svg_output> --inplace`, re-stamp pages that carry Chart/Table fallbacks, and rerun the final gate, or leave the explicit form)"
+      ],
+      "info": {
+        "viewbox": "0 0 1280 720",
+        "carrier_receipt": {
+          "text_elements": 23,
+          "images": {
+            "placements": 0,
+            "files": [],
+            "max_frame_share": 0.0
+          },
+          "icons": 0,
+          "effects": {
+            "inline_emphasis_runs": 0,
+            "gradient_uses": 0,
+            "filter_uses": 0,
+            "text_effects": 0
+          },
+          "geometry": {
+            "svg_elements": {
+              "rect": 4,
+              "circle": 8,
+              "ellipse": 0,
+              "line": 5,
+              "polyline": 0,
+              "polygon": 0,
+              "path": 0
+            },
+            "preset_shapes": 0,
+            "preset_names": {},
+            "page_frame_elements": 1,
+            "marker_uses": {
+              "start": 0,
+              "mid": 0,
+              "end": 0
+            }
+          },
+          "native_objects": {
+            "chart": 0,
+            "table": 0,
+            "formula_block": 0,
+            "formula_inline": 0,
+            "other": 0
+          }
+        },
+        "fonts": [
+          "Microsoft YaHei, Arial"
+        ],
+        "text_elements": 23,
+        "tspan_elements": 0,
+        "contextual_values": {
+          "colors": [
+            "#7C3AED",
+            "#A7F3D0",
+            "#CBD5E1",
+            "#ECFDF5"
+          ]
+        }
+      },
+      "passed": true,
+      "source_sha256": "2e78eb0b4db0084363e5444800472c13be1e94c932476caed56f1e0f1dcba3e2"
+    }
+  ]
+}

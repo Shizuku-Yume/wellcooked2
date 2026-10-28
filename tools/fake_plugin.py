@@ -13,7 +13,7 @@ Protocol/Messages.cs）。
     0   全部断言通过
     1   有断言失败（stderr 点名是哪一条、期望什么、实际什么）
     2   环境错误（Bridge 二进制缺失/起不来、端口占用等），不是断言结论
-    77  跳过：前置产物不在（例如 kitchenos-worker-stub 还没构建）
+    77  跳过：前置产物不在（例如 wellcooked-worker-stub 还没构建）
 
 用法见 --help；批量跑用 tools/run-bridge-scenarios.sh。
 """
@@ -1290,8 +1290,8 @@ def _pick_instance():
     崩溃留下的对象）撞号时会互相 unlink 队列，症状是重启后的 Worker 打不开 mq、
     Scheduler 收不到 RECOVERED。先看 /dev/shm 与 /dev/mqueue 里已有的后缀再挑。
     """
-    families = ("sem.kitchenos_nav_lock_", "sem.kitchenos_res_", "kitchenos_nav_",
-                "kitchenos_events_", "kitchenos_tasks_")
+    families = ("sem.wellcooked_nav_lock_", "sem.wellcooked_res_", "wellcooked_nav_",
+                "wellcooked_events_", "wellcooked_tasks_")
     used = set()
     for directory in (Path("/dev/shm"), Path("/dev/mqueue")):
         try:
@@ -1318,13 +1318,13 @@ class Ctx:
     def __init__(self, args, scenario):
         self.args = args
         self.scenario = scenario
-        # 名字带前导 '/'：shm.h 的默认值就是 "/kitchenos_state"，而 glibc 拒绝名字里
+        # 名字带前导 '/'：shm.h 的默认值就是 "/wellcooked_state"，而 glibc 拒绝名字里
         # 出现第二个 '/'。"//name" 在这里同样能被接受，所以两端怎么拼都不会错开。
         self.state_name = "/" + (args.state_name or
                                  "%s_%s" % (args.state_prefix, scenario)).lstrip("/")
         self.sem_name = "/" + (args.sem_name or
                                (self.state_name.lstrip("/") + "_ready")).lstrip("/")
-        # Supervisor 的 --instance：mq（/kitchenos_tasks_<chef>_N、/kitchenos_events_N）、
+        # Supervisor 的 --instance：mq（/wellcooked_tasks_<chef>_N、/wellcooked_events_N）、
         # 导航表与资源信号量的名字不带 state-name，几个 run 并行时会互相 unlink；给每次
         # 运行挑一个空闲实例号（0..255，supervisor 的解析范围）。显式给了 --runtime-dir
         # 时 supervisor 不会给运行目录再加 instance-N（daemon.c:177），证据路径不变。
@@ -1442,11 +1442,11 @@ class Ctx:
         recipes = recipes or self.args.recipes
         orders = orders or self.args.orders
         binary = Path(self.args.supervisor or
-                      Path(self.args.bridge).with_name("kitchenos-supervisor"))
+                      Path(self.args.bridge).with_name("wellcooked-supervisor"))
         if not binary.exists():
             raise InfraError("supervisor binary not found: %s (build it with: cd bridge && make)"
                              % binary)
-        self.runtime_dir = Path(tempfile.mkdtemp(prefix="kitchenos-osloop-"))
+        self.runtime_dir = Path(tempfile.mkdtemp(prefix="wellcooked-osloop-"))
         argv = ["--foreground",
                 "--runtime-dir", str(self.runtime_dir),
                 "--state-name", self.state_name, "--sem-name", self.sem_name,
@@ -1462,7 +1462,7 @@ class Ctx:
                 "--nav", self.args.nav,
                 "--instance", str(self.instance),
                 # 显式给导航表/锁名字：--instance 只在没显式给名字时才把 nav 名字
-                # 换成 /kitchenos_nav_<N>（supervisor.c），那样 NavTargetReader
+                # 换成 /wellcooked_nav_<N>（supervisor.c），那样 NavTargetReader
                 # 读不到 <state>_nav。两个名字都带 state-name，本来就按 run 隔离。
                 "--nav-name", "/" + self.state_name.lstrip("/") + "_nav",
                 "--nav-sem-name", "/" + self.state_name.lstrip("/") + "_nav_lock"]
@@ -3645,7 +3645,7 @@ def check_nav_metrics(ctx, checks, algorithm, chefs):
         checks.hard("nav_metrics_schema", False,
                     "top-level is %s, not an object" % type(data).__name__)
         return None
-    ok = set(data) == NAV_METRICS_TOP and data.get("schema") == "kitchenos.nav_metrics.v1"
+    ok = set(data) == NAV_METRICS_TOP and data.get("schema") == "wellcooked.nav_metrics.v1"
     checks.hard("nav_metrics_schema", ok, "top-level=%s" % sorted(data))
     checks.hard("nav_metrics_algorithm", data.get("algorithm") == algorithm,
                 "algorithm=%s expected=%s" % (data.get("algorithm"), algorithm))
@@ -3723,7 +3723,7 @@ def _nav_scenario(ctx, checks, *, name, length=0, bay=False, station_sides=(),
     """nav-corridor / nav-stuck / nav-crash / nav-ring 共用的编排。"""
     args = ctx.args
     chefs = len(starts)
-    workdir = Path(tempfile.mkdtemp(prefix="kitchenos-%s-" % name))
+    workdir = Path(tempfile.mkdtemp(prefix="wellcooked-%s-" % name))
     if kitchen_path is not None:
         kitchen_data = json.loads(Path(kitchen_path).read_text())
         cells = [tuple(cell) for cell in kitchen_data["grid"]["cells"]]
@@ -4166,7 +4166,7 @@ def scenario_macro(ctx, checks):
       3. 料箱不回料：pickup 按 1.5 s 超时 macro_failed，工序 FAILED，detail 带
          宏动作与所等条件。
     """
-    workdir = Path(tempfile.mkdtemp(prefix="kitchenos-macro-"))
+    workdir = Path(tempfile.mkdtemp(prefix="wellcooked-macro-"))
     checks.note("workdir", str(workdir))
     try:
         paths, cells, stations, products = macro_configs(workdir)
@@ -4511,7 +4511,7 @@ def scenario_os_resources(ctx, checks):
     Supervisor 在 unlink 前记录的 sem value、metrics.json 与 /dev/shm 残留。
     """
     args = ctx.args
-    tmp = Path(tempfile.mkdtemp(prefix="kitchenos-resources-"))
+    tmp = Path(tempfile.mkdtemp(prefix="wellcooked-resources-"))
     try:
         kitchen = json.loads(Path(args.kitchen).read_text())
         cookers = [st for st in kitchen.get("stations", []) if st.get("kind") == "cooker"]
@@ -4800,7 +4800,7 @@ def scenario_os_resources(ctx, checks):
             cooker = resources.get("cooker", {})
             per_order = metrics.get("orders", {}).get("per_order", [])
             complete = (
-                metrics.get("schema") == "kitchenos.metrics.v1" and
+                metrics.get("schema") == "wellcooked.metrics.v1" and
                 "orders" in metrics and "resources" in metrics and
                 "dispatch" in metrics and
                 "worker_restarts" in metrics and
@@ -5001,7 +5001,7 @@ def _demo3_run(ctx, checks, label, *, chefs, kitchen, recipes, order_spec,
                positions=None, stop_when=None):
     """起一棵 Supervisor，让 demo3 世界模型按动作改世界，跑一局。"""
     args = ctx.args
-    workdir = Path(tempfile.mkdtemp(prefix="kitchenos-demo3-"))
+    workdir = Path(tempfile.mkdtemp(prefix="wellcooked-demo3-"))
     paths = _demo3.demo3_files(workdir, kitchen=kitchen, recipes=recipes)
     try:
         ctx.clear_stale_shm()
@@ -6461,16 +6461,16 @@ def parse_args(argv):
     parser.add_argument("--list-scenarios", action="store_true", help="列出场景名后退出")
     parser.add_argument("--bridge",
                         default=os.environ.get(
-                            "KITCHENOS_BRIDGE",
-                            str(REPO_ROOT / "bridge" / "build" / "kitchenos-bridge")),
-                        help="kitchenos-bridge 路径（或设 $KITCHENOS_BRIDGE）")
+                            "WELLCOOKED_BRIDGE",
+                            str(REPO_ROOT / "bridge" / "build" / "wellcooked-bridge")),
+                        help="wellcooked-bridge 路径（或设 $WELLCOOKED_BRIDGE）")
     parser.add_argument("--worker-stub",
                         default=os.environ.get(
-                            "KITCHENOS_WORKER_STUB",
-                            str(REPO_ROOT / "bridge" / "build" / "kitchenos-worker-stub")),
-                        help="kitchenos-worker-stub 路径（或设 $KITCHENOS_WORKER_STUB）")
-    parser.add_argument("--supervisor", default=os.environ.get("KITCHENOS_SUPERVISOR"),
-                        help="kitchenos-supervisor 路径（默认取 --bridge 同目录）")
+                            "WELLCOOKED_WORKER_STUB",
+                            str(REPO_ROOT / "bridge" / "build" / "wellcooked-worker-stub")),
+                        help="wellcooked-worker-stub 路径（或设 $WELLCOOKED_WORKER_STUB）")
+    parser.add_argument("--supervisor", default=os.environ.get("WELLCOOKED_SUPERVISOR"),
+                        help="wellcooked-supervisor 路径（默认取 --bridge 同目录）")
     parser.add_argument("--kitchen", default=str(REPO_ROOT / "config" / "kitchen.example.json"),
                         help="os-loop 的 kitchen.json")
     parser.add_argument("--recipes", default=str(REPO_ROOT / "config" / "recipes.example.json"),
@@ -6488,7 +6488,7 @@ def parse_args(argv):
     parser.add_argument("--chefs", type=int, default=None, help="厨师数（默认 happy=2, connect-mode=1）")
     parser.add_argument("--state-name", default=None, help="共享内存状态对象名")
     parser.add_argument("--sem-name", default=None, help="就绪信号量名")
-    parser.add_argument("--state-prefix", default="kitchenos_c04",
+    parser.add_argument("--state-prefix", default="wellcooked_c04",
                         help="未显式给名字时用的前缀，保证场景之间互不干扰")
     parser.add_argument("--log", default=None, help="Bridge 日志路径")
     parser.add_argument("--duration", type=float, default=4.0, help="happy 场景的时长（秒）")
@@ -6524,7 +6524,7 @@ def parse_args(argv):
                         help="把 Bridge 主动发 ack 当硬断言（spec 未要求，默认只记录）")
     args = parser.parse_args(argv)
     if not args.supervisor:
-        args.supervisor = str(Path(args.bridge).with_name("kitchenos-supervisor"))
+        args.supervisor = str(Path(args.bridge).with_name("wellcooked-supervisor"))
     return args
 
 

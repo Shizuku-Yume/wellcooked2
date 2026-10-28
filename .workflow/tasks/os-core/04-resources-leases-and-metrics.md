@@ -10,7 +10,7 @@ Scheduler 周期回收过期租约并记 `resource_reclaimed`；维护资源分�
 写出 `runs/<ts>/{events.jsonl,decisions.jsonl,metrics.json}`。
 
 **Blocked by:** 02, 03
-**Files:** `bridge/include/kitchenos/{resource,metrics}.h`、
+**Files:** `bridge/include/wellcooked/{resource,metrics}.h`、
 `bridge/src/{resource,metrics}.c`、`bridge/src/scheduler.c`、`bridge/src/worker.c`、
 `bridge/tests/test_resources.c`、`bridge/tests/test_metrics.c`
 **Read first:** `.workflow/specs/os-core.md` 的共享资源段、W8/W10；§6.4 方案 2 的租约；
@@ -32,13 +32,13 @@ Scheduler 周期回收过期租约并记 `resource_reclaimed`；维护资源分�
 
 **实现（2026-10-24，worktree os-core）**
 
-- `bridge/include/kitchenos/resource.h` / `resource.c`：按 kitchen station kind 建
-  `/kitchenos_res_<kind>` 计数信号量（容量 = 该 kind 工位数），Supervisor 创建并
+- `bridge/include/wellcooked/resource.h` / `resource.c`：按 kitchen station kind 建
+  `/wellcooked_res_<kind>` 计数信号量（容量 = 该 kind 工位数），Supervisor 创建并
   unlink；Scheduler attach 后 `sem_trywait`/`sem_post`。租约表
   `(kind, chef, task_id, acquired_ms, deadline_ms)`，`kos_lease_remove()` 返回 1 才
   `sem_post`，从实现上排除 double release。资源分配图环检测 + victim（环上最大
   chef_id）见 decisions.md。
-- `bridge/include/kitchenos/metrics.h` / `metrics.c`：`metrics.json.tmp` + rename
+- `bridge/include/wellcooked/metrics.h` / `metrics.c`：`metrics.json.tmp` + rename
   原子写出；`test_metrics` 额外用 inode 变化证明 rename，而不是只检查文件存在。
 - `scheduler.c`：派发前取令牌并建租约，DONE/失败释放一次；tick 里 `expire_leases`
   和 `detect_deadlock`；Worker `RECOVERED` 只走 `reclaim_leases_for_chef`；关机释放
@@ -47,13 +47,13 @@ Scheduler 周期回收过期租约并记 `resource_reclaimed`；维护资源分�
   wait_ms。
 - `worker.c`：事件里带 generation，供 Scheduler 区分首次启动与重启（worker_restarts）。
 - `supervisor.c`：启动时加载 kitchen、创建资源信号量；关机时先打印
-  `resource_values`（unlink 前的 value/capacity），再 unlink `/kitchenos_res_*`；
+  `resource_values`（unlink 前的 value/capacity），再 unlink `/wellcooked_res_*`；
   SIGUSR1 转发给 Scheduler（操作者只信号 Supervisor，metrics 由 Scheduler 原子写）。
 - 场景 `tools/fake_plugin.py --scenario os-resources`：临时 kitchen 只留 1 个 cooker，
   2 个厨师，lease_ttl=8000ms；先向 Supervisor 发 SIGUSR1（验证转发与快照），
   持 cooker 租约时 SIGKILL worker-0，等重启/回收，再停树；断言 SIGUSR1 快照、
   争用 wait、worker-recovered 回收、lease-expired 回收、metrics 字段、关机
-  value=capacity、/dev/shm 无 `sem.kitchenos*` 残留。
+  value=capacity、/dev/shm 无 `sem.wellcooked*` 残留。
 - `tools/compare-runs.py`：读两个 `runs/<ts>`，输出 completed/failed/expired、
   avg_wait_ms（Σwait_ms/Σwaits）、dispatch 与 restarts。
 

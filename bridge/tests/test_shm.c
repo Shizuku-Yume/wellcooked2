@@ -18,7 +18,7 @@
 #define _POSIX_C_SOURCE 200809L
 #endif
 
-#include "kitchenos/shm.h"
+#include "wellcooked/shm.h"
 
 #include <errno.h>
 #include <stdio.h>
@@ -74,7 +74,7 @@ static void sleep_ms(int ms)
     nanosleep(&ts, NULL);
 }
 
-/* "/dev/shm" + "/kitchenos_test_x" —— 手写拼接，长度自己算得清。 */
+/* "/dev/shm" + "/wellcooked_test_x" —— 手写拼接，长度自己算得清。 */
 static void object_path(char *dst, size_t cap, const char *name)
 {
     size_t dl = strlen(KOS_SHM_DEFAULT_DIR);
@@ -100,8 +100,8 @@ static int object_exists(const char *name)
 /* 每次用例一套独立名字：隔离靠名字，因为 POSIX 命名对象只有 /dev/shm 一个落点。 */
 static void make_names(char *shm_name, char *sem_name, const char *tag)
 {
-    snprintf(shm_name, KOS_SHM_PATH_MAX, "/kitchenos_test_%s_%ld", tag, (long)getpid());
-    snprintf(sem_name, KOS_SHM_PATH_MAX, "/kitchenos_test_sem_%s_%ld", tag, (long)getpid());
+    snprintf(shm_name, KOS_SHM_PATH_MAX, "/wellcooked_test_%s_%ld", tag, (long)getpid());
+    snprintf(sem_name, KOS_SHM_PATH_MAX, "/wellcooked_test_sem_%s_%ld", tag, (long)getpid());
 }
 
 static void fill_opts(kos_shm_opts *opts, const char *shm_name, const char *sem_name)
@@ -130,7 +130,7 @@ static int open_segment(const char *shm_name, const char *sem_name, kos_shm_mode
 }
 
 /* 用例自己收拾自己建的段：/dev/shm 是 tmpfs，漏出来的对象会一直占着内存，
- * 而且会让"Bridge 退出后 /dev/shm 里没有 kitchenos 对象"这条检查失真。
+ * 而且会让"Bridge 退出后 /dev/shm 里没有 wellcooked 对象"这条检查失真。
  * 所以收尾一律走这里 —— 提前 return 的失败路径也必须走到（用 goto done）。
  * 幂等：没建过、已经删过都不算错。 */
 static void drop_section(const char *shm_name, const char *sem_name)
@@ -389,15 +389,15 @@ static void test_names(void)
 
     printf("[test_shm] 1. 名字解析与配置覆盖\n");
 
-    setenv(KOS_SHM_ENV_NAME, "/kitchenos_env_state", 1);
-    setenv(KOS_SHM_ENV_SEM_NAME, "/kitchenos_env_sem", 1);
+    setenv(KOS_SHM_ENV_NAME, "/wellcooked_env_state", 1);
+    setenv(KOS_SHM_ENV_SEM_NAME, "/wellcooked_env_sem", 1);
     setenv(KOS_SHM_ENV_DIR, "/dev/shm", 1);
     kos_shm_opts_init(&opts);
-    expect(opts.object_name && strcmp(opts.object_name, "/kitchenos_env_state") == 0,
-           "env KITCHENOS_SHM_NAME 覆盖默认对象名");
-    expect(opts.sem_name && strcmp(opts.sem_name, "/kitchenos_env_sem") == 0,
-           "env KITCHENOS_SEM_NAME 覆盖默认信号量名");
-    expect(opts.dir && strcmp(opts.dir, "/dev/shm") == 0, "env KITCHENOS_SHM_DIR 覆盖默认目录");
+    expect(opts.object_name && strcmp(opts.object_name, "/wellcooked_env_state") == 0,
+           "env WELLCOOKED_SHM_NAME 覆盖默认对象名");
+    expect(opts.sem_name && strcmp(opts.sem_name, "/wellcooked_env_sem") == 0,
+           "env WELLCOOKED_SEM_NAME 覆盖默认信号量名");
+    expect(opts.dir && strcmp(opts.dir, "/dev/shm") == 0, "env WELLCOOKED_SHM_DIR 覆盖默认目录");
     unsetenv(KOS_SHM_ENV_NAME);
     unsetenv(KOS_SHM_ENV_SEM_NAME);
     unsetenv(KOS_SHM_ENV_DIR);
@@ -406,8 +406,8 @@ static void test_names(void)
            "env 清空后 opts 回到『用默认值』状态");
 
     /* 名字格式：glibc 对含 '/' 的名字直接 EINVAL，提前拦住给一句人话。 */
-    opts.object_name = "kitchenos_state";
-    opts.sem_name = "/kitchenos_test_sem_names";
+    opts.object_name = "wellcooked_state";
+    opts.sem_name = "/wellcooked_test_sem_names";
     rc = kos_shm_open(&opts, KOS_SHM_CREATE, &shm, &err);
     expect(rc == KOS_ERR_INVAL, "对象名不以 '/' 开头 → KOS_ERR_INVAL");
     opts.object_name = "/nested/state";
@@ -423,12 +423,12 @@ static void test_names(void)
         char name[KOS_SHM_PATH_MAX];
         char suffix[16];
 
-        expect(kos_name_instance("/kitchenos_state", 2, name, sizeof name) == KOS_OK &&
-                   strcmp(name, "/kitchenos_state_2") == 0,
+        expect(kos_name_instance("/wellcooked_state", 2, name, sizeof name) == KOS_OK &&
+                   strcmp(name, "/wellcooked_state_2") == 0,
                "多实例名字加 _<k> 后缀");
-        expect(kos_name_instance("/kitchenos_state", KOS_INSTANCE_NONE, name, sizeof name) ==
+        expect(kos_name_instance("/wellcooked_state", KOS_INSTANCE_NONE, name, sizeof name) ==
                        KOS_OK &&
-                   strcmp(name, "/kitchenos_state") == 0,
+                   strcmp(name, "/wellcooked_state") == 0,
                "不给实例号时名字与以前相同");
         expect(kos_instance_suffix(2, suffix, sizeof suffix) == KOS_OK &&
                    strcmp(suffix, "_2") == 0,
@@ -457,7 +457,7 @@ static void test_open_and_version(void)
 
     printf("[test_shm] 2. 创建、挂接、版本与布局校验\n");
     make_names(shm_name, sem_name, "open");
-    snprintf(missing_name, sizeof missing_name, "/kitchenos_test_missing_%ld", (long)getpid());
+    snprintf(missing_name, sizeof missing_name, "/wellcooked_test_missing_%ld", (long)getpid());
 
     rc = open_segment(missing_name, sem_name, KOS_SHM_ATTACH, &shm, NULL);
     expect(rc == KOS_ERR_MISSING, "挂接不存在的段 → KOS_ERR_MISSING");

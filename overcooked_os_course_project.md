@@ -12,7 +12,7 @@
 
 暂定：**基于多任务调度的多人厨房协作系统**
 
-英文可用：**KitchenOS: Multi-Agent Cooking Scheduler**
+英文可用：**WellCooked: Multi-Agent Cooking Scheduler**
 
 以《胡闹厨房》式合作厨房作为可视化载体，把订单、加工工序和共享厨房设备抽象为操作系统中的作业、任务、资源和同步事件。调度系统自动控制多个厨师角色，在有限时间内安排订单和工序，**以原作游戏得分作为唯一优化目标**。
 
@@ -176,7 +176,7 @@ int create_daemon() {
     umask(022);
     
     // 4. 修改工作目录
-    chdir("/home/kitchenos/");  // 或项目目录
+    chdir("/home/wellcooked/");  // 或项目目录
     
     // 5. 关闭继承的文件描述符
     for (int fd = 0; fd < sysconf(_SC_OPEN_MAX); fd++) {
@@ -545,12 +545,12 @@ if (scheduler_pid == 0) {
 **用途**：多进程共享的世界状态与资源占用表（锅、切菜台、盘子）。
 
 ```c
-int shm_fd = shm_open("/kitchenos_state", O_CREAT | O_RDWR, 0666);
+int shm_fd = shm_open("/wellcooked_state", O_CREAT | O_RDWR, 0666);
 ftruncate(shm_fd, sizeof(SharedState));
 SharedState *state = mmap(NULL, sizeof(SharedState),
                           PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, 0);
 
-sem_t *sem = sem_open("/kitchenos_sem", O_CREAT, 0666, 1);
+sem_t *sem = sem_open("/wellcooked_sem", O_CREAT, 0666, 1);
 sem_wait(sem);
 /* 临界区：检查并占用锅 */
 sem_post(sem);
@@ -568,14 +568,14 @@ sem_post(sem);
 
 ```c
 // 调度器创建消息队列
-mqd_t mq = mq_open("/kitchenos_tasks", O_CREAT | O_WRONLY, 0666, NULL);
+mqd_t mq = mq_open("/wellcooked_tasks", O_CREAT | O_WRONLY, 0666, NULL);
 
 // 发送任务
 TaskMessage task = {.chef_id = 0, .action = MOVE, .x = 10, .y = 5};
 mq_send(mq, (char*)&task, sizeof(task), 0);
 
 // 工作进程接收任务
-mqd_t mq = mq_open("/kitchenos_tasks", O_RDONLY);
+mqd_t mq = mq_open("/wellcooked_tasks", O_RDONLY);
 TaskMessage task;
 mq_receive(mq, (char*)&task, sizeof(task), NULL);
 ```
@@ -592,7 +592,7 @@ mq_receive(mq, (char*)&task, sizeof(task), NULL);
 
 ```c
 // PID文件锁
-int pid_fd = open("/var/run/kitchenos.pid", O_CREAT | O_RDWR, 0644);
+int pid_fd = open("/var/run/wellcooked.pid", O_CREAT | O_RDWR, 0644);
 struct flock lock = {
     .l_type = F_WRLCK,
     .l_whence = SEEK_SET,
@@ -941,7 +941,7 @@ NetworkStream stream = client.GetStream();
 用途：Scheduler向Worker派发任务，Worker向Scheduler上报事件
 
 实现：
-- 创建两个消息队列：`/kitchenos-tasks`和`/kitchenos-events`；
+- 创建两个消息队列：`/wellcooked-tasks`和`/wellcooked-events`；
 - 任务消息带优先级，高优先级任务优先被Worker取出；
 - 消息优先级直接对应调度策略计算的优先级（EDF/HRRN的输出）。
 

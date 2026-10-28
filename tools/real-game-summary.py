@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Summarize and assert one KitchenOS real-game run.
+"""Summarize and assert one WellCooked real-game run.
 
 Reads only artifacts owned by the runner: the newest Scheduler run under
 <runtime>/runs, Worker logs, navd.log, the final game state, and the plugin

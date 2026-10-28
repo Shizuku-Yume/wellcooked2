@@ -2,7 +2,7 @@
  * framing.c -- one JSON message per line, as protocol/protocol.md §1 defines it.
  * See framing.h for the contract.
  */
-#include <kitchenos/framing.h>
+#include <wellcooked/framing.h>
 
 #include <errno.h>
 #include <stdlib.h>

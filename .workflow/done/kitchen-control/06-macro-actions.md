@@ -11,12 +11,12 @@ wait_ready/wash/deliver），每步按 shm 世界状态判完成、超时报 `FA
 `macro_start`/`macro_done`/`macro_failed`。
 
 **Blocked by:** 04
-**Files:** `bridge/include/kitchenos/{macro,mq}.h`、`bridge/src/{macro,scheduler,worker}.c`、
+**Files:** `bridge/include/wellcooked/{macro,mq}.h`、`bridge/src/{macro,scheduler,worker}.c`、
 `bridge/tests/{test_macro,test_scheduler}.c`、`tools/fake_plugin.py`（场景 `macro`）、
 `.workflow/specs/kitchen-control.md`、`.workflow/decisions.md`
 
 **Read first:** `.workflow/specs/kitchen-control.md` 的"L2 宏动作"与 W6；glossary 宏动作；
-`bridge/include/kitchenos/{mq,shm}.h`；`.workflow/tasks/os-core/03-worker-loop-and-path.md`
+`bridge/include/wellcooked/{mq,shm}.h`；`.workflow/tasks/os-core/03-worker-loop-and-path.md`
 **Covers:** W6
 
 **Check:** `cd bridge && make test` → **14 test suites, 0 failed**. `bash
@@ -63,13 +63,13 @@ Check after（全部实跑）:
 - `cd bridge && make test` → **14 test suites, 0 failed**（新增 `test_macro` 64 项：六种工序展开 + mix/assemble、face 先行、holding/progress/pot 状态完成、1.5 s/工时超时、砧板内容消失与 deliver 手上没东西立即失败）。
 - `bash tools/run-bridge-scenarios.sh --only macro,os-loop` → **2/2 PASS**。`macro` 三局：完整一单 `macro_start` 覆盖 goto/pickup/drop/chop/start_cook/wait_ready/deliver，pickup/chop/drop 的 `waited_ms` 均 ≥ 2000（fake 延迟 2 s 才改世界状态），`order_completed` 出现；wash 局 `wash` 的 `waited_ms=2050`；不回料局 `macro_failed detail=macro=pickup wait=holding timeout`，`task_failed t_ms≈1700`（不是 30 s）。`os-loop` 原有 path/interact/无 move/无同格/worker 重启 RECOVERED→requeue→新任务全部保持。
 - 实现：`macro.{h,c}`（计划展开 + 状态机，不碰 shm/时钟）、`worker.c` 改为宏动作、`Makefile -lm`、`test_macro.c`、fake `WorldSim`+`macro` 场景（3 局，约 35 s）。
-- 已知并发风险：fake 的 mq 名不带 run-id，和别的通道同时跑场景时曾撞到对方的 `/kitchenos_tasks_0`（一次 os-loop 出现 `station=dispenser-left` 的错任务）；单独重跑通过。不是本任务引入，未改 mq 命名。
+- 已知并发风险：fake 的 mq 名不带 run-id，和别的通道同时跑场景时曾撞到对方的 `/wellcooked_tasks_0`（一次 os-loop 出现 `station=dispenser-left` 的错任务）；单独重跑通过。不是本任务引入，未改 mq 命名。
 - Review（flow-verify 两个 brief）与 `test-san` 已在下方“Review（2026-10-25，补跑 flow-verify）”补齐。
 
 
 ## Review（2026-10-25，补跑 flow-verify）
 
-`Review boundary: dacd788388158ac06b3123ef742a1dfb18495b62 + bridge/include/kitchenos/macro.h,
+`Review boundary: dacd788388158ac06b3123ef742a1dfb18495b62 + bridge/include/wellcooked/macro.h,
 bridge/src/macro.c, bridge/src/worker.c, bridge/tests/test_macro.c, bridge/Makefile,
 tools/fake_plugin.py, tools/run-bridge-scenarios.sh; round: 1; briefs: A,B; boundaries:
 mq→Worker 任务/事件、navtab 目标/计划槽、shm 世界状态只读、fake_plugin 场景; findings:

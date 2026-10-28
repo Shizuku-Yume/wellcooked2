@@ -1,5 +1,5 @@
 /*
- * PluginPeer.cs -- KitchenOS 桥的跨实现一致性对端。
+ * PluginPeer.cs -- WellCooked 桥的跨实现一致性对端。
  *
  * 它要解决的问题：tools/fake_plugin.py 是对线格式的**重新实现**，
  * 所以只要两套实现错得一样，它就会和 C 桥一致。
@@ -98,10 +98,10 @@ namespace WellCooked.Conformance
             "                  [--require-kinds move,stop] [--no-raw-phase]\n" +
             "                  [--source-root DIR]\n" +
             "\n" +
-            "对着一个正在跑的 kitchenos-bridge，扮演插件那一侧的线格式。\n" +
+            "对着一个正在跑的 wellcooked-bridge，扮演插件那一侧的线格式。\n" +
             "--require-kinds 指定必须观察到的 action 种类：桥自己会回空转的\n" +
             "\"stop\"，而 \"move\" 需要有一个 Chef Worker（或者\n" +
-            "bridge/build/kitchenos-worker-stub）先往 slot 0 里发布。\n";
+            "bridge/build/wellcooked-worker-stub）先往 slot 0 里发布。\n";
 
         public static bool TryParse(string[] argv, out Options opt, out string error)
         {
@@ -286,7 +286,7 @@ namespace WellCooked.Conformance
 
         private void Banner()
         {
-            Say("=== KitchenOS 一致性对端（插件自己的协议代码）===");
+            Say("=== WellCooked 一致性对端（插件自己的协议代码）===");
             Say("对端       : {0}", Environment.Version + " / " + Path.GetFileName(CurrentExecutable()));
             Say("编译来源   : Protocol/Messages.cs + Net/TcpLink.cs，未改动");
             string root = _opt.SourceRoot;
@@ -850,7 +850,7 @@ namespace WellCooked.Conformance
                 int n;
                 if (!_actionKinds.TryGetValue(kind, out n) || n == 0)
                 {
-                    Fail("从未观察到 {0} 类型的 action。桥自己会回空转的 'stop'；'move' 需要有 Chef Worker 往 slot 0 里发布（bridge/build/kitchenos-worker-stub），两者都要求桥正在派发",
+                    Fail("从未观察到 {0} 类型的 action。桥自己会回空转的 'stop'；'move' 需要有 Chef Worker 往 slot 0 里发布（bridge/build/wellcooked-worker-stub），两者都要求桥正在派发",
                         Quote(kind));
                 }
             }

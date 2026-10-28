@@ -9,15 +9,15 @@
 #define _POSIX_C_SOURCE 200809L
 #endif
 
-#include <kitchenos/macro.h>
+#include <wellcooked/macro.h>
 
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
 
-#include <kitchenos/nav.h>
-#include <kitchenos/stand.h>
-#include <kitchenos/navtab.h>
+#include <wellcooked/nav.h>
+#include <wellcooked/stand.h>
+#include <wellcooked/navtab.h>
 
 #define MACRO_PI 3.14159265358979323846f
 #define MACRO_PROGRESS_DONE 0.999f
