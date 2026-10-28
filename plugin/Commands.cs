@@ -132,6 +132,9 @@ namespace WellCooked
                 case "levels":
                     DumpLevels(value);
                     break;
+                case "picker":
+                    LevelMenu.Show();
+                    break;
                 case "unlock":
                     UnlockAllLevels();
                     break;

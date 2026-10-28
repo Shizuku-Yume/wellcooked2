@@ -26,6 +26,8 @@ namespace WellCooked
             _log = Logger;
             _log.LogInfo("WellCooked.Smoke loaded; Unity " + UnityEngine.Application.unityVersion
                          + ", BepInEx " + typeof(BaseUnityPlugin).Assembly.GetName().Version);
+            LevelMenu.Init(m => _log.LogInfo(m));
+            HotkeyLoad.Init(m => _log.LogInfo(m));
             // 游戏失焦就暂停：调试时人在终端、答辩时 Supervisor 在终端，游戏都在后台，
             // 不打开这个开关厨师就一步不走（实测：窗口激活后立刻开始移动，失焦则完全冻结）。
             UnityEngine.Application.runInBackground = true;
@@ -43,6 +45,18 @@ namespace WellCooked
             Orders.Install(_log);
             Takeover.Install(_log);
             DumpGameInventory();
+        }
+
+        /// <summary>F9 选关菜单与 wellcooked-load.txt 文件通道。必须在关卡内用（前端加载会黑屏）。</summary>
+        private void Update()
+        {
+            HotkeyLoad.Tick();
+            LevelMenu.Tick();
+        }
+
+        private void OnGUI()
+        {
+            LevelMenu.Draw();
         }
 
         /// <summary>

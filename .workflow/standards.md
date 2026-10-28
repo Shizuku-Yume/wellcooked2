@@ -90,6 +90,14 @@ printf 'unlock=1\n' ...         # 解锁当前存档全部关卡（含 IsLevelUn
 printf 'orders=reload\n' ...    # 重读订单配置并打印当前配置与已生成单数
 ```
 
+关卡内可以按 **F9** 打开选关菜单（Up/Down 选择、Enter 加载、Esc 关闭），列表包含
+`s_wellcooked_demo_1..4` 与 `s_wellcooked_show_{sushi,beach,summer,city}`。主菜单里会拒绝加载
+（直接 `LoadLevel` 会黑屏），先进入任意关卡再按 F9。
+
+`s_wellcooked_show_*` 是纯素材展示关：没有料箱、砧板、灶台和菜单。看背景时把
+`wellcooked-takeover.txt` 的 `work` 写成非 `auto`（或删掉这一行），否则工序状态机会因为没有
+对应料箱反复重试；`diag=false` 也建议关掉，避免展示关里刷过程行。
+
 固定订单（策略对比要用同一组订单，游戏自己随机出单做不到）：
 
 ```sh

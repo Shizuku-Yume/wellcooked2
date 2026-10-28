@@ -75,6 +75,9 @@ namespace WellCooked
         private static bool _hasTarget;
         private static int _completed;
         private static string _lastError = "";
+        private static float _retryAt;
+        private static string _lastLoggedFailure = "";
+        private static float _lastLoggedFailureAt;
 
         /// <summary>每一步的超时（秒）。到点没做成就报失败、重来。</summary>
         private const float StepTimeout = 20f;
@@ -141,7 +144,7 @@ namespace WellCooked
         /// <summary>每帧推进一次；chefs 是"厨师位 → 控制器 + 位置 + 手上东西"。</summary>
         public static void Tick(float now, List<ChefState> chefs)
         {
-            if (chefs.Count == 0)
+            if (chefs.Count == 0 || now < _retryAt)
             {
                 return;
             }
@@ -614,14 +617,39 @@ namespace WellCooked
 
         private static void Fail(float now, string reason)
         {
-            _log.LogWarning("工序: 失败——" + reason + "，重来这一步");
-            _lastError = reason;
-            if (_step == Step.Idle)
+            // 只在这里记一次失败，不能回头调 Begin：Begin 里的"找不到料箱/砧板/盘子"
+            // 会再调 Fail，形成主线程死循环（展示关没有料箱，实测直接把游戏卡死）。
+            // 冷却后由 Tick 重新接单，重试频率从"每帧"降到每 2 秒一次。
+            if (reason != _lastLoggedFailure || now - _lastLoggedFailureAt >= 10f)
             {
-                return;
+                _log.LogWarning("工序: 失败——" + reason + "，稍后重试");
+                _lastLoggedFailure = reason;
+                _lastLoggedFailureAt = now;
             }
 
-            Begin(_step, now);
+            _lastError = reason;
+            _retryAt = now + 2f;
+            _step = Step.Idle;
+            _slot = -1;
+            _hasTarget = false;
+            _facing = false;
+            _work = false;
+            _pressing = false;
+        }
+
+        /// <summary>换关卡/重新接管时清掉上一关的失败冷却与状态。</summary>
+        public static void Reset()
+        {
+            _step = Step.Idle;
+            _slot = -1;
+            _hasTarget = false;
+            _facing = false;
+            _work = false;
+            _pressing = false;
+            _retryAt = 0f;
+            _lastError = "";
+            _lastLoggedFailure = "";
+            _lastLoggedFailureAt = 0f;
         }
 
         /// <summary>这一单要什么料：从菜谱的步骤树里取叶子节点名（如 SushiFish）。</summary>

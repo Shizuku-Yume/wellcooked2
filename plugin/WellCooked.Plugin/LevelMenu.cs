@@ -54,6 +54,15 @@ namespace WellCooked
             _log = log;
         }
 
+        /// <summary>打开选关菜单（F9 与调试指令 `menu=1` 共用）。</summary>
+        public static void Show()
+        {
+            if (!_open)
+            {
+                Open();
+            }
+        }
+
         /// <summary>Called from Update: F9 toggles, and a confirmed selection is loaded here.</summary>
         public static void Tick()
         {

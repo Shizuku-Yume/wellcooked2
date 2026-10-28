@@ -8,7 +8,8 @@
 2. **注入输入**：前端"按 A 加入"走设备层虚拟手柄；关卡内的动作走设备层手柄 + 逻辑层
    （`LogicalInput`），由本地的工序状态机（`WorkOrder`）或 Bridge 下发的动作驱动。
 3. **调试通道**：`BepInEx/wellcooked-command.txt` 一行一条指令（`load`/`restart`/`mech`/`levels`/…），
-   配置在 `BepInEx/wellcooked-takeover.txt`（见 `.workflow/standards.md`）。
+   配置在 `BepInEx/wellcooked-takeover.txt`（见 `.workflow/standards.md`）。关卡内按 **F9** 打开选关菜单
+   （Up/Down 选择、Enter 加载、Esc 关闭）；主菜单里会拒绝加载并提示，先随便进一关再用。
 
 ## 读的是游戏的哪些对象与字段
 

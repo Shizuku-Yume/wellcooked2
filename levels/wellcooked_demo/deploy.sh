@@ -4,7 +4,7 @@
 # 为什么 Linux 不能“构建”：AssetBundle 必须由 Unity 2017.4 的 Windows 构建目标生成，
 # 本机没有该模块，也没有可用的 Unity 许可证（见任务 13 的 Progress）。所以这里只做部署；
 # 真正的构建在 Windows 侧跑 build-only.ps1，或者由 WELLCOOKED_BUILD_CMD 指定的命令
-# （例如 ssh 到构建机）完成后把 5 个 bundle 写回本目录，再执行本脚本。
+# （例如 ssh 到构建机）完成后把 9 个 bundle 写回本目录，再执行本脚本。
 #
 # 用法:
 #   bash levels/wellcooked_demo/deploy.sh [--game-dir DIR]
@@ -23,6 +23,10 @@ FILES=(
     s_wellcooked_demo_2
     s_wellcooked_demo_3
     s_wellcooked_demo_4
+    s_wellcooked_show_sushi
+    s_wellcooked_show_beach
+    s_wellcooked_show_summer
+    s_wellcooked_show_city
 )
 
 while [ $# -gt 0 ]; do

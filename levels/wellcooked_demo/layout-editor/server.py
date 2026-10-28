@@ -14,7 +14,7 @@ PORT = int(os.environ.get("WELLCOOKED_EDITOR_PORT", "8770"))
 # 构建脚本在仓库外（Windows 侧是 D:\oc2-level-build\build-only.ps1），用环境变量传入。
 BUILD_PS1 = os.environ.get("WELLCOOKED_BUILD_PS1", "")
 # Linux 侧没有 Unity 构建能力；需要真实构建时把命令放这里（例如 ssh 到 Windows 构建机），
-# 命令成功后必须把 5 个 bundle 写回 levels/wellcooked_demo/，然后本服务再部署。
+# 命令成功后必须把 9 个 bundle 写回 levels/wellcooked_demo/，然后本服务再部署。
 BUILD_CMD = os.environ.get("WELLCOOKED_BUILD_CMD", "")
 DEPLOY_SH = os.path.join(ROOT, "deploy.sh")
 STATUS_FILE = os.environ.get("WELLCOOKED_STATUS_FILE", os.path.join(HERE, "build-status.txt"))

@@ -486,6 +486,7 @@ namespace WellCooked
         {
             _driving = true;
             _drivingSince = now;
+            WorkOrder.Reset();
             _log.LogInfo("takeover: 检测到 " + chefCount + " 名厨师，开始接管驱动（我们占了 " + OwnedPads.Count + " 位）");
             ChooseLogicalPlayers(UnityEngine.Object.FindObjectsOfType<PlayerControls>());
             CollectTargets();
@@ -651,6 +652,7 @@ namespace WellCooked
             }
 
             LogicalInput.Clear();
+            WorkOrder.Reset();
 
             _log.LogInfo("takeover: 离开关卡，停止驱动");
         }

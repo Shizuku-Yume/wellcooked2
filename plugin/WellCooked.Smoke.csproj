@@ -46,6 +46,13 @@
     <Compile Remove="WellCooked.Plugin/**;tools/**" />
   </ItemGroup>
 
+  <!-- F9 选关与场景加载复用 WellCooked.Plugin 的源码，不复制一份实现。
+       只挑这两个自包含文件；其余文件（Plugin.cs/Game/Net/Protocol）属于另一套桥接客户端。 -->
+  <ItemGroup>
+    <Compile Include="WellCooked.Plugin/LevelMenu.cs" />
+    <Compile Include="WellCooked.Plugin/HotkeyLoad.cs" />
+  </ItemGroup>
+
   <!-- 引用游戏自带的 UnityEngine 程序集（2017.4 是模块化布局，名字随版本变，用通配符）。
        以完整路径作为 Reference 的身份，避免按元数据批处理（MSBuild 不支持那种写法）。 -->
   <ItemGroup>

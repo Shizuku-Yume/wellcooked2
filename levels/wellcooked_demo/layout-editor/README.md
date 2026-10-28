@@ -18,7 +18,7 @@ python server.py
 | `WELLCOOKED_EDITOR_PORT` | `8770` | HTTP 端口 |
 | `WELLCOOKED_GAME_DIR` | 自动探测 Steam 路径 | 游戏安装目录；处理时间 JSON 写到它的 `BepInEx/wellcooked-processing.json` |
 | `WELLCOOKED_BUILD_PS1` | 空 | Windows 侧 `build-only.ps1` 的路径；有 `powershell`/`pwsh` 时先构建再部署 |
-| `WELLCOOKED_BUILD_CMD` | 空 | 自定义构建命令（shell）；Linux 侧接远端构建机时用。成功后会再部署仓库里的 5 个 bundle |
+| `WELLCOOKED_BUILD_CMD` | 空 | 自定义构建命令（shell）；Linux 侧接远端构建机时用。成功后会再部署仓库里的 9 个 bundle |
 | `WELLCOOKED_STATUS_FILE` | `layout-editor/build-status.txt` | 构建/部署状态文件路径 |
 
 Windows 本机：
@@ -40,7 +40,7 @@ WELLCOOKED_GAME_DIR="/run/media/shizuku/File/Steam/steamapps/common/Overcooked! 
 
 1. 设置了 `WELLCOOKED_BUILD_CMD`：先跑它；退出码 0 后再部署。
 2. 否则设置了 `WELLCOOKED_BUILD_PS1` 且本机有 `powershell`/`pwsh`：先构建再部署。
-3. 否则：**只部署** `levels/wellcooked_demo/` 里现有的 5 个 bundle，并在状态里说明没有重建。
+3. 否则：**只部署** `levels/wellcooked_demo/` 里现有的 9 个 bundle，并在状态里说明没有重建。
 
 `WELLCOOKED_BUILD_CMD` 的契约：命令退出码为 0 时，`levels/wellcooked_demo/` 里的
 `info_wellcooked_demo` 与 `s_wellcooked_demo_1..4` 必须已经是新产物；服务随后调用
