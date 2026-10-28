@@ -725,6 +725,32 @@ static void test_lifecycle(void)
                st.spawns == 2,
            "status_counts_exits_and_spawns");
 
+    /* 运行中切过的策略必须在 Scheduler 被 kill -9 重启后保留（不回退到启动参数）。 */
+    {
+        char req_path[KOS_DAEMON_PATH_MAX + 32];
+        char policy_path[KOS_DAEMON_PATH_MAX + 32];
+        FILE *req;
+        long new_sched = 0;
+
+        snprintf(req_path, sizeof req_path, "%s/strategy.request", r.runtime);
+        snprintf(policy_path, sizeof policy_path, "%s/policy.json", r.runtime);
+        req = fopen(req_path, "w");
+        expect(req != NULL && fputs("order=hrrn task=cp\n", req) >= 0 && fclose(req) == 0,
+               "strategy_request_written");
+        kill(r.pid, SIGHUP);
+        expect(wait_log(scheduler_log, "to=HRRN", 2000), "request_switch_to_hrrn");
+        kill((pid_t)sched_pid, SIGKILL);
+        expect(wait_child_running(r.runtime, "scheduler", 2, RESTART_TIMEOUT_MS, &new_sched) &&
+                   new_sched != sched_pid,
+               "scheduler_restarted");
+        expect(wait_log(scheduler_log, "policy_restored order=HRRN task=cp", 3000),
+               "restarted_scheduler_restores_policy");
+        expect(read_all(policy_path, text, sizeof text) == 0 &&
+                   strstr(text, "\"order\":\"HRRN\"") != NULL &&
+                   strstr(text, "\"task\":\"cp\"") != NULL,
+               "policy_file_keeps_switched_policy");
+    }
+
     /* 同一运行目录的第二个实例必须在碰日志之前被 pid 锁挡住。 */
     second = spawn_supervisor(r.runtime, r.state, r.sem, r.port, 2, NULL, 0, 0, 5,
                               "0,50,100", 50, 800, 100);
