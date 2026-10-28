@@ -389,6 +389,8 @@ class Handler(BaseHTTPRequestHandler):
                 or params["strategy"] not in ORDERS or params["task_policy"] not in TASKS
                 or params["dispatch"] not in DISPATCH or not 30 <= params["game_seconds"] <= 600):
             return self.send_json(400, {"error": "参数不在允许范围内"})
+        if params["dispatch"] == "zoned" and not (ROOT / "config" / "maps" / params["scene"] / "zones.json").is_file():
+            return self.send_json(400, {"error": "所选关卡没有分区配置，不能使用分区派工"})
         if not APP.start(params):
             return self.send_json(409, {"error": "已有一局在跑，先停掉它"})
         return self.send_json(202, {"started": True})

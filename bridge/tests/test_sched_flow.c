@@ -1411,6 +1411,18 @@ static void test_pour_waits_for_cooked(void)
     n = collect_tasks(taskss, 1, got, 1, 3000);
     expect(n == 1 && strcmp(got[0].op, "pour") == 0,
            "pour_dispatched_after_cooked");
+    /* 倒料 goto 超时回队不退避：熟锅等 2 s 就可能焦（实机 20261028-120417）。 */
+    if (n == 1) {
+        int64_t failed_at = mono_ms();
+
+        expect(send_event(events, got[0].task_id, 0, KOS_EVT_FAILED,
+                          "macro=goto wait=arrived+face timeout waited_ms=6000") == 0,
+               "pour_goto_failure_sent");
+        n = collect_tasks(taskss, 1, got, 1, 3000);
+        expect(n == 1 && strcmp(got[0].op, "pour") == 0 &&
+                   got[0].received_ms - failed_at < 1000,
+               "pour_retried_without_backoff");
+    }
     cleanup_run(&run, &shm, &events, 1);
 }
 

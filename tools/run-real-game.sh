@@ -490,6 +490,11 @@ if [ "$BUILD_PLUGIN" = 1 ]; then
     PLUGIN_DLL="$SOURCE_ROOT/plugin/bin/Release/net35/WellCooked.Smoke.dll"
 fi
 [ -f "$PLUGIN_DLL" ] || die "plugin DLL not found: $PLUGIN_DLL"
+if [ "$BUILD_PLUGIN" = 0 ] && [ "$SOURCE_ROOT" = "$ROOT" ] && [ "$PLUGIN_DLL" = "$ROOT/plugin/bin/Release/net35/WellCooked.Smoke.dll" ]; then
+    if [ ! -f "$PLUGIN_DLL" ] || [ "$PLUGIN_DLL" -ot "$ROOT/plugin/WorldState.cs" ] || [ "$PLUGIN_DLL" -ot "$ROOT/plugin/Link/StateFrame.cs" ]; then
+        die "BUILD_PLUGIN=0 使用了过期插件；先 BUILD_PLUGIN=1 重新编译"
+    fi
+fi
 mkdir -p "$(dirname "$DEST_PLUGIN")"
 cp -p "$PLUGIN_DLL" "$DEST_PLUGIN"
 say "deploy: plugin $(basename "$PLUGIN_DLL")"
@@ -613,6 +618,7 @@ fi
 say "round: waiting up to ${GAME_SECONDS}s for round end"
 deadline=$((SECONDS + GAME_SECONDS))
 round_started=0
+scene_change_streak=0
 end_reason=""
 while [ "$SECONDS" -lt "$deadline" ]; do
     if ! kill -0 "$SUPERVISOR_PID" 2>/dev/null; then
@@ -625,10 +631,17 @@ while [ "$SECONDS" -lt "$deadline" ]; do
     fi
     # 插件用 File.WriteAllText 非原子写 state；读到半截文件时 state_probe 给出 "?"，
     # 不能当成换场景（实机 20261028-070912 在 elapsed=40s 被误判 scene-changed 提前收工）。
-    if [ "$round_started" = 1 ] && [ "$scene" != "?" ] && [ -n "$scene" ] &&
-        [ "$scene" != "$SCENE" ]; then
-        end_reason="scene-changed"
-        break
+    # 连续 3 次读到别的场景才算真换场景。
+    if [ "$scene" = "?" ] || [ -z "$scene" ]; then
+        :
+    elif [ "$round_started" = 1 ] && [ "$scene" != "$SCENE" ]; then
+        scene_change_streak=$((scene_change_streak + 1))
+        if [ "$scene_change_streak" -ge 3 ]; then
+            end_reason="scene-changed"
+            break
+        fi
+    else
+        scene_change_streak=0
     fi
     if python3 -c 'import sys; raise SystemExit(0 if float(sys.argv[1]) > 5 and float(sys.argv[2]) <= 0.05 else 1)' \
         "$elapsed" "$left" 2>/dev/null; then

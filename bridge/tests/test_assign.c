@@ -700,6 +700,54 @@ static void test_missing_station_fails_order(void)
     ksfx_cleanup(&run);
 }
 
+__attribute__((unused)) static void test_zoned_without_config_fails(void)
+{
+    ksfx_run run;
+    char zones_path[KSFX_PATH_MAX];
+    char log_path[KSFX_PATH_MAX];
+    char *text;
+    size_t len = 0;
+    int status = 0;
+    pid_t done;
+    int waited;
+
+    if (ksfx_init(&run) != 0) {
+        expect(0, "zoned_missing_config_fixture_init");
+        ksfx_cleanup(&run);
+        return;
+    }
+    if (snprintf(zones_path, sizeof zones_path, "%s/zones.json", run.dir) >=
+            (int)sizeof zones_path || unlink(zones_path) != 0) {
+        expect(0, "zoned_missing_config_removed");
+        ksfx_cleanup(&run);
+        return;
+    }
+    if (ksfx_spawn_ex(&run, "fcfs", "zoned") <= 0) {
+        expect(0, "zoned_missing_config_scheduler_spawned");
+        ksfx_cleanup(&run);
+        return;
+    }
+    for (waited = 0; waited < 3000; waited += 20) {
+        done = waitpid(run.pid, &status, WNOHANG);
+        if (done == run.pid) {
+            run.pid = -1;
+            break;
+        }
+        ksfx_sleep_ms(20);
+    }
+    expect(run.pid == -1 && WIFEXITED(status) && WEXITSTATUS(status) != 0,
+           "zoned_missing_config_rejected");
+    if (snprintf(log_path, sizeof log_path, "%s/logs/scheduler.log", run.runtime_dir) >=
+        (int)sizeof log_path) {
+        expect(0, "zoned_missing_config_log_path");
+    } else {
+        text = ksfx_read_file(log_path, &len);
+        expect(text != NULL && strstr(text, "zoned_config_required") != NULL,
+               "zoned_missing_config_error_logged");
+        free(text);
+    }
+    ksfx_cleanup(&run);
+}
 static void test_zoned_pipeline(void)
 {
     kos_zones zones;
@@ -904,6 +952,7 @@ int main(void)
     test_decisions_log();
     test_distance_and_wash();
     test_missing_station_fails_order();
+    test_zoned_without_config_fails();
     test_zoned_pipeline();
     printf("[test_assign] 检查 %d 项，失败 %d 项\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;

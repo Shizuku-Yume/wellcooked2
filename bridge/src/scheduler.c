@@ -2497,8 +2497,12 @@ static void handle_worker_event(scheduler *s, const kos_mq_msg *msg)
                     if (strcmp(op, "place") == 0) {
                         task->station_id[0] = '\0';
                     }
+                    /* 倒料不退避：锅熟后约 12 s 就焦，2 s 退避期间空闲厨师会去拿别的活
+                     * （实机 20261028-120417 米饭锅 goto 超时后退避，锅差点烧）。 */
                     task->not_before_ms =
-                        now + (int64_t)task->fail_count * SCHED_TASK_RETRY_BACKOFF_MS;
+                        strcmp(op, "pour") == 0
+                            ? now
+                            : now + (int64_t)task->fail_count * SCHED_TASK_RETRY_BACKOFF_MS;
                     kos_log_info(s->rt.log, "task_retry_backoff",
                                  "order=%s node=%s attempt=%d not_before_ms=%lld",
                                  order->id, s->recipes.nodes[node].id, task->fail_count,
@@ -4351,7 +4355,15 @@ static int task_rank_before(const scheduler *s, const sched_candidate *a,
                             const sched_candidate *b)
 {
     int seq_a, seq_b;
+    int pour_a = a->order_index >= 0 &&
+                 strcmp(s->recipes.nodes[a->node_index].op, "pour") == 0;
+    int pour_b = b->order_index >= 0 &&
+                 strcmp(s->recipes.nodes[b->node_index].op, "pour") == 0;
 
+    /* 熟锅倒料排在一切之前（含洗盘/放下）：等一轮就可能烧焦起火。 */
+    if (pour_a != pour_b) {
+        return pour_a;
+    }
     if ((a->order_index < 0) != (b->order_index < 0)) {
         return a->order_index < 0;
     }
@@ -4412,7 +4424,10 @@ static void greedy_assign(const scheduler *s, const sched_candidate *pool, int p
             }
             if (best < 0) {
                 best = i;
-                if (s->task_policy == KOS_TASK_POLICY_FIFO) {
+                /* fifo 不看路程，但倒料例外：取最近的人，少走一步少一分烧焦风险。 */
+                if (s->task_policy == KOS_TASK_POLICY_FIFO &&
+                    (pool[task].order_index < 0 ||
+                     strcmp(s->recipes.nodes[pool[task].node_index].op, "pour") != 0)) {
                     break;
                 }
             } else if (travel_cells[index] < travel_cells[best * pool_count + task]) {
@@ -5359,14 +5374,34 @@ static int load_config(scheduler *s)
                  s->kitchen.station_count, s->recipes_path, s->recipes.node_count,
                  s->recipes.dish_count, s->recipes.edge_count);
     if (s->zoned) {
+        int zones_rc;
+
         kos_error_clear(&err);
-        if (kos_zones_for_kitchen(s->kitchen_path, &s->zones, &err) == KOS_OK && s->zones.from_file) {
-            (void)kos_zones_register_handoff(&s->zones, &s->kitchen, &err);
-            (void)kos_recipes_apply_zones(&s->recipes, &s->kitchen, &s->zones, &err);
-            kos_assign_pot_chain(&s->recipes, s->pot_chain);
-            kos_log_info(s->rt.log, "zoned_pipeline_ready", "zones=%d handoff=%s",
-                         s->zones.zone_count, s->zones.handoff.id);
+        zones_rc = kos_zones_for_kitchen(s->kitchen_path, &s->zones, &err);
+        if (zones_rc != KOS_OK || !s->zones.from_file) {
+            char text[256];
+
+            if (zones_rc == KOS_OK) {
+                snprintf(text, sizeof text, "zones.json is required for zoned dispatch");
+            } else {
+                error_text(&err, text, sizeof text);
+            }
+            kos_log_error(s->rt.log, "zoned_config_required", "kitchen=%s error=%s",
+                          s->kitchen_path, text);
+            return -1;
         }
+        if (kos_zones_register_handoff(&s->zones, &s->kitchen, &err) != KOS_OK ||
+            kos_recipes_apply_zones(&s->recipes, &s->kitchen, &s->zones, &err) != KOS_OK) {
+            char text[256];
+
+            error_text(&err, text, sizeof text);
+            kos_log_error(s->rt.log, "zoned_config_invalid", "kitchen=%s error=%s",
+                          s->kitchen_path, text);
+            return -1;
+        }
+        kos_assign_pot_chain(&s->recipes, s->pot_chain);
+        kos_log_info(s->rt.log, "zoned_pipeline_ready", "zones=%d handoff=%s",
+                     s->zones.zone_count, s->zones.handoff.id);
     }
     kos_assign_pot_chain(&s->recipes, s->pot_chain);
     recipe_feasibility_check(s);

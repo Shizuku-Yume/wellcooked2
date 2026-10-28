@@ -666,6 +666,7 @@ __attribute__((unused)) static int ksfx_wait_log(const ksfx_run *r, const char *
     return -1;
 }
 
+
 __attribute__((unused)) static int ksfx_stop(ksfx_run *r)
 {
     int status = 0;
