@@ -22,6 +22,7 @@ namespace WellCooked.Game
 
         private static Action<string> _log;
         private static Type _containerType;
+        private static Type _loadingType;
         private static FieldInfo _capacityField;
         private static string _lastScene = "";
         private static float _nextTick;
@@ -31,6 +32,7 @@ namespace WellCooked.Game
         {
             _log = log;
             _containerType = AccessTools.TypeByName("IngredientContainer");
+            _loadingType = AccessTools.TypeByName("LoadingScreenUIController");
             if (_containerType != null)
             {
                 _capacityField = _containerType.GetField("m_capacity",
@@ -55,6 +57,11 @@ namespace WellCooked.Game
 
             if (!InTunedLevel(scene)) return;
             if (_containerType == null || _capacityField == null) return;
+
+            // Never poke scene objects while the level is still being loaded: the container
+            // components appear one by one and touching them mid-construction can wedge the
+            // loading flow.
+            if (IsLoading()) return;
 
             try
             {
@@ -109,6 +116,19 @@ namespace WellCooked.Game
             }
             catch { }
             return false;
+        }
+
+        private static bool IsLoading()
+        {
+            try
+            {
+                if (_loadingType == null) return false;
+                return Resources.FindObjectsOfTypeAll(_loadingType).Length > 0;
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         private static bool InTunedLevel(string scene)

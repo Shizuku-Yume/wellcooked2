@@ -96,11 +96,12 @@ public static class BatchBuildWellCookedDemo
         }
 
         Debug.Log("[batch] 打包完成，bundle 数 = " + manifest.GetAllAssetBundles().Length);
-        foreach (string name in new[] { "info_wellcooked_demo", "s_wellcooked_demo_1",
-                                        "s_wellcooked_demo_2", "s_wellcooked_demo_3", "s_wellcooked_demo_4" })
+        // 动态列出所有 wellcooked 产物（含 4 个展示关）
+        foreach (string bundle in manifest.GetAllAssetBundles())
         {
-            string path = Path.Combine(BundleDir, name);
-            Debug.Log(string.Format("[batch] 产物 {0}: {1}", name,
+            if (!bundle.Contains("wellcooked")) continue;
+            string path = Path.Combine(BundleDir, bundle);
+            Debug.Log(string.Format("[batch] 产物 {0}: {1}", bundle,
                 File.Exists(path) ? (new FileInfo(path).Length + " 字节") : "缺失"));
         }
 
@@ -187,11 +188,12 @@ public static class BatchBuildWellCookedDemo
             }
         }
 
-        foreach (string name in new[] { "info_wellcooked_demo", "s_wellcooked_demo_1",
-                                        "s_wellcooked_demo_2", "s_wellcooked_demo_3", "s_wellcooked_demo_4" })
+        // 动态列出所有 wellcooked 产物（含 4 个展示关）
+        foreach (string bundle in manifest.GetAllAssetBundles())
         {
-            string path = Path.Combine(BundleDir, name);
-            Debug.Log(string.Format("[batch] 产物 {0}: {1}", name,
+            if (!bundle.Contains("wellcooked")) continue;
+            string path = Path.Combine(BundleDir, bundle);
+            Debug.Log(string.Format("[batch] 产物 {0}: {1}", bundle,
                 File.Exists(path) ? (new FileInfo(path).Length + " 字节") : "缺失"));
         }
 
