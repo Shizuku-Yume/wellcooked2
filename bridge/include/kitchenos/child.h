@@ -54,7 +54,8 @@ typedef struct {
     char recipes_path[KOS_DAEMON_PATH_MAX];
     char orders_path[KOS_DAEMON_PATH_MAX];
     char runs_dir[KOS_DAEMON_PATH_MAX];
-    char strategy[16]; /* "fcfs" / "edf" / "llf" / "hrrn" */
+    char strategy[16]; /* "fcfs" / "edf" / "llf" / "hrrn" / "sjf" */
+    char task_policy[8]; /* "fifo" / "cp" / "cost" */
     char dispatch[16]; /* "flexible" / "zoned" */
     int chefs;         /* Scheduler: 输入槽数量（= Worker 数） */
     int generation;    /* Worker: 第几次拉起；>1 时才发 RECOVERED */
@@ -85,7 +86,7 @@ void kos_child_opts_init(kos_child_opts *o, kos_child_kind kind);
  *   --runtime-dir DIR  --state-name NAME  --sem-name NAME  --log FILE
  *   --supervisor-fd N  --supervisor-heartbeat-ms M  --attach-retry-ms M
  *   --kitchen FILE  --recipes FILE  --orders FILE  --runs-dir DIR
- *   --strategy fcfs|edf|llf|hrrn  --chefs N  --generation N  --lease-ttl-ms M
+ *   --strategy fcfs|edf|llf|hrrn|sjf  --task-policy fifo|cp|cost  --chefs N  --generation N  --lease-ttl-ms M
  *   --tick-ms M  --slot-interval-ms M  --nav-name NAME  --nav-sem-name NAME
  *   --nav pibt|pa  --instance N
  *   --verbose  --help  --version

@@ -99,6 +99,7 @@ typedef struct {
     const char *orders_path;
     const char *runs_dir;
     const char *strategy;
+    const char *task_policy;
     const char *dispatch;
     int lease_ttl_ms;
     const char *bridge_bin_opt;
@@ -600,6 +601,10 @@ static int spawn_child(supervisor *s, int index)
             if (s->strategy != NULL) {
                 argv[ac++] = (char *)"--strategy";
                 argv[ac++] = (char *)s->strategy;
+            }
+            if (s->task_policy != NULL) {
+                argv[ac++] = (char *)"--task-policy";
+                argv[ac++] = (char *)s->task_policy;
             }
             if (s->dispatch != NULL) {
                 argv[ac++] = (char *)"--dispatch";
@@ -1183,7 +1188,9 @@ static void print_help(void)
            "  --recipes FILE           recipes.json passed to Scheduler\n"
            "  --orders FILE            orders.json menu passed to Scheduler\n"
            "  --runs-dir DIR           Scheduler run logs (default <runtime>/runs)\n"
-           "  --strategy fcfs|edf|llf|hrrn  initial order policy (default fcfs; SIGHUP cycles)\n"
+           "  --strategy fcfs|edf|llf|hrrn|sjf  initial order policy (default fcfs; SIGHUP cycles\n"
+           "                           or applies <runtime>/strategy.request)\n"
+           "  --task-policy fifo|cp|cost    task ordering (default cost)\n"
            "  --dispatch flexible|zoned     dispatch mode (default flexible)\n"
            "  --lease-ttl-ms M         resource lease lifetime (default 30000)\n"
            "  --bridge-host H          Bridge bind address (default %s)\n"
@@ -1264,6 +1271,7 @@ static int parse_args(int argc, char **argv, supervisor *s)
     s->sem_name = KOS_SHM_DEFAULT_SEM_NAME;
     s->instance = KOS_INSTANCE_NONE;
     s->strategy = "fcfs";
+    s->task_policy = "cost";
     s->dispatch = "flexible";
     s->lease_ttl_ms = 30000;
     s->daemon.ready_fd = -1;
@@ -1458,6 +1466,14 @@ static int parse_args(int argc, char **argv, supervisor *s)
                 return ARG_ERR;
             }
             s->strategy = v;
+        } else if (strcmp(name, "--task-policy") == 0) {
+            const char *v = take_value(value, argc, argv, &i);
+            kos_task_policy tp;
+
+            if (v == NULL || kos_task_policy_from_name(v, &tp) != KOS_OK) {
+                return ARG_ERR;
+            }
+            s->task_policy = kos_task_policy_name(tp);
         } else if (strcmp(name, "--dispatch") == 0) {
             const char *v = take_value(value, argc, argv, &i);
 

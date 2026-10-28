@@ -2,13 +2,15 @@
  * scheduler.c -- KitchenOS Scheduler。
  *
  * 两级调度：
- *   1. 订单级：policy.h 的 FCFS / EDF 只吃订单视图与资源视图。
+ *   1. 订单级：policy.h 的 FCFS / EDF / LLF / HRRN / SJF 只吃订单视图与资源视图。
  *   2. 工序级：订单展开成 recipes.json 的 DAG；前置完成且资源可预约的节点进就绪
- *      队列，按关键路径剩余工时挑最高的一个，派给空闲厨师。
+ *      队列，按 --task-policy 排：cost（五项加权代价 + 匈牙利匹配，默认）、
+ *      cp（剩余关键路径长的先做）、fifo（开工顺序 + 工序下标）。
  *
  * 任务走 POSIX mq（每厨师一条 /kitchenos_tasks_<chef>），结果从 /kitchenos_events
- * 回来。每次派发写 runs/<ts>/decisions.jsonl，状态变化写 events.jsonl；SIGHUP 在
- * FCFS/EDF 之间切换并留下一条 strategy 决策，SIGUSR1 写 checkpoint.json。
+ * 回来。每次派发写 runs/<ts>/decisions.jsonl，状态变化写 events.jsonl；SIGHUP 时
+ * 若 <runtime>/strategy.request 存在就按它切两级策略，否则订单级轮换，都留下一条
+ * strategy 决策并重写 <runtime>/policy.json；SIGUSR1 写 checkpoint.json。
  *
  * 这里不碰游戏：世界状态只从 shm 读，动作只由 Worker 写输入槽。没有 Bridge 时
  * 它照样能凭 config/orders.json 的 menu 生成订单并派发，只是没人执行。
@@ -169,6 +171,8 @@ typedef struct {
     kos_kitchen kitchen;
     kos_recipes recipes;
     kos_policy *policy;
+    kos_task_policy task_policy;
+    int64_t policy_since_ms;
     char kitchen_path[KOS_DAEMON_PATH_MAX];
     char recipes_path[KOS_DAEMON_PATH_MAX];
     char orders_path[KOS_DAEMON_PATH_MAX];
@@ -190,6 +194,7 @@ typedef struct {
     int64_t dispatch_edf;
     int64_t dispatch_llf;
     int64_t dispatch_hrrn;
+    int64_t dispatch_sjf;
     int64_t worker_restarts;
     int blocked_hold[KOS_SHM_MAX_CHEFS]; /* 报过 BLOCKED 的厨师先不接新活 */
     int hold_stuck[KOS_SHM_MAX_CHEFS];   /* 手里那件东西没人要、也没台面可放 */
@@ -377,6 +382,8 @@ static void decision_common(json_writer *w, scheduler *s, const char *kind,
     json_writer_string(w, kind);
     json_writer_key(w, "policy");
     json_writer_string(w, kos_policy_name(s->policy));
+    json_writer_key(w, "task_policy");
+    json_writer_string(w, kos_task_policy_name(s->task_policy));
     json_writer_key(w, "reason");
     json_writer_string(w, reason);
     json_writer_key(w, "w_d");
@@ -3413,8 +3420,10 @@ static int open_next_order(scheduler *s, int64_t now, const int *chef_cells,
         order->opened = 1;
         order->open_seq = ++s->open_seq;
         kos_log_info(s->rt.log, "order_opened",
-                     "order=%s dish=%s open_seq=%d policy=%s crit_ms=%lld slack_ms=%lld",
+                     "order=%s dish=%s open_seq=%d policy=%s task_policy=%s crit_ms=%lld "
+                     "slack_ms=%lld",
                      order->id, order->dish, order->open_seq, kos_policy_name(s->policy),
+                     kos_task_policy_name(s->task_policy),
                      (long long)critical, (long long)(order->deadline_ms - now));
         json_writer_init(&w, line, sizeof line);
         event_common(&w, s, "order_opened");
@@ -3784,6 +3793,85 @@ static void reconcile_holding_loss(scheduler *s, int64_t now)
     }
 }
 
+/* fifo / cp 的派工键：服务工序（洗盘、放下）先于订单工序，它们不派就会卡住别的活。 */
+static int task_rank_before(const scheduler *s, const sched_candidate *a,
+                            const sched_candidate *b)
+{
+    int seq_a, seq_b;
+
+    if ((a->order_index < 0) != (b->order_index < 0)) {
+        return a->order_index < 0;
+    }
+    if (a->order_index < 0) {
+        return a->order_index < b->order_index; /* putdown(-2) 先于 wash(-1) */
+    }
+    if (s->task_policy == KOS_TASK_POLICY_CP) {
+        int64_t ca = kos_recipe_critical_ms(&s->recipes, s->orders[a->order_index].dish_index,
+                                            a->node_index);
+        int64_t cb = kos_recipe_critical_ms(&s->recipes, s->orders[b->order_index].dish_index,
+                                            b->node_index);
+
+        if (ca != cb) {
+            return ca > cb;
+        }
+    }
+    seq_a = s->orders[a->order_index].open_seq;
+    seq_b = s->orders[b->order_index].open_seq;
+    if (seq_a != seq_b) {
+        return seq_a < seq_b;
+    }
+    return a->task_index < b->task_index;
+}
+
+/*
+ * 工序级 fifo / cp：就绪池按键排好，依次交给一个能做的空闲厨师。fifo 取下标最小的
+ * 那个（不看路程），cp 取路程最近的那个。能不能做沿用代价矩阵里的 unreachable，
+ * 所以锅熟才倒、手里东西要对、分区限制这些闸门三档完全一样。
+ */
+static void greedy_assign(const scheduler *s, const sched_candidate *pool, int pool_count,
+                          int idle_count, const kos_assign_terms *terms,
+                          const int *travel_cells, int *task_of_chef)
+{
+    int order[KOS_ASSIGN_MAX_TASKS];
+    int i, j;
+
+    for (i = 0; i < idle_count; i++) {
+        task_of_chef[i] = -1;
+    }
+    for (j = 0; j < pool_count; j++) {
+        int k = j;
+
+        while (k > 0 && task_rank_before(s, &pool[j], &pool[order[k - 1]])) {
+            order[k] = order[k - 1];
+            k--;
+        }
+        order[k] = j;
+    }
+    for (j = 0; j < pool_count; j++) {
+        int task = order[j];
+        int best = -1;
+
+        for (i = 0; i < idle_count; i++) {
+            int index = i * pool_count + task;
+
+            if (task_of_chef[i] >= 0 || terms[index].unreachable) {
+                continue;
+            }
+            if (best < 0) {
+                best = i;
+                if (s->task_policy == KOS_TASK_POLICY_FIFO) {
+                    break;
+                }
+            } else if (travel_cells[index] < travel_cells[best * pool_count + task]) {
+                best = i;
+            }
+        }
+        if (best >= 0) {
+            task_of_chef[best] = task;
+        }
+    }
+}
+
 static void dispatch_ready(scheduler *s, int64_t now)
 {
     sched_candidate all[KOS_ASSIGN_MAX_TASKS];
@@ -4017,7 +4105,7 @@ static void dispatch_ready(scheduler *s, int64_t now)
             }
         }
     }
-    {
+    if (s->task_policy == KOS_TASK_POLICY_COST) {
         kos_error err;
 
         kos_error_clear(&err);
@@ -4029,6 +4117,8 @@ static void dispatch_ready(scheduler *s, int64_t now)
             kos_log_warn(s->rt.log, "assign_failed", "error=%s", text);
             return;
         }
+    } else {
+        greedy_assign(s, pool, pool_count, idle_count, terms, travel_cells, task_of_chef);
     }
 
     for (i = 0; i < idle_count; i++) {
@@ -4251,6 +4341,9 @@ static void dispatch_ready(scheduler *s, int64_t now)
             s->wash.started_ms = now;
         }
         switch (kos_policy_kind_of(s->policy)) {
+        case KOS_POLICY_SJF:
+            s->dispatch_sjf++;
+            break;
         case KOS_POLICY_EDF:
             s->dispatch_edf++;
             break;
@@ -4270,10 +4363,10 @@ static void dispatch_ready(scheduler *s, int64_t now)
                              &terms[i * pool_count + pick], &components);
         kos_log_info(s->rt.log, "task_dispatched",
                      "order=%s node=%s chef=%d task=%llu priority=%d crit_ms=%d "
-                     "cost=%.3f travel_cells=%d policy=%s", order_id, node_id, chef,
-                     (unsigned long long)msg.task_id, priority, critical_ms,
+                     "cost=%.3f travel_cells=%d policy=%s task_policy=%s", order_id, node_id,
+                     chef, (unsigned long long)msg.task_id, priority, critical_ms,
                      components.cost, travel_cells[i * pool_count + pick],
-                     kos_policy_name(s->policy));
+                     kos_policy_name(s->policy), kos_task_policy_name(s->task_policy));
 
         json_writer_init(&w, line, sizeof line);
         decision_common(&w, s, "dispatch", "list-scheduling", &components);
@@ -4405,32 +4498,126 @@ static void reload_config_on_sighup(scheduler *s)
                  s->assign_cfg.cell_ms, s->assign_cfg.wash_ms);
 }
 
+/* <runtime>/policy.json：控制台读的"当前策略"，每次启动和切换后原子重写。 */
+static void write_policy_file(scheduler *s)
+{
+    char path[KOS_DAEMON_PATH_MAX + 32];
+    char tmp[KOS_DAEMON_PATH_MAX + 48];
+    char text[160];
+    int len;
+    int fd;
+
+    if (path_join(path, sizeof path, s->rt.runtime_dir, "policy.json") != 0 ||
+        path_join(tmp, sizeof tmp, s->rt.runtime_dir, ".policy.json.tmp") != 0) {
+        return;
+    }
+    len = snprintf(text, sizeof text, "{\"order\":\"%s\",\"task\":\"%s\",\"since_ms\":%lld}\n",
+                   kos_policy_name(s->policy), kos_task_policy_name(s->task_policy),
+                   (long long)s->policy_since_ms);
+    fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+    if (fd < 0) {
+        kos_log_warn(s->rt.log, "policy_file_failed", "path=%s error=%s", tmp, strerror(errno));
+        return;
+    }
+    if (write(fd, text, (size_t)len) != len || close(fd) != 0) {
+        kos_log_warn(s->rt.log, "policy_file_failed", "path=%s error=%s", tmp, strerror(errno));
+        (void)unlink(tmp);
+        return;
+    }
+    if (rename(tmp, path) != 0) {
+        kos_log_warn(s->rt.log, "policy_file_failed", "path=%s error=%s", path, strerror(errno));
+        (void)unlink(tmp);
+    }
+}
+
+/*
+ * 读 <runtime>/strategy.request 并删除。返回 1 = 文件存在且合法（order 与 task 已填好），
+ * 0 = 文件不存在，-1 = 文件存在但内容不合法（已写 WARN）。
+ */
+static int take_strategy_request(scheduler *s, kos_policy_kind *order, kos_task_policy *task)
+{
+    char path[KOS_DAEMON_PATH_MAX + 32];
+    char text[256];
+    FILE *file;
+    size_t n;
+    int has_order = 0;
+    int has_task = 0;
+
+    if (path_join(path, sizeof path, s->rt.runtime_dir, "strategy.request") != 0) {
+        return 0;
+    }
+    file = fopen(path, "r");
+    if (file == NULL) {
+        return 0;
+    }
+    n = fread(text, 1, sizeof text - 1, file);
+    text[n] = '\0';
+    if (!feof(file)) {
+        n = sizeof text; /* 超长：按坏内容处理 */
+    }
+    fclose(file);
+    (void)unlink(path);
+    if (n >= sizeof text - 1 ||
+        kos_policy_parse_request(text, order, &has_order, task, &has_task) != KOS_OK) {
+        text[sizeof text - 1] = '\0';
+        text[strcspn(text, "\r\n")] = '\0';
+        kos_log_warn(s->rt.log, "strategy_request_invalid", "path=%s content=%s", path, text);
+        return -1;
+    }
+    return 1;
+}
+
 static void strategy_switch(scheduler *s)
 {
     kos_policy_kind from = kos_policy_kind_of(s->policy);
-    kos_policy_kind to = kos_policy_other(from);
+    kos_task_policy from_task = s->task_policy;
+    kos_policy_kind to = from;
+    kos_task_policy to_task = from_task;
+    const char *reason = "SIGHUP";
     json_writer w;
     char line[SCHED_LINE_MAX];
+    int request = take_strategy_request(s, &to, &to_task);
 
+    if (request < 0) {
+        return;
+    }
+    if (request > 0) {
+        reason = "request";
+    } else {
+        to = kos_policy_other(from);
+    }
     kos_policy_set_kind(s->policy, to);
-    kos_log_info(s->rt.log, "strategy_switch", "from=%s to=%s reason=SIGHUP",
-                 kos_policy_kind_name(from), kos_policy_kind_name(to));
+    s->task_policy = to_task;
+    s->policy_since_ms = now_ms() - s->started_ms;
+    kos_log_info(s->rt.log, "strategy_switch",
+                 "from=%s to=%s task_from=%s task_to=%s reason=%s",
+                 kos_policy_kind_name(from), kos_policy_kind_name(to),
+                 kos_task_policy_name(from_task), kos_task_policy_name(to_task), reason);
     json_writer_init(&w, line, sizeof line);
     event_common(&w, s, "strategy_switch");
     json_writer_key(&w, "from");
     json_writer_string(&w, kos_policy_kind_name(from));
     json_writer_key(&w, "to");
     json_writer_string(&w, kos_policy_kind_name(to));
+    json_writer_key(&w, "task_from");
+    json_writer_string(&w, kos_task_policy_name(from_task));
+    json_writer_key(&w, "task_to");
+    json_writer_string(&w, kos_task_policy_name(to_task));
     event_end(s, &w);
 
     json_writer_init(&w, line, sizeof line);
-    decision_common(&w, s, "strategy", "SIGHUP", NULL);
+    decision_common(&w, s, "strategy", reason, NULL);
     json_writer_key(&w, "from");
     json_writer_string(&w, kos_policy_kind_name(from));
     json_writer_key(&w, "to");
     json_writer_string(&w, kos_policy_kind_name(to));
+    json_writer_key(&w, "task_from");
+    json_writer_string(&w, kos_task_policy_name(from_task));
+    json_writer_key(&w, "task_to");
+    json_writer_string(&w, kos_task_policy_name(to_task));
     json_writer_object_end(&w);
     write_jsonl(s->decisions_fd, &w);
+    write_policy_file(s);
 }
 
 static const char *order_status_name(int status)
@@ -4465,6 +4652,7 @@ static void write_metrics_snapshot(scheduler *s, const char *reason)
     snapshot.dispatch_edf = s->dispatch_edf;
     snapshot.dispatch_llf = s->dispatch_llf;
     snapshot.dispatch_hrrn = s->dispatch_hrrn;
+    snapshot.dispatch_sjf = s->dispatch_sjf;
     snapshot.worker_restarts = s->worker_restarts;
 
     for (i = 0; i < s->order_count && i < KOS_METRICS_MAX_ORDERS; i++) {
@@ -4686,6 +4874,9 @@ static int scheduler_main(scheduler *s, const kos_child_opts *opts)
     memset(s, 0, sizeof *s);
     s->rt.opts = *opts;
     s->zoned = (strcmp(opts->dispatch, "zoned") == 0 || strcmp(opts->dispatch, "zone") == 0);
+    if (kos_task_policy_from_name(opts->task_policy, &s->task_policy) != KOS_OK) {
+        s->task_policy = KOS_TASK_POLICY_COST;
+    }
     if (opts->runs_dir[0] != '\0') {
         copy_str(s->runs_dir, sizeof s->runs_dir, opts->runs_dir);
     }
@@ -4753,8 +4944,10 @@ static int scheduler_main(scheduler *s, const kos_child_opts *opts)
     }
 
     kos_log_info(s->rt.log, "scheduler_ready",
-                 "policy=%s chefs=%d orders=%d run_dir=%s", kos_policy_name(s->policy),
+                 "policy=%s task_policy=%s chefs=%d orders=%d run_dir=%s",
+                 kos_policy_name(s->policy), kos_task_policy_name(s->task_policy),
                  s->rt.opts.chefs, s->order_count, s->run_dir);
+    write_policy_file(s);
 
     while (!kos_child_poll(&s->rt)) {
         int64_t now = now_ms();

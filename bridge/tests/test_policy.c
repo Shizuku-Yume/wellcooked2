@@ -111,8 +111,9 @@ static void test_policy_order(void)
     expect(kos_policy_other(KOS_POLICY_FCFS) == KOS_POLICY_EDF &&
                kos_policy_other(KOS_POLICY_EDF) == KOS_POLICY_LLF &&
                kos_policy_other(KOS_POLICY_LLF) == KOS_POLICY_HRRN &&
-               kos_policy_other(KOS_POLICY_HRRN) == KOS_POLICY_FCFS,
-           "policy_other_cycles_four");
+               kos_policy_other(KOS_POLICY_HRRN) == KOS_POLICY_SJF &&
+               kos_policy_other(KOS_POLICY_SJF) == KOS_POLICY_FCFS,
+           "policy_other_cycles_five");
     {
         kos_policy_kind kind = KOS_POLICY_FCFS;
 
@@ -256,6 +257,129 @@ static void test_llf_hrrn(void)
     kos_policy_destroy(hrrn);
     kos_policy_destroy(edf);
     kos_policy_destroy(fcfs);
+}
+
+/*
+ * SJF：估计剩余工时最短的先开，与 FCFS/EDF 的选择都不同；工时并列退化成 FCFS。
+ *   a: arrival 100, deadline 2000, est 4000（FCFS、EDF 都选 a）
+ *   b: arrival 300, deadline 6000, est 500 （SJF 选 b）
+ *   c: arrival 200, deadline 5000, est 1500
+ */
+static void test_sjf(void)
+{
+    kos_order_view orders[3];
+    kos_policy *sjf;
+    kos_policy *fcfs;
+    kos_policy *edf;
+    kos_policy_kind kind = KOS_POLICY_FCFS;
+    int chosen = -1;
+
+    printf("[test_policy] 2b. SJF\n");
+    memset(orders, 0, sizeof orders);
+    snprintf(orders[0].id, sizeof orders[0].id, "a");
+    orders[0].arrival_ms = 100;
+    orders[0].deadline_ms = 2000;
+    orders[0].est_cost_ms = 4000;
+    orders[0].status = KOS_ORDER_ACTIVE;
+    snprintf(orders[1].id, sizeof orders[1].id, "b");
+    orders[1].arrival_ms = 300;
+    orders[1].deadline_ms = 6000;
+    orders[1].est_cost_ms = 500;
+    orders[1].status = KOS_ORDER_ACTIVE;
+    snprintf(orders[2].id, sizeof orders[2].id, "c");
+    orders[2].arrival_ms = 200;
+    orders[2].deadline_ms = 5000;
+    orders[2].est_cost_ms = 1500;
+    orders[2].status = KOS_ORDER_ACTIVE;
+
+    sjf = make_policy(KOS_POLICY_SJF);
+    fcfs = make_policy(KOS_POLICY_FCFS);
+    edf = make_policy(KOS_POLICY_EDF);
+    expect(sjf != NULL && fcfs != NULL && edf != NULL, "policy_create_sjf");
+    if (sjf == NULL || fcfs == NULL || edf == NULL) {
+        kos_policy_destroy(sjf);
+        kos_policy_destroy(fcfs);
+        kos_policy_destroy(edf);
+        return;
+    }
+    expect(kos_policy_pick(sjf, orders, 3, NULL, 0, 1000, &chosen) == KOS_OK && chosen == 1,
+           "sjf_shortest_estimate_first");
+    expect(kos_policy_pick(fcfs, orders, 3, NULL, 0, 1000, &chosen) == KOS_OK && chosen == 0,
+           "sjf_case_fcfs_differs");
+    expect(kos_policy_pick(edf, orders, 3, NULL, 0, 1000, &chosen) == KOS_OK && chosen == 0,
+           "sjf_case_edf_differs");
+
+    orders[1].status = KOS_ORDER_COMPLETED;
+    expect(kos_policy_pick(sjf, orders, 3, NULL, 0, 1000, &chosen) == KOS_OK && chosen == 2,
+           "sjf_skips_completed");
+
+    orders[1].status = KOS_ORDER_ACTIVE;
+    orders[1].est_cost_ms = 1500;
+    expect(kos_policy_pick(sjf, orders, 3, NULL, 0, 1000, &chosen) == KOS_OK && chosen == 2,
+           "sjf_tie_falls_back_to_fcfs");
+
+    expect(strcmp(kos_policy_name(sjf), "SJF") == 0, "policy_name_sjf");
+    expect(kos_policy_kind_from_name("Sjf", &kind) == KOS_OK && kind == KOS_POLICY_SJF,
+           "policy_kind_from_name_sjf");
+    kos_policy_destroy(sjf);
+    kos_policy_destroy(fcfs);
+    kos_policy_destroy(edf);
+}
+
+static void test_task_policy_and_request(void)
+{
+    kos_task_policy task = KOS_TASK_POLICY_COST;
+    kos_policy_kind order = KOS_POLICY_FCFS;
+    int has_order = -1;
+    int has_task = -1;
+
+    printf("[test_policy] 2c. task policy / strategy.request\n");
+    expect(kos_task_policy_from_name("FIFO", &task) == KOS_OK && task == KOS_TASK_POLICY_FIFO &&
+               kos_task_policy_from_name("cp", &task) == KOS_OK && task == KOS_TASK_POLICY_CP &&
+               kos_task_policy_from_name("cost", &task) == KOS_OK &&
+               task == KOS_TASK_POLICY_COST,
+           "task_policy_from_name");
+    expect(kos_task_policy_from_name("greedy", &task) != KOS_OK, "task_policy_rejects_unknown");
+    expect(strcmp(kos_task_policy_name(KOS_TASK_POLICY_FIFO), "fifo") == 0 &&
+               strcmp(kos_task_policy_name(KOS_TASK_POLICY_CP), "cp") == 0 &&
+               strcmp(kos_task_policy_name((kos_task_policy)99), "cost") == 0,
+           "task_policy_names");
+
+    expect(kos_policy_parse_request("task=cp  order=SJF\n", &order, &has_order, &task,
+                                    &has_task) == KOS_OK &&
+               has_order == 1 && order == KOS_POLICY_SJF && has_task == 1 &&
+               task == KOS_TASK_POLICY_CP,
+           "request_both_keys_any_order");
+
+    order = KOS_POLICY_LLF;
+    expect(kos_policy_parse_request("task=fifo", &order, &has_order, &task, &has_task) ==
+                   KOS_OK &&
+               has_order == 0 && order == KOS_POLICY_LLF && has_task == 1 &&
+               task == KOS_TASK_POLICY_FIFO,
+           "request_task_only_keeps_order");
+
+    task = KOS_TASK_POLICY_CP;
+    expect(kos_policy_parse_request("order=hrrn", &order, &has_order, &task, &has_task) ==
+                   KOS_OK &&
+               has_order == 1 && order == KOS_POLICY_HRRN && has_task == 0 &&
+               task == KOS_TASK_POLICY_CP,
+           "request_order_only_keeps_task");
+
+    order = KOS_POLICY_LLF;
+    expect(kos_policy_parse_request("order=bogus task=cp", &order, &has_order, &task,
+                                    &has_task) != KOS_OK &&
+               order == KOS_POLICY_LLF,
+           "request_bad_order_rejected_untouched");
+    expect(kos_policy_parse_request("", &order, &has_order, &task, &has_task) != KOS_OK,
+           "request_empty_rejected");
+    expect(kos_policy_parse_request("sjf", &order, &has_order, &task, &has_task) != KOS_OK,
+           "request_bare_word_rejected");
+    expect(kos_policy_parse_request("order=sjf order=fcfs", &order, &has_order, &task,
+                                    &has_task) != KOS_OK,
+           "request_duplicate_key_rejected");
+    expect(kos_policy_parse_request("speed=fast", &order, &has_order, &task, &has_task) !=
+               KOS_OK,
+           "request_unknown_key_rejected");
 }
 
 static int load_recipes(kos_recipes *recipes)
@@ -634,6 +758,8 @@ int main(void)
     printf("[test_policy] 开始：订单策略、工序 DAG、mq\n");
     test_policy_order();
     test_llf_hrrn();
+    test_sjf();
+    test_task_policy_and_request();
     test_recipes();
     test_list_schedule();
     test_reward_tiebreak();

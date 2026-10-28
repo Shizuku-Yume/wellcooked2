@@ -1,5 +1,5 @@
 /*
- * policy.c -- FCFS / EDF / LLF / HRRN。见 policy.h 的接口约束。
+ * policy.c -- FCFS / EDF / LLF / HRRN / SJF。见 policy.h 的接口约束。
  *
  * 所有比较都用 (主键, 次键, 下标) 的三段式，保证同一份输入永远挑出同一个订单；
  * 调度实验的可重复性依赖这一点，不能交给"数组刚好是有序的"这种巧合。
@@ -13,6 +13,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 struct kos_policy {
     kos_policy_kind kind;
@@ -26,7 +27,7 @@ kos_policy *kos_policy_create(kos_policy_kind kind, kos_error *err)
         kos_error_clear(err);
     }
     if (kind != KOS_POLICY_FCFS && kind != KOS_POLICY_EDF &&
-        kind != KOS_POLICY_LLF && kind != KOS_POLICY_HRRN) {
+        kind != KOS_POLICY_LLF && kind != KOS_POLICY_HRRN && kind != KOS_POLICY_SJF) {
         if (err != NULL) {
             err->code = KOS_ERR_INVAL;
             snprintf(err->context, sizeof err->context, "未知策略 %d", (int)kind);
@@ -64,6 +65,8 @@ const char *kos_policy_kind_name(kos_policy_kind kind)
         return "LLF";
     case KOS_POLICY_HRRN:
         return "HRRN";
+    case KOS_POLICY_SJF:
+        return "SJF";
     case KOS_POLICY_FCFS:
     default:
         return "FCFS";
@@ -78,8 +81,8 @@ const char *kos_policy_name(const kos_policy *policy)
 void kos_policy_set_kind(kos_policy *policy, kos_policy_kind kind)
 {
     if (policy != NULL &&
-        (kind == KOS_POLICY_FCFS || kind == KOS_POLICY_EDF ||
-         kind == KOS_POLICY_LLF || kind == KOS_POLICY_HRRN)) {
+        (kind == KOS_POLICY_FCFS || kind == KOS_POLICY_EDF || kind == KOS_POLICY_LLF ||
+         kind == KOS_POLICY_HRRN || kind == KOS_POLICY_SJF)) {
         policy->kind = kind;
     }
 }
@@ -94,6 +97,8 @@ kos_policy_kind kos_policy_other(kos_policy_kind kind)
     case KOS_POLICY_LLF:
         return KOS_POLICY_HRRN;
     case KOS_POLICY_HRRN:
+        return KOS_POLICY_SJF;
+    case KOS_POLICY_SJF:
     default:
         return KOS_POLICY_FCFS;
     }
@@ -101,30 +106,125 @@ kos_policy_kind kos_policy_other(kos_policy_kind kind)
 
 int kos_policy_kind_from_name(const char *name, kos_policy_kind *out)
 {
+    static const struct {
+        const char *name;
+        kos_policy_kind kind;
+    } names[] = {
+        {"fcfs", KOS_POLICY_FCFS}, {"edf", KOS_POLICY_EDF}, {"llf", KOS_POLICY_LLF},
+        {"hrrn", KOS_POLICY_HRRN}, {"sjf", KOS_POLICY_SJF},
+    };
+    size_t i;
+
     if (name == NULL || out == NULL) {
         return KOS_ERR_INVAL;
     }
-    if (strcmp(name, "fcfs") == 0 || strcmp(name, "FCFS") == 0) {
-        *out = KOS_POLICY_FCFS;
-        return KOS_OK;
-    }
-    if (strcmp(name, "edf") == 0 || strcmp(name, "EDF") == 0) {
-        *out = KOS_POLICY_EDF;
-        return KOS_OK;
-    }
-    if (strcmp(name, "llf") == 0 || strcmp(name, "LLF") == 0) {
-        *out = KOS_POLICY_LLF;
-        return KOS_OK;
-    }
-    if (strcmp(name, "hrrn") == 0 || strcmp(name, "HRRN") == 0) {
-        *out = KOS_POLICY_HRRN;
-        return KOS_OK;
+    for (i = 0; i < sizeof names / sizeof names[0]; i++) {
+        if (strcasecmp(name, names[i].name) == 0) {
+            *out = names[i].kind;
+            return KOS_OK;
+        }
     }
     return KOS_ERR_INVAL;
 }
 
+const char *kos_task_policy_name(kos_task_policy policy)
+{
+    switch (policy) {
+    case KOS_TASK_POLICY_FIFO:
+        return "fifo";
+    case KOS_TASK_POLICY_CP:
+        return "cp";
+    case KOS_TASK_POLICY_COST:
+    default:
+        return "cost";
+    }
+}
+
+int kos_task_policy_from_name(const char *name, kos_task_policy *out)
+{
+    if (name == NULL || out == NULL) {
+        return KOS_ERR_INVAL;
+    }
+    if (strcasecmp(name, "fifo") == 0) {
+        *out = KOS_TASK_POLICY_FIFO;
+    } else if (strcasecmp(name, "cp") == 0) {
+        *out = KOS_TASK_POLICY_CP;
+    } else if (strcasecmp(name, "cost") == 0) {
+        *out = KOS_TASK_POLICY_COST;
+    } else {
+        return KOS_ERR_INVAL;
+    }
+    return KOS_OK;
+}
+
+int kos_policy_parse_request(const char *text, kos_policy_kind *order, int *has_order,
+                             kos_task_policy *task, int *has_task)
+{
+    kos_policy_kind o = KOS_POLICY_FCFS;
+    kos_task_policy t = KOS_TASK_POLICY_COST;
+    int got_o = 0;
+    int got_t = 0;
+    const char *p = text;
+
+    if (text == NULL || order == NULL || has_order == NULL || task == NULL ||
+        has_task == NULL) {
+        return KOS_ERR_INVAL;
+    }
+    for (;;) {
+        char word[48];
+        size_t n = 0;
+        char *eq;
+
+        while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') {
+            p++;
+        }
+        if (*p == '\0') {
+            break;
+        }
+        while (p[n] != '\0' && p[n] != ' ' && p[n] != '\t' && p[n] != '\r' && p[n] != '\n') {
+            n++;
+        }
+        if (n >= sizeof word) {
+            return KOS_ERR_INVAL;
+        }
+        memcpy(word, p, n);
+        word[n] = '\0';
+        p += n;
+        eq = strchr(word, '=');
+        if (eq == NULL) {
+            return KOS_ERR_INVAL;
+        }
+        *eq = '\0';
+        if (strcasecmp(word, "order") == 0 && !got_o) {
+            if (kos_policy_kind_from_name(eq + 1, &o) != KOS_OK) {
+                return KOS_ERR_INVAL;
+            }
+            got_o = 1;
+        } else if (strcasecmp(word, "task") == 0 && !got_t) {
+            if (kos_task_policy_from_name(eq + 1, &t) != KOS_OK) {
+                return KOS_ERR_INVAL;
+            }
+            got_t = 1;
+        } else {
+            return KOS_ERR_INVAL;
+        }
+    }
+    if (!got_o && !got_t) {
+        return KOS_ERR_INVAL;
+    }
+    *has_order = got_o;
+    *has_task = got_t;
+    if (got_o) {
+        *order = o;
+    }
+    if (got_t) {
+        *task = t;
+    }
+    return KOS_OK;
+}
+
 /*
- * FCFS 是四种策略共同的次级键：主键并列时都退化为"先到先做"，再按数组下标定序。
+ * FCFS 是五种策略共同的次级键：主键并列时都退化为"先到先做"，再按数组下标定序。
  * 这样同一份输入永远挑出同一个订单，调度实验可重复。
  */
 static int compare_fcfs(const kos_order_view *a, const kos_order_view *b, int a_index,
@@ -148,6 +248,12 @@ static int compare_orders(kos_policy_kind kind, const kos_order_view *a,
     case KOS_POLICY_EDF:
         if (a->deadline_ms != b->deadline_ms) {
             return a->deadline_ms < b->deadline_ms ? -1 : 1;
+        }
+        break;
+    case KOS_POLICY_SJF:
+        /* 估计剩余工时短的先开；未开工单就是菜谱关键路径。 */
+        if (a->est_cost_ms != b->est_cost_ms) {
+            return a->est_cost_ms < b->est_cost_ms ? -1 : 1;
         }
         break;
     case KOS_POLICY_LLF: {

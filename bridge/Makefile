@@ -21,7 +21,7 @@ TESTS    := $(wildcard tests/test_*.c)
 # Every executable's main() must never be pulled into a test binary. The list is
 # explicit: a wildcard rule would silently decide that a new daemon belongs in
 # the test link, and two main()s then fail at link time with a confusing error.
-MAIN_SRCS := src/bridge.c src/supervisor.c src/scheduler.c src/worker.c src/navd.c
+MAIN_SRCS := src/bridge.c src/supervisor.c src/scheduler.c src/worker.c src/navd.c src/monitor_main.c
 LINK_SRCS := $(filter-out $(MAIN_SRCS),$(SRCS))
 
 OBJS      := $(patsubst src/%.c,$(OBJ_DIR)/%.o,$(SRCS))
@@ -60,6 +60,12 @@ else
 NAVD_BIN := $(BUILD)/kitchenos-navd
 endif
 
+ifeq ($(wildcard src/monitor_main.c),)
+MONITOR_BIN :=
+else
+MONITOR_BIN := $(BUILD)/kitchenos-monitor
+endif
+
 # tools/ holds test-only binaries that are not part of the daemon: worker_stub
 # stands in for a Chef Worker so the whole frame barrier can be driven without
 # the game or a real Scheduler. Conditional for the same reason as bridge.c.
@@ -76,8 +82,8 @@ endif
 # $(OBJS) is a prerequisite so that `make` really means "every module compiles".
 # Without it, a tree with sources but no test suite or bridge yet would build
 # nothing, print "built:", and exit 0 — a green signal over broken code.
-all: $(OBJS) $(TEST_BINS) $(BRIDGE_BIN) $(SUPERVISOR_BIN) $(SCHEDULER_BIN) $(WORKER_BIN) $(NAVD_BIN) $(TOOL_BINS)
-	@echo "built: $(notdir $(TEST_BINS) $(BRIDGE_BIN) $(SUPERVISOR_BIN) $(SCHEDULER_BIN) $(WORKER_BIN) $(NAVD_BIN) $(TOOL_BINS))"
+all: $(OBJS) $(TEST_BINS) $(BRIDGE_BIN) $(SUPERVISOR_BIN) $(SCHEDULER_BIN) $(WORKER_BIN) $(NAVD_BIN) $(MONITOR_BIN) $(TOOL_BINS)
+	@echo "built: $(notdir $(TEST_BINS) $(BRIDGE_BIN) $(SUPERVISOR_BIN) $(SCHEDULER_BIN) $(WORKER_BIN) $(NAVD_BIN) $(MONITOR_BIN) $(TOOL_BINS))"
 
 $(BUILD)/kitchenos-worker-stub: tools/worker_stub.c $(LINK_OBJS) | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ $< $(LINK_OBJS) $(LDFLAGS)
@@ -102,6 +108,9 @@ $(BUILD)/kitchenos-worker: $(OBJ_DIR)/worker.o $(LINK_OBJS) | $(BUILD)
 $(BUILD)/kitchenos-navd: $(OBJ_DIR)/navd.o $(LINK_OBJS) | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
+$(BUILD)/kitchenos-monitor: $(OBJ_DIR)/monitor_main.o $(LINK_OBJS) | $(BUILD)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
 # One binary per tests/test_*.c suite, linked against every non-main module object.
 $(BUILD)/%: tests/%.c $(LINK_OBJS) | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ $< $(LINK_OBJS) $(LDFLAGS)
@@ -116,7 +125,7 @@ $(BUILD) $(OBJ_DIR):
 # Integration suites exec the daemons, so `make test` must build them too. Without
 # this dependency `make test` after a clean tree (or `make test-san`) linked the
 # suites but left them unable to spawn anything.
-test: $(TEST_BINS) $(BRIDGE_BIN) $(SUPERVISOR_BIN) $(SCHEDULER_BIN) $(WORKER_BIN) $(NAVD_BIN) $(TOOL_BINS)
+test: $(TEST_BINS) $(BRIDGE_BIN) $(SUPERVISOR_BIN) $(SCHEDULER_BIN) $(WORKER_BIN) $(NAVD_BIN) $(MONITOR_BIN) $(TOOL_BINS)
 	@failed=0; total=0; \
 	for t in $(TEST_BINS); do \
 	  total=$$((total + 1)); \

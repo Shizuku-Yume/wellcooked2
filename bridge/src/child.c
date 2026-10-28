@@ -132,6 +132,7 @@ void kos_child_opts_init(kos_child_opts *o, kos_child_kind kind)
     o->slot_interval_ms = 10;
     o->lease_ttl_ms = 30000;
     copy_str(o->strategy, sizeof o->strategy, "fcfs");
+    copy_str(o->task_policy, sizeof o->task_policy, "cost");
     copy_str(o->dispatch, sizeof o->dispatch, "flexible");
 }
 
@@ -171,7 +172,8 @@ void kos_child_print_usage(FILE *out, kos_child_kind kind)
             "                      [--log FILE] [--supervisor-fd N]\n"
             "                      [--supervisor-heartbeat-ms M] [--attach-retry-ms M]\n"
             "                      [--kitchen FILE] [--recipes FILE] [--orders FILE]\n"
-            "                      [--runs-dir DIR] [--strategy fcfs|edf|llf|hrrn] [--dispatch flexible|zoned] [--chefs N]\n"
+            "                      [--runs-dir DIR] [--strategy fcfs|edf|llf|hrrn|sjf] [--task-policy fifo|cp|cost]\n"
+            "                      [--dispatch flexible|zoned] [--chefs N]\n"
             "                      [--tick-ms M] [--slot-interval-ms M] [--instance N]\n"
             "                      [--verbose] [--help] [--version]\n",
             kind_name(kind));
@@ -187,7 +189,8 @@ void kos_child_print_usage(FILE *out, kos_child_kind kind)
             "\n"
             "Scheduler: builds orders/tasks from config/{kitchen,recipes,orders}.example.json\n"
             "and the Bridge's shm world state, dispatches ready tasks over POSIX mq, and\n"
-            "writes runs/<ts>/{events.jsonl,decisions.jsonl}. SIGHUP cycles FCFS/EDF/LLF/HRRN.\n"
+            "writes runs/<ts>/{events.jsonl,decisions.jsonl}. SIGHUP applies <runtime>/strategy.request\n"
+            "or cycles FCFS/EDF/LLF/HRRN/SJF.\n"
             "Worker: receives its mq task, expands it into macro actions, writes the target\n"
             "slot of /kitchenos_nav, reads the plan slot, publishes per-frame actions into its\n"
             "input slot, and reports task results on /kitchenos_events.\n"
@@ -328,6 +331,14 @@ int kos_child_parse_args(kos_child_opts *o, int argc, char **argv)
                 return KOS_CHILD_ARG_ERR;
             }
             copy_str(o->strategy, sizeof o->strategy, v);
+        } else if (strcmp(name, "--task-policy") == 0) {
+            const char *v = take_value(value, argc, argv, &i);
+            kos_task_policy tp;
+
+            if (v == NULL || kos_task_policy_from_name(v, &tp) != KOS_OK) {
+                return KOS_CHILD_ARG_ERR;
+            }
+            copy_str(o->task_policy, sizeof o->task_policy, kos_task_policy_name(tp));
         } else if (strcmp(name, "--dispatch") == 0) {
             const char *v = take_value(value, argc, argv, &i);
 
@@ -593,7 +604,7 @@ int kos_child_setup(kos_child_runtime *rt, const kos_child_opts *opts)
                      : (opts->kind == KOS_CHILD_NAVD ? "navd_start" : "worker_start"),
                  "pid=%ld chef_id=%d log=%s state=%s sem=%s supervisor_fd=%d "
                  "heartbeat_ms=%d attach_retry_ms=%d kitchen=%s recipes=%s orders=%s "
-                 "runs=%s strategy=%s chefs=%d generation=%d lease_ttl_ms=%d "
+                 "runs=%s strategy=%s task_policy=%s chefs=%d generation=%d lease_ttl_ms=%d "
                  "tick_ms=%d slot_ms=%d version=%s",
                  (long)getpid(), opts->chef_id, rt->log_path,
                  opts->state_name != NULL ? opts->state_name : KOS_SHM_DEFAULT_NAME,
@@ -603,6 +614,7 @@ int kos_child_setup(kos_child_runtime *rt, const kos_child_opts *opts)
                  opts->recipes_path[0] ? opts->recipes_path : "(default)",
                  opts->orders_path[0] ? opts->orders_path : "(default)",
                  opts->runs_dir[0] ? opts->runs_dir : "(default)", opts->strategy,
+                 opts->task_policy,
                  opts->chefs, opts->generation, opts->lease_ttl_ms, opts->tick_ms,
                  opts->slot_interval_ms, CHILD_VERSION);
     return 0;
