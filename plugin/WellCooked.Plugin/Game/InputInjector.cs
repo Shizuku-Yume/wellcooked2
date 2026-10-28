@@ -247,13 +247,27 @@ namespace WellCooked.Game
             switch (action)
             {
                 case "move":
-                    if (m.target == null)
+                {
+                    float tx, ty;
+                    if (m.target != null)
+                    {
+                        tx = m.target.x;
+                        ty = m.target.y;
+                    }
+                    else if (m.has_target_xy)
+                    {
+                        // 扁平字段：游戏内 JsonUtility 解析不了嵌套对象，客户端用这组字段兜底。
+                        tx = m.target_x;
+                        ty = m.target_y;
+                    }
+                    else
                     {
                         detail = "missing target";
                         return false;
                     }
-                    if (!StartMove(chef, m.target.x, m.target.y, out detail)) return false;
+                    if (!StartMove(chef, tx, ty, out detail)) return false;
                     return true;
+                }
 
                 case "stop":
                     StopMove(chef);

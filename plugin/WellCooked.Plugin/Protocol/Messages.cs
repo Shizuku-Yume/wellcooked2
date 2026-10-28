@@ -27,6 +27,10 @@ namespace WellCooked.Protocol
         public string button;
         public int hold_ms;
         public Vec2 target;
+        // JsonUtility（游戏内 2017.4 运行时）解析不了嵌套对象，move 的坐标额外给一份扁平字段。
+        public bool has_target_xy;
+        public float target_x;
+        public float target_y;
         public string target_object;
         public string token;
         public int state_interval_ms;
