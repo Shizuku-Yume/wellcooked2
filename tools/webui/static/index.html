@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KitchenOS 厨房控制台</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="topbar">
+  <h1 class="logo"><span>Kitchen</span><span class="os">OS</span><small>厨房控制台</small></h1>
+  <div class="hud">
+    <div class="pill" id="conn" role="status" aria-live="polite">连接中…</div>
+    <div class="clock" aria-label="回合剩余时间"><span class="clock-face" id="clock">--:--</span></div>
+    <div class="coin" aria-label="得分"><span class="coin-icon" aria-hidden="true">★</span><span id="score">0</span></div>
+  </div>
+  <nav class="tabs" role="tablist">
+    <button role="tab" id="tab-live" aria-selected="true" aria-controls="view-live">实时厨房</button>
+    <button role="tab" id="tab-runs" aria-selected="false" aria-controls="view-runs">结果对比</button>
+  </nav>
+</header>
+
+<main>
+<section id="view-live" role="tabpanel" aria-labelledby="tab-live" class="layout">
+  <aside class="side">
+    <form class="card wood" id="run-form">
+      <h2>开一局</h2>
+      <label>关卡<select name="scene" id="f-scene"></select></label>
+      <label>厨师人数<select name="chefs"><option>1</option><option>2</option><option>3</option><option selected>4</option></select></label>
+      <label>订单策略<select name="strategy" class="sel-order"></select></label>
+      <label>工序策略<select name="task_policy" class="sel-task"></select></label>
+      <label>派工方式<select name="dispatch"><option value="flexible">flexible 自由</option><option value="zoned">zoned 分区</option></select></label>
+      <label>时长上限（秒）<input name="game_seconds" type="number" min="30" max="600" value="240"></label>
+      <div class="row">
+        <button type="submit" class="btn go" id="btn-start">开始</button>
+        <button type="button" class="btn stop" id="btn-stop">停止</button>
+      </div>
+    </form>
+
+    <form class="card wood" id="switch-form">
+      <h2>运行中切换</h2>
+      <p class="now">当前：<b id="now-order">-</b> / <b id="now-task">-</b></p>
+      <label>订单策略<select name="order" class="sel-order"></select></label>
+      <label>工序策略<select name="task" class="sel-task"></select></label>
+      <button type="submit" class="btn go">应用（SIGHUP）</button>
+    </form>
+
+    <div class="card wood">
+      <h2>故障演示</h2>
+      <p class="hint">kill -9 Scheduler，看 Supervisor 把它拉起来。</p>
+      <button type="button" class="btn danger" id="btn-kill">Kill Scheduler</button>
+    </div>
+
+    <div class="card paper">
+      <h2>进程树</h2>
+      <table class="procs"><thead><tr><th>角色</th><th>pid</th><th>状态</th><th>启动</th><th>退出</th></tr></thead><tbody id="procs"></tbody></table>
+    </div>
+    <div class="toast" id="toast" role="alert" aria-live="assertive"></div>
+  </aside>
+
+  <div class="stage">
+    <div class="card tickets-card">
+      <h2>订单 <span class="count" id="order-count">0</span></h2>
+      <ol class="tickets" id="tickets" aria-live="polite"></ol>
+    </div>
+    <div class="grid2">
+      <div class="card tile">
+        <h2>厨房俯视图</h2>
+        <svg id="map" viewBox="0 0 100 60" role="img" aria-label="厨房俯视图：工位和厨师位置"></svg>
+      </div>
+      <div class="card paper">
+        <h2>厨师</h2>
+        <ul class="chefs" id="chefs"></ul>
+      </div>
+    </div>
+    <div class="card paper">
+      <h2>工位</h2>
+      <ul class="stations" id="stations"></ul>
+    </div>
+    <div class="grid3">
+      <div class="card paper"><h2>调度统计</h2><div id="metrics"></div></div>
+      <div class="card paper"><h2>调度决策</h2><ol class="feed" id="decisions"></ol></div>
+      <div class="card paper"><h2>事件</h2><ol class="feed" id="events"></ol></div>
+    </div>
+    <div class="grid2">
+      <div class="card paper"><h2>已结束订单</h2><ol class="feed" id="results"></ol></div>
+      <div class="card dark"><h2>脚本输出</h2><pre id="output" aria-live="off"></pre></div>
+    </div>
+  </div>
+</section>
+
+<section id="view-runs" role="tabpanel" aria-labelledby="tab-runs" hidden>
+  <div class="card paper">
+    <h2>历史对局 <button type="button" class="btn small" id="btn-refresh">刷新</button></h2>
+    <div id="runs-chart" class="bars" aria-hidden="true"></div>
+    <table class="runs"><thead><tr><th>对局</th><th>订单策略</th><th>工序策略</th><th>派工</th><th>人数</th><th>得分</th><th>完成/到达</th><th>平均周转 s</th><th>结果</th></tr></thead><tbody id="runs"></tbody></table>
+  </div>
+  <div class="card dark"><h2>对局摘要 <span id="run-name"></span></h2><pre id="run-summary">点上面一行看摘要。</pre></div>
+</section>
+</main>
+<script src="/static/app.js"></script>
+</body>
+</html>

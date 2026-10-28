@@ -25,6 +25,9 @@
 #   GAME_SECONDS=240        hard cap after the Supervisor starts
 #   WAIT_SECONDS=240        launch/load/pad timeout
 #   PORT=14455 HOST=127.0.0.1
+#   STRATEGY=fcfs           order policy: fcfs|sjf|llf|hrrn|edf
+#   TASK_POLICY=cost        task assignment: cost|fifo|cp
+#   DISPATCH=flexible       flexible|zoned
 #
 # Exit status is 0 only when the summary assertions pass.  A completed run with
 # failed gameplay assertions still leaves all logs and a summary and exits 1.
@@ -52,11 +55,15 @@ EXPORT="${EXPORT:-0}"
 DIAG="${DIAG:-false}"
 EXPORT_SCRIPT="${EXPORT_SCRIPT:-}"
 MAP_DIR="${MAP_DIR:-$ROOT/config/maps}"
+STRATEGY="${STRATEGY:-fcfs}"
+TASK_POLICY="${TASK_POLICY:-cost}"
+DISPATCH="${DISPATCH:-flexible}"
 
 SOURCE_ROOT="${SOURCE_ROOT:-$ROOT}"
 PLUGIN_DLL="${PLUGIN_DLL:-$SOURCE_ROOT/plugin/bin/Release/net35/WellCooked.Smoke.dll}"
 BRIDGE_BIN_DIR="${BRIDGE_BIN_DIR:-$SOURCE_ROOT/bridge/build}"
 SUPERVISOR="$BRIDGE_BIN_DIR/kitchenos-supervisor"
+MONITOR="$BRIDGE_BIN_DIR/kitchenos-monitor"
 BUNDLE_SRC="${BUNDLE_SRC:-}"
 BUNDLE_REF="${BUNDLE_REF:-origin/main}"
 
@@ -72,6 +79,7 @@ DEST_LEVEL="$GAME_DIR/BepInEx/plugins/OC2DIYLevel/levels/wellcooked_demo"
 
 RT=""
 SUPERVISOR_PID=""
+MONITOR_PID=""
 BACKUP_DIR=""
 LOG_OFFSET=0
 GAME_STARTED=0
@@ -222,6 +230,13 @@ stop_supervisor() {
     SUPERVISOR_PID=""
 }
 
+stop_monitor() {
+    [ -n "$MONITOR_PID" ] || return 0
+    kill -TERM "$MONITOR_PID" 2>/dev/null || true
+    wait "$MONITOR_PID" 2>/dev/null || true
+    MONITOR_PID=""
+}
+
 stop_game() {
     local i
     if pgrep -f 'Overcooked2\.exe' >/dev/null 2>&1; then
@@ -240,6 +255,7 @@ cleanup() {
     CLEANED=1
     set +e
     stop_supervisor
+    stop_monitor
     if [ "$GAME_STARTED" = 1 ] && [ "$KEEP_GAME" != 1 ]; then
         stop_game
     fi
@@ -410,6 +426,17 @@ write_summary() {
         --takeover "$RT/wellcooked-takeover.final.txt" \
         --chefs "$CHEFS" --scene "$SCENE" | tee "$summary"
     SUMMARY_RC=${PIPESTATUS[0]}
+    # 最后一次生效的策略（启动参数或中途切换后），供结果对比页读取。
+    python3 - "$RT/policy.json" "$DISPATCH" >>"$summary" <<'PY' || true
+import json, sys
+try:
+    with open(sys.argv[1]) as f:
+        p = json.load(f)
+except (OSError, ValueError):
+    raise SystemExit(0)
+print("policy: order=%s task=%s dispatch=%s" % (p.get("order", "?"), p.get("task", "?"), sys.argv[2]))
+PY
+    tail -n 1 "$summary"
     set -e
 }
 
@@ -434,6 +461,7 @@ RT="$ROOT/logs/real-game/${STARTED_AT}-${TAG}"
 [ ! -e "$RT" ] || die "runtime directory already exists: $RT"
 mkdir -p "$RT/logs" "$RT/runs" "$RT/bundles.previous"
 say "run: $RT"
+say "runtime: $RT"
 
 # Stop leftovers only after owning the lock.  The fixture/recording game is
 # stopped as well unless REUSE_GAME=1.
@@ -471,7 +499,7 @@ if [ "$BUILD_BRIDGE" = 1 ]; then
     make -C "$SOURCE_ROOT/bridge" -j"$(nproc)" >"$RT/build-bridge.log" 2>&1 \
         || die "bridge build failed (see $RT/build-bridge.log)"
 fi
-for bin in kitchenos-supervisor kitchenos-bridge kitchenos-scheduler kitchenos-worker kitchenos-navd; do
+for bin in kitchenos-supervisor kitchenos-bridge kitchenos-scheduler kitchenos-worker kitchenos-navd kitchenos-monitor; do
     [ -x "$BRIDGE_BIN_DIR/$bin" ] || die "missing bridge binary: $BRIDGE_BIN_DIR/$bin"
 done
 
@@ -530,9 +558,13 @@ start_supervisor() {
         --workers "$CHEFS" --bridge-host "$HOST" --bridge-port "$PORT" \
         --kitchen "$KITCHEN" --recipes "$RECIPES" \
         --orders "$ROOT/config/orders.world.json" --runs-dir "$RT/runs" \
+        --strategy "$STRATEGY" --task-policy "$TASK_POLICY" --dispatch "$DISPATCH" \
         >"$RT/supervisor.console.log" 2>&1 &
     SUPERVISOR_PID=$!
-    say "supervisor: pid $SUPERVISOR_PID"
+    say "supervisor: pid $SUPERVISOR_PID (order=$STRATEGY task=$TASK_POLICY dispatch=$DISPATCH)"
+    "$MONITOR" --runtime-dir "$RT" >"$RT/monitor.console.log" 2>&1 &
+    MONITOR_PID=$!
+    say "monitor: pid $MONITOR_PID"
 }
 
 if [ "$EXPORT" = 1 ]; then
@@ -607,6 +639,7 @@ say "round: $end_reason"
 sleep 3
 
 stop_supervisor
+stop_monitor
 collect_logs
 
 if [ "$KEEP_GAME" != 1 ]; then
