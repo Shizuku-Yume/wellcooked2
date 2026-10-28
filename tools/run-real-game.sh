@@ -650,9 +650,19 @@ while [ "$SECONDS" -lt "$deadline" ]; do
     fi
     sleep 2
 done
-[ -n "$end_reason" ] || end_reason="timeout"
-say "round: $end_reason"
 sleep 3
+# 上限与回合等长时（控制台 game_seconds=120 跑 120 s 关），墙钟 deadline 常比插件写出
+# left=0 早一两秒；收工前再读一次，回合确实结束就按 round-end 算，不报 timeout。
+if [ -z "$end_reason" ]; then
+    read -r scene chefs stations left elapsed round <<<"$(state_probe)"
+    if python3 -c 'import sys; raise SystemExit(0 if float(sys.argv[1]) > 5 and float(sys.argv[2]) <= 0.05 else 1)' \
+        "$elapsed" "$left" 2>/dev/null; then
+        end_reason="round-end"
+    else
+        end_reason="timeout"
+    fi
+fi
+say "round: $end_reason"
 
 stop_supervisor
 stop_monitor

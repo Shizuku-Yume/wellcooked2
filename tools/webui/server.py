@@ -183,9 +183,25 @@ class App:
             data["metrics"] = read_json(run / "metrics.json") if run else None
         return data
 
-    def poll_forever(self, interval=0.5):
+    def refresh_metrics(self):
+        """Scheduler 只在关机和 SIGUSR1 时写 metrics.json；局中定期发 SIGUSR1，实时面板才有数。"""
+        rt = self.rt
+        if rt is None or not self.running():
+            return
+        pid = scheduler_pid(rt)
+        if pid > 0:
+            try:
+                os.kill(pid, signal.SIGUSR1)
+            except OSError:
+                pass
+
+    def poll_forever(self, interval=0.5, metrics_every=4):
         """唯一的读盘线程：每 interval 秒刷新一次快照，SSE 连接只读缓存，几个标签页都不多读。"""
+        tick = 0
         while True:
+            if tick % metrics_every == 0:
+                self.refresh_metrics()
+            tick += 1
             try:
                 text = json.dumps(self.snapshot(), ensure_ascii=False)
             except Exception as exc:  # 读盘出错不能让推送线程死掉

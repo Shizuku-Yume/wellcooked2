@@ -483,6 +483,7 @@ static int spawn_child(supervisor *s, int index)
     char hb_fd_buf[16];
     char hb_ms_buf[16];
     char generation_buf[32];
+    char lease_buf[16];
     char instance_buf[16];
     char log_path[KOS_DAEMON_PATH_MAX];
     char bin[KOS_DAEMON_PATH_MAX];
@@ -610,13 +611,14 @@ static int spawn_child(supervisor *s, int index)
                 argv[ac++] = (char *)"--dispatch";
                 argv[ac++] = (char *)s->dispatch;
             }
-            {
-                char lease_buf[16];
-
-                snprintf(lease_buf, sizeof lease_buf, "%d", s->lease_ttl_ms);
-                argv[ac++] = (char *)"--lease-ttl-ms";
-                argv[ac++] = lease_buf;
-            }
+            snprintf(lease_buf, sizeof lease_buf, "%d", s->lease_ttl_ms);
+            argv[ac++] = (char *)"--lease-ttl-ms";
+            argv[ac++] = lease_buf;
+            /* 第几次拉起：>1 时 Scheduler 从 policy.json 恢复运行中切过的策略。 */
+            snprintf(generation_buf, sizeof generation_buf, "%lld",
+                     (long long)sc->rec.spawns + 1);
+            argv[ac++] = (char *)"--generation";
+            argv[ac++] = generation_buf;
         }
         if (sc->kind == SPEC_NAVD && s->nav_opt != NULL) {
             /* 只从启动参数选算法，运行期没有切换入口。 */

@@ -1429,16 +1429,24 @@ static int open_queues(scheduler *s)
         kos_log_error(s->rt.log, "mq_name_failed", "instance=%d", s->rt.opts.instance);
         return -1;
     }
-    kos_error_clear(&err);
-    rc = kos_mq_unlink_all(s->rt.opts.chefs, s->rt.opts.instance, &err);
-    if (rc != KOS_OK) {
-        char text[256];
+    /*
+     * 第一次启动清掉上一局残留的队列再建。Supervisor 重新拉起（generation > 1）时不能删：
+     * Worker 手里还开着旧队列的描述符，删了再建等于换了一条 Worker 永远读不到的新队列
+     * （实机 20261028-133741：kill -9 后派了 16 个任务，Worker 一个都没收到）。
+     */
+    if (s->rt.opts.generation <= 1) {
+        kos_error_clear(&err);
+        rc = kos_mq_unlink_all(s->rt.opts.chefs, s->rt.opts.instance, &err);
+        if (rc != KOS_OK) {
+            char text[256];
 
-        error_text(&err, text, sizeof text);
-        kos_log_warn(s->rt.log, "mq_stale_cleanup_failed", "error=%s", text);
+            error_text(&err, text, sizeof text);
+            kos_log_warn(s->rt.log, "mq_stale_cleanup_failed", "error=%s", text);
+        }
     }
     kos_error_clear(&err);
-    if (kos_mq_create(events_name, KOS_MQ_MAX_MESSAGES, &err) != KOS_OK) {
+    rc = kos_mq_create(events_name, KOS_MQ_MAX_MESSAGES, &err);
+    if (rc != KOS_OK && !(rc == KOS_ERR_EXISTS && s->rt.opts.generation > 1)) {
         char text[256];
 
         error_text(&err, text, sizeof text);
@@ -1452,7 +1460,8 @@ static int open_queues(scheduler *s)
             return -1;
         }
         kos_error_clear(&err);
-        if (kos_mq_create(name, KOS_MQ_MAX_MESSAGES, &err) != KOS_OK) {
+        rc = kos_mq_create(name, KOS_MQ_MAX_MESSAGES, &err);
+        if (rc != KOS_OK && !(rc == KOS_ERR_EXISTS && s->rt.opts.generation > 1)) {
             char text[256];
 
             error_text(&err, text, sizeof text);
@@ -5131,6 +5140,54 @@ static void write_policy_file(scheduler *s)
 }
 
 /*
+ * Supervisor 重新拉起（generation > 1）时，从 policy.json 读回上一任最后生效的策略，
+ * 否则运行中切过的策略会被启动参数覆盖（实机 20261028-123754：切 SJF/fifo 后 kill -9，
+ * 新 Scheduler 回到 FCFS/cost）。第一次启动不读：runtime 目录可能留着上一局的文件。
+ */
+static void restore_policy_file(scheduler *s)
+{
+    char path[KOS_DAEMON_PATH_MAX + 32];
+    char text[256];
+    json_value *doc = NULL;
+    const char *order = NULL;
+    const char *task = NULL;
+    long long since = 0;
+    kos_policy_kind kind;
+    kos_task_policy task_policy;
+    FILE *file;
+    size_t n;
+
+    if (s->rt.opts.generation <= 1 ||
+        path_join(path, sizeof path, s->rt.runtime_dir, "policy.json") != 0) {
+        return;
+    }
+    file = fopen(path, "r");
+    if (file == NULL) {
+        return;
+    }
+    n = fread(text, 1, sizeof text - 1, file);
+    fclose(file);
+    text[n] = '\0';
+    if (json_parse(text, n, &doc) != JSON_OK ||
+        json_object_get_string(doc, "order", &order, NULL) != JSON_OK ||
+        json_object_get_string(doc, "task", &task, NULL) != JSON_OK ||
+        kos_policy_kind_from_name(order, &kind) != KOS_OK ||
+        kos_task_policy_from_name(task, &task_policy) != KOS_OK) {
+        kos_log_warn(s->rt.log, "policy_restore_failed", "path=%s", path);
+        json_free(doc);
+        return;
+    }
+    (void)json_object_get_int(doc, "since_ms", &since);
+    kos_policy_set_kind(s->policy, kind);
+    s->task_policy = task_policy;
+    s->policy_since_ms = since;
+    kos_log_info(s->rt.log, "policy_restored", "order=%s task=%s generation=%d",
+                 kos_policy_kind_name(kind), kos_task_policy_name(task_policy),
+                 s->rt.opts.generation);
+    json_free(doc);
+}
+
+/*
  * 读 <runtime>/strategy.request 并删除。返回 1 = 文件存在且合法（order 与 task 已填好），
  * 0 = 文件不存在，-1 = 文件存在但内容不合法（已写 WARN）。
  */
@@ -5511,7 +5568,9 @@ static int scheduler_main(scheduler *s, const kos_child_opts *opts)
         return 1;
     }
     s->started_ms = now_ms();
-    s->next_task_id = 0;
+    /* 重启后队列沿用，里面可能还有上一任的 DONE/FAILED；按代错开 id，旧事件只会落到
+     * event_unknown_task，不会被当成新任务的结果。 */
+    s->next_task_id = opts->generation > 1 ? (uint64_t)(opts->generation - 1) << 32 : 0;
 
     {
         kos_policy_kind kind;
@@ -5563,6 +5622,7 @@ static int scheduler_main(scheduler *s, const kos_child_opts *opts)
         return 1;
     }
 
+    restore_policy_file(s);
     kos_log_info(s->rt.log, "scheduler_ready",
                  "policy=%s task_policy=%s chefs=%d orders=%d run_dir=%s",
                  kos_policy_name(s->policy), kos_task_policy_name(s->task_policy),

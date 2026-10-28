@@ -36,9 +36,9 @@ def read(path):
         return ""
 
 
-def newest_run(runtime):
-    runs = sorted((runtime / "runs").glob("*"), key=lambda p: p.stat().st_mtime)
-    return runs[-1] if runs else None
+def all_runs(runtime):
+    """一个 runtime 就是一局；Scheduler 每次被 Supervisor 拉起都会新建一个 run 目录。"""
+    return sorted((runtime / "runs").glob("*"), key=lambda p: p.stat().st_mtime)
 
 
 def norm_id(value):
@@ -137,9 +137,10 @@ def main():
         state = {}
     plugin = read(args.plugin_log)
     takeover = read(args.takeover)
-    run = newest_run(runtime)
-    events = rows(run / "events.jsonl") if run else []
-    decisions = rows(run / "decisions.jsonl") if run else []
+    runs = all_runs(runtime)
+    run = runs[-1] if runs else None
+    events = [e for r in runs for e in rows(r / "events.jsonl")]
+    decisions = [d for r in runs for d in rows(r / "decisions.jsonl")]
 
     orders = order_rows(events, state)
     completed = [o for o in orders if o["outcome"] == "completed"]
@@ -178,7 +179,7 @@ def main():
     failed = [name for name, ok in checks.items() if not ok]
 
     print("=== real-game summary: scene=%s chefs=%d ===" % (args.scene, args.chefs))
-    print("score=%g  run=%s" % (score, run.name if run else "(none)"))
+    print("score=%g  run=%s" % (score, ",".join(r.name for r in runs) or "(none)"))
     print("orders: %d arrived, %d completed; dishes completed=%s"
           % (len(orders), len(completed), ",".join(completed_dishes) or "-"))
     for order in orders:
