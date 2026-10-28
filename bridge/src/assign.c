@@ -10,7 +10,7 @@
 #define _POSIX_C_SOURCE 200809L
 #endif
 
-#include <kitchenos/assign.h>
+#include <wellcooked/assign.h>
 
 #include <errno.h>
 #include <float.h>
@@ -20,7 +20,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include <kitchenos/json.h>
+#include <wellcooked/json.h>
 
 #define ASSIGN_FILE_MAX (1024 * 1024)
 #define ASSIGN_PATH_MAX 512

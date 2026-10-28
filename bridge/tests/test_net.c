@@ -39,9 +39,9 @@
 #include <time.h>
 #include <unistd.h>
 
-#include <kitchenos/framing.h>
-#include <kitchenos/log.h>
-#include <kitchenos/net.h>
+#include <wellcooked/framing.h>
+#include <wellcooked/log.h>
+#include <wellcooked/net.h>
 
 /* ------------------------------------------------------------------ checks */
 

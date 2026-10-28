@@ -13,8 +13,8 @@
 #define _POSIX_C_SOURCE 200809L
 #endif
 
-#include <kitchenos/child.h>
-#include <kitchenos/policy.h>
+#include <wellcooked/child.h>
+#include <wellcooked/policy.h>
 
 #include <errno.h>
 #include <signal.h>
@@ -168,7 +168,7 @@ static int parse_long(const char *text, long min, long max, long *out)
 void kos_child_print_usage(FILE *out, kos_child_kind kind)
 {
     fprintf(out,
-            "usage: kitchenos-%s --runtime-dir DIR [--state-name NAME] [--sem-name NAME]\n"
+            "usage: wellcooked-%s --runtime-dir DIR [--state-name NAME] [--sem-name NAME]\n"
             "                      [--log FILE] [--supervisor-fd N]\n"
             "                      [--supervisor-heartbeat-ms M] [--attach-retry-ms M]\n"
             "                      [--kitchen FILE] [--recipes FILE] [--orders FILE]\n"
@@ -178,11 +178,11 @@ void kos_child_print_usage(FILE *out, kos_child_kind kind)
             "                      [--verbose] [--help] [--version]\n",
             kind_name(kind));
     if (kind == KOS_CHILD_WORKER) {
-        fprintf(out, "       kitchenos-worker also takes --chef-id N (0..%d).\n",
+        fprintf(out, "       wellcooked-worker also takes --chef-id N (0..%d).\n",
                 KOS_SHM_MAX_CHEFS - 1);
     }
     if (kind == KOS_CHILD_NAVD) {
-        fprintf(out, "       kitchenos-navd also takes --nav-name NAME --nav-sem-name NAME\n"
+        fprintf(out, "       wellcooked-navd also takes --nav-name NAME --nav-sem-name NAME\n"
                      "       and --nav pibt|pa (default pibt; pa is the comparison baseline).\n");
     }
     fprintf(out,
@@ -192,8 +192,8 @@ void kos_child_print_usage(FILE *out, kos_child_kind kind)
             "writes runs/<ts>/{events.jsonl,decisions.jsonl}. SIGHUP applies <runtime>/strategy.request\n"
             "or cycles FCFS/EDF/LLF/HRRN/SJF.\n"
             "Worker: receives its mq task, expands it into macro actions, writes the target\n"
-            "slot of /kitchenos_nav, reads the plan slot, publishes per-frame actions into its\n"
-            "input slot, and reports task results on /kitchenos_events.\n"
+            "slot of /wellcooked_nav, reads the plan slot, publishes per-frame actions into its\n"
+            "input slot, and reports task results on /wellcooked_events.\n"
             "navd: plans every chef with PIBT from each world snapshot and releases waypoints\n"
             "through the execution dependency graph; it owns the plan slots.\n"
             "\n"
@@ -554,7 +554,7 @@ int kos_child_setup(kos_child_runtime *rt, const kos_child_opts *opts)
         char text[256];
 
         kos_error_format(&err, text, sizeof text);
-        fprintf(stderr, "kitchenos-%s: 运行目录不可用: %s\n", kind_name(opts->kind), text);
+        fprintf(stderr, "wellcooked-%s: 运行目录不可用: %s\n", kind_name(opts->kind), text);
         return 1;
     }
 
@@ -573,7 +573,7 @@ int kos_child_setup(kos_child_runtime *rt, const kos_child_opts *opts)
             char text[256];
 
             kos_error_format(&err, text, sizeof text);
-            fprintf(stderr, "kitchenos-%s: 日志路径不可用: %s\n", kind_name(opts->kind),
+            fprintf(stderr, "wellcooked-%s: 日志路径不可用: %s\n", kind_name(opts->kind),
                     text);
             return 1;
         }
@@ -585,7 +585,7 @@ int kos_child_setup(kos_child_runtime *rt, const kos_child_opts *opts)
         char text[256];
 
         kos_error_format(&err, text, sizeof text);
-        fprintf(stderr, "kitchenos-%s: 打不开日志 %s: %s\n", kind_name(opts->kind),
+        fprintf(stderr, "wellcooked-%s: 打不开日志 %s: %s\n", kind_name(opts->kind),
                 rt->log_path, text);
         return 1;
     }

@@ -4,9 +4,9 @@
 **Blocked by:** 01, 02
 **Task type:** feature
 **Covers:** W2, W5, W6, W7
-**Delivers:** 可执行的 `kitchenos-bridge`：TCP 双拓扑链路、按帧写共享内存、帧屏障与 idle 降级、
+**Delivers:** 可执行的 `wellcooked-bridge`：TCP 双拓扑链路、按帧写共享内存、帧屏障与 idle 降级、
 心跳超时暂停、断线重连、`logs/bridge.log`、SIGTERM/SIGINT 优雅退出与 IPC 清理。
-**Files:** `bridge/include/kitchenos/{net,log,bridge}.h`, `bridge/src/{net,log,bridge}.c`,
+**Files:** `bridge/include/wellcooked/{net,log,bridge}.h`, `bridge/src/{net,log,bridge}.c`,
 `bridge/tests/test_net.c`
 **Read first:** `.workflow/specs/bridge.md`（全篇）, 本 effort 的 01 与 02 产出的头文件。
 **Done when:**
@@ -22,8 +22,8 @@
 - [x] `SIGTERM` 1 秒内退出，`shm_unlink`/`sem_unlink` 清理干净，端口可立即重新绑定
 - [x] 日志包含：启动退出、连接与断开、每帧摘要、动作下发、缺失槽、心跳超时、解析失败、信号
 
-**Check:** `cd bridge && make && ./build/kitchenos-bridge --link listen --port 12345 &` 后，
-`tools/fake_plugin.py` 能完成 happy 场景；`kill -TERM` 后进程退出且 `ls /dev/shm | grep kitchenos`
+**Check:** `cd bridge && make && ./build/wellcooked-bridge --link listen --port 12345 &` 后，
+`tools/fake_plugin.py` 能完成 happy 场景；`kill -TERM` 后进程退出且 `ls /dev/shm | grep wellcooked`
 为空。
 
 ## Progress
@@ -42,13 +42,13 @@ $ python3 tools/fake_plugin.py --scenario happy --listen-port 12345
   HARD ok  bridge_accepts_plugin_connection — 127.0.0.1:12345
   HARD ok  actions_dispatched — got 480, need >= 20 in 4.0s
   HARD ok  actions_wellformed — 0 malformed
-  HARD ok  bridge_writes_state_shm — /dev/shm/kitchenos_c04_happy
+  HARD ok  bridge_writes_state_shm — /dev/shm/wellcooked_c04_happy
   HARD ok  bridge_alive_after_stream
   info     bridge exited on SIGTERM after 0.05s (code 0)
   info     no shm objects left after exit
   PASS happy
 
-$ ./build/kitchenos-bridge --link listen --port 12345 --log /tmp/manual.log &
+$ ./build/wellcooked-bridge --link listen --port 12345 --log /tmp/manual.log &
   12345 已监听: 1
 $ kill -TERM $!
   bridge 退出码=0
@@ -59,7 +59,7 @@ $ kill -TERM $!
 Bridge 自己写下退出路径的两条日志：`signal name=SIGTERM` → `bridge_stop reason=signal
 frames=0 dispatched=0 paused=0`。
 
-> **Check 的一处限定（来自 02 的实测）**：裸跑 `ls /dev/shm | grep kitchenos` 在**别人也有
+> **Check 的一处限定（来自 02 的实测）**：裸跑 `ls /dev/shm | grep wellcooked` 在**别人也有
 > Bridge 活着**时不会是 0 —— 那些对象属于并发运行。本次所有场景用的都是各自唯一的
 > `--state-name`，实测残留为 0。
 

@@ -118,8 +118,8 @@ Linux 侧下动作的正路是 Worker 写共享内存输入槽，`bridge/tools/w
 
 ```sh
 bash scripts/dev-cycle.sh 12 s_sushi_1_1          # 进关卡（会先把游戏点起来）
-bridge/build/kitchenos-bridge --link listen --host 127.0.0.1 --port 14455 --log logs/bridge.log --verbose &
-bridge/build/kitchenos-worker-stub --state-name /kitchenos_state --sem-name /kitchenos_input_ready     --chefs 2 --slot 0 --kind move --target 12.57,-1.8 --hz 120 --duration 10
+bridge/build/wellcooked-bridge --link listen --host 127.0.0.1 --port 14455 --log logs/bridge.log --verbose &
+bridge/build/wellcooked-worker-stub --state-name /wellcooked_state --sem-name /wellcooked_input_ready     --chefs 2 --slot 0 --kind move --target 12.57,-1.8 --hz 120 --duration 10
 # 判据：游戏日志出现 `action: 厨师位 1 到达 (12.6,-1.8)`；桥日志 actions_sent 每帧 move=1；
 #       状态文件里 0 号厨师落在目标 0.5 米内
 ```

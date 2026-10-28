@@ -10,7 +10,7 @@ DAG，按 FCFS/EDF 选单、按列表调度把就绪工序派给空闲 Worker；
 `runs/<ts>/{decisions.jsonl,events.jsonl}`；SIGHUP 切策略；SIGUSR1 导出快照。
 
 **Blocked by:** 01
-**Files:** `bridge/include/kitchenos/{policy,mq}.h`、`bridge/src/{policy,mq}.c`、
+**Files:** `bridge/include/wellcooked/{policy,mq}.h`、`bridge/src/{policy,mq}.c`、
 `bridge/src/scheduler.c`、`bridge/tests/test_policy.c`、`config/*.json` 读取器
 **Read first:** `.workflow/specs/os-core.md` 的 Order/Task 模型、策略接口、W6/W7；
 `config/recipes.example.json` 的 `nodes/edges/dishes`；`config/kitchen.example.json` 的
@@ -25,7 +25,7 @@ os-loop 的 `decisions.jsonl` 里 FCFS 与 SIGHUP 后的 EDF 决策都能读出�
 - [x] `kos_policy` 接口只吃订单/资源视图，不引用 game/protocol/shm
 - [x] FCFS、EDF；截止期相同时 EDF 与 FCFS 选择一致
 - [x] 列表调度：前置完成 + 资源可预约才进就绪队列；关键路径优先
-- [x] `/kitchenos_tasks_<chef>` 与 `/kitchenos_events` 创建、定时收发、退出清理
+- [x] `/wellcooked_tasks_<chef>` 与 `/wellcooked_events` 创建、定时收发、退出清理
 - [x] SIGHUP 重读配置并切换策略；决策日志记录策略名与理由
 - [x] 两个策略在同一输入上产出可比较的 `decisions.jsonl`
 

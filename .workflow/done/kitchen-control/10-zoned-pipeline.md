@@ -49,9 +49,9 @@ Check after:
 
 实现要点:
 1. `config/maps/s_wellcooked_demo_2/zones.json`：定义两区划分（厨师 0 下半区，厨师 1 上半区）与跨区交接台面 `counter_handoff_0`（坐标 `[4.2, -3.6]`，两侧站位格 `[4.2, -4.8]` 与 `[4.2, -2.4]`）。
-2. `bridge/include/kitchenos/zones.h`、`bridge/src/zones.c`：实现 `kos_zones_load`、`kos_zones_for_kitchen`、`kos_zones_station_zone`、`kos_zones_chef_zone` 与 `kos_zones_register_handoff`。
-3. `bridge/include/kitchenos/recipes.h`、`bridge/src/recipes.c`：`kos_recipe_node` 增加 `zone` 字段；实现 `kos_recipes_apply_zones`，将跨区边 $u \to v$ 扩展为 $u \to \text{drop} \to \text{fetch} \to v$。
-4. `bridge/include/kitchenos/child.h`、`bridge/src/child.c`、`bridge/src/supervisor.c`、`bridge/src/scheduler.c`：全链条打通 `--dispatch flexible|zoned`。Scheduler 在 zoned 模式下注册交接台面、扩展菜谱 DAG、按分区约束过滤候选与计算 `w_z` 惩罚分量，`decisions.jsonl` 完整记录。
+2. `bridge/include/wellcooked/zones.h`、`bridge/src/zones.c`：实现 `kos_zones_load`、`kos_zones_for_kitchen`、`kos_zones_station_zone`、`kos_zones_chef_zone` 与 `kos_zones_register_handoff`。
+3. `bridge/include/wellcooked/recipes.h`、`bridge/src/recipes.c`：`kos_recipe_node` 增加 `zone` 字段；实现 `kos_recipes_apply_zones`，将跨区边 $u \to v$ 扩展为 $u \to \text{drop} \to \text{fetch} \to v$。
+4. `bridge/include/wellcooked/child.h`、`bridge/src/child.c`、`bridge/src/supervisor.c`、`bridge/src/scheduler.c`：全链条打通 `--dispatch flexible|zoned`。Scheduler 在 zoned 模式下注册交接台面、扩展菜谱 DAG、按分区约束过滤候选与计算 `w_z` 惩罚分量，`decisions.jsonl` 完整记录。
 5. `tools/instances.py` 与 `tools/batch.py`：支持根据场景自动优先使用 `config/maps/<scene>/` 的地图与菜谱，透传 `--dispatch` 参数。
 
 Decisions（`Mine: yes`）:

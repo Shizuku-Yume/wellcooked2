@@ -3,7 +3,7 @@
 
 #include <stdint.h>
 
-#include "kitchenos/macro.h"
+#include "wellcooked/macro.h"
 
 /* Keep aligned with plugin/ActionDriver.cs: PulseSeconds=.25, PulseInterval=.6,
  * KeyPulses=2. A worker intent must survive through the second pulse release. */

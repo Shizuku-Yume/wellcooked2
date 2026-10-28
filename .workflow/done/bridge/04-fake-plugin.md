@@ -42,7 +42,7 @@ SUITE_EXIT=0
 
 ### 设计取舍
 
-- **只认 C 的 worker stub，没有 Python 兜底。** `bridge/build/kitchenos-worker-stub` 不存在时
+- **只认 C 的 worker stub，没有 Python 兜底。** `bridge/build/wellcooked-worker-stub` 不存在时
   `one-slot` 直接 SKIP（77）并说明原因，而不是用 Python 假装写槽。代价是一次 `make clean`
   会让 W3 失去证据；收益是"输入槽由 C 代码按 shm.h 的真实布局写入"这件事没有被偷换。
   这个代价真实发生过，见下。
@@ -58,8 +58,8 @@ SUITE_EXIT=0
   跳过错过的节拍而不补发）而不是改 harness，因为 harness 的假设本身是对的。
 - **并发运行会互相踩。** 两次 harness 运行重叠时观察到伪失败：`FAIL happy —
   bridge_writes_state_shm`（另一次运行的 `clear_stale_shm` 把本此运行**正在使用**的
-  `/dev/shm/kitchenos_c04_happy` 删掉了），以及三个 90 s 超时（`logs/scenario-*.out`
-  被另一次运行同时覆盖）。runner 硬编码 `PREFIX=kitchenos_c04` 并写同一批日志文件。
+  `/dev/shm/wellcooked_c04_happy` 删掉了），以及三个 90 s 超时（`logs/scenario-*.out`
+  被另一次运行同时覆盖）。runner 硬编码 `PREFIX=wellcooked_c04` 并写同一批日志文件。
   规避办法是串行执行，或用 `-- --state-name ... --sem-name ... --log ...` 隔离
   （PASSTHRU 放在最后可用，已实测）。这一点在多人/多 agent 环境下必须注意：
   **它产生的失败看起来像产品缺陷，实际是测试基建的冲突。**
@@ -74,7 +74,7 @@ SUITE_EXIT=0
 上面三条后来都被作者追到了根因，其中两条的**最初解释是错的**，值得更正：
 
 - **"并发运行会互相踩"的真正机制不是日志互相覆盖，而是清理模式误杀。** runner 用
-  `pkill -f "kitchenos-bridge .*--state-name X"` 清理，但这个模式**也会匹配到正在运行的
+  `pkill -f "wellcooked-bridge .*--state-name X"` 清理，但这个模式**也会匹配到正在运行的
   fake_plugin 自己的命令行** —— 因为它的 cmdline 里同样含有 bridge 路径和 `--state-name X`。
   两个 runner 实例并存时，一个实例的清理会 SIGKILL 掉另一个实例正在跑的场景，
   症状是"0 秒 / 7 秒就超时"以及被截断的日志。**这与 Bridge 真的卡死在观感上无法区分**，
@@ -90,7 +90,7 @@ SUITE_EXIT=0
 
 **最终状态**：连续三次全量运行（含一次 `--strict`，把所有 soft 断言升格为硬断言）
 均为 5/5 PASS、退出码 0、零 soft WARN，被测二进制 sha256 在运行前后一致。
-每次运行使用 `/kitchenos_c04_<run-id>_<scenario>` 与 `logs/bridge-<run-id>-<scenario>.log`
+每次运行使用 `/wellcooked_c04_<run-id>_<scenario>` 与 `logs/bridge-<run-id>-<scenario>.log`
 （run-id = runner pid），且只清理自己的对象，因此并行运行互不可见、互不可删；
 `wait_listen` 还会校验监听 socket 的 inode 确实属于本次的 Bridge pid，
 从根本上杜绝"连到了别人的 Bridge 上"（这种情况真实发生过一次，当时 12345 被占）。

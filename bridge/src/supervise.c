@@ -9,7 +9,7 @@
 #define _POSIX_C_SOURCE 200809L
 #endif
 
-#include <kitchenos/supervise.h>
+#include <wellcooked/supervise.h>
 
 #include <errno.h>
 #include <stdio.h>

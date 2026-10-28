@@ -1,5 +1,5 @@
 /*
- * scheduler_fixture.h -- 单元测试里启动真实 kitchenos-scheduler 的小夹具。
+ * scheduler_fixture.h -- 单元测试里启动真实 wellcooked-scheduler 的小夹具。
  *
  * 只做三件事：把 config/maps/s_wellcooked_demo_2 的 kitchen/recipes 复制到临时目录，
  * 把工位 kind 加上 pid 后缀（资源信号量名因此不会撞上别的通道/别的测试），再起一个
@@ -8,19 +8,19 @@
  *
  * 头文件里的函数都标了 unused：test_assign 与 test_policy 各只用到一部分。
  */
-#ifndef KITCHENOS_TEST_SCHEDULER_FIXTURE_H
-#define KITCHENOS_TEST_SCHEDULER_FIXTURE_H
+#ifndef WELLCOOKED_TEST_SCHEDULER_FIXTURE_H
+#define WELLCOOKED_TEST_SCHEDULER_FIXTURE_H
 
 #ifndef _POSIX_C_SOURCE
 #define _POSIX_C_SOURCE 200809L
 #endif
 
-#include "kitchenos/child.h"
-#include "kitchenos/json.h"
-#include "kitchenos/kitchen.h"
-#include "kitchenos/recipes.h"
-#include "kitchenos/resource.h"
-#include "kitchenos/shm.h"
+#include "wellcooked/child.h"
+#include "wellcooked/json.h"
+#include "wellcooked/kitchen.h"
+#include "wellcooked/recipes.h"
+#include "wellcooked/resource.h"
+#include "wellcooked/shm.h"
 
 #include <dirent.h>
 #include <errno.h>
@@ -420,7 +420,7 @@ __attribute__((unused)) static int ksfx_spawn_ex(ksfx_run *r, const char *strate
         return -1;
     }
     *slash = '\0';
-    if (snprintf(bin, sizeof bin, "%s/kitchenos-scheduler", exe) >= (int)sizeof bin ||
+    if (snprintf(bin, sizeof bin, "%s/wellcooked-scheduler", exe) >= (int)sizeof bin ||
         ksfx_join(err_path, sizeof err_path, r->runtime_dir, "scheduler-stderr.log") != 0) {
         return -1;
     }
@@ -720,4 +720,4 @@ __attribute__((unused)) static void ksfx_cleanup(ksfx_run *r)
     r->pid = -1;
 }
 
-#endif /* KITCHENOS_TEST_SCHEDULER_FIXTURE_H */
+#endif /* WELLCOOKED_TEST_SCHEDULER_FIXTURE_H */

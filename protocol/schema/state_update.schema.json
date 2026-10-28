@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:kitchenos:schema:state_update",
+  "$id": "urn:wellcooked:schema:state_update",
   "title": "state_update",
   "description": "插件 → Bridge：一帧世界状态。只有 type 是必填的，其余字段缺失（或为 null）时 Bridge 取默认值。数组上限是 C 侧固定布局的接收能力，超出部分被丢弃并计数，消息本身仍然可用。",
   "type": "object",

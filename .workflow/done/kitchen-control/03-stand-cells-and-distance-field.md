@@ -11,11 +11,11 @@
 到全图的 BFS 距离场；没有站位格的工位让加载失败并报出工位 id。
 
 **Blocked by:** 01
-**Files:** `bridge/include/kitchenos/stand.h`、`bridge/src/stand.c`、`bridge/src/kitchen.c`、
+**Files:** `bridge/include/wellcooked/stand.h`、`bridge/src/stand.c`、`bridge/src/kitchen.c`、
 `bridge/tests/test_stand.c`、`bridge/Makefile`
 
 **Read first:** `.workflow/specs/kitchen-control.md` 的"L1 走位 / 站位格表与距离场"与 W1；glossary
-站位格、距离场；`bridge/include/kitchenos/{kitchen,nav}.h`
+站位格、距离场；`bridge/include/wellcooked/{kitchen,nav}.h`
 **Covers:** W1
 
 **Check:** `cd bridge && make test` → `test_stand` 对 `config/maps/` 四张地图全过：每个工位
@@ -90,6 +90,6 @@ Dirty at start: none（从 `origin/kitchen-control/01-map-configs` 的 3818609 �
 
 **Review**
 
-- `Review boundary: 3818609 + bridge/{include/kitchenos/{kitchen,stand,worker_task}.h,src/{kitchen,stand,worker_task,worker}.c,tests/{test_stand,test_worker_nav}.c}、config/maps/s_wellcooked_demo_{3,4}、plugin/{WorldState.cs,README.md}、.workflow/{specs,glossary,decisions,tasks}；round: 1；briefs: reviewer；boundaries: 不可信 kitchen.json 解析、插件从游戏场景采样地形；findings: 0 blocking / 2 nonblocking`。
+- `Review boundary: 3818609 + bridge/{include/wellcooked/{kitchen,stand,worker_task}.h,src/{kitchen,stand,worker_task,worker}.c,tests/{test_stand,test_worker_nav}.c}、config/maps/s_wellcooked_demo_{3,4}、plugin/{WorldState.cs,README.md}、.workflow/{specs,glossary,decisions,tasks}；round: 1；briefs: reviewer；boundaries: 不可信 kitchen.json 解析、插件从游戏场景采样地形；findings: 0 blocking / 2 nonblocking`。
 - 非阻塞 1：距离场接口还没有 navd/Scheduler 消费者。不是本任务范围（任务 04/07 接），spec 已改成"本任务只提供接口，任务 04/07 接入"。
 - 非阻塞 2：`stand.h` 写了"站位格必须在厨师连通区"，实现没有厨师输入。已改成"两侧都可能列出，调用方用距离场判断可达"，与实现一致。

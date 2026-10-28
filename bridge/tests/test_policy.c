@@ -9,11 +9,11 @@
 #define _POSIX_C_SOURCE 200809L
 #endif
 
-#include "kitchenos/child.h"
-#include "kitchenos/json.h"
-#include "kitchenos/mq.h"
-#include "kitchenos/policy.h"
-#include "kitchenos/recipes.h"
+#include "wellcooked/child.h"
+#include "wellcooked/json.h"
+#include "wellcooked/mq.h"
+#include "wellcooked/policy.h"
+#include "wellcooked/recipes.h"
 
 #include "scheduler_fixture.h"
 
@@ -552,7 +552,7 @@ static void test_mq(void)
     mqd_t queue = (mqd_t)-1;
 
     printf("[test_policy] 4. 任务消息队列\n");
-    snprintf(name, sizeof name, "/kitchenos_test_%ld", (long)getpid());
+    snprintf(name, sizeof name, "/wellcooked_test_%ld", (long)getpid());
     (void)mq_unlink(name);
     kos_error_clear(&err);
     expect(kos_mq_create(name, 4, &err) == KOS_OK, "mq_create");

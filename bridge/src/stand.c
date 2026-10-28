@@ -13,7 +13,7 @@
 #define _POSIX_C_SOURCE 200809L
 #endif
 
-#include <kitchenos/stand.h>
+#include <wellcooked/stand.h>
 
 #include <limits.h>
 #include <math.h>
@@ -21,7 +21,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#include <kitchenos/nav.h>
+#include <wellcooked/nav.h>
 
 /* 垂直偏移超过半格就不是"正对着工位"了；0.5 格是相邻格中心的最大偏差。 */
 #define STAND_PERP_TOLERANCE_FACTOR 0.5f

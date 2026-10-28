@@ -14,10 +14,10 @@
 #define _POSIX_C_SOURCE 200809L
 #endif
 
-#include "kitchenos/child.h"
-#include "kitchenos/kitchen.h"
-#include "kitchenos/nav.h"
-#include "kitchenos/stand.h"
+#include "wellcooked/child.h"
+#include "wellcooked/kitchen.h"
+#include "wellcooked/nav.h"
+#include "wellcooked/stand.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -337,7 +337,7 @@ static int write_file(const char *path, const char *text)
 
 static void test_synthetic(void)
 {
-    char dir[] = "/tmp/kitchenos-stand-XXXXXX";
+    char dir[] = "/tmp/wellcooked-stand-XXXXXX";
     char shared_path[256];
     char no_stand_path[256];
     char control_path[256];

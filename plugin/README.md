@@ -86,7 +86,7 @@
 
 ## 一次真实操作的日志片段（任务 04，2026-10-16，`s_sushi_1_1`）
 
-Bridge（`--link listen`）+ 替身 Worker（`kitchenos-worker-stub`，写共享内存输入槽）→ 游戏插件：
+Bridge（`--link listen`）+ 替身 Worker（`wellcooked-worker-stub`，写共享内存输入槽）→ 游戏插件：
 
 ```
 # 桥侧：每帧把输入槽转成一条 action 下发，插件回 ack

@@ -13,11 +13,11 @@
 #define _POSIX_C_SOURCE 200809L
 #endif
 
-#include <kitchenos/pibt.h>
+#include <wellcooked/pibt.h>
 
 #include <string.h>
 
-#include <kitchenos/nav.h>
+#include <wellcooked/nav.h>
 
 typedef struct {
     kos_pibt *pibt;

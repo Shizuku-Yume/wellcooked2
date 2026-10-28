@@ -1,5 +1,5 @@
 /*
- * scheduler.c -- KitchenOS Scheduler。
+ * scheduler.c -- WellCooked Scheduler。
  *
  * 两级调度：
  *   1. 订单级：policy.h 的 FCFS / EDF / LLF / HRRN / SJF 只吃订单视图与资源视图。
@@ -7,7 +7,7 @@
  *      队列，按 --task-policy 排：cost（五项加权代价 + 匈牙利匹配，默认）、
  *      cp（剩余关键路径长的先做）、fifo（开工顺序 + 工序下标）。
  *
- * 任务走 POSIX mq（每厨师一条 /kitchenos_tasks_<chef>），结果从 /kitchenos_events
+ * 任务走 POSIX mq（每厨师一条 /wellcooked_tasks_<chef>），结果从 /wellcooked_events
  * 回来。每次派发写 runs/<ts>/decisions.jsonl，状态变化写 events.jsonl；SIGHUP 时
  * 若 <runtime>/strategy.request 存在就按它切两级策略，否则订单级轮换，都留下一条
  * strategy 决策并重写 <runtime>/policy.json；SIGUSR1 写 checkpoint.json。
@@ -19,19 +19,19 @@
 #define _POSIX_C_SOURCE 200809L
 #endif
 
-#include <kitchenos/assign.h>
-#include <kitchenos/child.h>
-#include <kitchenos/json.h>
-#include <kitchenos/kitchen.h>
-#include <kitchenos/log.h>
-#include <kitchenos/metrics.h>
-#include <kitchenos/mq.h>
-#include <kitchenos/policy.h>
-#include <kitchenos/recipes.h>
-#include <kitchenos/resource.h>
-#include <kitchenos/shm.h>
-#include <kitchenos/stand.h>
-#include <kitchenos/zones.h>
+#include <wellcooked/assign.h>
+#include <wellcooked/child.h>
+#include <wellcooked/json.h>
+#include <wellcooked/kitchen.h>
+#include <wellcooked/log.h>
+#include <wellcooked/metrics.h>
+#include <wellcooked/mq.h>
+#include <wellcooked/policy.h>
+#include <wellcooked/recipes.h>
+#include <wellcooked/resource.h>
+#include <wellcooked/shm.h>
+#include <wellcooked/stand.h>
+#include <wellcooked/zones.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <math.h>
@@ -5756,7 +5756,7 @@ int main(int argc, char **argv)
         return 0;
     }
     if (parsed == KOS_CHILD_ARG_VERSION) {
-        printf("kitchenos-scheduler 0.3.0\n");
+        printf("wellcooked-scheduler 0.3.0\n");
         return 0;
     }
     if (parsed != KOS_CHILD_ARG_OK) {

@@ -30,7 +30,6 @@ h2 { font-size: 1.15rem; display: flex; align-items: center; gap: .5rem; }
 }
 .logo { font-size: 2.1rem; line-height: 1; font-weight: 900; color: var(--yellow); display: flex; align-items: baseline; gap: .15rem;
   text-shadow: -2px -2px 0 #2b1205, 2px -2px 0 #2b1205, -2px 2px 0 #2b1205, 2px 2px 0 #2b1205, 0 5px 0 #2b1205; transform: rotate(-2deg); }
-.logo .os { color: var(--red); }
 .logo small { font-size: .95rem; color: #fff; -webkit-text-stroke: 0; text-shadow: 0 2px 0 #000; margin-left: .6rem; transform: rotate(2deg); }
 .hud { display: flex; align-items: center; gap: .8rem; margin-left: auto; }
 .pill { background: #555; color: #fff; padding: .3rem .8rem; border-radius: 999px; font-weight: 800; border: 3px solid #111; }

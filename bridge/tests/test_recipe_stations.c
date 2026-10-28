@@ -17,9 +17,9 @@
 #define _POSIX_C_SOURCE 200809L
 #endif
 
-#include "kitchenos/kitchen.h"
-#include "kitchenos/recipes.h"
-#include "kitchenos/stand.h"
+#include "wellcooked/kitchen.h"
+#include "wellcooked/recipes.h"
+#include "wellcooked/stand.h"
 
 #include <stdio.h>
 #include <string.h>

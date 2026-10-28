@@ -1,8 +1,8 @@
 /*
- * protocol.c -- KitchenOS message encode/decode. See protocol.h for the contract
+ * protocol.c -- WellCooked message encode/decode. See protocol.h for the contract
  * and protocol/protocol.md for the field-by-field agreement with the game plugin.
  */
-#include <kitchenos/protocol.h>
+#include <wellcooked/protocol.h>
 
 #include <string.h>
 

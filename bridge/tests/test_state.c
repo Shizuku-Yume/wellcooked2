@@ -7,10 +7,10 @@
  * where protocol caps (PROTO_MAX_*) become shm caps (KOS_SHM_MAX_*); a silent
  * truncation here would look like a state loss to the scheduler.
  */
-#include <kitchenos/json.h>
-#include <kitchenos/protocol.h>
-#include <kitchenos/shm.h>
-#include <kitchenos/state.h>
+#include <wellcooked/json.h>
+#include <wellcooked/protocol.h>
+#include <wellcooked/shm.h>
+#include <wellcooked/state.h>
 
 #include <math.h>
 #include <stdio.h>

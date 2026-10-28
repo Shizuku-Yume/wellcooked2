@@ -16,11 +16,11 @@
 #define _POSIX_C_SOURCE 200809L
 #endif
 
-#include <kitchenos/pa.h>
+#include <wellcooked/pa.h>
 
 #include <string.h>
 
-#include <kitchenos/nav.h>
+#include <wellcooked/nav.h>
 
 #define PA_UNREACHABLE UINT16_MAX
 #define PA_STATIC 0xFFu

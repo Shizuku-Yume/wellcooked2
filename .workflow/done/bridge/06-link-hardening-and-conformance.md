@@ -5,7 +5,7 @@
 **Task type:** feature
 **Covers:** W1, W2, W5, W7
 **Delivers:** 把"只在极端时序下才出现"的链路问题钉成可重跑的检查，并给两端一个不依赖游戏的对端。
-**Files:** `plugin/tools/conformance/`、`tools/run-bridge-scenarios.sh`、`tools/fake_plugin.py`、`bridge/src/bridge.c`、`bridge/src/net.c`、`bridge/src/protocol.c`、`bridge/include/kitchenos/protocol.h`、`bridge/tests/test_protocol.c`、`bridge/tools/worker_stub.c`、`protocol/protocol.md`、`protocol/schema/`
+**Files:** `plugin/tools/conformance/`、`tools/run-bridge-scenarios.sh`、`tools/fake_plugin.py`、`bridge/src/bridge.c`、`bridge/src/net.c`、`bridge/src/protocol.c`、`bridge/include/wellcooked/protocol.h`、`bridge/tests/test_protocol.c`、`bridge/tools/worker_stub.c`、`protocol/protocol.md`、`protocol/schema/`
 **Read first:** `.workflow/specs/bridge.md`、`plugin/tools/conformance/README.md`
 **Done when:**
 - [x] 有一个不用游戏、不用游戏程序集就能跑的跨实现对端，能与真的 Bridge 双向收发
@@ -41,7 +41,7 @@ spec 的验收结果引用。它们承载了这套交付里**唯一**"两端分�
 bash tools/run-bridge-scenarios.sh
   合计: 9 个场景, 通过 9, 失败 0, 跳过 0
   /dev/shm: 本次运行的 IPC 对象已清空
-  进程: 没有残留的 kitchenos-bridge / kitchenos-worker-stub
+  进程: 没有残留的 wellcooked-bridge / wellcooked-worker-stub
   结论: 全部通过            （退出码 0）
 ```
 
@@ -119,8 +119,8 @@ deletions）：
  M .workflow/specs/bridge.md                       前提/失败行为/W 表/验收结果/模块表/§5.2 对照行/测试层次
  M .workflow/done/bridge/05-real-game.md           补记：插件作者、"真实插件"的含义、W8 仍缺一半
  M bridge/Makefile                                   test-san 目标（ASan/UBSan，独立 build 目录）
- M bridge/include/kitchenos/protocol.h               pickup/dash 常量与构造器声明；跨端契约基准写明
- M bridge/include/kitchenos/shm.h                    动作词表与线上枚举一比一，写明
+ M bridge/include/wellcooked/protocol.h               pickup/dash 常量与构造器声明；跨端契约基准写明
+ M bridge/include/wellcooked/shm.h                    动作词表与线上枚举一比一，写明
  M bridge/src/bridge.c                               pickup/dash 直接映射 + actions_sent 计数；
                                                    stop/none 之外的构造失败记 WARN
  M bridge/src/protocol.c                             build_bare_action() 复用于 stop/pickup/dash

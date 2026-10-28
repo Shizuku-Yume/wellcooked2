@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Real-game iteration helper for KitchenOS (kc-iter).
+# Real-game iteration helper for WellCooked (kc-iter).
 # Merges incoming branches, builds bridge & plugin, runs s_wellcooked_demo_3 (4 chefs),
 # and prints summary and iteration digest.
 #

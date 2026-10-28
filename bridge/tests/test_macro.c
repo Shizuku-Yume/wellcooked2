@@ -9,10 +9,10 @@
 #define _POSIX_C_SOURCE 200809L
 #endif
 
-#include "kitchenos/child.h"
-#include "kitchenos/kitchen.h"
-#include "kitchenos/macro.h"
-#include "kitchenos/stand.h"
+#include "wellcooked/child.h"
+#include "wellcooked/kitchen.h"
+#include "wellcooked/macro.h"
+#include "wellcooked/stand.h"
 
 #include <math.h>
 #include <stdio.h>

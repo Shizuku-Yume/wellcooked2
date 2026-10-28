@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:kitchenos:schema:action",
+  "$id": "urn:wellcooked:schema:action",
   "title": "action",
   "description": "Bridge → 插件：让某个厨师做一件事。stop 是空转动作，输入槽缺失或超时时下发。",
   "type": "object",

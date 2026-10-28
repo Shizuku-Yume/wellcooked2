@@ -48,7 +48,7 @@ p50/p99），供 W15 的报告表格使用。
   `--only nav-ring --nav pa` 都是 PASS，4 人到达 1333/1533/2867/4233 ms，PIBT `nav_stuck=0`，
   pa 同场景 `nav_stuck=0`；`make test` 与 `make test-san` 都是 13 套件 0 失败。
 - 全套场景（2026-10-25）：18 个场景 16 过、2 失败。`os-loop` 单独复跑 PASS，全套那次失败是
-  另一个通道的 supervisor 把全局 mq 名 `/kitchenos_tasks_*` unlink 掉造成的（串行跑无问题）。
+  另一个通道的 supervisor 把全局 mq 名 `/wellcooked_tasks_*` unlink 掉造成的（串行跑无问题）。
   `os-resources` 在 `origin/kitchen-control/04-navd-pibt` 的原始代码上（`git archive` 到
   `/tmp/kc04-base` 重建后）同样失败同样的 5 条断言（`resource_released_events`、
   `contention_observed`、`other_chef_acquires_after_reclaim`、`metrics_resource_wait`、

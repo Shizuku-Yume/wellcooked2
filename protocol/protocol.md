@@ -1,9 +1,9 @@
-# 跨端协议：KitchenOS Bridge ↔ WellCooked 插件
+# 跨端协议：WellCooked Bridge ↔ WellCooked 插件
 
 这是两端**唯一**的契约。字段名、消息类型名以本文档和 `schema/` 为准，两端都不许私自改名。
 
 改动顺序：先改 `schema/` 与本文档，再同步两端实现 ——
-C 侧 `bridge/include/kitchenos/protocol.h` + `bridge/src/protocol.c`，
+C 侧 `bridge/include/wellcooked/protocol.h` + `bridge/src/protocol.c`，
 插件侧 `plugin/WellCooked.Plugin/Protocol/Messages.cs`。
 
 分帧的契约就是本文档第 1 节，两端实现分别是插件侧
@@ -295,9 +295,9 @@ C 侧构造样例（前两条与 §5.2 的两条控制指令一致）：
 | 心跳超时（Bridge 只看心跳；插件侧默认关闭该判定，开着时看"任何消息"） | 判定插件断开，暂停下发，重连后继续 | Bridge |
 | TCP 断开 | 等待重连（客户端模式按间隔重试） | Bridge |
 
-C 侧错误码：`bridge/include/kitchenos/json.h` 的 `JSON_ERR_*`、
-`bridge/include/kitchenos/framing.h` 的 `FRAMING_ERR_*`、
-`bridge/include/kitchenos/protocol.h` 的 `PROTO_ERR_*`。解析失败带上下文（`json_error` 里有
+C 侧错误码：`bridge/include/wellcooked/json.h` 的 `JSON_ERR_*`、
+`bridge/include/wellcooked/framing.h` 的 `FRAMING_ERR_*`、
+`bridge/include/wellcooked/protocol.h` 的 `PROTO_ERR_*`。解析失败带上下文（`json_error` 里有
 字节偏移、行列和一句话说明），够写一条能定位的日志。
 
 ## 5. 上限（C 侧固定布局）
@@ -317,8 +317,8 @@ C 侧错误码：`bridge/include/kitchenos/json.h` 的 `JSON_ERR_*`、
 
 ## 6. 版本与兼容
 
-- 当前版本 `0.3.0`（`bridge/include/kitchenos/protocol.h` 的 `PROTO_VERSION`，
+- 当前版本 `0.3.0`（`bridge/include/wellcooked/protocol.h` 的 `PROTO_VERSION`，
   同时是插件 `WellCooked.Plugin` 的版本基准）。
 - 加法兼容：新增可选字段、新增 `resources` 键、新增消息类型 —— 老实现忽略即可，不必改版本。
 - 破坏兼容：改字段名、改字段类型、改动作名、改分帧 —— 必须同时改两端并提升版本号。
-- 共享内存的结构版本号与协议版本是两件事，见 `bridge/include/kitchenos/shm.h`。
+- 共享内存的结构版本号与协议版本是两件事，见 `bridge/include/wellcooked/shm.h`。

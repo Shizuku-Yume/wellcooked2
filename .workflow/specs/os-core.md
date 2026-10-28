@@ -6,7 +6,7 @@ W8/W11 有自动化检查，W10 的实机部分仍未验证）
 
 ## What this is for
 
-Bridge 已经能把游戏状态写进 `/kitchenos_state`、把每个厨师的动作从输入槽发回游戏，但它
+Bridge 已经能把游戏状态写进 `/wellcooked_state`、把每个厨师的动作从输入槽发回游戏，但它
 上面没有调度者，下面没有执行者：订单不会变成工序，工序不会变成某个厨师的路径，进程死了
 没有东西把它拉起来。课程要求的两级调度（订单级 + 工序级）、共享资源、信号处理与守护进程
 目前一条都不存在。本 effort 补上另外四类进程，并给出它们之间每条链路的归属。
@@ -19,10 +19,10 @@ Bridge 已经能把游戏状态写进 `/kitchenos_state`、把每个厨师的动
 ### 进程树
 
 ```
-kitchenos-supervisor                 完整 Linux 守护进程，单实例（pid 文件 fcntl 锁）
-├── kitchenos-bridge                 TCP ⇄ 插件；唯一世界状态写者；帧屏障
-├── kitchenos-scheduler              订单/工序队列、策略、资源租约、决策日志
-└── kitchenos-worker --chef-id 0..N-1
+wellcooked-supervisor                 完整 Linux 守护进程，单实例（pid 文件 fcntl 锁）
+├── wellcooked-bridge                 TCP ⇄ 插件；唯一世界状态写者；帧屏障
+├── wellcooked-scheduler              订单/工序队列、策略、资源租约、决策日志
+└── wellcooked-worker --chef-id 0..N-1
                                      A* 路径规划 → 每帧写自己那格输入槽
 ```
 
@@ -38,7 +38,7 @@ Supervisor 自己所在目录）。Scheduler 与 Worker 是同一个源码树里
 - 启动前先把运行目录解析成绝对路径（daemon 之后 `chdir("/")` 会让相对路径失效）。
 - `runtime/kitchend.pid` 用 `fcntl(F_SETLK, F_WRLCK)` 加锁；第二个实例拿不到锁时退出码
   **3**，stderr 写明 pid 文件路径，绝不碰第一个实例的日志。daemon 模式下父进程通过就绪
-  管道拿到这个退出码，所以 `kitchenos-supervisor` 命令本身能报告"已在运行"。
+  管道拿到这个退出码，所以 `wellcooked-supervisor` 命令本身能报告"已在运行"。
 - 每个子进程一条匿名管道做心跳：子进程每 `--supervisor-heartbeat-ms` 写 1 字节，
   Supervisor 在主循环里非阻塞读走；`SIGALRM` 健康检查发现超过
   `--heartbeat-timeout-ms` 没有字节时记 `child_unresponsive` 并发 `SIGKILL`，随后按普通
@@ -57,8 +57,8 @@ Supervisor 自己所在目录）。Scheduler 与 Worker 是同一个源码树里
   名字、删除 pid 文件、留下最终 `status.json` 供事后查。
 - `SIGHUP` 转发给 Scheduler（策略热切换归它）；Scheduler 不在时记 `sighup_no_scheduler`。
 - `SIGUSR1` 原子写 `runtime/status.json`（临时文件 + `rename`）并记 `status_dump`。
-- 运行目录：`--runtime-dir` > `$KITCHENOS_RUNTIME_DIR` > `$XDG_RUNTIME_DIR/kitchenos` >
-  `/tmp/kitchenos-<uid>`；`mkdir -p` 出 `logs/` 与 `runs/`。默认值刻意不是仓库路径：
+- 运行目录：`--runtime-dir` > `$WELLCOOKED_RUNTIME_DIR` > `$XDG_RUNTIME_DIR/wellcooked` >
+  `/tmp/wellcooked-<uid>`；`mkdir -p` 出 `logs/` 与 `runs/`。默认值刻意不是仓库路径：
   仓库可能挂在 9p 上，fcntl 锁与共享内存都要求 Linux 原生文件系统（decisions.md:
   2026-10-24 - 运行目录默认放 Linux 原生 tmpfs）。
 
@@ -115,10 +115,10 @@ Supervisor 自己所在目录）。Scheduler 与 Worker 是同一个源码树里
 ### Chef Worker
 
 > **状态：**已实现（任务 03，W9/W11）。Worker 用 kitchen.json 的网格做 A*，按路径写
-> move、到站写 interact，完成后通过 `/kitchenos_events` 回事件。
+> move、到站写 interact，完成后通过 `/wellcooked_events` 回事件。
 
 - 每个厨师一个进程，`--chef-id N` 绑定输入槽 N。
-- 从自己的任务队列 `/kitchenos_tasks_<chef>` 收高层任务；向 `/kitchenos_events` 上报
+- 从自己的任务队列 `/wellcooked_tasks_<chef>` 收高层任务；向 `/wellcooked_events` 上报
   accepted/done/failed；资源令牌由 Scheduler 在派发前取得、完成后释放。
 - 路径规划：在 `config/kitchen.json` 的 `grid.cells` + `grid.mask` 上做 A*（0.6 m 网格，
   `mask` 的位含义见 `edge_bits`），把"到哪个工位/哪一格"变成逐帧 `move`，到达后发
@@ -133,12 +133,12 @@ Supervisor 自己所在目录）。Scheduler 与 Worker 是同一个源码树里
 ### 共享资源
 
 > **状态：**已实现（任务 04，W8）。Supervisor 按 kind 创建并 unlink
-> `/kitchenos_res_<kind>`；Scheduler attach 后用 `sem_trywait`/`sem_post` 管理容量，
+> `/wellcooked_res_<kind>`；Scheduler attach 后用 `sem_trywait`/`sem_post` 管理容量，
 > 租约到期或 Worker 崩溃时回收且只回收一次；死锁图与 victim 规则已实现并有单元检查。
 
 `config/kitchen.json` 的工位按 `kind` 归类：`cooker`（锅/煎锅）、`mixer`、`container`
 （砧板/备料台）、`plate_stack`（盘子）、`dispenser`、`serving`、`sink`、`bin`。计数信号量
-命名 `/kitchenos_res_<kind>[_<i>]`，容量取该类可用工位数（盘子取 `plate_stack` 的数量）。
+命名 `/wellcooked_res_<kind>[_<i>]`，容量取该类可用工位数（盘子取 `plate_stack` 的数量）。
 信号量只保证互斥/计数，**不保证崩溃回收** —— 回收靠 Scheduler 的租约表（§6.4 方案 2），
 因为 POSIX 命名信号量没有 robust 语义，而进程是独立进程不是线程，不能靠
 `PTHREAD_MUTEX_ROBUST`。租约长度由 `--lease-ttl-ms` 配置（默认 30000 ms）。释放路径
@@ -152,17 +152,17 @@ Worker RECOVERED 与关机清理都不可能把同一令牌还两次。死锁检
 
 | 链路 | 机制 | 谁写 → 谁读 | 理由 |
 |---|---|---|---|
-| 世界状态 | `shm_open("/kitchenos_state")` + seqlock | Bridge → 全部 | 已有实现；一写多读，拷贝一份自洽快照 |
-| 输入槽 | 每厨师 seqlock + `/kitchenos_input_ready` | Worker → Bridge | 已有实现；每格独占写，门铃只表示"可能有人写了" |
-| 任务 | POSIX mq，每厨师一条 `/kitchenos_tasks_<chef>` | Scheduler → Worker | 消息有边界、有优先级、可定时接收；按厨师分队列避免一个 Worker 取走别人的任务 |
-| 事件 | POSIX mq `/kitchenos_events` | Worker → Scheduler | 多生产者单消费者，消息自带 chef_id/task_id |
+| 世界状态 | `shm_open("/wellcooked_state")` + seqlock | Bridge → 全部 | 已有实现；一写多读，拷贝一份自洽快照 |
+| 输入槽 | 每厨师 seqlock + `/wellcooked_input_ready` | Worker → Bridge | 已有实现；每格独占写，门铃只表示"可能有人写了" |
+| 任务 | POSIX mq，每厨师一条 `/wellcooked_tasks_<chef>` | Scheduler → Worker | 消息有边界、有优先级、可定时接收；按厨师分队列避免一个 Worker 取走别人的任务 |
+| 事件 | POSIX mq `/wellcooked_events` | Worker → Scheduler | 多生产者单消费者，消息自带 chef_id/task_id |
 | 心跳 | 匿名管道，每子进程一条 | 子进程 → Supervisor | 最基础的 IPC（§6.2.1）；只写 1 字节，无协议负担 |
 | 单实例 | `fcntl` 写锁 | Supervisor | §6.2.5 明确要求 |
 | 日志 | 每进程一个文件（单写者） | 各进程 | 避免多进程追加锁；跨进程事件用 mq 汇总到 Scheduler 的 jsonl |
 | 游戏 | TCP | Bridge ⇄ 插件 | 已有实现 |
 
-消息队列的**名字与定长消息布局**是跨进程契约：`/kitchenos_tasks_<chef>`、
-`/kitchenos_events`，消息是 `kos_mq_msg`（`mq.h`）。Scheduler 创建并在退出时
+消息队列的**名字与定长消息布局**是跨进程契约：`/wellcooked_tasks_<chef>`、
+`/wellcooked_events`，消息是 `kos_mq_msg`（`mq.h`）。Scheduler 创建并在退出时
 `mq_unlink`；Supervisor 在关闭末尾对同一批名字再扫一遍（幂等），兜住 Scheduler 被
 `SIGKILL` 的情况。锁住它的是 `test_policy` 的 `mq_roundtrip`/`mq_priority_orders_messages`
 与 `test_supervisor` 的 `cleanup_logged`。每局消息带
@@ -208,7 +208,7 @@ resource_wait_ms/decisions/restarts`，供对比脚本读。
 | `worker`（可执行） | A*、每帧输入槽、资源信号量、事件上报 | 选单、决定优先级 |
 | `bridge`（已有） | TCP、帧屏障、世界状态 | 调度、路径 |
 
-头文件是模块契约，都在 `bridge/include/kitchenos/`：
+头文件是模块契约，都在 `bridge/include/wellcooked/`：
 
 | 头文件 | 职责 |
 |---|---|
@@ -239,7 +239,7 @@ resource_wait_ms/decisions/restarts`，供对比脚本读。
   Worker 数量在启动时确定，每厨师一条 mq 的名字稳定；mq 的 `mq_timedreceive` 让 Worker
   没有任务时不必阻塞在无法响应 SIGTERM 的读上。见 decisions.md:
   2026-10-24 - 任务/事件链路用 POSIX 消息队列。
-- **所有进程追加同一个 `logs/kitchenos.log`，用 fcntl 锁保护。** 好处是只有一份时间线。
+- **所有进程追加同一个 `logs/wellcooked.log`，用 fcntl 锁保护。** 好处是只有一份时间线。
   被否掉：fcntl 锁只保护单次 `write`，多行事件的原子性还得自己保证；一个进程写坏日志会
   影响全部。每进程一个文件本来就是 §6.6 的建议，且 Scheduler 的 jsonl 已经把跨进程事件
   汇总成一条时间线。见 decisions.md: 2026-10-24 - 日志每进程一个文件、单写者。
@@ -298,7 +298,7 @@ kitchen-control 的 W8 里检查。锁住它的是
 `critical_path_orders_tasks`、`list_schedule_is_deterministic`。
 
 **W8. 共享资源与租约回收（已实现，有检查）。** Supervisor 为每个 kitchen kind 建
-`/kitchenos_res_<kind>` 计数信号量并在关机时 unlink；Scheduler 用 `sem_trywait` 取得
+`/wellcooked_res_<kind>` 计数信号量并在关机时 unlink；Scheduler 用 `sem_trywait` 取得
 令牌、记租约，`DONE`/失败只释放一次，租约到期或 Worker `RECOVERED` 也只回收一次。
 `kill -9` 持锅 Worker 的场景在 `tools/fake_plugin.py --scenario os-resources`：一个
 cooker、两个厨师，确认持 cooker 租约时 kill，随后 `worker_recovered` +

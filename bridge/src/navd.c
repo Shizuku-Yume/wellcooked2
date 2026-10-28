@@ -12,16 +12,16 @@
 #define _POSIX_C_SOURCE 200809L
 #endif
 
-#include <kitchenos/adg.h>
-#include <kitchenos/child.h>
-#include <kitchenos/json.h>
-#include <kitchenos/kitchen.h>
-#include <kitchenos/log.h>
-#include <kitchenos/navtab.h>
-#include <kitchenos/pa.h>
-#include <kitchenos/pibt.h>
-#include <kitchenos/shm.h>
-#include <kitchenos/stand.h>
+#include <wellcooked/adg.h>
+#include <wellcooked/child.h>
+#include <wellcooked/json.h>
+#include <wellcooked/kitchen.h>
+#include <wellcooked/log.h>
+#include <wellcooked/navtab.h>
+#include <wellcooked/pa.h>
+#include <wellcooked/pibt.h>
+#include <wellcooked/shm.h>
+#include <wellcooked/stand.h>
 
 #include <errno.h>
 #include <fcntl.h>
@@ -226,7 +226,7 @@ static void write_nav_metrics(navd *n)
     json_writer_init(&writer, body, sizeof body);
     json_writer_object_begin(&writer);
     json_writer_key(&writer, "schema");
-    json_writer_string(&writer, "kitchenos.nav_metrics.v1");
+    json_writer_string(&writer, "wellcooked.nav_metrics.v1");
     json_writer_key(&writer, "algorithm");
     json_writer_string(&writer, n->algo == NAVD_ALGO_PA ? "pa" : "pibt");
     json_writer_key(&writer, "planning_cycles");
@@ -1249,7 +1249,7 @@ int main(int argc, char **argv)
         return 0;
     }
     if (parsed == KOS_CHILD_ARG_VERSION) {
-        printf("kitchenos-navd 0.1.0\n");
+        printf("wellcooked-navd 0.1.0\n");
         return 0;
     }
     if (parsed != KOS_CHILD_ARG_OK) {

@@ -136,11 +136,11 @@ user may overturn on sight. `Revisit when` of "never" is allowed but suspicious;
 ## 2026-10-15 - 共享状态用 seqlock；就绪信号量另起名字
 
 - **Decided:** 世界状态用 seqlock 保护；"本帧输入已就绪"的通知信号量命名为
-  `/kitchenos_input_ready`，不采用文档代码示例里的 `/kitchenos_sem`。
-- **Instead of:** 走 §6.2.3 的另一条路——用初值为 1 的 `/kitchenos_sem` 当互斥量，
+  `/wellcooked_input_ready`，不采用文档代码示例里的 `/wellcooked_sem`。
+- **Instead of:** 走 §6.2.3 的另一条路——用初值为 1 的 `/wellcooked_sem` 当互斥量，
   由 Bridge 在写临界区前后 `sem_wait`/`sem_post`。
 - **Because:** §6.2.3 原文是"使用 seqlock **或**读写信号量保护"，择一即可。文档 553 行的
-  `/kitchenos_sem` 初值为 1，是**互斥量**那一路的名字；而"通过信号量通知 Bridge 本帧输入
+  `/wellcooked_sem` 初值为 1，是**互斥量**那一路的名字；而"通过信号量通知 Bridge 本帧输入
   已就绪"（869 行）的那个信号量文档没有给名字。本项目的访问模式是 Bridge 单写、
   Scheduler 与多个 Worker 并发读，正是 seqlock 的适用形状，且读者永不被写者阻塞。
 - **Mine:** yes
@@ -199,7 +199,7 @@ user may overturn on sight. `Revisit when` of "never" is allowed but suspicious;
 ## 2026-10-15 - 链路不做认证，默认监听 0.0.0.0
 
 - **Decided:** Bridge 与插件之间不做认证与加密。Bridge 默认监听 `0.0.0.0:12345`，任何连上的
-  对端都会被当成插件（新连接顶掉旧连接），它发来的 `state_update` 会写进 `/kitchenos_state`；
+  对端都会被当成插件（新连接顶掉旧连接），它发来的 `state_update` 会写进 `/wellcooked_state`；
   `--link connect` 模式下 Bridge 发来的 `action` 会被插件当作游戏输入执行。
 - **Instead of:** 在 `hello` 里带一个共享令牌、两端校验，或默认只绑 `127.0.0.1`。
 - **Because:** 单机课设：两端同机，插件默认连 `127.0.0.1`，文档也没要求认证。加令牌要同时改
@@ -236,13 +236,13 @@ user may overturn on sight. `Revisit when` of "never" is allowed but suspicious;
 
 ## 2026-10-15 - 重启时清掉崩溃残留的共享内存，不拒绝启动
 
-- **Decided:** Bridge 启动时用 `KOS_SHM_CREATE` 打开 `/kitchenos_state`；对象已存在就记一条
+- **Decided:** Bridge 启动时用 `KOS_SHM_CREATE` 打开 `/wellcooked_state`；对象已存在就记一条
   `shm_recreate` WARN、unlink 后重建，而不是报错退出。魔数/结构版本/尺寸校验只用于**挂接**
   （`KOS_SHM_ATTACH`，Scheduler/Worker 走这条），不匹配就明确拒绝。
 - **Instead of:** 按 spec 早先那句"写 shm 前先确认对端结构版本号，不匹配则拒绝启动"，Bridge
   遇到任何已存在的段都退出。
 - **Because:** 上一次运行被 SIGKILL 或崩溃之后段会留在 `/dev/shm`。若拒绝启动，用户就得先手工
-  `rm /dev/shm/kitchenos_state*` 才能再跑，而这条命令不在任何文档里 —— 那是个只有作者知道的隐性
+  `rm /dev/shm/wellcooked_state*` 才能再跑，而这条命令不在任何文档里 —— 那是个只有作者知道的隐性
   前置条件。段的唯一写入者就是 Bridge 自己，重建不会破坏别人的数据；真正的多进程读者走 ATTACH，
   那条路上三项校验一个不少。spec 里那句话已改成这个行为。
 - **Mine:** yes
@@ -539,8 +539,8 @@ user may overturn on sight. `Revisit when` of "never" is allowed but suspicious;
 
 ## 2026-10-24 - 任务/事件链路用 POSIX 消息队列，每厨师一条任务队列
 
-- **Decided:** Scheduler→Worker 用 POSIX mq：每个厨师一条 `/kitchenos_tasks_<chef>`，
-  优先级字段 = 策略算出的紧急度；Worker→Scheduler 共用 `/kitchenos_events`。队列由
+- **Decided:** Scheduler→Worker 用 POSIX mq：每个厨师一条 `/wellcooked_tasks_<chef>`，
+  优先级字段 = 策略算出的紧急度；Worker→Scheduler 共用 `/wellcooked_events`。队列由
   Scheduler 创建与 `mq_unlink`。Supervisor 与子进程之间另有一条匿名管道专做心跳。
 - **Instead of:** 用 pipe 传递任务，或让所有 Worker 抢同一条 mq。
 - **Because:** 管道没有消息边界与优先级，EDF/列表调度的输出要自己编码成帧再排序；单条共享
@@ -556,7 +556,7 @@ user may overturn on sight. `Revisit when` of "never" is allowed but suspicious;
 
 - **Decided:** `runtime/logs/{supervisor,scheduler,worker-N,bridge}.log` 各由一个进程写；
   跨进程事件由 Scheduler 汇总进 `runs/<ts>/events.jsonl`。多进程共写同一文件不加锁。
-- **Instead of:** 所有进程追加同一个 `logs/kitchenos.log`，用 fcntl 写锁串行化。
+- **Instead of:** 所有进程追加同一个 `logs/wellcooked.log`，用 fcntl 写锁串行化。
 - **Because:** fcntl 锁只保护单次 `write` 调用，一条事件跨多个 `write` 时仍会交错；而一个
   进程卡死会连累全部日志。§6.6 本来就列了"每个进程写独立文件"这一方案，且现有 `log` 模块
   的契约就是单写者。需要一条合并时间线时读 `events.jsonl`，不是读日志文件。
@@ -566,8 +566,8 @@ user may overturn on sight. `Revisit when` of "never" is allowed but suspicious;
 
 ## 2026-10-24 - 运行目录默认放 Linux 原生 tmpfs，不用 /var/run
 
-- **Decided:** 运行目录优先级 `--runtime-dir` > `$KITCHENOS_RUNTIME_DIR` >
-  `$XDG_RUNTIME_DIR/kitchenos` > `/tmp/kitchenos-<uid>`；pid 文件是其中的
+- **Decided:** 运行目录优先级 `--runtime-dir` > `$WELLCOOKED_RUNTIME_DIR` >
+  `$XDG_RUNTIME_DIR/wellcooked` > `/tmp/wellcooked-<uid>`；pid 文件是其中的
   `kitchend.pid`，用 `fcntl` 写锁保证单实例。
 - **Instead of:** 按 §6.1 原文把 pid 文件放 `/var/run/kitchend.pid`。
 - **Because:** 课程实验室里的普通用户写不了 `/var/run`；仓库在 WSL2 里可能位于 9p
@@ -581,7 +581,7 @@ user may overturn on sight. `Revisit when` of "never" is allowed but suspicious;
 ## 2026-10-24 - 共享资源用命名计数信号量 + 租约回收，不用 robust mutex
 
 - **Decided:** 锅、砧板、盘子等按 `config/kitchen.json` 的 `kind` 建命名计数信号量
-  `/kitchenos_res_<kind>`；Scheduler 在派发前 `sem_trywait`，同时记下租约
+  `/wellcooked_res_<kind>`；Scheduler 在派发前 `sem_trywait`，同时记下租约
   `(kind, chef, task_id, acquired, deadline)`；tick 里回收过期租约并 `sem_post`。
   Worker 不碰信号量：它只执行任务，释放统一由 Scheduler 在收到 DONE/FAILED 时做。
 - **Instead of:** 按 §6.4 方案 1 用放在共享内存里的 `PTHREAD_MUTEX_ROBUST` 保护资源。
@@ -670,7 +670,7 @@ user may overturn on sight. `Revisit when` of "never" is allowed but suspicious;
 ## 2026-10-25 - 多厨师避让用时空 A* + 共享预约表
 
 - **Decided:** 每个 Worker 在 4 邻域网格上做时空 A*（等待也是一步），按优先级依次把自己
-  的路径写进共享预约表 `/kitchenos_resv`（64 时隙环，`/kitchenos_resv_lock` 保护），后来者
+  的路径写进共享预约表 `/wellcooked_resv`（64 时隙环，`/wellcooked_resv_lock` 保护），后来者
   避开已预约的格与对换；互等成环时按 `nav_deadlock` 规则让环上优先级最低、并列时 chef_id
   最大的那个退让。避让与寻路全部在 Worker（Linux 侧）。
 - **Instead of:** 插件 `Navigation.cs` 做局部避让；或 CBS 全局最优多智能体寻路；或 Scheduler
@@ -704,7 +704,7 @@ user may overturn on sight. `Revisit when` of "never" is allowed but suspicious;
   避让用时空 A* + 共享预约表
 - **Decided:** Supervisor 下新增 `navd` 子进程，统一为所有厨师规划：每一步跑 PIBT（优先级继承 +
   回溯），按执行依赖图把路点放行给各厨师，插件用新动作 `path` 沿路点连续走。Worker 只写目标槽、
-  读计划槽（共享内存 `/kitchenos_nav`，各槽单写者）。优先级时空 A* 保留为 `navd --nav pa` 对照
+  读计划槽（共享内存 `/wellcooked_nav`，各槽单写者）。优先级时空 A* 保留为 `navd --nav pa` 对照
   基线。规划仍全部在 Linux 侧，Scheduler 仍只派高层目标。
 - **Instead of:** 每个 Worker 各自做时空 A* + 共享预约表；Worker 内 WHCA*；中央 RHCR。
 - **Because:** 用户要求走位"不要太初级"、要能当后续调度策略展示的地基，并选了这一档。PIBT 在

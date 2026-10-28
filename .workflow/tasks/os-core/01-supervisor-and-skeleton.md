@@ -5,18 +5,18 @@
 **Base commit:** <commit-sha>
 **Covers:** W1, W2, W3, W4, W5
 
-**Delivers:** `kitchenos-supervisor` 完整守护进程（daemonize + pid 文件锁 + fork/exec
+**Delivers:** `wellcooked-supervisor` 完整守护进程（daemonize + pid 文件锁 + fork/exec
 Bridge/Scheduler/N Worker + SIGCHLD 收尸重启 + SIGALRM 健康检查 + SIGTERM 有序关闭与 IPC
-清理 + SIGHUP 转发 + SIGUSR1 状态导出），以及 `kitchenos-scheduler` / `kitchenos-worker`
+清理 + SIGHUP 转发 + SIGUSR1 状态导出），以及 `wellcooked-scheduler` / `wellcooked-worker`
 的最小真实进程骨架（挂接 shm、写日志、心跳、响应 SIGTERM）。
 
 **Blocked by:** 无（Bridge 已完成）
-**Files:** `bridge/include/kitchenos/{daemon,supervise,child}.h`、
+**Files:** `bridge/include/wellcooked/{daemon,supervise,child}.h`、
 `bridge/src/{daemon,supervise,child,supervisor,scheduler,worker}.c`、
 `bridge/tools/silent_child.c`、`bridge/tests/test_supervisor.c`、`bridge/Makefile`、
 `bridge/src/bridge.c`（只加 supervisor 心跳开关）、`.workflow/specs/os-core.md`
 **Read first:** `.workflow/specs/os-core.md` 的进程树、信号、W1–W5；
-`bridge/include/kitchenos/shm.h`；`bridge/src/bridge.c` 的 `run_loop`
+`bridge/include/wellcooked/shm.h`；`bridge/src/bridge.c` 的 `run_loop`
 **Covers:** W1, W2, W3, W4, W5
 **Check:** `cd bridge && make && make test` 退出码 0；`test_supervisor` 覆盖 W1–W5 全部
 检查；`bash tools/run-bridge-scenarios.sh` 仍全绿。

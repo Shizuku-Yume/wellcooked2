@@ -88,8 +88,8 @@ os-core 已经把 Supervisor / Scheduler / Worker 进程树、消息队列、FCF
 Scheduler 在任务 07 用它估路程。厨师走到该工位任一站位格都算到达。
 见 decisions.md: 2026-10-25 - 站位格取工位每个方向最近的可走格。
 
-**导航表（`/kitchenos_nav`）。** 一块独立共享内存（不挤进 16 KB 的世界状态段），由 Supervisor
-创建与 unlink，命名信号量 `/kitchenos_nav_lock` 做互斥。默认名字就是上面两个；Supervisor 在
+**导航表（`/wellcooked_nav`）。** 一块独立共享内存（不挤进 16 KB 的世界状态段），由 Supervisor
+创建与 unlink，命名信号量 `/wellcooked_nav_lock` 做互斥。默认名字就是上面两个；Supervisor 在
 `--state-name` 不是默认值时派生成 `<state-name>_nav`/`<state-name>_nav_lock`，同机多个场景/实例
 各有一份。每个厨师两个槽，各只有一个写者：
 
@@ -708,8 +708,8 @@ fix8 证据：`macro_failed` 里 `drop` 9 次、`pickup` 4 次、`start_cook` 3 
 | G14 | 厨师 `state`（moving/idle）没发 | `StateFrame.AppendChefs` 不填 | 低 | 可选 |
 
 **改动顺序与容量。** 新增字段固定按这个顺序改：`protocol/protocol.md` 与 `protocol/schema/` →
-`bridge/include/kitchenos/protocol.h` 的 `proto_*` 与 `bridge/src/protocol.c` 的 `parse_*` →
-`bridge/include/kitchenos/shm.h`（升 `KOS_SHM_VERSION`）与 `bridge/src/bridge.c:world_from_state_update`
+`bridge/include/wellcooked/protocol.h` 的 `proto_*` 与 `bridge/src/protocol.c` 的 `parse_*` →
+`bridge/include/wellcooked/shm.h`（升 `KOS_SHM_VERSION`）与 `bridge/src/bridge.c:world_from_state_update`
 → 插件 `plugin/Link/StateFrame.cs`。`tools/fake_plugin.py` 与 `plugin/tools/conformance/` 同一次改，
 否则协议级场景会漏测。`kos_resource.content` 只有 32 字节（`shm.h:60`），资源上限 32
 （`shm.h:54`）；递归内容必须新开 `contents[]`，不能塞进 `content`。`_3` 有 42 个 Counter，

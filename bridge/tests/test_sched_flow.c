@@ -3,7 +3,7 @@
  *
  * 这套测试把 Scheduler 当成被测进程，自己扮演 Worker 与插件：
  *   - 用 shm 写世界状态（厨师位置/手持、订单、分数、order_results）；
- *   - 从 /kitchenos_tasks_<chef> 取派工消息，往 /kitchenos_events 发 DONE/FAILED；
+ *   - 从 /wellcooked_tasks_<chef> 取派工消息，往 /wellcooked_events 发 DONE/FAILED；
  *   - 断言 events.jsonl 里的 order_completed / order_expired / item_adopted /
  *     putdown_queued / recipe_infeasible / task_requeued 与重新派工的间隔。
  * 每条用例都对应一次 W11 实机失败或状态审计缺口。
@@ -12,13 +12,13 @@
 #define _POSIX_C_SOURCE 200809L
 #endif
 
-#include "kitchenos/child.h"
-#include "kitchenos/json.h"
-#include "kitchenos/macro.h"
-#include "kitchenos/mq.h"
-#include "kitchenos/recipes.h"
-#include "kitchenos/shm.h"
-#include "kitchenos/stand.h"
+#include "wellcooked/child.h"
+#include "wellcooked/json.h"
+#include "wellcooked/macro.h"
+#include "wellcooked/mq.h"
+#include "wellcooked/recipes.h"
+#include "wellcooked/shm.h"
+#include "wellcooked/stand.h"
 #include "scheduler_fixture.h"
 
 #include <errno.h>

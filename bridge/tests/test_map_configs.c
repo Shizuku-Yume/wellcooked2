@@ -11,9 +11,9 @@
 #define _POSIX_C_SOURCE 200809L
 #endif
 
-#include "kitchenos/child.h"
-#include "kitchenos/kitchen.h"
-#include "kitchenos/recipes.h"
+#include "wellcooked/child.h"
+#include "wellcooked/kitchen.h"
+#include "wellcooked/recipes.h"
 
 #include <stdio.h>
 #include <string.h>

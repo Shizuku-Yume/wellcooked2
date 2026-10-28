@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:kitchenos:schema:config",
+  "$id": "urn:wellcooked:schema:config",
   "title": "config",
   "description": "Bridge → 插件：把调度策略与订单计划告诉插件。",
   "type": "object",

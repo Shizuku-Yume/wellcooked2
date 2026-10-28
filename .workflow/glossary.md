@@ -26,7 +26,7 @@ competing names, omit the line rather than inventing fake synonyms.
 - **Bridge**: 唯一与游戏通信的进程；通过 TCP 收发 JSON，把世界状态写进共享内存，把 Worker
   算出的输入汇总后下发插件。它不解释调度策略。
 - **世界状态（world state）**: 游戏当前局面（得分、时间、厨师、订单、厨具），由 Bridge 独占
-  写、其他进程并发读，放在共享内存 `/kitchenos_state` 里。_Avoid_: 状态快照、快照（那是
+  写、其他进程并发读，放在共享内存 `/wellcooked_state` 里。_Avoid_: 状态快照、快照（那是
   Scheduler 的 SIGUSR1 检查点，不是这个）。
 - **输入槽（input slot）**: 共享内存里每个厨师一格的动作槽位，由对应 Worker 独占写、Bridge
   读。_Avoid_: 动作队列。
@@ -67,7 +67,7 @@ competing names, omit the line rather than inventing fake synonyms.
 - **洗盘工序（wash）**: Scheduler 在干净盘 ≤ 1 且有脏盘时合成的维护工序，不属于订单，和
   订单工序走同一个候选列表与资源租约。_Avoid_: 把 wash 当成一张订单（会污染订单级 metrics）。
 - **navd**: Supervisor 下的走位进程，统一为所有厨师规划路径（PIBT，或对照基线 `pa`），
-  通过共享内存导航表 `/kitchenos_nav` 与 Worker 交换目标和计划。
+  通过共享内存导航表 `/wellcooked_nav` 与 Worker 交换目标和计划。
 - **PIBT**: Priority Inheritance with Backtracking。每一步按优先级给每个厨师挑下一格，挡路的人
   继承优先级先让开，让不开就回退换格；换目标后步数 + 紧迫度是优先级，`pinned` 与已到站的
   目标厨师是固定障碍。_Avoid_: 死锁退让（PIBT 不靠事后检测死锁）。

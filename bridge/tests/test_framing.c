@@ -10,7 +10,7 @@
  * (eaed4f5), and a payload carrying a raw terminator must never reach the wire
  * as two messages.
  */
-#include <kitchenos/framing.h>
+#include <wellcooked/framing.h>
 
 #include <errno.h>
 #include <stdio.h>

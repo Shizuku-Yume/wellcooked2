@@ -13,7 +13,7 @@ Bridge 写进 shm（版本号加一），fake_plugin 两端都认。
 
 **Blocked by:** None
 **Files:** `protocol/protocol.md`、`protocol/schema/{action,state_update}.schema.json`、
-`bridge/include/kitchenos/{protocol,shm}.h`、`bridge/src/{protocol,shm,bridge}.c`、
+`bridge/include/wellcooked/{protocol,shm}.h`、`bridge/src/{protocol,shm,bridge}.c`、
 `plugin/{ActionDriver,WorldState,Kitchen}.cs`、`tools/fake_plugin.py`、`bridge/tests/`
 
 **Read first:** `.workflow/specs/kitchen-control.md` 的"插件动作契约"与"时钟"；

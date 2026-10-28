@@ -13,15 +13,15 @@
 #define _POSIX_C_SOURCE 200809L
 #endif
 
-#include <kitchenos/child.h>
+#include <wellcooked/child.h>
 #include "worker_timing.h"
-#include <kitchenos/kitchen.h>
-#include <kitchenos/log.h>
-#include <kitchenos/macro.h>
-#include <kitchenos/recipes.h>
-#include <kitchenos/mq.h>
-#include <kitchenos/navtab.h>
-#include <kitchenos/shm.h>
+#include <wellcooked/kitchen.h>
+#include <wellcooked/log.h>
+#include <wellcooked/macro.h>
+#include <wellcooked/recipes.h>
+#include <wellcooked/mq.h>
+#include <wellcooked/navtab.h>
+#include <wellcooked/shm.h>
 
 #include <errno.h>
 #include <fcntl.h>
@@ -891,7 +891,7 @@ int main(int argc, char **argv)
         return 0;
     }
     if (parsed == KOS_CHILD_ARG_VERSION) {
-        printf("kitchenos-worker 0.5.0\n");
+        printf("wellcooked-worker 0.5.0\n");
         return 0;
     }
     if (parsed != KOS_CHILD_ARG_OK) {

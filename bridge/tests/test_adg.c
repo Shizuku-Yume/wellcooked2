@@ -9,11 +9,11 @@
 #define _POSIX_C_SOURCE 200809L
 #endif
 
-#include "kitchenos/adg.h"
-#include "kitchenos/child.h"
-#include "kitchenos/kitchen.h"
-#include "kitchenos/navtab.h"
-#include "kitchenos/pibt.h"
+#include "wellcooked/adg.h"
+#include "wellcooked/child.h"
+#include "wellcooked/kitchen.h"
+#include "wellcooked/navtab.h"
+#include "wellcooked/pibt.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -286,8 +286,8 @@ static void test_navtab(void)
     kos_error err;
 
     printf("[test_adg] 2. 导航表\n");
-    snprintf(object, sizeof object, "/kitchenos_test_nav_%ld", (long)getpid());
-    snprintf(sem, sizeof sem, "/kitchenos_test_navlock_%ld", (long)getpid());
+    snprintf(object, sizeof object, "/wellcooked_test_nav_%ld", (long)getpid());
+    snprintf(sem, sizeof sem, "/wellcooked_test_navlock_%ld", (long)getpid());
     kos_navtab_opts_init(&opts);
     opts.object_name = object;
     opts.sem_name = sem;
@@ -349,10 +349,10 @@ static void test_navtab(void)
                strcmp(nav_name, KOS_NAV_DEFAULT_NAME) == 0 &&
                strcmp(nav_sem, KOS_NAV_DEFAULT_SEM_NAME) == 0,
            "默认状态名派生默认导航表名");
-    expect(kos_navtab_default_names("/kitchenos_x", nav_name, sizeof nav_name, nav_sem,
+    expect(kos_navtab_default_names("/wellcooked_x", nav_name, sizeof nav_name, nav_sem,
                                     sizeof nav_sem) == 0 &&
-               strcmp(nav_name, "/kitchenos_x_nav") == 0 &&
-               strcmp(nav_sem, "/kitchenos_x_nav_lock") == 0,
+               strcmp(nav_name, "/wellcooked_x_nav") == 0 &&
+               strcmp(nav_sem, "/wellcooked_x_nav_lock") == 0,
            "自定义状态名派生独立导航表名");
 }
 

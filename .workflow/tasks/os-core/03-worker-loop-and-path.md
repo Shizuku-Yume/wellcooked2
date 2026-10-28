@@ -9,16 +9,16 @@
 逐帧写 `move`，到达工位后发 `interact`/`pickup`，完成/阻塞时回事件；没有任务时写 `stop`。
 
 **Blocked by:** 02
-**Files:** `bridge/include/kitchenos/{nav,worker_task}.h`、`bridge/src/{nav,worker_task}.c`、
+**Files:** `bridge/include/wellcooked/{nav,worker_task}.h`、`bridge/src/{nav,worker_task}.c`、
 `bridge/src/worker.c`、`bridge/tests/test_worker_nav.c`
 **Read first:** `.workflow/specs/os-core.md` 的 Chef Worker 段与 W9；
 `config/kitchen.example.json` 的 `grid.cells/mask/edge_bits`、`stations[].pos`；
-`bridge/include/kitchenos/shm.h` 的 `kos_shm_slot_publish`
+`bridge/include/wellcooked/shm.h` 的 `kos_shm_slot_publish`
 **Check:** `test_worker_nav` 的 `path_respects_mask`、`path_reaches_station_neighbour`、
 `slot_contains_move_then_interact` 全过；`os-loop` 场景的
 `worker_move_forwarded_each_chef`、`worker_interact_forwarded_each_chef`、
 `worker_slot_nonstop_move`、`worker_restart_requeues_task` 全过；
-`kitchenos-worker-stub` 的帧协议不被改动。
+`wellcooked-worker-stub` 的帧协议不被改动。
 
 - [x] 网格索引（浮点坐标 ↔ cell）与 `mask` 邻接一致
 - [x] A* 到"工位相邻的可走格"，不可达时回事件而不是原地重试

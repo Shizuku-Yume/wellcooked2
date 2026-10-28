@@ -3,7 +3,7 @@
  */
 #define _POSIX_C_SOURCE 200809L
 
-#include <kitchenos/net.h>
+#include <wellcooked/net.h>
 
 #include <errno.h>
 #include <fcntl.h>
@@ -22,7 +22,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#include <kitchenos/framing.h>
+#include <wellcooked/framing.h>
 
 #define KOS_NET_HOST_MAX 128
 #define KOS_NET_ERR_MAX 192

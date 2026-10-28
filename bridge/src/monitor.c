@@ -2,8 +2,8 @@
  * live.json 编码：把一份自洽的世界状态快照写成控制台用的 JSON。
  * 进程入口在 monitor_main.c；这里不碰共享内存，测试可以直接喂结构体。
  */
-#include <kitchenos/monitor.h>
-#include <kitchenos/json.h>
+#include <wellcooked/monitor.h>
+#include <wellcooked/json.h>
 
 static int put_string(json_writer *w, const char *key, const char *value)
 {

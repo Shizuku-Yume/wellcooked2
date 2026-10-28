@@ -6,7 +6,7 @@
  *   1. 纯函数（崩溃窗口、退避、pid 文件锁）用假时间戳和 fork 出的子进程验证。
  *      fcntl 记录锁属于进程而不是 fd，所以"同一进程开两个 fd"证明不了单实例；
  *      第二个持锁者必须真的在另一个进程里。
- *   2. 进程控制用真实的 `kitchenos-supervisor --foreground` 跑：kill -9 一个 Worker
+ *   2. 进程控制用真实的 `wellcooked-supervisor --foreground` 跑：kill -9 一个 Worker
  *      看它是否被拉起、崩溃循环是否按上限放弃、SIGTERM 后子进程是否全消失且 IPC
  *      对象被删。每条断言都对应 spec 里一个 W 编号。
  *
@@ -20,13 +20,13 @@
 #define _XOPEN_SOURCE 700
 #endif
 
-#include "kitchenos/child.h"
-#include "kitchenos/daemon.h"
-#include "kitchenos/kitchen.h"
-#include "kitchenos/mq.h"
-#include "kitchenos/resource.h"
-#include "kitchenos/shm.h"
-#include "kitchenos/supervise.h"
+#include "wellcooked/child.h"
+#include "wellcooked/daemon.h"
+#include "wellcooked/kitchen.h"
+#include "wellcooked/mq.h"
+#include "wellcooked/resource.h"
+#include "wellcooked/shm.h"
+#include "wellcooked/supervise.h"
 
 #include <arpa/inet.h>
 #include <errno.h>
@@ -459,7 +459,7 @@ static void remove_tree(const char *path)
 }
 
 /* Supervisor 被 SIGKILL 时不会走 unlink_resources；测试自己清掉全局资源信号量，
- * 否则下一次 make test 会在 /dev/shm 里留下 sem.kitchenos_res_*。 */
+ * 否则下一次 make test 会在 /dev/shm 里留下 sem.wellcooked_res_*。 */
 static void unlink_resource_sems_instance(int instance)
 {
     char path[KOS_DAEMON_PATH_MAX];
@@ -511,8 +511,8 @@ static void init_run(sup_run *r, const char *tag)
 {
     memset(r, 0, sizeof *r);
     make_runtime(r->runtime, sizeof r->runtime);
-    snprintf(r->state, sizeof r->state, "/kitchenos_t_%s_%ld", tag, (long)getpid());
-    snprintf(r->sem, sizeof r->sem, "/kitchenos_ts_%s_%ld", tag, (long)getpid());
+    snprintf(r->state, sizeof r->state, "/wellcooked_t_%s_%ld", tag, (long)getpid());
+    snprintf(r->sem, sizeof r->sem, "/wellcooked_ts_%s_%ld", tag, (long)getpid());
     r->port = free_port();
     r->pid = -1;
 }
@@ -1102,8 +1102,8 @@ static void resolve_binaries(void)
         return;
     }
     *slash = '\0';
-    snprintf(g_sup_bin, sizeof g_sup_bin, "%s/kitchenos-supervisor", exe);
-    snprintf(g_silent_bin, sizeof g_silent_bin, "%s/kitchenos-silent-child", exe);
+    snprintf(g_sup_bin, sizeof g_sup_bin, "%s/wellcooked-supervisor", exe);
+    snprintf(g_silent_bin, sizeof g_silent_bin, "%s/wellcooked-silent-child", exe);
 }
 
 /* 取出 scheduler.log 里 mq_ready 的事件队列名。 */
@@ -1132,7 +1132,7 @@ static int read_events_queue(const char *log_path, char *out, size_t cap)
 /*
  * 自定义 shm 名的两棵树（场景 harness 就是这种用法）必须拿到不同的 mq 名；
  * 否则第二棵树会把第一棵的事件收走，os-loop 的 RECOVERED 就是这样丢的。
- * 修复前两个 scheduler.log 都写 events=/kitchenos_events。
+ * 修复前两个 scheduler.log 都写 events=/wellcooked_events。
  */
 static void test_custom_names_isolate_mq(void)
 {
@@ -1169,8 +1169,8 @@ static void test_custom_names_isolate_mq(void)
     if (queue_b[0] != '\0') {
         printf("       second events queue: %s\n", queue_b);
     }
-    expect(strcmp(queue_a, "/kitchenos_events") != 0 &&
-               strcmp(queue_b, "/kitchenos_events") != 0,
+    expect(strcmp(queue_a, "/wellcooked_events") != 0 &&
+               strcmp(queue_b, "/wellcooked_events") != 0,
            "custom_names_use_a_suffixed_event_queue");
     expect(strcmp(queue_a, queue_b) != 0, "two_runs_do_not_share_event_queue");
     (void)kill(a.pid, SIGTERM);

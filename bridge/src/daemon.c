@@ -14,7 +14,7 @@
 #define _XOPEN_SOURCE 700
 #endif
 
-#include <kitchenos/daemon.h>
+#include <wellcooked/daemon.h>
 
 #include <errno.h>
 #include <stdarg.h>
@@ -126,10 +126,10 @@ int kos_runtime_dir(const char *override, char *buf, size_t len, kos_error *err)
         const char *xdg = getenv("XDG_RUNTIME_DIR");
 
         if (xdg != NULL && xdg[0] == '/') {
-            if (snprintf(raw, sizeof raw, "%s/kitchenos", xdg) >= (int)sizeof raw) {
+            if (snprintf(raw, sizeof raw, "%s/wellcooked", xdg) >= (int)sizeof raw) {
                 return set_error(err, KOS_ERR_INVAL, 0, "XDG_RUNTIME_DIR 过长: %s", xdg);
             }
-        } else if (snprintf(raw, sizeof raw, "/tmp/kitchenos-%lu",
+        } else if (snprintf(raw, sizeof raw, "/tmp/wellcooked-%lu",
                             (unsigned long)getuid()) >= (int)sizeof raw) {
             return set_error(err, KOS_ERR_INVAL, 0, "默认运行目录过长: %s", raw);
         }

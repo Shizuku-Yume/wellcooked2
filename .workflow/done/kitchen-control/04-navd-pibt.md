@@ -12,14 +12,14 @@
 卡住 3 次报 `BLOCKED`，`navd` 崩溃时厨师停下、重启后继续。
 
 **Blocked by:** 02, 03
-**Files:** `bridge/include/kitchenos/{nav,navtab}.h`、`bridge/src/{navd,navtab,pibt,adg,worker,
+**Files:** `bridge/include/wellcooked/{nav,navtab}.h`、`bridge/src/{navd,navtab,pibt,adg,worker,
 supervisor,scheduler}.c`、`bridge/tests/{test_pibt,test_adg}.c`、`bridge/Makefile`、
 `tools/fake_plugin.py`（场景 `nav-corridor`、`nav-stuck`、`nav-crash`）、`tools/run-bridge-scenarios.sh`
 
 **Read first:** `.workflow/specs/kitchen-control.md` 的"L1 走位"全段、W2、W3、W5 与"值得测的
 边界"；glossary navd、PIBT、执行依赖图；decisions.md: 2026-10-25 - 走位改由中央 navd 进程用
 PIBT 规划；Okumura 等 2022（PIBT，AIJ）与 Hönig 等 2019（ADG，RA-L）的算法描述；
-`bridge/include/kitchenos/{nav,shm,mq}.h`
+`bridge/include/wellcooked/{nav,shm,mq}.h`
 **Covers:** W2, W3, W5
 
 **Check:** `cd bridge && make test` → `test_pibt` 在四张地图各 100 组随机起终点、2–4 个厨师下
@@ -28,7 +28,7 @@ PIBT 规划；Okumura 等 2022（PIBT，AIJ）与 Hönig 等 2019（ADG，RA-L�
 nav-corridor,nav-stuck,nav-crash` → 两人 10 s（游戏时钟）内到达且无同格帧；卡住链
 `nav_replan`×3 → `BLOCKED` → 另一厨师收到该工序；`SIGKILL navd` 后 500 ms 内 `stop`，重启后到达。
 
-- [x] `/kitchenos_nav` + `/kitchenos_nav_lock` 由 Supervisor 创建与 unlink；目标槽只有 Worker 写、
+- [x] `/wellcooked_nav` + `/wellcooked_nav_lock` 由 Supervisor 创建与 unlink；目标槽只有 Worker 写、
       计划槽只有 `navd` 写
 - [x] PIBT 优先级 = 换目标后经过的步数 + 紧迫度，并列 `chef_id` 小者先；`pinned` 当障碍
 - [x] 计划窗口 H = 8；路点到达按实际坐标 ≤ 0.3 m 判定，不推算
@@ -71,8 +71,8 @@ Check after（全部实跑）:
   的 RECOVERED/requeue/new-task 链仍成立）。
 
 实现要点:
-- 新增 `navtab.{h,c}`：独立 `/kitchenos_nav` 段，每厨师目标槽（Worker 写）/计划槽（navd 写），
-  seqlock + `/kitchenos_nav_lock`；计划序号在 navd 重启后从旧槽继续加一。
+- 新增 `navtab.{h,c}`：独立 `/wellcooked_nav` 段，每厨师目标槽（Worker 写）/计划槽（navd 写），
+  seqlock + `/wellcooked_nav_lock`；计划序号在 navd 重启后从旧槽继续加一。
 - 新增 `pibt.{h,c}`、`adg.{h,c}`：PIBT 一步规划 + 执行依赖图放行；PIBT 把 pinned 与"有目标
   且已到站"的厨师当固定障碍，距离场按障碍格重算；没任务的目标=当前格仍可被推。ADG 同时
   检查"计划里更早的占用者已执行到那一步"和"实际已离开该格"。

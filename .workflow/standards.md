@@ -2,7 +2,7 @@
 
 ## What this project is
 
-WellCooked / KitchenOS：《胡闹厨房2》的订单、工序、厨具被当作作业、任务、共享资源，
+WellCooked：《胡闹厨房2》的订单、工序、厨具被当作作业、任务、共享资源，
 在 Linux 上用多进程（Supervisor 守护进程 + Scheduler + Worker + Bridge）和 POSIX IPC
 完成调度，游戏画面是可视化和验收载体。使用者是课程教师和答辩评审，唯一优化目标是游戏得分。
 设计基线是仓库根的 `overcooked_os_course_project.md`。
@@ -171,7 +171,7 @@ python3 scripts/export-kitchen.py --out /tmp/k.json --out-recipes /tmp/r.json   
 - `overcooked_os_course_project.md` — 课设方案：需求、调度模型、IPC、协议、排期
 - `1.txt` — 课堂汇报口播稿
 - `represent/` — 课堂汇报材料（pptx、生成脚本、SVG、UML、思维导图），不是运行时依赖
-- `bridge/` — Linux 侧 OS 核心（C，纯 POSIX，GNU make）。`bridge/include/kitchenos/` 下的头文件就是
+- `bridge/` — Linux 侧 OS 核心（C，纯 POSIX，GNU make）。`bridge/include/wellcooked/` 下的头文件就是
   模块契约。目录名取自组员 standards 的命名；原先叫 `core/`，2026-10-15 改名对齐。
 - `bridge/tests/` — C 单元测试，`make test` 驱动
 - `protocol/` — 两端共享的协议说明与 JSON Schema，是跨端唯一契约

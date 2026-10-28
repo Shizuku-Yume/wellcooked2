@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""KitchenOS 浏览器控制台：启动一局、实时看板、切策略、杀 Scheduler、结果对比。
+"""WellCooked 浏览器控制台：启动一局、实时看板、切策略、杀 Scheduler、结果对比。
 
     python3 tools/webui/server.py [--port 8765]
 
 只用标准库，只监听 127.0.0.1，没有登录：本机任何用户都能开局/发信号，别转发端口。
 实时数据走 SSE（/api/stream，每 500 ms 一帧）。数据全部来自 run-real-game.sh 的运行目录：
-live.json（kitchenos-monitor）、status.json（Supervisor）、policy.json（Scheduler）、
+live.json（wellcooked-monitor）、status.json（Supervisor）、policy.json（Scheduler）、
 runs/<run>/events.jsonl|decisions.jsonl|metrics.json、summary.txt。
 """
 import argparse
@@ -91,7 +91,7 @@ def scheduler_pid(rt):
                 cmd = Path("/proc/%d/cmdline" % pid).read_bytes()
             except OSError:
                 return 0
-            return pid if pid > 0 and b"kitchenos-scheduler" in cmd else 0
+            return pid if pid > 0 and b"wellcooked-scheduler" in cmd else 0
     return 0
 
 
@@ -308,7 +308,7 @@ MAX_BODY = 4096
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "KitchenOSConsole/1"
+    server_version = "WellCookedConsole/1"
 
     def log_message(self, fmt, *args):  # 不刷屏；SSE 每帧一条太吵
         pass
@@ -459,7 +459,7 @@ def main():
     threading.Thread(target=APP.poll_forever, daemon=True).start()
     server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
     server.daemon_threads = True
-    print("KitchenOS 控制台: http://127.0.0.1:%d/" % args.port, flush=True)
+    print("WellCooked 控制台: http://127.0.0.1:%d/" % args.port, flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

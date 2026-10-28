@@ -77,7 +77,7 @@ Dirty at start: none（从 `9d72d38` 起，叠在 `game-bridge/10-plugin-cleanup
 | 重启 Bridge 自动恢复 | 重启后 1 秒内桥侧又出现 `link_up` + `plugin_hello`（同一次运行内实测） |
 
 **Check after（第一轮）**（2026-10-16，`bash scripts/build-plugin.sh` 0 警告 0 错误；Bridge 用
-`bridge/build/kitchenos-bridge --link listen --host 127.0.0.1 --port 14455 --log logs/bridge.log`，
+`bridge/build/wellcooked-bridge --link listen --host 127.0.0.1 --port 14455 --log logs/bridge.log`，
 游戏用 `bash scripts/dev-cycle.sh 20 s_sushi_1_1` 进关卡）：
 
 | 判据 | 实测 |

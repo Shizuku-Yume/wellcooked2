@@ -38,7 +38,7 @@
 
 | 命令 | 结果 |
 |---|---|
-| `cd bridge && make` | `built: test_framing test_json test_net test_protocol test_shm kitchenos-bridge kitchenos-worker-stub` |
+| `cd bridge && make` | `built: test_framing test_json test_net test_protocol test_shm wellcooked-bridge wellcooked-worker-stub` |
 | `cd bridge && make test` | `5 test suites, 0 failed` |
 | `bash tools/run-bridge-scenarios.sh` | `合计: 10 个场景, 通过 10, 失败 0, 跳过 0`（happy / one-slot / no-heartbeat / bad-frames / connect-mode / reconnect-storm / silent-connect / data-shapes / second-peer / pickup-dash） |
 | `grep -n 'DEFAULT_LISTEN_PORT\|DEFAULT_HOST' bridge/src/bridge.c` | `127.0.0.1` + `14455`（两种链路模式同号，`decisions.md: 2026-10-15 - 端口按组员决策统一成 14455`） |

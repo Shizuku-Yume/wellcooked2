@@ -1,11 +1,11 @@
 /*
- * test_protocol.c -- unit tests for the KitchenOS message layer.
+ * test_protocol.c -- unit tests for the WellCooked message layer.
  *
  * The state_update sample is copied verbatim from §5.2 of the project document,
  * because that sample plus the plugin's Messages.cs are the contract: if this
  * test still passes, the bridge understands what the game sends.
  */
-#include <kitchenos/protocol.h>
+#include <wellcooked/protocol.h>
 
 #include <stdio.h>
 #include <string.h>
@@ -1259,7 +1259,7 @@ static void test_long_strings_are_truncated_not_fatal(void)
 
 int main(void)
 {
-    printf("test_protocol: KitchenOS message encode/decode\n");
+    printf("test_protocol: WellCooked message encode/decode\n");
 
     test_state_update_sample();
     test_state_new_fields();

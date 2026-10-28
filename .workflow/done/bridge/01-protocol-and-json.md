@@ -6,7 +6,7 @@
 **Covers:** W1
 **Delivers:** `protocol/` 下的协议说明与 JSON Schema；`bridge/` 的 `json`、`framing`、`protocol`
 三个模块及其单元测试；`bridge/Makefile`。
-**Files:** `protocol/protocol.md`, `protocol/schema/*.json`, `bridge/include/kitchenos/{json,framing,protocol}.h`,
+**Files:** `protocol/protocol.md`, `protocol/schema/*.json`, `bridge/include/wellcooked/{json,framing,protocol}.h`,
 `bridge/src/{json,framing,protocol}.c`, `bridge/tests/test_{json,framing,protocol}.c`, `bridge/Makefile`
 **Read first:** `.workflow/specs/bridge.md`（How it is built 的表与数据形状）,
 `plugin/WellCooked.Plugin/Net/TcpLink.cs`（分帧的唯一基准）,
@@ -57,7 +57,7 @@ Check 里"退出码 0"这一条在 02 的 `test_shm` 修好之前无法整体成
   超限按"保留前 N 条 + `proto_diag` 计数"处理，不整条失败；`protocol/protocol.md` §5 与 schema
   的 `maxItems` 一致。
 
-**后续修正（integrator 记录）：** `bridge/include/kitchenos/framing.h` 第 52 行的注释
+**后续修正（integrator 记录）：** `bridge/include/wellcooked/framing.h` 第 52 行的注释
 `*payload/*len` 含嵌套 `/*`，触发 `-Werror=comment`，会让所有依赖它的 agent 编译失败；
 措辞已改为 "payload and len describe one frame"。
 

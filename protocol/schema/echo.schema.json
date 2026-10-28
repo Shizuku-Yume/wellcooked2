@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:kitchenos:schema:echo",
+  "$id": "urn:wellcooked:schema:echo",
   "title": "echo",
   "description": "双向：联调第一步。收到 echo 的一端回 echo_reply，token 原样照抄。",
   "type": "object",
