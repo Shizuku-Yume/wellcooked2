@@ -65,6 +65,7 @@ static const char STATE_SAMPLE[] =
     "  \"type\": \"state_update\",\n"
     "  \"timestamp\": 1234567890,\n"
     "  \"game_time\": 180,\n"
+    "  \"game_time_ms\": 180000,\n"
     "  \"score\": 450,\n"
     "  \"chefs\": [\n"
     "    {\n"
@@ -99,8 +100,7 @@ static const char STATE_SAMPLE[] =
 /* The same message from a future game build: a pot the sample never had, plus a
  * station kind nobody has invented yet. Dynamic keys must not break the parser. */
 static const char STATE_FUTURE[] =
-    "{\"type\":\"state_update\",\"timestamp\":2,\"game_time\":1,\"score\":0,"
-    "\"chefs\":[],\"orders\":[],"
+    "{\"type\":\"state_update\",\"timestamp\":2,\"game_time\":1,\"game_time_ms\":1000,\"score\":0,"
     "\"resources\":{\"pot_7\":{\"state\":\"occupied\",\"content\":\"soup\","
     "\"time_left\":3},\"sink_2\":{\"state\":\"dirty\"},\"plate_stack\":{\"count\":0}}}";
 
@@ -178,6 +178,7 @@ static void test_state_update_sample(void)
 
     CHECK_INT(state.timestamp, 1234567890LL);
     CHECK_DBL(state.game_time, 180.0);
+    CHECK_INT(state.game_time_ms, 180000LL);
     CHECK_DBL(state.score, 450.0);
 
     CHECK_INT(state.chef_count, 2);
@@ -236,6 +237,60 @@ static void test_state_update_sample(void)
     json_free(root);
 }
 
+/* facing / progress / dirty_plates / sink progress are additive optional fields;
+ * this locks their wire names to the C structs the rest of the system reads. */
+static void test_state_new_fields(void)
+{
+    static const char sample[] =
+        "{\"type\":\"state_update\",\"timestamp\":7,\"game_time\":2,\"game_time_ms\":2345,"
+        "\"score\":0,"
+        "\"chefs\":[{\"id\":0,\"position\":{\"x\":1,\"y\":2},\"facing\":-1.25}],"
+        "\"resources\":{"
+        "\"cutting_board_0\":{\"state\":\"occupied\",\"content\":\"fish\",\"progress\":0.5},"
+        "\"dirty_plates\":{\"state\":\"occupied\",\"count\":3},"
+        "\"sink_0\":{\"state\":\"washing\",\"count\":2,\"progress\":0.75}}}";
+    json_value *root = parse_ok(sample, sizeof sample - 1);
+    proto_state_update state;
+    const proto_resource *board;
+    const proto_resource *dirty;
+    const proto_resource *sink;
+
+    printf("[test_protocol] 新增状态字段：facing / progress / dirty_plates / sink\n");
+    CHECK(root != NULL);
+    if (root == NULL)
+        return;
+
+    CHECK_INT(protocol_parse_state_update(root, &state, NULL), PROTO_OK);
+    CHECK_INT(state.game_time_ms, 2345LL);
+    CHECK_INT(state.chef_count, 1);
+    CHECK_DBL(state.chefs[0].facing, -1.25);
+
+    board = find_resource(&state, "cutting_board_0");
+    dirty = find_resource(&state, "dirty_plates");
+    sink = find_resource(&state, "sink_0");
+    CHECK(board != NULL && dirty != NULL && sink != NULL);
+    if (board != NULL) {
+        CHECK_INT(board->has_progress, 1);
+        CHECK_DBL(board->progress, 0.5);
+        CHECK_STR(board->content, "fish");
+    }
+    if (dirty != NULL) {
+        CHECK_INT(dirty->kind, PROTO_RES_DIRTY_PLATES);
+        CHECK_INT(dirty->index, -1);
+        CHECK_INT(dirty->has_count, 1);
+        CHECK_INT(dirty->count, 3);
+        CHECK_INT(dirty->has_progress, 0);
+    }
+    if (sink != NULL) {
+        CHECK_INT(sink->kind, PROTO_RES_SINK);
+        CHECK_INT(sink->index, 0);
+        CHECK_INT(sink->has_progress, 1);
+        CHECK_DBL(sink->progress, 0.75);
+        CHECK_INT(sink->count, 2);
+    }
+    json_free(root);
+}
+
 static void test_dynamic_resources(void)
 {
     json_value *root = parse_ok(STATE_FUTURE, sizeof STATE_FUTURE - 1);
@@ -263,7 +318,8 @@ static void test_dynamic_resources(void)
         CHECK_DBL(pot7->time_left, 3.0);
     }
     if (sink != NULL) {
-        CHECK_INT(sink->kind, PROTO_RES_UNKNOWN); /* kept, not rejected */
+        CHECK_INT(sink->kind, PROTO_RES_SINK);
+        CHECK_INT(sink->index, 2);
         CHECK_STR(sink->key, "sink_2");
         CHECK_STR(sink->state, "dirty");
     }
@@ -273,6 +329,249 @@ static void test_dynamic_resources(void)
     }
 
     json_free(root);
+}
+
+/*
+ * cooked / burning / burn_in / fire（KOS_SHM_VERSION 3）：一个烧焦的锅仍然"熟过"，
+ * state 只有一个字符串，两个事实必须能同时报（实机 20261027-123220 final-state.json：
+ * cooked=true、burning=true、progress 24.0 s）。
+ */
+static void test_cooking_flags(void)
+{
+    static const char sample[] =
+        "{\"type\":\"state_update\",\"game_time_ms\":1,\"resources\":{"
+        "\"pot_4\":{\"state\":\"burning\",\"cooked\":true,\"burning\":true},"
+        "\"pot_5\":{\"state\":\"cooked\",\"cooked\":true,\"burning\":false,"
+        "\"burn_in\":6.5,\"fire\":false}}}";
+    static const char negative[] =
+        "{\"type\":\"state_update\",\"game_time_ms\":1,\"resources\":{"
+        "\"pot_4\":{\"state\":\"cooked\",\"burn_in\":-1}}}";
+    static const char wrong_type[] =
+        "{\"type\":\"state_update\",\"game_time_ms\":1,\"resources\":{"
+        "\"pot_4\":{\"cooked\":\"yes\"}}}";
+    json_value *root;
+    proto_state_update state;
+    const proto_resource *pot;
+
+    root = parse_ok(sample, sizeof sample - 1);
+    CHECK(root != NULL);
+    if (root == NULL)
+        return;
+    CHECK_INT(protocol_parse_state_update(root, &state, NULL), PROTO_OK);
+    pot = find_resource(&state, "pot_4");
+    CHECK(pot != NULL);
+    if (pot != NULL) {
+        CHECK_INT(pot->has_cooked, 1);
+        CHECK_INT(pot->cooked, 1);
+        CHECK_INT(pot->has_burning, 1);
+        CHECK_INT(pot->burning, 1);
+    }
+    pot = find_resource(&state, "pot_5");
+    CHECK(pot != NULL);
+    if (pot != NULL) {
+        CHECK_INT(pot->cooked, 1);
+        CHECK_INT(pot->burning, 0);
+        CHECK_INT(pot->has_burn_in, 1);
+        CHECK_DBL(pot->burn_in, 6.5);
+        CHECK_INT(pot->has_fire, 1);
+        CHECK_INT(pot->fire, 0); /* reported false != not reported */
+    }
+    json_free(root);
+
+    root = parse_ok(negative, sizeof negative - 1);
+    CHECK(root != NULL);
+    if (root != NULL) {
+        CHECK_INT(protocol_parse_state_update(root, &state, NULL), PROTO_ERR_RANGE);
+        json_free(root);
+    }
+
+    root = parse_ok(wrong_type, sizeof wrong_type - 1);
+    CHECK(root != NULL);
+    if (root != NULL) {
+        CHECK_INT(protocol_parse_state_update(root, &state, NULL), PROTO_ERR_RANGE);
+        json_free(root);
+    }
+}
+
+/*
+ * KOS_SHM_VERSION 4：厨师报"游戏自己选中的交互对象"（facing_pos）。
+ * 宏只在这个对象就是目标工位时才按键（实机 20261027-131838 的错位按键）。
+ */
+static void test_chef_facing_target(void)
+{
+    static const char sample[] =
+        "{\"type\":\"state_update\",\"game_time_ms\":1,\"chefs\":["
+        "{\"id\":0,\"position\":{\"x\":3.0,\"y\":-2.2},\"facing\":0.0,"
+        "\"facing_pos\":{\"x\":3.0,\"y\":-1.2}},"
+        "{\"id\":1,\"position\":{\"x\":3.0,\"y\":-2.2},\"facing\":0.0}]}";
+    json_value *root = parse_ok(sample, sizeof sample - 1);
+    proto_state_update state;
+
+    CHECK(root != NULL);
+    if (root == NULL)
+        return;
+    CHECK_INT(protocol_parse_state_update(root, &state, NULL), PROTO_OK);
+    CHECK_INT(state.chef_count, 2);
+    CHECK_INT(state.chefs[0].has_facing_target, 1);
+    CHECK_DBL(state.chefs[0].facing_x, 3.0);
+    CHECK_DBL(state.chefs[0].facing_y, -1.2);
+    CHECK_INT(state.chefs[1].has_facing_target, 0); /* 老插件：字段缺失 */
+    json_free(root);
+}
+
+/* 任务 09 G1–G9：灶台槽位、递归内容、手持内容、每单分值、回合时钟、订单结果。 */
+static void test_state_audit_fields(void)
+{
+    static const char sample[] =
+        "{\"type\":\"state_update\",\"game_time_ms\":5000,\"score\":80,"
+        "\"round_time_left\":42,\"round_time_limit\":120,"
+        "\"chefs\":[{\"id\":2,\"position\":{\"x\":1,\"y\":2},\"holding\":\"utensil_pot_01\","
+        "\"holding_contents\":[\"Rice\",\"cooked:BurritoChoppedChicken\"]}],"
+        "\"orders\":[{\"id\":\"order_001\",\"recipe\":\"Chicken_Burrito\","
+        "\"time_remaining\":88,\"score\":80}],"
+        "\"order_results\":["
+        "{\"seq\":7,\"id\":\"order_001\",\"recipe\":\"Chicken_Burrito\","
+        "\"outcome\":\"delivered\",\"score\":80,\"game_time_ms\":4900},"
+        "{\"seq\":8,\"id\":\"order_002\",\"outcome\":\"expired\"}],"
+        "\"resources\":{"
+        "\"pot_4\":{\"kind\":\"cooker\",\"pos\":{\"x\":6.6,\"y\":-6.0},"
+        "\"state\":\"cooking\",\"item\":\"utensil_pot_01\",\"step\":\"Pot\","
+        "\"progress\":0.25,\"time_left\":9,\"contents\":[\"Rice\"],\"content\":\"Rice\"},"
+        "\"counter_0\":{\"kind\":\"counter\",\"pos\":{\"x\":0.6,\"y\":-6.0},"
+        "\"state\":\"occupied\",\"item\":\"Tortilla\","
+        "\"contents\":[\"cooked:BurritoChoppedChicken\",\"cooked:Rice\"]},"
+        "\"carried_2\":{\"kind\":\"carried\",\"chef_id\":2,\"pos\":{\"x\":1.0,\"y\":-5.5},"
+        "\"state\":\"carried\",\"item\":\"utensil_frying_pan_01\","
+        "\"contents\":[\"BurritoChicken\"]},"
+        "\"container_3\":{\"kind\":\"container\",\"pos\":{\"x\":-1,\"y\":-1},"
+        "\"state\":\"empty\",\"item\":\"equipment_plate_01\",\"contents\":[]},"
+        "\"plate_stack\":{\"kind\":\"plate_stack\",\"count\":4,\"pos\":{\"x\":3,\"y\":1.2}},"
+        "\"mystery\":{\"state\":\"free\"}"
+        "}}";
+    json_value *root = parse_ok(sample, sizeof sample - 1);
+    proto_state_update state;
+    const proto_resource *pot;
+    const proto_resource *counter;
+    const proto_resource *carried;
+    const proto_resource *container;
+    const proto_resource *mystery;
+
+    printf("[test_protocol] 任务 09 状态字段：锅槽位 / 内容递归 / 订单结果\n");
+    CHECK(root != NULL);
+    if (root == NULL)
+        return;
+
+    CHECK_INT(protocol_parse_state_update(root, &state, NULL), PROTO_OK);
+    CHECK_INT(state.has_round_time, 1);
+    CHECK_DBL(state.round_time_left, 42.0);
+    CHECK_DBL(state.round_time_limit, 120.0);
+
+    CHECK_INT(state.chef_count, 1);
+    CHECK_INT(state.chefs[0].holding_content_count, 2);
+    CHECK_STR(state.chefs[0].holding_contents[0], "Rice");
+    CHECK_STR(state.chefs[0].holding_contents[1], "cooked:BurritoChoppedChicken");
+
+    CHECK_INT(state.order_count, 1);
+    CHECK_INT(state.orders[0].has_score, 1);
+    CHECK_INT(state.orders[0].score, 80);
+
+    CHECK_INT(state.order_result_count, 2);
+    CHECK_INT(state.order_results[0].seq, 7);
+    CHECK_STR(state.order_results[0].outcome, "delivered");
+    CHECK_INT(state.order_results[0].has_score, 1);
+    CHECK_INT(state.order_results[0].score, 80);
+    CHECK_INT(state.order_results[0].game_time_ms, 4900);
+    CHECK_INT(state.order_results[1].seq, 8);
+    CHECK_STR(state.order_results[1].outcome, "expired");
+    CHECK_INT(state.order_results[1].has_score, 0);
+
+    pot = find_resource(&state, "pot_4");
+    counter = find_resource(&state, "counter_0");
+    carried = find_resource(&state, "carried_2");
+    container = find_resource(&state, "container_3");
+    mystery = find_resource(&state, "mystery");
+    CHECK(pot != NULL && counter != NULL && carried != NULL && container != NULL
+          && mystery != NULL);
+    if (pot != NULL) {
+        CHECK_INT(pot->kind, PROTO_RES_POT);
+        CHECK_INT(pot->index, 4);
+        CHECK_STR(pot->kind_name, "cooker");
+        CHECK_INT(pot->has_pos, 1);
+        CHECK_DBL(pot->x, 6.6);
+        CHECK_DBL(pot->y, -6.0);
+        CHECK_STR(pot->item, "utensil_pot_01");
+        CHECK_STR(pot->step, "Pot");
+        CHECK_INT(pot->content_count, 1);
+        CHECK_STR(pot->contents[0], "Rice");
+        CHECK_STR(pot->content, "Rice");
+        CHECK_INT(pot->has_progress, 1);
+        CHECK_INT(pot->has_time_left, 1);
+    }
+    if (counter != NULL) {
+        CHECK_INT(counter->kind, PROTO_RES_COUNTER);
+        CHECK_INT(counter->index, 0);
+        CHECK_INT(counter->content_count, 2);
+        CHECK_STR(counter->contents[0], "cooked:BurritoChoppedChicken");
+        CHECK_STR(counter->item, "Tortilla");
+    }
+    if (carried != NULL) {
+        CHECK_INT(carried->kind, PROTO_RES_CARRIED);
+        CHECK_INT(carried->index, 2); /* carried_<chef_id> */
+        CHECK_INT(carried->has_chef_id, 1);
+        CHECK_INT(carried->chef_id, 2);
+        CHECK_STR(carried->state, "carried");
+    }
+    if (container != NULL) {
+        CHECK_INT(container->kind, PROTO_RES_CONTAINER);
+        CHECK_INT(container->index, 3);
+        CHECK_INT(container->content_count, 0); /* 明确的空数组，不是"少了字段" */
+    }
+    if (mystery != NULL) {
+        CHECK_INT(mystery->kind, PROTO_RES_UNKNOWN); /* 认不出也要原样保留 */
+        CHECK_INT(mystery->index, -1);
+        CHECK_INT(mystery->has_pos, 0);
+    }
+
+    json_free(root);
+}
+
+/* 坏输入：半个位置是发送端 bug，必须拒绝整条消息；超量数组只丢超出部分。 */
+static void test_state_field_errors(void)
+{
+    static const char bad_pos[] =
+        "{\"type\":\"state_update\",\"game_time_ms\":1,"
+        "\"resources\":{\"pot_0\":{\"pos\":{\"x\":1}}}}";
+    static const char many[] =
+        "{\"type\":\"state_update\",\"game_time_ms\":1,"
+        "\"order_results\":[{\"id\":\"order_009\",\"outcome\":\"expired\"}],"
+        "\"resources\":{\"counter_0\":{\"contents\":"
+        "[\"a\",\"b\",\"c\",\"d\",\"e\",\"f\",\"g\",\"h\",\"i\"]}}}";
+    json_value *root;
+    proto_state_update state;
+    proto_diag diag;
+
+    printf("[test_protocol] 任务 09 状态字段：坏位置 / 超量内容\n");
+
+    root = parse_ok(bad_pos, sizeof bad_pos - 1);
+    CHECK(root != NULL);
+    if (root != NULL) {
+        CHECK_INT(protocol_parse_state_update(root, &state, NULL), PROTO_ERR_RANGE);
+        json_free(root);
+    }
+
+    root = parse_ok(many, sizeof many - 1);
+    CHECK(root != NULL);
+    if (root != NULL) {
+        memset(&diag, 0, sizeof diag);
+        CHECK_INT(protocol_parse_state_update(root, &state, &diag), PROTO_OK);
+        CHECK_INT(state.resource_count, 1);
+        CHECK_INT(state.resources[0].content_count, PROTO_MAX_CONTENTS);
+        CHECK(diag.dropped_items >= 1);
+        /* 缺 seq 的结果条目单独丢弃，不连累整条消息 */
+        CHECK_INT(state.order_result_count, 0);
+        CHECK(diag.dropped_items >= 2);
+        json_free(root);
+    }
 }
 
 static void test_heartbeat(void)
@@ -309,8 +608,8 @@ static void test_hello(void)
                                    3, buf, sizeof buf, &len),
               PROTO_OK);
     CHECK_STR(buf,
-              "{\"type\":\"hello\",\"instance\":\"linux-bridge\",\"version\":\"0.1.0\","
-              "\"actions\":[\"move\",\"stop\",\"interact\"]}");
+              "{\"type\":\"hello\",\"instance\":\"linux-bridge\",\"version\":\""
+              PROTO_VERSION "\",\"actions\":[\"move\",\"stop\",\"interact\"]}");
 
     root = parse_ok(buf, len);
     CHECK(root != NULL);
@@ -322,7 +621,7 @@ static void test_hello(void)
         CHECK_INT(protocol_message_type(root), PROTO_MSG_HELLO);
         CHECK_INT(protocol_parse_hello(root, &hello, &diag), PROTO_OK);
         CHECK_STR(hello.instance, "linux-bridge");
-        CHECK_STR(hello.version, "0.1.0");
+        CHECK_STR(hello.version, PROTO_VERSION);
         CHECK_INT(hello.action_count, 3);
         CHECK_STR(hello.actions[0], "move");
         CHECK_STR(hello.actions[2], "interact");
@@ -368,7 +667,23 @@ static void test_ack(void)
         CHECK_INT(protocol_parse_ack(root, &ack, NULL), PROTO_OK);
         CHECK_INT(ack.ok, 0);
         CHECK_INT(ack.chef_id, 2);
+        CHECK_INT(ack.has_seq, 0);
         CHECK_STR(ack.detail, "no such object");
+        json_free(root);
+    }
+
+    /* path 的结局 ack 带规划序号；ack 的其它字段形状不变。 */
+    root = PARSE_OK("{\"type\":\"ack\",\"action\":\"path\",\"chef_id\":3,\"ok\":true,"
+                    "\"seq\":42,\"detail\":\"path 到达终点 seq=42\"}");
+    CHECK(root != NULL);
+    if (root != NULL) {
+        proto_ack ack;
+
+        CHECK_INT(protocol_parse_ack(root, &ack, NULL), PROTO_OK);
+        CHECK_INT(ack.has_seq, 1);
+        CHECK_INT(ack.seq, 42);
+        CHECK_INT(ack.chef_id, 3);
+        CHECK_STR(ack.action, "path");
         json_free(root);
     }
 }
@@ -480,7 +795,8 @@ static void test_actions(void)
     }
 
     /* §5.2 「控制指令」sample 2. */
-    CHECK_INT(protocol_build_action_interact(1, "cutting_board_0", buf, sizeof buf, &len),
+    CHECK_INT(protocol_build_action_interact(1, "cutting_board_0", 0, 0.0, 0.0, buf, sizeof buf,
+                                             &len),
               PROTO_OK);
     CHECK_STR(buf, "{\"type\":\"action\",\"chef_id\":1,\"action\":\"interact\","
                    "\"target_object\":\"cutting_board_0\"}");
@@ -527,6 +843,153 @@ static void test_actions(void)
         json_free(root);
     }
 
+
+    /* path with 1 waypoint and 8 waypoints roundtrip */
+    {
+        proto_waypoint wps[1];
+        wps[0].x = 10.5;
+        wps[0].y = 5.25;
+        CHECK_INT(protocol_build_action_path(0, 101, wps, 1, buf, sizeof buf, &len), PROTO_OK);
+        root = parse_ok(buf, len);
+        CHECK(root != NULL);
+        if (root != NULL) {
+            proto_action action;
+            CHECK_INT(protocol_parse_action(root, &action, NULL), PROTO_OK);
+            CHECK_STR(action.action, PROTO_ACTION_PATH);
+            CHECK_INT(action.chef_id, 0);
+            CHECK_INT(action.seq, 101);
+            CHECK_INT(action.waypoint_count, 1);
+            CHECK_DBL(action.waypoints[0].x, 10.5);
+            CHECK_DBL(action.waypoints[0].y, 5.25);
+            json_free(root);
+        }
+    }
+    {
+        proto_waypoint wps[8];
+        for (size_t i = 0; i < 8; i++) {
+            wps[i].x = (double)i * 1.5;
+            wps[i].y = (double)i * 2.0;
+        }
+        CHECK_INT(protocol_build_action_path(1, 202, wps, 8, buf, sizeof buf, &len), PROTO_OK);
+        root = parse_ok(buf, len);
+        CHECK(root != NULL);
+        if (root != NULL) {
+            proto_action action;
+            CHECK_INT(protocol_parse_action(root, &action, NULL), PROTO_OK);
+            CHECK_STR(action.action, PROTO_ACTION_PATH);
+            CHECK_INT(action.chef_id, 1);
+            CHECK_INT(action.seq, 202);
+            CHECK_INT(action.waypoint_count, 8);
+            for (size_t i = 0; i < 8; i++) {
+                CHECK_DBL(action.waypoints[i].x, (double)i * 1.5);
+                CHECK_DBL(action.waypoints[i].y, (double)i * 2.0);
+            }
+            json_free(root);
+        }
+    }
+    /* Invalid waypoint count or negative seq fails before emitting a schema-invalid message. */
+    CHECK_INT(protocol_build_action_path(0, 1, NULL, 0, buf, sizeof buf, &len), PROTO_ERR_RANGE);
+    {
+        proto_waypoint one = { 1.0, 2.0 };
+        CHECK_INT(protocol_build_action_path(0, -1, &one, 1, buf, sizeof buf, &len),
+                  PROTO_ERR_RANGE);
+    }
+
+    /* Path semantic errors are rejected, not silently defaulted. */
+    root = PARSE_OK("{\"type\":\"action\",\"chef_id\":0,\"action\":\"path\",\"waypoints\":[{\"x\":1,\"y\":2}],\"seq\":-1}");
+    CHECK(root != NULL);
+    if (root != NULL) {
+        proto_action action;
+        CHECK_INT(protocol_parse_action(root, &action, NULL), PROTO_ERR_RANGE);
+        json_free(root);
+    }
+    root = PARSE_OK("{\"type\":\"action\",\"chef_id\":0,\"action\":\"path\",\"waypoints\":[{\"x\":1,\"y\":2}]}");
+    CHECK(root != NULL);
+    if (root != NULL) {
+        proto_action action;
+        CHECK_INT(protocol_parse_action(root, &action, NULL), PROTO_ERR_MISSING);
+        json_free(root);
+    }
+    root = PARSE_OK("{\"type\":\"action\",\"chef_id\":0,\"action\":\"path\",\"seq\":1,"
+                    "\"waypoints\":[{\"x\":1,\"y\":2},{\"x\":1,\"y\":3},{\"x\":1,\"y\":4},"
+                    "{\"x\":1,\"y\":5},{\"x\":1,\"y\":6},{\"x\":1,\"y\":7},{\"x\":1,\"y\":8},"
+                    "{\"x\":1,\"y\":9},{\"x\":1,\"y\":10}]}");
+    CHECK(root != NULL);
+    if (root != NULL) {
+        proto_action action;
+        CHECK_INT(protocol_parse_action(root, &action, NULL), PROTO_ERR_RANGE);
+        json_free(root);
+    }
+
+    /* Two messages with the same seq stay independent on the wire; the plugin is
+     * the side that appends (runtime selftest covers that). */
+    {
+        const char *same_seq =
+            "{\"type\":\"action\",\"chef_id\":0,\"action\":\"path\",\"seq\":7,"
+            "\"waypoints\":[{\"x\":1,\"y\":2},{\"x\":1,\"y\":3}]}";
+        proto_action first;
+        proto_action second;
+
+        memset(&first, 0, sizeof first);
+        memset(&second, 0, sizeof second);
+        root = PARSE_OK(same_seq);
+        CHECK(root != NULL);
+        if (root != NULL) {
+            CHECK_INT(protocol_parse_action(root, &first, NULL), PROTO_OK);
+            json_free(root);
+        }
+        root = PARSE_OK(same_seq);
+        CHECK(root != NULL);
+        if (root != NULL) {
+            CHECK_INT(protocol_parse_action(root, &second, NULL), PROTO_OK);
+            CHECK_INT(second.seq, 7);
+            CHECK_INT(second.waypoint_count, 2);
+            CHECK_INT(first.seq, 7);
+            CHECK_INT(first.waypoint_count, 2);
+            json_free(root);
+        }
+    }
+
+    /* face action roundtrip: with target, target_object, and invalid without both */
+    CHECK_INT(protocol_build_action_face(0, 1, 12.0, 6.0, NULL, buf, sizeof buf, &len), PROTO_OK);
+    root = parse_ok(buf, len);
+    CHECK(root != NULL);
+    if (root != NULL) {
+        proto_action action;
+        CHECK_INT(protocol_parse_action(root, &action, NULL), PROTO_OK);
+        CHECK_STR(action.action, PROTO_ACTION_FACE);
+        CHECK_INT(action.chef_id, 0);
+        CHECK_INT(action.has_target, 1);
+        CHECK_DBL(action.target_x, 12.0);
+        CHECK_DBL(action.target_y, 6.0);
+        json_free(root);
+    }
+    CHECK_INT(protocol_build_action_face(1, 0, 0.0, 0.0, "cutting_board_0", buf, sizeof buf, &len), PROTO_OK);
+    root = parse_ok(buf, len);
+    CHECK(root != NULL);
+    if (root != NULL) {
+        proto_action action;
+        CHECK_INT(protocol_parse_action(root, &action, NULL), PROTO_OK);
+        CHECK_STR(action.action, PROTO_ACTION_FACE);
+        CHECK_INT(action.chef_id, 1);
+        CHECK_STR(action.target_object, "cutting_board_0");
+        json_free(root);
+    }
+    CHECK_INT(protocol_build_action_face(0, 0, 0.0, 0.0, NULL, buf, sizeof buf, &len), PROTO_ERR_MISSING);
+
+    /* work action roundtrip */
+    CHECK_INT(protocol_build_action_work(0, "cutting_board_0", buf, sizeof buf, &len), PROTO_OK);
+    root = parse_ok(buf, len);
+    CHECK(root != NULL);
+    if (root != NULL) {
+        proto_action action;
+        CHECK_INT(protocol_parse_action(root, &action, NULL), PROTO_OK);
+        CHECK_STR(action.action, PROTO_ACTION_WORK);
+        CHECK_INT(action.chef_id, 0);
+        CHECK_STR(action.target_object, "cutting_board_0");
+        json_free(root);
+    }
+    CHECK_INT(protocol_build_action_work(0, "", buf, sizeof buf, &len), PROTO_ERR_MISSING);
     /* A buffer that cannot hold the message fails loudly instead of truncating. */
     CHECK(protocol_build_action_pickup(0, buf, 8, &len) != PROTO_OK);
 }
@@ -627,6 +1090,40 @@ static void test_parse_errors(void)
         CHECK_INT(protocol_parse_heartbeat(root, &beat), PROTO_ERR_RANGE);
         json_free(root);
     }
+
+    /* game_time_ms is game-internal elapsed time; negative is not usable. */
+    root = PARSE_OK("{\"type\":\"state_update\",\"game_time_ms\":-1}");
+    CHECK(root != NULL);
+    if (root != NULL) {
+        CHECK_INT(protocol_parse_state_update(root, &state, NULL), PROTO_ERR_RANGE);
+        json_free(root);
+    }
+
+    /* progress outside 0..1 is a sender bug, rejected at the trust boundary. */
+    root = PARSE_OK("{\"type\":\"state_update\",\"game_time_ms\":1000,"
+                    "\"resources\":{\"cutting_board_0\":{\"state\":\"occupied\","
+                    "\"progress\":1.5}}}");
+    CHECK(root != NULL);
+    if (root != NULL) {
+        CHECK_INT(protocol_parse_state_update(root, &state, NULL), PROTO_ERR_RANGE);
+        json_free(root);
+    }
+    root = PARSE_OK("{\"type\":\"state_update\",\"game_time_ms\":1000,"
+                    "\"resources\":{\"sink_0\":{\"state\":\"washing\","
+                    "\"progress\":-0.1}}}");
+    CHECK(root != NULL);
+    if (root != NULL) {
+        CHECK_INT(protocol_parse_state_update(root, &state, NULL), PROTO_ERR_RANGE);
+        json_free(root);
+    }
+
+    /* Missing game_time_ms yields PROTO_ERR_MISSING (explicit error for old message format) */
+    root = PARSE_OK("{\"type\":\"state_update\",\"timestamp\":1,\"game_time\":1,\"score\":0}");
+    CHECK(root != NULL);
+    if (root != NULL) {
+        CHECK_INT(protocol_parse_state_update(root, &state, NULL), PROTO_ERR_MISSING);
+        json_free(root);
+    }
 }
 
 static void test_partial_and_oversized_arrays(void)
@@ -641,7 +1138,7 @@ static void test_partial_and_oversized_arrays(void)
     /* More chefs than the fixed layout holds: keep the first PROTO_MAX_CHEFS and
      * report the rest instead of failing the whole frame. */
     pos = 0;
-    app(buf, sizeof buf, &pos, "{\"type\":\"state_update\",\"chefs\":[");
+    app(buf, sizeof buf, &pos, "{\"type\":\"state_update\",\"game_time_ms\":1000,\"chefs\":[");
     for (i = 0; i < PROTO_MAX_CHEFS + 4; i++) {
         if (i > 0)
             app(buf, sizeof buf, &pos, ",");
@@ -662,7 +1159,7 @@ static void test_partial_and_oversized_arrays(void)
     }
 
     /* A chef entry that is not an object is dropped on its own. */
-    root = PARSE_OK("{\"type\":\"state_update\",\"chefs\":[42,{\"id\":5,\"state\":\"idle\"}]}");
+    root = PARSE_OK("{\"type\":\"state_update\",\"game_time_ms\":1000,\"chefs\":[42,{\"id\":5,\"state\":\"idle\"}]}");
     CHECK(root != NULL);
     if (root != NULL) {
         memset(&diag, 0, sizeof diag);
@@ -674,7 +1171,7 @@ static void test_partial_and_oversized_arrays(void)
     }
 
     /* A chef without an id cannot be attributed to an input slot. */
-    root = PARSE_OK("{\"type\":\"state_update\",\"chefs\":[{\"state\":\"idle\"},"
+    root = PARSE_OK("{\"type\":\"state_update\",\"game_time_ms\":1000,\"chefs\":[{\"state\":\"idle\"},"
                     "{\"id\":2,\"state\":\"moving\"}]}");
     CHECK(root != NULL);
     if (root != NULL) {
@@ -688,7 +1185,7 @@ static void test_partial_and_oversized_arrays(void)
 
     /* A big order list is the documented stress case. */
     pos = 0;
-    app(buf, sizeof buf, &pos, "{\"type\":\"state_update\",\"orders\":[");
+    app(buf, sizeof buf, &pos, "{\"type\":\"state_update\",\"game_time_ms\":1000,\"orders\":[");
     for (i = 0; i < 100; i++) {
         if (i > 0)
             app(buf, sizeof buf, &pos, ",");
@@ -714,7 +1211,7 @@ static void test_partial_and_oversized_arrays(void)
 
     /* More resource keys than the layout holds. */
     pos = 0;
-    app(buf, sizeof buf, &pos, "{\"type\":\"state_update\",\"resources\":{");
+    app(buf, sizeof buf, &pos, "{\"type\":\"state_update\",\"game_time_ms\":1000,\"resources\":{");
     for (i = 0; i < PROTO_MAX_RESOURCES + 12; i++) {
         if (i > 0)
             app(buf, sizeof buf, &pos, ",");
@@ -745,7 +1242,7 @@ static void test_long_strings_are_truncated_not_fatal(void)
     int i;
 
     pos = 0;
-    app(buf, sizeof buf, &pos, "{\"type\":\"state_update\",\"orders\":[{\"id\":\"");
+    app(buf, sizeof buf, &pos, "{\"type\":\"state_update\",\"game_time_ms\":1000,\"orders\":[{\"id\":\"");
     for (i = 0; i < 200; i++)
         app(buf, sizeof buf, &pos, "x");
     app(buf, sizeof buf, &pos, "\",\"recipe\":\"salad\"}]}");
@@ -765,7 +1262,12 @@ int main(void)
     printf("test_protocol: KitchenOS message encode/decode\n");
 
     test_state_update_sample();
+    test_state_new_fields();
     test_dynamic_resources();
+    test_state_audit_fields();
+    test_chef_facing_target();
+    test_cooking_flags();
+    test_state_field_errors();
     test_heartbeat();
     test_hello();
     test_ack();

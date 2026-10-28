@@ -536,3 +536,474 @@ user may overturn on sight. `Revisit when` of "never" is allowed but suspicious;
 - **Revisit when:** 组员的 Windows 实验室需要一份独立部署的插件（例如课程要求两个实验室各自交付），
   或 net46 那份承载了 net35 编不出来的东西（例如只在新 Mono 上可用的 API）。
 - **Effort:** game-bridge
+
+## 2026-10-24 - 任务/事件链路用 POSIX 消息队列，每厨师一条任务队列
+
+- **Decided:** Scheduler→Worker 用 POSIX mq：每个厨师一条 `/kitchenos_tasks_<chef>`，
+  优先级字段 = 策略算出的紧急度；Worker→Scheduler 共用 `/kitchenos_events`。队列由
+  Scheduler 创建与 `mq_unlink`。Supervisor 与子进程之间另有一条匿名管道专做心跳。
+- **Instead of:** 用 pipe 传递任务，或让所有 Worker 抢同一条 mq。
+- **Because:** 管道没有消息边界与优先级，EDF/列表调度的输出要自己编码成帧再排序；单条共享
+  队列会让一个 Worker 取走本来派给另一个厨师的任务，而任务携带 chef_id 与位置相关目标。
+  mq 的 `mq_timedreceive` 让 Worker 在没任务时也能按时响应 SIGTERM 与心跳。一条队列的
+  创建/清理成本很小（名字由厨师数决定），换来优先级与解耦直接对应 §6.2.2。
+- **Mine:** yes
+- **Revisit when:** mq 的优先级反转在实测里伤害到调度效果，或需要把任务广播给所有 Worker
+  （那时改为共享队列 + 任务认领）。
+- **Effort:** os-core
+
+## 2026-10-24 - 日志每进程一个文件、单写者，不共写同一文件
+
+- **Decided:** `runtime/logs/{supervisor,scheduler,worker-N,bridge}.log` 各由一个进程写；
+  跨进程事件由 Scheduler 汇总进 `runs/<ts>/events.jsonl`。多进程共写同一文件不加锁。
+- **Instead of:** 所有进程追加同一个 `logs/kitchenos.log`，用 fcntl 写锁串行化。
+- **Because:** fcntl 锁只保护单次 `write` 调用，一条事件跨多个 `write` 时仍会交错；而一个
+  进程卡死会连累全部日志。§6.6 本来就列了"每个进程写独立文件"这一方案，且现有 `log` 模块
+  的契约就是单写者。需要一条合并时间线时读 `events.jsonl`，不是读日志文件。
+- **Mine:** yes
+- **Revisit when:** 演示需要一个严格按墙钟排序的单一流水，且事件级锁的原子追加被证明必要。
+- **Effort:** os-core
+
+## 2026-10-24 - 运行目录默认放 Linux 原生 tmpfs，不用 /var/run
+
+- **Decided:** 运行目录优先级 `--runtime-dir` > `$KITCHENOS_RUNTIME_DIR` >
+  `$XDG_RUNTIME_DIR/kitchenos` > `/tmp/kitchenos-<uid>`；pid 文件是其中的
+  `kitchend.pid`，用 `fcntl` 写锁保证单实例。
+- **Instead of:** 按 §6.1 原文把 pid 文件放 `/var/run/kitchend.pid`。
+- **Because:** 课程实验室里的普通用户写不了 `/var/run`；仓库在 WSL2 里可能位于 9p
+  （`/mnt/d`），而 9p 上的 fcntl 锁语义不可靠，共享内存与信号量又必须放 `/dev/shm`
+  （tmpfs）。默认 Linux 原生路径同时满足权限与锁语义，两个实验室都不用改代码。
+  见 `standards.md` 的"运行时目录（pid、日志）必须可配置"。
+- **Mine:** yes
+- **Revisit when:** 系统以 root 部署并要求把状态放进 `/var/run`，或课程验收指定该路径。
+- **Effort:** os-core
+
+## 2026-10-24 - 共享资源用命名计数信号量 + 租约回收，不用 robust mutex
+
+- **Decided:** 锅、砧板、盘子等按 `config/kitchen.json` 的 `kind` 建命名计数信号量
+  `/kitchenos_res_<kind>`；Scheduler 在派发前 `sem_trywait`，同时记下租约
+  `(kind, chef, task_id, acquired, deadline)`；tick 里回收过期租约并 `sem_post`。
+  Worker 不碰信号量：它只执行任务，释放统一由 Scheduler 在收到 DONE/FAILED 时做。
+- **Instead of:** 按 §6.4 方案 1 用放在共享内存里的 `PTHREAD_MUTEX_ROBUST` 保护资源。
+- **Because:** robust mutex 保护的是临界区，没有"哪个厨师持有、租到什么时候"的身份信息；
+  租约能在日志里说清持有者与回收理由，直接对应"检测并恢复死锁"的验收点，也不要求资源
+  对象本身放在共享内存里。POSIX 命名信号量没有 robust 语义，所以回收必须由第三方
+  （Scheduler）做。代价是回收延迟等于租约长度，可配。
+- **Mine:** yes
+- **Revisit when:** 租约超时无法与烹饪/切菜的长工序匹配，或需要把资源状态也放进 shm 给
+  监控面板读。
+- **Effort:** os-core
+
+## 2026-10-24 - 死锁 victim 规则：环上 chef_id 最大的那个
+
+- **Decided:** 资源分配图检测到环时，victim = 环上 `chef_id` 最大者；Scheduler 记
+  `deadlock_detected`（带 cycle）与 `deadlock_recovered`，按 task_id 删除 victim 的租约，
+  `sem_post` 一次，把它的任务改回 PENDING 并重新排队。victim 自己继续参与后续调度。
+- **Instead of:** 选资源数最多/持锁最久的厨师，或按到达顺序 FIFO 回退。
+- **Because:** 当前每个任务只持有一个资源，正常调度不会成环；这个规则是给以后多资源任务
+  的兜底，必须一眼能复现。chef_id 最大是确定性的、无需额外记账，而且与 Worker 启动顺序
+  一致，日志里 cycle 与 victim 可以直接对上。所有释放仍走同一条"先删租约、成功才
+  sem_post"的路径，breaking deadlock 不会引入第二次释放。
+- **Mine:** yes
+- **Revisit when:** 有任务同时持有多把资源并需要最小化回退代价，或需要按订单价值而不是
+  chef 编号选 victim。
+- **Effort:** os-core
+
+## 2026-10-24 - 路径规划放 Worker，Scheduler 只派高层目标
+
+- **Decided:** Scheduler 派发的是 `{op, station/target, duration}` 这类高层任务；A* 与
+  逐帧动作由 Worker 用 `config/kitchen.json` 的网格算，写入自己的输入槽。
+- **Instead of:** Scheduler 算好整条路径再通过 mq 发给 Worker。
+- **Because:** 厨师位置每帧都在变，路径必须在执行前按当前位置重算；把路径塞进 mq 既浪费
+  带宽，又让"Worker 崩溃重启"必须回头找 Scheduler 要一份新路径。这也符合既有分工：
+  Bridge 不规划路径，插件只执行动作。
+- **Mine:** yes
+- **Revisit when:** 多个 Worker 之间的避让需要全局协调（窄道相遇），那时 Scheduler 需要
+  参与路径预约。
+- **Effort:** os-core
+- **Superseded by:** 2026-10-25 - 走位改由中央 navd 进程用 PIBT 规划
+
+## 2026-10-24 - 重启退避用 §6.1 的三档（0 / 2 s / 10 s），不是几何翻倍
+
+- **Decided:** 默认退避序列 `0,2000,10000`，窗口 60 s、上限 5 次；序列由
+  `--backoff-ms` 覆盖，最后一项重复使用。
+- **Instead of:** 严格的几何退避（1 s、2 s、4 s、8 s……）。
+- **Because:** 课程文档 §6.1 把"首次立即、10 秒内再次失败等 2 秒、1 分钟内失败 3 次等
+  10 秒、5 次后停止"写成了明确策略，答辩时要能逐条对上。几何翻倍与它冲突，而且
+  0→2→10 已经覆盖了"快速恢复一次、随后迅速拉开"。需要严格翻倍做实验时用
+  `--backoff-ms 0,1000,2000,4000,8000` 即可，不用改代码。
+- **Mine:** yes
+- **Revisit when:** 老师明确要求指数退避公式，或实验表明 2 s/10 s 的固定档在长时间崩溃
+  循环下仍过于频繁（那时把默认序列换成几何）。
+- **Effort:** os-core
+
+## 2026-10-24 - SIGHUP 重读配置在有活跃订单时延后应用
+
+- **Decided:** SIGHUP 每次都重新读取 recipes/kitchen；若还有活跃订单，只记
+  `config_reload_deferred` 并切换策略，等订单全部结束后的下一次 SIGHUP 才替换 DAG/
+  网格并重建资源表。
+- **Instead of:** 收到 SIGHUP 立即热替换订单图与网格。
+- **Because:** 已派发/运行中的任务用 dish 下标引用工序；运行中换表会让下一轮事件落到
+  另一道菜的节点上，表现为"任务完成了但 DAG 没往前"且没有报错。延后应用保住一致性，
+  策略切换仍然即时（演示要的是 FCFS/EDF 立刻可比较）。
+- **Mine:** yes
+- **Revisit when:** 任务记录改为按全局 node id 而不是 dish 下标引用，或 Scheduler 增加
+  了可撤销/重放的调度日志能够迁移在途任务。
+- **Effort:** os-core
+
+## 2026-10-24 - 配置订单的到达/截止期由 Scheduler 合成
+
+- **Decided:** `config/orders.example.json` 只有 menu（固定菜单），Scheduler 按它生成
+  5 条配置订单：到达间隔 700 ms，截止期 = 到达 + 20 s + 2×工时 + (i%2)×8 s；同时把
+  shm 世界状态里新出现的游戏订单按真实 `time_remaining` 收进同一个订单模型。
+- **Instead of:** 扩写 orders.json 增加 arrival/deadline 字段（要同步插件与协议），或
+  只依赖游戏上报的订单。
+- **Because:** 课程阶段的 orders.json 契约是"一份配置=一个阶段一列菜名"，插件只读 menu；
+  改字段会把一个纯演示配置变成跨端协议。合成值足以让 FCFS/EDF 在本机产生不同顺序、
+  让无游戏闭环跑起来；仿真实验以后需要精确到达时刻时应新增独立实验输入，而不是偷偷改
+  现有文件语义。
+- **Mine:** yes
+- **Revisit when:** 插件侧开始按配置文件生成带到达时刻的订单，或模拟器需要可复现的
+  精确到达序列。
+- **Effort:** os-core
+
+## 2026-10-25 - 多厨师避让用时空 A* + 共享预约表
+
+- **Decided:** 每个 Worker 在 4 邻域网格上做时空 A*（等待也是一步），按优先级依次把自己
+  的路径写进共享预约表 `/kitchenos_resv`（64 时隙环，`/kitchenos_resv_lock` 保护），后来者
+  避开已预约的格与对换；互等成环时按 `nav_deadlock` 规则让环上优先级最低、并列时 chef_id
+  最大的那个退让。避让与寻路全部在 Worker（Linux 侧）。
+- **Instead of:** 插件 `Navigation.cs` 做局部避让；或 CBS 全局最优多智能体寻路；或 Scheduler
+  集中算所有路径。
+- **Because:** 用户决定寻路放 Worker：调度与寻路是课程要展示的 Linux 侧机制，放进插件就会
+  有两份路径（game-bridge/13 的卡住即由此而来）。共享内存 + 信号量的预约表给了全局协调，
+  又不违反"路径规划放 Worker、Scheduler 只派高层目标"；CBS 最坏指数级且每次重规划要全体
+  重算，4 个厨师下优先级规划加退让已够用、日志也好解释。
+- **Mine:** no
+- **Revisit when:** 厨师数超过 4 或 `_3` 上 `nav_deadlock` 频繁到影响得分，那时考虑 CBS
+  或窗口化 CBS；或实测插件执行 `step` 的延迟让 Linux 侧跟随误差超过 0.15 m。
+- **Effort:** kitchen-control
+- **Superseded by:** 2026-10-25 - 走位改由中央 navd 进程用 PIBT 规划
+
+## 2026-10-25 - Linux 侧计时统一用游戏时钟
+
+- **Decided:** 插件在 `state_update` 里带 `game_time_ms`（游戏内毫秒，暂停不走），Worker 的
+  预约时隙、卡住判定、宏动作超时与 Scheduler 的截止期、LLF/HRRN 全部用它；墙钟只用于
+  链路心跳与进程重启退避。
+- **Instead of:** 继续用 `CLOCK_MONOTONIC` 墙钟。
+- **Because:** 游戏暂停或掉帧时墙钟照走，预约会过期、厨师会被误判卡住、订单截止期被提前
+  判超时；模拟器要 `--speed` 快进，只有用同一个逻辑时钟，实机和模拟器跑的才是同一份代码。
+- **Mine:** yes
+- **Revisit when:** 插件拿不到稳定的游戏时钟（例如关卡切换时回退），那时在 Bridge 里做单调
+  化处理而不是退回墙钟。
+- **Effort:** kitchen-control
+
+## 2026-10-25 - 走位改由中央 navd 进程用 PIBT 规划
+
+- **Supersedes:** 2026-10-24 - 路径规划放 Worker，Scheduler 只派高层目标；2026-10-25 - 多厨师
+  避让用时空 A* + 共享预约表
+- **Decided:** Supervisor 下新增 `navd` 子进程，统一为所有厨师规划：每一步跑 PIBT（优先级继承 +
+  回溯），按执行依赖图把路点放行给各厨师，插件用新动作 `path` 沿路点连续走。Worker 只写目标槽、
+  读计划槽（共享内存 `/kitchenos_nav`，各槽单写者）。优先级时空 A* 保留为 `navd --nav pa` 对照
+  基线。规划仍全部在 Linux 侧，Scheduler 仍只派高层目标。
+- **Instead of:** 每个 Worker 各自做时空 A* + 共享预约表；Worker 内 WHCA*；中央 RHCR。
+- **Because:** 用户要求走位"不要太初级"、要能当后续调度策略展示的地基，并选了这一档。PIBT 在
+  每对相邻格都在长度 ≥ 3 的环上的图（`_3` 环形过道）上保证每个厨师都能到达，不靠死锁检测兜底；
+  依赖图放行让厨师快慢不一时也不会同格，又不用一格一停。各自规划做不到全体同步推进，所以要
+  一个看全局的进程；不放 Scheduler，免得走位节奏拖住派工、Scheduler 崩溃时厨师全停。
+- **Mine:** no
+- **Revisit when:** 厨师数超过 4 或 `nav_metrics.json` 里 PIBT 的等待步数明显高于 `pa`，那时
+  考虑窗口化的 PBS；或 `navd` 单步规划 p99 超过一帧。
+- **Effort:** kitchen-control
+
+## 2026-10-25 - 批量实验用多开游戏实例，不写模拟器
+
+- **Decided:** 不写 `tools/sim` 离散事件模拟器。批量实验在本机同时开 N 个（目标 3 个）
+  640×360 的 Overcooked2 实例：不经 Steam applaunch，直接 `proton run`；每个实例一个独立目录
+  （复制 exe/doorstop/`BepInEx/`，`Overcooked2_Data` 符号链接），插件端口 `14455 + k`，Linux 侧
+  每个实例一棵 `--instance k` 的进程树，IPC 名字加 `_<k>` 后缀。离线上界改成不开游戏的纯计算脚本。
+- **Instead of:** 自写模拟器无头快进；或多个实例共用游戏目录只改端口。
+- **Because:** 用户认为模拟器成本太高，要求多开小窗口直接接管。2026-10-25 实测两个实例能同时
+  跑、各自加载插件（各约 1 GB 内存、2 核、1.3 GB 显存），从独立目录启动也能加载插件；共用目录时
+  第二个实例把第一个的 `LogOutput.log` 轮转掉，状态/指令文件也会互相覆盖，所以必须分目录。
+  真游戏批跑省掉了模型重建和精度校准，实验和演示是同一份代码。
+- **Mine:** no
+- **Revisit when:** 实验量大到 N 个实例跑不完（例如权重网格超过一晚），或 Proton/Steam 更新后
+  不再允许第二个实例启动。
+- **Effort:** kitchen-control
+
+## 2026-10-25 - 可走格保留所有含厨师的连通块，不取最大块
+
+- **Decided:** 插件地形采样筛连通块时，保留所有含厨师（没有厨师时含工位锚点）的块；只有完全
+  不含锚点的块当口袋丢掉。导出文件因此可以有多个连通区，导航与距离场按连通区分别处理。
+- **Instead of:** 继续只保留最大连通块。
+- **Because:** 任务 01 实测 `_2` 的外围装饰地面 281 格比每个厨房条带 175 格大，按最大块会把
+  所有厨师和工位留在网格外；`_2` 又按设计分成两条互不相通的厨房条带，只留一块会丢掉一半地图。
+  两次实机导出都复现了"厨师离最近格 6–8 米"，改后厨师都在 0.3 米内。
+- **Mine:** yes
+- **Revisit when:** 出现"有厨师但故意不可达"的区域，或某块只含工位、不含厨师而导航必须穿过它。
+- **Effort:** kitchen-control
+
+## 2026-10-25 - 地形采样等工位生成后再做，锚点用全部工位类型
+
+- **Decided:** 插件 `DumpTerrainOnce` 在场景里工位组件数为 0 时不采样；工位数或厨师数比上次
+  采样时变多就重采，直到两个数稳定。采样锚点从"只找 `ClientIngredientContainer`"改成与导出
+  共用的 `StationTypes` 全表（出菜口、水槽、盘堆、锅、料箱等）。重导出了 `_3`、`_4` 两张图，
+  `_1`、`_2` 已验证所有工位都在 1.2 m 内有正对的格，保持任务 01 的导出不变。
+- **Instead of:** 场景一有厨师就采样（任务 01 的原实现）、锚点只取料箱；或把"含工位"的连通块
+  也一并保留。
+- **Because:** 实测加载顺序是"先有厨师，工位还是 0"，任务 01 因此把 `_3` 的采样范围切到
+  x=-1.2..10.2（98 格）、`_4` 切到 x=-5.4..7.8（223 格），水槽/出菜口落在网格外，站位格
+  根本不存在。保留"含工位"的块会更糟：`_3` 会把 380 格外围装饰地面和 45 格台面顶当可走格，
+  厨师能走到台面上。等工位出现、范围覆盖全部工位后，厨师连通块就是完整厨房（`_3` 167 格，
+  `_4` 381 格），23 个工位都能在 1.2 m 内找到正对的格。
+- **Mine:** yes
+- **Revisit when:** 场景改为异步流式加载，工位数在采样后还会持续增加；或关卡里存在没有厨师的
+  合法厨房区（那时要对工位连通块做单独的"可站"判定，而不是简单保留）。
+- **Effort:** kitchen-control
+
+## 2026-10-25 - 站位格取工位每个方向最近的可走格
+
+- **Decided:** `stand` 模块在 +x/-x/+z/-z 四个方向上各取一个站位格：沿轴距离 > 半格、垂直
+  偏移 ≤ 半格，选最近的可走格；最多 4 个，按到工位的距离排序，朝向存"从站位格看向工位"的
+  方向位。距离场按 `grid.mask` 做多源 BFS，不可达保持 `UINT16_MAX`。
+- **Instead of:** 按 spec 字面"离工位一个 step、朝工位方向的边未被 `mask` 挡"取相邻格。
+- **Because:** 实机导出的工位坐标在台面/墙中心，不在可走格上：四张地图上离工位最近的格都在
+  1.2 m（两格，正好是游戏 1.2 m 交互格的一步），工位那一格的 mask 位恒为 0（那一格不可走）。
+  按字面规则取相邻格，四张地图所有工位都是 0 个站位格，加载必然失败。测试改为双向检查：
+  朝工位方向的相邻格可走时 mask 位必须为 1、不可走时必须为 0；前者只在工位紧贴网格
+  （`_3` 的 sink 偏 0.01 m）时出现。
+- **Mine:** yes
+- **Revisit when:** 导出里带上工位占用的格子或游戏 1.2 m 网格原点，能直接算交互邻居而不必按
+  坐标取最近格。
+## 2026-10-25 - 手柄竖轴与游戏世界 z 轴反向
+
+- **Decided:** `ActionDriver.Feed` 在写设备层与逻辑层之前统一把方向向量的 y(z) 取反；
+  `Navigation`/`face` 仍用世界坐标，`Feed` 是唯一的坐标到输入转换点。
+- **Instead of:** 让每个动作（move/path/face）各自记住翻转，或改所有本地驾驶代码。
+- **Because:** 2026-10-25 `s_city_h5` 实机验证：喂 `stick=(0,1)` 时厨师向 `-z` 走，path 的
+  第一个 +z 路点越走越远（3.35 m 后超时）；翻转后同一条 4 路点 path 连续切换并到达。
+- **Mine:** yes
+- **Revisit when:** 游戏或输入注入层改变坐标约定（例如换 InControl 版本），用一条 +z path 复测。
+- **Effort:** kitchen-control
+
+## 2026-10-25 - game_time_ms 字段与计时消费者的任务边界
+
+- **Decided:** 任务 02 只交付 `game_time_ms` 的插件上报、协议/ shm 字段与 fake/测试；
+  现有 Scheduler/Worker 里仍用墙钟的计时路径，由后续任务 03/04/06/07 在改各自算法时接入。
+- **Instead of:** 在 02 里跨任务改 Scheduler/Worker 的超时、预约和卡住判定。
+- **Because:** 那些计时路径本来就要在导航、宏动作、派工任务里重写；在 02 提前改会与它们的边界重叠，
+  也无法在本任务内证明新计时语义。02 的 Check 只要求字段暂停不走。
+- **Mine:** yes
+- **Revisit when:** 任务 04 或 06 落地后，`grep CLOCK_MONOTONIC` 仍能看到本应使用游戏时钟的计时。
+- **Effort:** kitchen-control
+
+## 2026-10-25 - 已到站的目标厨师在 PIBT 里当固定障碍
+
+- **Decided:** 有目标且实际已在站位格的厨师，PIBT 当固定障碍处理（不移动、也不被推），
+  并按这些障碍格重算每个厨师的 BFS 距离场；没任务（目标=当前格）的厨师仍可被推开。
+- **Instead of:** 按字面把"到达目标优先级清零"理解成到站后仍可被推，并继续用 stand 的
+  静态距离场排序候选。
+- **Because:** `_3` 随机用例实测两种做法都会卡死：两人在同一条 1 格宽环上，若到站者立刻
+  被推开又会马上抢回目标格，两个方向的追击无限循环；静态距离场下，最近邻被固定障碍挡住时
+  又会在相邻两格间来回走。把到站者当障碍 + 障碍感知距离场后，test_pibt 四张图 100 组
+  随机用例全部 200 步内到达。真机上 Worker 读到 `arrived` 后也会置 `pinned`，语义一致。
+- **Mine:** yes
+- **Revisit when:** 需要让另一个厨师从到站者的格子上硬挤过去（例如站位格被永久占死），
+  那时改为依赖卡住重规划或换站位格，而不是放开推人。
+- **Effort:** kitchen-control
+
+## 2026-10-25 - BLOCKED 后先扣住原厨师，再把工序改派
+
+- **Decided:** Scheduler 收到 `BLOCKED` 时把工序放回就绪队列，给任务记 `avoid_chef`，并
+  暂时不把新任务派给报 blocked 的厨师；等该工序派给别的厨师后解除扣留。
+- **Instead of:** 只把工序回队列、让下一轮轮到谁就谁接；或把整单直接判 FAILED。
+- **Because:** 导航实测里单资源场景下，原厨师一空下来就抢走了下一单，被重排的工序反而在
+  资源队列上等，永远到不了另一个厨师手里（nav-stuck 第一次跑就是这样）。扣住一个调度周期
+  让重排真正生效，又不把整单失败掉。
+- **Mine:** yes
+- **Revisit when:** 所有厨师都被同一工序 block 过一遍，需要超时后判失败或扩大站位格集合。
+- **Effort:** kitchen-control
+
+## 2026-10-25 - nav_metrics 的口径与落盘位置
+
+- **Decided:** `navd` 每局在进程树运行目录（`--runtime-dir`）写一份 `nav_metrics.json`：
+  algorithm、planning_cycles、game_ms、每个厨师的 steps/waits/replans/stuck、totals，
+  以及一次规划推进的 planning_us 的 samples/p50/p99/max。steps/waits 只统计已执行的计划步
+  （等待 = PIBT/pa 计划里原地停留的一步）；replans 是卡住触发的重规划次数，stuck 是
+  `nav_stuck` latch 次数；算法名由 `--nav` 固定，一局只写这一份。
+- **Instead of:** 写进 Scheduler 的 `runs/<ts>/`（navd 不知道 Scheduler 选的运行目录，要新增
+  共享内存字段或跨进程读时间戳）；或只在日志里按行输出，让报告脚本再聚合。
+- **Because:** 一台机器可同时有多棵进程树，runtime-dir 天然每棵树唯一；tmp+rename 的原子写
+  让批跑收集不会读到半份文件。W15 要的等待步数、卡住次数和规划 p99 都在同一份文件里，
+  `metrics.json` 仍归 Scheduler。
+- **Mine:** yes
+- **Revisit when:** 批跑工具要从 `runs/<ts>/` 一次收集全部指标，或要求跨 navd 重启累计计数；
+  那时把多份 nav_metrics 合并进运行目录。
+- **Effort:** kitchen-control
+
+## 2026-10-25 - pa 对照基线用保守优先级时空规划
+
+- **Decided:** `navd --nav pa` 在时间展开图上按 PIBT 同样的优先级依次做 A*（等待也算一步），
+  预约表只放在 navd 内存；后来者避开已预约的 (时间, 格) 与对换。计划终点必须在此后所有时刻
+  都没人预约（计划走完就停在终点），高优先级的人可以穿过尚未规划者当前的格，后者再改道；
+  找不到任何安全终点时本次规划报错（`nav_pa_failed`），不产出冲突路径。
+- **Instead of:** 把未规划者当前格当永久障碍（`_3` 上会两人隔着一格互等：高优先级者离目标
+  一格却被挡住，低优先级者要穿过的正是高优先级者停住的格）；或允许路径终点冲突、靠 ADG
+  兜底（单元检查抓到了同格）。
+- **Because:** `_3` 的 `nav-ring` 上 4 个厨师对向穿越，前一种做法会永久停住；后一种会产出
+  时间上冲突的计划。保守终点 + 安全改道后，四张图各 100 组随机用例无冲突、同输入一致，
+  `nav-ring` 上 PIBT 与 pa 多次运行全部在 10 s 内到达。
+- **Mine:** yes
+- **Revisit when:** W15 的实机批跑显示 pa 的等待步数明显更高但仍能完成、需要更公平的对照；
+  或厨师数超过 4，需要窗口化 PBS。
+## 2026-10-25 - 宏动作的 face 完成看世界朝向，不接插件 ack
+
+- **Decided:** `goto` 在计划槽 `arrived` 后发 `face`，完成判据取世界状态的 `chef.facing` 与工位方向误差 < 15°；`ack` 仍只到 Bridge 日志。
+- **Instead of:** 把插件的 ack 经 Bridge 或 shm 回传给 Worker 再判完成。
+- **Because:** 现有链路里 ack 不下发 Worker，而插件只在同一个 15° 误差内才回成功 ack，读世界状态是同一个事实且不用改协议/shm 布局；macros 的其它步骤本来也以状态为准。
+- **Mine:** yes
+- **Revisit when:** Worker 需要按插件拒绝原因（找不到目标、位置不对）做不同重试策略。
+- **Effort:** kitchen-control
+
+## 2026-10-25 - plate 拆成 goto + wait_ready + pickup
+
+- **Decided:** `plate` 工序在 pickup 前加 `wait_ready`，读该工位的锅 `state` 到 `cooked`；工位没有锅状态（例如只是盘子堆）时 `wait_ready` 直接通过，pickup 的 `holding` 仍是成功判据。
+- **Instead of:** 只发 `pickup`，靠 1.5 s 超时后由 Scheduler 重排队等熟。
+- **Because:** `cook` 明确放下即走、不等熟，锅没熟时盘工序的 pickup 必失败；把"等熟"放进同一道工序，失败原因和宏动作链能对上，也不增加 Scheduler 的工序类型。
+- **Mine:** yes
+- **Revisit when:** Scheduler 能按锅状态单独生成"等熟"工序，或能按订单精确匹配到某一口锅。
+- **Effort:** kitchen-control
+- **Superseded by:** 2026-10-26 - plate 保留订单专属锅直至取菜
+
+## 2026-10-25 - 工位 id 与 shm 资源键按精确名/归一化/同类序号匹配
+
+- **Decided:** Worker 找工位对应的 shm 资源时，先认精确名，再做 `-`/`_` 归一化比较，最后按工位 kind + 序号找 `pot_N`/`cutting_board_N`/`sink_N` 等插件键。
+- **Instead of:** 让 Scheduler 改发插件资源键，或改 kitchen 导出改用 GameObject 名。
+- **Because:** kitchen.json 用 `cooker-0`/`container-0`，插件上报 `pot_0`/`cutting_board_0`；任务 06 只做执行器，接口统一留给任务 09 的实机接入，先有一层可解释的匹配比在 Scheduler 里另造一套 id 污染更小。
+- **Mine:** yes
+- **Revisit when:** 任务 09 把导出的工位 id 与插件键统一，删掉后两级匹配。
+- **Effort:** kitchen-control
+
+## 2026-10-25 - decisions.jsonl 的 w_* 写带符号分量，每条决策都有
+
+- **Decided:** 派工决策把代价公式的五项分别写成 `w_d/w_t/w_c/w_u/w_z`，符号与公式一致
+  （`w_c`、`w_u` 为负），`cost` 等于五项之和；`order_open`、`strategy` 等非派工决策也写
+  这五个键，值为 0。派工行另写原始输入 `travel_cells/travel_s/work_s/critical_s/urgency/
+  zone/weight_*`，日志里能逐项复算。
+- **Instead of:** 只写权重（`w_d` 是 1.0 这类常数）或只写原始量；非派工决策不带这五个键。
+- **Because:** 分析脚本要按同一组键汇总策略对比，不必按 `kind` 分支；权重与分量同名会让
+  人分不清日志里的数乘过没有。任务 11 的网格搜索直接读这些分量解释差异，公式改了也能对账。
+- **Mine:** yes
+- **Revisit when:** 决策日志出现第三种需要同样五个分量的记录类型，或日志行逼近 2048 字节
+  上限（现在派工行约 700 字节）。
+- **Effort:** kitchen-control
+
+## 2026-10-25 - 订单按开工顺序交付，策略只决定下一单
+
+- **Decided:** 订单有 `opened/open_seq`：未开工订单的工序不参与派工；已开工订单的就绪工序
+  不够填满空闲厨师时，才按策略再开一单；开工更早的订单没做完时，后面订单的 `deliver` 不
+  进就绪队列。策略（FCFS/EDF/LLF/HRRN）只决定开工顺序，不中途改派已开工订单。
+- **Instead of:** 每次派工都让策略在所有活跃订单里挑一个（os-core 原行为），或固定一个
+  并发订单数/先到先做。
+- **Because:** 小费倍率要求按顺序上菜，晚开的单先交付会打乱倍率；把策略限制在"开下一单"
+  才能让 LLF/HRRN 的差别只体现在订单顺序上，比较实验可解释。按空闲厨师数补开订单，避免
+  策略挑中的单一时没有就绪工序就让厨师空转，也不会把全部订单一次铺开。
+- **Mine:** yes
+- **Revisit when:** 实机发现交付顺序门控导致某单长期缺盘/缺锅而其它单已完成却不能交付；
+  那时让 `deliver` 只在"上一单已交付"而不是"上一单全部工序完成"时放行。
+- **Effort:** kitchen-control
+
+## 2026-10-25 - wash 是 Scheduler 合成工序，不走订单模型
+
+- **Decided:** 干净盘 ≤ 1 且有脏盘时，Scheduler 合成一道 `wash`（`op=wash`、`resource`
+  取水槽工位 kind、`duration_ms=wash_ms`）放进与订单工序相同的候选列表、匈牙利配对和资源
+  租约；同一时刻最多一道，干净盘恢复、Worker 崩溃或租约回收时丢弃重生成。它不出现在订单
+  列表与订单 metrics 里。
+- **Instead of:** 伪造一张 wash 订单（复用订单 DAG 与派发路径），或给 wash 单开一个队列。
+- **Because:** 伪造订单会把维护工序算进 `orders_total/completed`，污染策略对比的得分与
+  超时统计；另起队列又要复制一份派工、资源与日志逻辑。做成候选里的一种合成工序，复用现有
+  的配对与租约，日志用 `node=wash` 区分。
+- **Mine:** yes
+- **Revisit when:** 出现多种维护工序（补货、清理台面），那时抽一个 maintenance 任务类型，
+  而不是继续往 `sched_candidate` 里加特例。
+- **Effort:** kitchen-control
+
+## 2026-10-25 - 游戏时钟落地前，Scheduler 的时间参数沿用单调时钟
+
+- **Decided:** 任务 07 的 LLF/HRRN 与租约截止期继续用 Scheduler 现有的单调时钟 `now_ms`；
+  策略接口只收一个 `now_ms`，任务 02 的 `game_time_ms` 合并进来后只改 Scheduler 取时的一处，
+  策略与测试不用动。
+- **Instead of:** 在任务 07 的分支上复制一份 `game_time_ms`（改 shm 布局、版本号与 Bridge），
+  或从 `world.game_time`（整秒）另造一套时间轴。
+- **Because:** 任务 02 不是任务 07 的前置，它的分支还没归档；任务 07 的基分支（03）里没有
+  `game_time_ms` 字段。订单到达/截止期目前全是单调时钟坐标，只把策略换成游戏时间会让两套
+  时间轴混用，暂停时反而更错。真正接入时（任务 04/09 合并 02 之后）要连同租约、超时一起换，
+  这正是 "2026-10-25 - Linux 侧计时统一用游戏时钟" 的执行点。
+- **Mine:** yes
+- **Revisit when:** 任务 02 的 `game_time_ms` 合并进本通道的任务（04/06/09），或实机出现暂停
+  期间租约过期/LLF 选择漂移。
+- **Effort:** kitchen-control
+## 2026-10-26 - plate 保留订单专属锅直至取菜
+
+- **Decided:** Scheduler 在 cook 工序完成时从 Worker 租约表摘除该任务租约，但不归还 cooker 令牌；在同一订单/task 记录锅工位与预留状态，`plate` 仅使用该订单对应 cook 的预留锅。plate 成功、订单失败或取消时归还令牌并清除工位预留。Worker 收到 `source_station_id`，先取干净盘，再去该锅等待并拿菜。
+- **Instead of:** 让 Worker 从共享状态猜锅，或只改 `plate` 的 `resource` 为 cooker；前者无法区分并行订单，后者丢失盘子堆站位与有限容量约束。
+- **Because:** `kos_mq_msg` 原本无订单到锅映射，且 Scheduler 在 cook 完成时立即释放 cooker；两个独立缺口都需明确处理。Scheduler 现有订单/task 内存记录足以承载运行期预留，不引入持久化层。
+- **Mine:** yes
+- **Revisit when:** Scheduler 具备可恢复的持久化订单状态，或 recipe DAG 用显式产物位置替代 cook→plate 同名节点绑定。
+- **Effort:** kitchen-control
+- **Supersedes:** 2026-10-25 - plate 拆成 goto + wait_ready + pickup
+
+## 2026-10-26 - navd waypoint and station interaction bounds stay separate
+
+- **Decided:** A plugin `path` endpoint is accepted only at actual-coordinate distance ≤ 0.3 m from its final navd cell waypoint; corner skipping stays at 0.15 m. Kitchen exports require the nearest stand cell to be within 1.2 m of each station. Exported station coordinates snap to the sampled grid only when transform noise is at most 0.02 m.
+- **Instead of:** A station-center target, broader endpoint tolerance, or accepting a stand beyond 1.2 m.
+- **Because:** Task 04 defines coordinate-based movement, while real interactions use a separate adjacent-cell geometry. `_2` and `_3` sink transforms were offset by 0.01 m, producing a false 1.20004 m distance against the 1.2 m bound.
+- **Mine:** no
+- **Revisit when:** The game changes its grid spacing or the real interaction contract changes.
+
+## 2026-10-26 - Worker interaction intent spans plugin retry pulses
+
+- **Decided:** Keep each Worker `interact` intent live for 1000 ms, long enough for ActionDriver's immediate 250 ms pulse and the retry pulse starting 600 ms later. Macro completion remains gated on world-state change.
+- **Instead of:** A 250 ms Worker window that ends before the plugin retry, or changing ActionDriver's pulse cadence.
+- **Because:** Fresh `_2` evidence shows the Worker sent a 250 ms interact window while the plugin's second pulse is scheduled 600 ms after the first; the pickup timed out with `holding` still empty. Plugin ack confirms receipt only, not the game interaction.
+- **Mine:** yes
+- **Revisit when:** The plugin action cadence or Worker input publication semantics change.
+- **Effort:** kitchen-control
+
+## 2026-10-26 - demo2 disconnected bands block task09 acceptance
+
+- **Decided:** Do not add a synthetic wall connector, fake teleport, or silently broaden reachability. Task09's `_2` acceptance plan is blocked until the authoritative level contract chooses one real remedy: a spawn/menu configuration that places a chef in each physical band, a supported cross-band handoff, or a corrected exported map/bundle whose topology is actually one connected kitchen. Keep `task_station_unreachable` rejection strict meanwhile.
+- **Instead of:** Marking the fetch-only `BurritoChicken` run as success, dispatching unreachable Rice/Tortilla/cooker work, or altering the distance field to bridge the two 175-cell components.
+- **Because:** Fresh `_2` runtime `logs/real-game/20261026-110357-_2-finalfresh` reports both chefs in the lower band (cells 128/240; final coordinates near `(-3,-4.94)` and `(-3,-8.27)`), while Rice, Tortilla, and cooker-0 are upper-band stations. Scheduler repeatedly and correctly rejects those stations; only BurritoChicken fetch completes and score is -390. The authoritative spec says `_2` has two mutually disconnected strips and navigation must preserve components, while game-bridge/13's older layout note incorrectly claims one connected main block and all key stations reachable.
+- **Mine:** yes
+- **Revisit when:** The level owner supplies verified spawn/menu/handoff semantics or a regenerated bundle/config pair with measured station reachability from both actual chef starts.
+- **Superseded by:** 2026-10-26 - 实机控制按 4 个厨师验收
+
+## 2026-10-25 - 分区模式下跨区中间产物在菜谱 DAG 中展开为 (drop, fetch) 节点
+
+- **Decided:** 分区流水线模式在 Scheduler 启用 `--dispatch zoned` 且读取 `zones.json` 后，对跨分区的菜谱边 $(u, v)$ 在 DAG 中展开插入一对交接工序：$u \to \text{drop} \to \text{fetch} \to v$。`drop` 归属源分区（由出区厨师放）、`fetch` 归属目标分区（由入区厨师取），工位均指向 `zones.json` 配置的交接台面（默认 `counter_handoff_0`）。厨师只接本区工序，除交接工序外无跨区派工。灵活模式（默认）不展开交接工序，原有 DAG 与派工逻辑完全不变。
+- **Instead of:** 不改 DAG、由 Worker 运行时动态检测跨区并在走到台面时拆解为放料与取料；或在派工时由 Scheduler 临时硬编码拦截跨区工序。
+- **Because:** 把交接显式作为 DAG 节点后，工序就绪依赖、关键路径工时、Kuhn 匹配开单计数与匈牙利矩阵代价都能统一复用既有的 L3 列表调度与代价模型，无须在调度循环中增加特例；`decisions.jsonl` 中也能清晰追踪每个跨区中间产物的交接决策与代价分量。
+- **Mine:** yes
+- **Revisit when:** 出现多级流水线（中间产物经过三个以上区域交接）或多交接台面竞争缓冲需要细粒度排队时。
+- **Effort:** kitchen-control
+
+## 2026-10-26 - 实机控制按 4 个厨师验收
+
+- **Supersedes:** 2026-10-26 - demo2 disconnected bands block task09 acceptance
+- **Decided:** 实机验收（kitchen-control W11/W13、game-bridge W6）一律占满 4 个玩家位、4 个厨师系统控制。第一次实机闭环（W11）在 `_3` 上做：一整块地图、4 人灵活派工、不需要交接。`_2` 不改图：每条带 2 人，按分区流水线派工，跨带中间产物经交接台面 `drop`/`fetch`，归 W14。“不得伪造连通”仍然成立。
+- **Instead of:** 继续按 2 个厨师验收，然后让地图作者改 `_2` 的出生点或菜单，或者重新导出一张连通的图。
+- **Because:** 用户一直要求 4 人控制，并定了先做 `_3`。`layout_2.tsv` 每条带各有 2 个出生点（下 (4,-12)/(12,-12)，上 (4,-2)/(11,-1)），只占 2 位时两人都落在下带，这就是 `logs/real-game/20261026-110357-_2-finalfresh` 里上带工位全部不可达的原因。地图本身不是问题，问题出在计划只写了 2 人（课设方案 §1628 “第一版只做 2 名厨师”被沿用进了 W11）。W11 原先选 `_2`，依据是 2026-10-19 `eval-levels.sh` 报“只有 `_2` 单连通”，这个结论反了：导出显示 `_2` 两块各 175 格，`_1`/`_3`/`_4` 各一块。`_2` 四人还要求一区多厨师，现有 `zones.json` 每区只挂 1 个厨师。
+- **Mine:** no（用户定的）
+- **Revisit when:** 某张图实测 4 人时出生点与 `layout_*.tsv` 不符，或游戏/加载器限制本地玩家数少于 4。
+- **Effort:** kitchen-control
+
+## 2026-10-26 - 共享中间产物不做硬性判据，跟着地图来
+
+- **Decided:** 自制关卡不再要求“至少两种菜共享一个中间产物”。地图菜谱里有就用，没有就靠共用工位、锅、砧板与盘子产生资源争用。
+- **Instead of:** 改某道菜，让它和 `Chicken_Burrito` 共用 `BoiledRice`，然后重新打包 bundle。
+- **Because:** 用户定的。四张图现有菜谱已经覆盖切、煮、煎，争用靠共用 2 块砧板、锅和盘堆，不用为这条判据重打 bundle。
+- **Mine:** no（用户定的）
+- **Revisit when:** 调度实验需要演示“中间产物复用”带来的策略差异。
+- **Effort:** game-bridge

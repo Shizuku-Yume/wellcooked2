@@ -80,8 +80,10 @@ namespace WellCooked
             int chefCount = AppendChefs(json);
             AppendKitchen(json, missing);
             AppendCooking(json, missing);
-            int stationCount = AppendMap(json, missing);
-            DumpTerrainOnce();
+            int fixedStations;
+            int stationCount = AppendMap(json, missing, out fixedStations);
+            GridAlign.Apply();
+            DumpTerrainOnce(fixedStations);
 
             json.Append(",\"missing\":[");
             for (int i = 0; i < missing.Count; i++)
@@ -285,6 +287,10 @@ namespace WellCooked
                     .Append(",\"progress\":").Append(Num(Invoke(handler, "GetCookingProgress")))
                     .Append(",\"cooked\":").Append(Bool(Invoke(handler, "IsCooked")))
                     .Append(",\"burning\":").Append(Bool(Invoke(handler, "IsBurning")))
+                    // 这口锅做哪种烹饪（CookingHandler.m_cookingType）：游戏只让
+                    // AllowedCookingSteps 含这一步的料放进来（CookableContainer.AllowItemPlacement），
+                    // 米只能进煮锅、鸡只能进炸篮，OS 侧挑灶台必须按它配
+                    .Append(",\"step\":\"").Append(StepName(Get(component, "m_cookingType")) ?? "").Append('"')
                     .Append('}');
             }
 
@@ -292,29 +298,57 @@ namespace WellCooked
         }
 
         /// <summary>
+        /// 地图上的工位组件类型。导出与地形采样的锚点、连通块筛选共用同一张表：
+        /// 只拿料箱当锚点会漏掉出菜口/水槽/盘堆，采样范围就把它们切在网格外
+        /// （`_3`/`_4` 实测：水槽在 x=12.6，采样只到 x=10.2，站位格根本不存在）。
+        /// </summary>
+        private static readonly string[] StationTypes =
+        {
+            "ClientIngredientContainer", "ClientPlateStation", "ClientWashingStation",
+            "ClientHeatedStation", "ClientMixingStation", "ClientCleanPlateStack",
+            "ClientDirtyPlateStack", "ClientConveyorStation", "ClientSwitchStation",
+            "ClientCookingStation", "ClientPlate", "ClientCookableContainer",
+            "ClientCookablePreparationContainer", "ClientTrayIngredientContainer",
+            // 砧板（任务 09 P0）：`ClientWorkstation` 是 chopping 台面的同步组件，
+            // 之前不在工位表里，导出的 kitchen.json 没有 board-N。
+            "ClientWorkstation",
+            // 普通台面：卷饼当容器的地方。`ClientAttachStation` 是游戏给所有
+            // `AttachStation`（能放东西的表面）加上的同步组件——`MultiplayerController`
+            // 的 `AddSynchronisedType(typeof(AttachStation), SynchroniserConfig(ServerAttachStation,
+            // ClientAttachStation))`。导出时按 `Kitchen.IsPlainCounter`（名字含 countertop
+            // 且不是砧板）过滤；实机对象名是 `countertop_01_standard_wood`
+            // （logs/manual/20261027-022317/manual.log），实测玉米饼放在 (0.60,-6.00) 那张。
+            "ClientAttachStation",
+            // 料箱：DispenserCrate 上的这个组件给出它发的是哪种料
+            "ClientPickupItemSpawner",
+            // 垃圾桶：挑工位时必须排除（实测把鱼扔进去过），导出给 OS 侧的厨房模型用
+            "ClientRubbishBin"
+        };
+
+        /// <summary>
+        /// 开局后还会被拿起、生成、销毁的物品类型（盘子、锅、容器、盘堆）。它们照常导出，
+        /// 但不算进地形重采的工位数：数量一变就在主线程整张网格重采约 3 秒，
+        /// 实测开局约 10 秒时 96→97 触发重采，游戏在倒计时 1:51 卡住。
+        /// </summary>
+        private static readonly HashSet<string> MovableStationTypes = new HashSet<string>
+        {
+            "ClientPlate", "ClientCookableContainer", "ClientCookablePreparationContainer",
+            "ClientIngredientContainer", "ClientTrayIngredientContainer",
+            "ClientCleanPlateStack", "ClientDirtyPlateStack"
+        };
+
+        /// <summary>
         /// 地图上的工位与物品：砧板/锅/盘子/水槽/加热台/传送带各自的位置和内容物。
         /// 内容是 `ClientIngredientContainer.GetContents()` 给出的物品节点，位置取组件自己的 transform。
         /// 调度要用它做资源预订（谁占了哪口锅、哪块砧板上有东西）。
         /// </summary>
-        private static int AppendMap(StringBuilder json, List<string> missing)
+        private static int AppendMap(StringBuilder json, List<string> missing, out int fixedCount)
         {
-            var stationTypes = new[]
-            {
-                "ClientIngredientContainer", "ClientPlateStation", "ClientWashingStation",
-                "ClientHeatedStation", "ClientMixingStation", "ClientCleanPlateStack",
-                "ClientDirtyPlateStack", "ClientConveyorStation", "ClientSwitchStation",
-                "ClientCookingStation", "ClientPlate", "ClientCookableContainer",
-                "ClientCookablePreparationContainer", "ClientTrayIngredientContainer",
-                // 料箱：DispenserCrate 上的这个组件给出它发的是哪种料
-                "ClientPickupItemSpawner",
-                // 垃圾桶：挑工位时必须排除（实测把鱼扔进去过），导出给 OS 侧的厨房模型用
-                "ClientRubbishBin"
-            };
-
             json.Append(",\"stations\":[");
             bool first = true;
             int count = 0;
-            foreach (var typeName in stationTypes)
+            fixedCount = 0;
+            foreach (var typeName in StationTypes)
             {
                 var found = FindAll(typeName);
                 if (found.Count == 0)
@@ -330,6 +364,18 @@ namespace WellCooked
                         continue;
                     }
 
+                    // `cutting_board_<N>` 只认砧板（与 Kitchen.ChoppingBoards 同一条规则）；
+                    // 别的 Workstation 不进 kitchen.json，否则 board-N 的序号两边对不上。
+                    if (typeName == "ClientWorkstation" && !Kitchen.IsChoppingBoard(unity.gameObject.name))
+                    {
+                        continue;
+                    }
+                    // 普通台面（counter-N）：同样只认名字，砧板/盘堆/料箱上的 AttachStation 不算。
+                    if (typeName == "ClientAttachStation" && !Kitchen.IsPlainCounter(unity.gameObject.name))
+                    {
+                        continue;
+                    }
+
                     if (!first)
                     {
                         json.Append(',');
@@ -337,6 +383,10 @@ namespace WellCooked
 
                     first = false;
                     count++;
+                    if (!MovableStationTypes.Contains(typeName))
+                    {
+                        fixedCount++;
+                    }
                     var p = unity.transform.position;
                     json.Append("{\"type\":\"").Append(typeName)
                         .Append("\",\"name\":\"").Append(Clean(unity.gameObject.name))
@@ -377,6 +427,39 @@ namespace WellCooked
                         }
 
                         json.Append(']');
+                        // 这个料能进哪种烹饪（CookableProperties.AllowedCookingSteps），与上面锅的 step 对上才放得进
+                        json.Append(",\"cook_steps\":[");
+                        var cookable = prefabObject == null ? null : prefabObject.GetComponent("CookableProperties");
+                        var allowed = AsEnumerable(Get(cookable, "AllowedCookingSteps"));
+                        if (allowed != null)
+                        {
+                            bool firstStep = true;
+                            foreach (var step in allowed)
+                            {
+                                var stepName = StepName(step);
+                                if (stepName == null)
+                                {
+                                    continue;
+                                }
+
+                                if (!firstStep)
+                                {
+                                    json.Append(',');
+                                }
+
+                                firstStep = false;
+                                json.Append('"').Append(stepName).Append('"');
+                            }
+                        }
+
+                        json.Append(']');
+                    }
+
+                    if (typeName == "ClientCookableContainer")
+                    {
+                        // 锅/炸篮/平底锅做哪种烹饪：ClientCookableContainer.GetCookingHandler().AccessCookingType
+                        var cookingHandler = Invoke(component, "GetCookingHandler");
+                        json.Append(",\"step\":\"").Append(StepName(Get(cookingHandler, "AccessCookingType")) ?? "").Append('"');
                     }
 
                     json.Append(",\"contents\":[");
@@ -431,6 +514,19 @@ namespace WellCooked
         /// 只看名字会复用上一关的旧网格（Unity 2017 的 Scene 没有 handle）。
         /// </summary>
         private static int _terrainChefId;
+
+        /// <summary>
+        /// 采样时场景里的工位组件数。工位是场景加载后才逐个出现的，0 个工位时采样
+        /// 只能拿厨师当锚点，范围会把远处的出菜口/水槽切掉；所以 0 时先不采，等它变大。
+        /// </summary>
+        private static int _terrainStationCount;
+
+        /// <summary>
+        /// 采样时的厨师数。虚拟手柄是逐个加入的：采样时只有 2 名厨师，第 3/4 名可能
+        /// 落在另一条互不相通的厨房条带里（`_2` 实测），后加入的人所在连通块会被当成
+        /// 口袋丢掉。人数变多就重采一次，直到稳定。
+        /// </summary>
+        private static int _terrainChefCount;
 
         // 可走格：直接来自游戏的 GridManager（occupant 为空的格子），不是自己打射线猜的
         private static bool[,] _walkable;
@@ -587,7 +683,7 @@ namespace WellCooked
             }
         }
 
-        private static void DumpTerrainOnce()
+        private static void DumpTerrainOnce(int stationCount)
         {
             var scene = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
             if (scene == "StartScreen" || scene == "Loading")
@@ -596,12 +692,19 @@ namespace WellCooked
             }
 
             var found = UnityEngine.Object.FindObjectsOfType<PlayerControls>();
-            if (found.Length == 0 && FindAll("ClientIngredientContainer").Count == 0)
+            if (scene == _terrainScene && _terrainStationCount > 0 &&
+                found.Length <= _terrainChefCount && stationCount <= _terrainStationCount &&
+                (found.Length == 0 ? _terrainChefId == 0
+                                   : found[0].GetInstanceID() == _terrainChefId))
             {
-                return; // 既没厨师也没工位，还没进关卡
+                return;
             }
 
-            if (scene == _terrainScene && found.Length > 0 && found[0].GetInstanceID() == _terrainChefId)
+            // 实测加载顺序：先有厨师，工位还是 0（日志 `厨师=4 工位=0 缺=地图工位`）。
+            // 这时采样只有厨师锚点，范围会把远处的出菜口/水槽切在网格外（`_3`/`_4`
+            // 的可走格因此少了一大块）。等工位出现再采；0 个工位时什么都别写。
+            // 工位和厨师都是陆续出现的，任何一个变多就重采，直到两个数都稳定。
+            if (stationCount <= 0)
             {
                 return;
             }
@@ -610,6 +713,8 @@ namespace WellCooked
             // 但工位已经在了）。锚点会退化成"工位位置"，厨师半径用最近一次量到的值。
             _terrainScene = scene;
             _terrainChefId = found.Length > 0 ? found[0].GetInstanceID() : 0;
+            _terrainStationCount = stationCount;
+            _terrainChefCount = found.Length;
             try
             {
                 if (!SampleGameGrid())
@@ -643,17 +748,22 @@ namespace WellCooked
 
             float minX = float.MaxValue, maxX = float.MinValue, minZ = float.MaxValue, maxZ = float.MinValue;
             var anchors = new List<Vector3>();
+            var chefAnchors = new List<Vector3>();
             foreach (var chef in UnityEngine.Object.FindObjectsOfType<PlayerControls>())
             {
                 anchors.Add(chef.transform.position);
+                chefAnchors.Add(chef.transform.position);
             }
 
-            foreach (var station in FindAll("ClientIngredientContainer"))
+            foreach (var typeName in StationTypes)
             {
-                var component = station as Component;
-                if (component != null)
+                foreach (var station in FindAll(typeName))
                 {
-                    anchors.Add(component.transform.position);
+                    var component = station as Component;
+                    if (component != null)
+                    {
+                        anchors.Add(component.transform.position);
+                    }
                 }
             }
 
@@ -759,8 +869,10 @@ namespace WellCooked
 
             // 建完边再筛连通块：放在建边之前的话，边表还是全 false，
             // 每个格子都成了独立块，最大块只剩 1 格（实测 可走格 1/308）。
+            // 选块不能只看大小：自制地图的外围装饰地面可能比厨房大（_2 实测外围
+            // 281 格 > 每个厨房条带 175 格），按最大块会把厨师和工位都留在网格外。
             int blocks;
-            int dropped = KeepLargestComponent(out blocks);
+            int dropped = KeepPlayableComponents(chefAnchors, anchors, out blocks);
 
             // 只写保留下来的格子：过滤前那份列表会把丢掉的格子也写进文件，
             // 而导航用的是过滤后的 `_walkable`——两边对不上，OS 侧读到的地图就多出孤岛。
@@ -868,18 +980,54 @@ namespace WellCooked
             return 0.35f;
         }
 
+        /// <summary>锚点（厨师/工位）最近的已采样格属于哪个连通块；都没有返回 0。</summary>
+        private static int NearestComponent(int[,] component, Vector3 anchor)
+        {
+            int best = 0;
+            float bestDistance = float.MaxValue;
+            for (int i = 0; i < _cellsX; i++)
+            {
+                for (int j = 0; j < _cellsZ; j++)
+                {
+                    if (!_walkable[i, j] || component[i, j] == 0)
+                    {
+                        continue;
+                    }
+                    Vector2 center = CellCenter(i, j);
+                    float dx = center.x - anchor.x;
+                    float dz = center.y - anchor.z;
+                    float distance = dx * dx + dz * dz;
+                    if (distance < bestDistance)
+                    {
+                        bestDistance = distance;
+                        best = component[i, j];
+                    }
+                }
+            }
+            return best;
+        }
+
         /// <summary>
-        /// 只保留最大的连通块。物理采样难免留下"口袋"（一小片孤立可走格），
-        /// 厨师走进去就再也出不来：起点格在口袋里，A* 到哪都报不可达（实测卡死在 20.56,-3.13）。
-        /// 把口袋从可走表里去掉，起点就会就近跳到主区。
+        /// 保留所有含厨师的连通块，丢掉其余"口袋"；没有厨师时（关卡评估）按工位锚点保留。
+        ///
+        /// 物理采样难免留下孤立可走格，必须从可走表里去掉，否则厨师走进去就再也出不来。
+        /// 但"最大块"不等于"可玩区"：自制地图的外围装饰地面可能比厨房还大（`_2` 实测
+        /// 外围 281 格 > 每个厨房条带 175 格），按最大块会把所有厨师和工位留在网格外；
+        /// `_2` 又按设计分成两条互不相通的厨房条带，所以也不能只挑一块——凡是有厨师的
+        /// 块都要保留。
+        ///
+        /// 别把"含工位"的块也一起保留：工位摆在台面上，台面顶、外围装饰地面也会被
+        /// 采样成可走格（`_3` 实测 380 格外围 + 45 格台面顶，全都没有厨师）。真正
+        /// 要修的是采样范围：范围够大时厨师的连通块会覆盖整间厨房（`_3` 167 格），
+        /// 所有工位都在它的边界上。见 `DumpTerrainOnce` 的加载顺序说明。
         /// </summary>
-        private static int KeepLargestComponent(out int blocks)
+        private static int KeepPlayableComponents(List<Vector3> chefs, List<Vector3> anchors,
+                                                  out int blocks)
         {
             var component = new int[_cellsX, _cellsZ];
             var queue = new Queue<int>();
+            var sizes = new List<int> { 0 }; // 下标 = label，sizes[0] 不用
             // label 数就是连通块数：>1 说明厨房被隔断（有走不到的区域），挑关卡时要看这个
-            int best = 0;
-            int bestSize = 0;
             int label = 0;
 
             for (int i = 0; i < _cellsX; i++)
@@ -925,21 +1073,70 @@ namespace WellCooked
                         }
                     }
 
-                    if (size > bestSize)
-                    {
-                        bestSize = size;
-                        best = label;
-                    }
+                    sizes.Add(size);
                 }
             }
 
             blocks = label;
+            var keep = new bool[label + 1];
+            int kept = 0;
+            if (chefs != null && chefs.Count > 0)
+            {
+                foreach (var chef in chefs)
+                {
+                    int l = NearestComponent(component, chef);
+                    if (l > 0 && !keep[l])
+                    {
+                        keep[l] = true;
+                        kept++;
+                    }
+                }
+            }
+            if (kept == 0 && anchors != null && anchors.Count > 0)
+            {
+                foreach (var anchor in anchors)
+                {
+                    int l = NearestComponent(component, anchor);
+                    if (l > 0 && !keep[l])
+                    {
+                        keep[l] = true;
+                        kept++;
+                    }
+                }
+            }
+            if (kept == 0)
+            {
+                int best = 0;
+                int bestSize = 0;
+                for (int l = 1; l <= label; l++)
+                {
+                    if (sizes[l] > bestSize)
+                    {
+                        bestSize = sizes[l];
+                        best = l;
+                    }
+                }
+                if (best > 0)
+                {
+                    keep[best] = true;
+                    kept = 1;
+                }
+            }
+
+            var debug = new StringBuilder("state: 连通块 " + label + " 个");
+            for (int l = 1; l <= label; l++)
+            {
+                debug.Append(' ').Append(l).Append('=').Append(sizes[l])
+                     .Append(keep[l] ? "保留" : "丢掉");
+            }
+            _log.LogInfo(debug.ToString());
+
             int dropped = 0;
             for (int i = 0; i < _cellsX; i++)
             {
                 for (int j = 0; j < _cellsZ; j++)
                 {
-                    if (_walkable[i, j] && component[i, j] != best)
+                    if (_walkable[i, j] && !keep[component[i, j]])
                     {
                         _walkable[i, j] = false;
                         dropped++;
@@ -1356,9 +1553,13 @@ namespace WellCooked
                     : null;
             }
 
+            // 煮/炸/煎：CookedCompositeOrderNode.m_cookingStep 说这一步要哪种锅
+            string cooking = StepName(Get(node, "m_cookingStep"));
+            string cookAttr = cooking == null ? "" : ",\"cook\":\"" + cooking + "\"";
+
             if (children == null || children.Count == 0)
             {
-                steps.Add("{\"node\":\"" + name + "\",\"type\":\"" + type.Name + "\""
+                steps.Add("{\"node\":\"" + name + "\",\"type\":\"" + type.Name + "\"" + cookAttr
                           + (plating == null ? "" : ",\"plate\":\"" + plating + "\"") + "}");
                 return;
             }
@@ -1369,8 +1570,15 @@ namespace WellCooked
                 CollectOrderSteps(child, parts, depth + 1);
             }
 
-            steps.Add("{\"node\":\"" + name + "\",\"type\":\"" + type.Name + "\",\"children\":["
+            steps.Add("{\"node\":\"" + name + "\",\"type\":\"" + type.Name + "\"" + cookAttr + ",\"children\":["
                       + string.Join(",", parts.ToArray()) + "]}");
+        }
+
+        /// <summary>CookingStepData（ScriptableObject）的资源名，如 Boil/Fry；空/非 Unity 对象给 null。</summary>
+        private static string StepName(object step)
+        {
+            var unity = step as UnityEngine.Object;
+            return unity != null && !string.IsNullOrEmpty(unity.name) ? Clean(unity.name) : null;
         }
 
         /// <summary>

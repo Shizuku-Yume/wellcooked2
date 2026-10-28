@@ -18,12 +18,14 @@
 
 | 要什么 | 从哪读 | 取值含义 |
 |---|---|---|
-| 厨师 | `PlayerControls`（场景里枚举）；编号 `PlayerIDProvider.GetID()`（**强转 int 就是输入槽号**，`Takeover` 与上报都用它）；手持物 `ServerPlayerAttachmentCarrier.InspectCarriedItem()`（`null` = 空手）；位置取 `transform.position` 的 **x/z**（`y` 是高度，恒为 0） | 编号是"哪个厨师"，也是动作指令里的 `chef_id` |
+| 厨师 | `PlayerControls`（场景里枚举）；编号 `PlayerIDProvider.GetID()`（**强转 int 就是输入槽号**，`Takeover` 与上报都用它）；手持物 `ServerPlayerAttachmentCarrier.InspectCarriedItem()`（`null` = 空手）；手持物内容 `Kitchen.ItemContents()`（盘里是哪道菜）；位置取 `transform.position` 的 **x/z**（`y` 是高度，恒为 0） | 编号是"哪个厨师"，也是动作指令里的 `chef_id` |
 | 得分/订单/计时 | `ServerKitchenFlowControllerBase` → `GetPoints(TeamID)`、`GetMonitorForTeam(TeamID)` → `ServerTeamMonitor.OrdersController` → `m_activeOrders`、`ActiveRecipes`；计时 `RoundTimer.TimeElapsed`、`m_timeLeft`、`m_roundTimer`、`m_timeLimit` | `RoundTimer` **在第一个订单交付前不走**（游戏设计），开局别拿它判"回合已开始"，用订单自己的 `remaining`/`lifetime` |
-| 订单 | 每张 `ServerOrderData`：`ID.m_id`、`Remaining`、`Lifetime`；菜名在 `RecipeListEntry.m_order`（ScriptableObject）的 `name` | `Remaining` 是剩余秒；菜名与关卡菜谱表里的名字一致 |
-| 锅 | 静态 `ServerCookingHandler.GetCookingHandlers()`；`GetCookingProgress()`（0..1）、`IsCooked()`、`IsBurning()`、`AccessCookingTime`（总时长）；位置从它交出的 `GetCookingHandler()` 组件上取（handler 本身不是 `Component`） | 上报里 `time_left = AccessCookingTime × (1 − progress)` |
+| 订单 | 每张 `ServerOrderData`：`ID.m_id`、`Remaining`、`Lifetime`；菜名在 `RecipeListEntry.m_order`（ScriptableObject）的 `name`，分值在 `RecipeListEntry.m_scoreForMeal` | `Remaining` 是剩余秒；菜名与关卡菜谱表里的名字一致 |
+| 锅 | **灶台** `ClientCookingStation`（`m_itemPot` 是当前那口锅，空灶台为 `null`；按 x、z 排序就是 `pot_<N>`，空灶台也报）；锅上的 `ClientCookingHandler`：`GetCookingProgress()`（**秒，不是 0..1**）、`IsBurning()`、`AccessCookingTime`（总时长）、`AccessCookingType`（`Pot`/`FryingPan`/`DeepFatFryer`） | 上报里 `progress = GetCookingProgress()/AccessCookingTime`、`time_left = AccessCookingTime − GetCookingProgress()`；别用 `ServerCookingHandler` 的静态表，它只列有料的锅（G1） |
+| 台面/容器 | `ClientAttachStation.m_item`（台面上那个物体）、`ClientIngredientContainer.GetContents()`（容器里递归展开） | 有东西的普通台面报 `counter_<N>`，掉在地上的容器报 `container_<N>`，厨师手里的报 `carried_<厨师号>` |
+| 订单结果 | `ClientOrderControllerBase.OnFoodDelivered(bool, OrderID)` 与 `OnOrderExpired(OrderID)`（Harmony 后置补丁，`plugin/Link/OrderResults.cs`） | `order_results[]` 的 `outcome` = `delivered` / `expired` / `failed`；光看 `m_activeOrders` 分不清交付与过期（G9） |
 | 砧板/工位 | 客户端组件 `ClientWorkstation`、`ClientAttachStation`；**板上有没有料看 `ClientAttachStation.m_item`**（`workstation.m_item` 只在有厨师用时才非空）；切菜进度在 `ClientWorkableItem.m_progress`（整数阶段）/`m_subProgress`/`HasFinished()` | 名字不可靠（盘子堆挂在台面上时返回台面本身），判"面前是什么"要比**格子** |
-| 盘子 | `ClientCleanPlateStack`（`GetSize()`）、`ClientPlateStation`（交付口） | 上报里 `plate_stack.count` |
+| 盘子 | `ClientCleanPlateStack`（计数在基类 `ClientPlateStackBase.GetCount()`；`GetSize()` 不存在）、`ClientPlateStation`（交付口）；盘里是哪道菜用 `ClientPlate.GetOrderComposition()` | 上报里 `plate_stack.count` 与 `resources[].contents` |
 | 料箱给什么 | `ClientPickupItemSpawner.GetItemPrefab()` 的名字（如 `SushiFish`）；prefab 上挂的 `Choppable*`/`Cookable*` 组件决定它要不要切/煮（菜谱树里看不出来） | 导出到 `wellcooked-state.json` 的 `gives`/`prefab_components` |
 | 网格 | `GridManager.GetActive(0)` → `GetUnclampedGridLocationFromPos`/`GetPosFromGridLocation`/`GetGridOccupant`，格坐标类型 `GridIndex` | 游戏自己的网格是 **1.2 米**，台面摆在 0.6 米格上，粗一半表示不出中间的障碍 —— 所以可走格自己按 0.6 米采样（`WorldState`） |
 | 输入 | 逻辑层 `PlayerInputLookup.GetButton/GetValue`（`ILogicalButton`/`ILogicalValue`，按 `LogicalButtonID`：`PickupAndDrop`/`Dash`/`WorkstationInteract`）；设备层 InControl `InputDevice`（`AddControl` 注册控制项，`InputManager.AttachDevice` 挂上） | 前端"按 A 加入"只能走设备层；关卡内动作两层都能用 |
@@ -32,12 +34,14 @@
 
 - `BepInEx/wellcooked-state.json`：给人看与给 OS 侧导出用（`scripts/export-kitchen.py` 读它生成
   `config/kitchen.json` + `config/recipes.json`）。取不到的字段进 `missing` 数组，**不假装拿到了**。
-  同目录还有 `wellcooked-terrain.json`（可走格）与 `wellcooked-menu.json`（菜谱表，`menu=1` 导出）。
+  同目录还有 `wellcooked-terrain.json`（可走格，保留所有含厨师的连通块；没有厨师时按工位
+  锚点保留。采样等工位真正生成后才做，否则范围只覆盖厨师附近，远处的出菜口/水槽会被切在
+  网格外）与 `wellcooked-menu.json`（菜谱表，`menu=1` 导出）。
 - `state_update`（TCP，**默认每帧**；`wellcooked-takeover.txt` 里写 `state_ms=<毫秒>` 就按间隔限流）：
   字段名以 `protocol/protocol.md` 为准，构造在 `plugin/Link/StateFrame.cs`。协议的分帧硬上限是单行 1 MiB；
-  4 KB 是状态帧的**预算**（超过只在日志里警告一次，不截断也不丢弃 —— 见 `LinkRunner.MaxStateBytes`）。
-  协议里可选的字段取不到时**省略**（不是填 0）：`chefs[].state`、`orders[].ingredients`、
-  `resources[].chef_id` 这一轮没映射；锅/砧板读不到状态时只报编号。
+  `LinkRunner.MaxStateBytes` 的 **16 KB 是软预算**（递归 `contents[]` 满帧约 7–9 KB）：超了只在日志里
+  警告一次，仍然发送、对端不截断。协议里可选的字段取不到时**省略**（不是填 0）：
+  `chefs[].state`、`orders[].ingredients` 这一轮没映射；锅/砧板读不到状态时只报编号。
 
 ## 链路配置与重连（`wellcooked-takeover.txt`）
 
@@ -86,11 +90,11 @@ Bridge（`--link listen`）+ 替身 Worker（`kitchenos-worker-stub`，写共享
 
 ```
 # 桥侧：每帧把输入槽转成一条 action 下发，插件回 ack
-INFO  actions_sent frame=1542 chefs=2 sent=2 idle=1 move=1 interact=0 pickup=0 dash=0 timed_out=0
+INFO  actions_sent frame=1542 chefs=2 sent=2 idle=1 move=1 interact=0 pickup=0 dash=0 path=0 face=0 work=0 timed_out=0
 DEBUG plugin_ack chef=0 action=move ok=1 detail=ok
-INFO  actions_sent frame=444  chefs=2 sent=2 idle=1 move=0 interact=0 pickup=1 dash=0 timed_out=0
+INFO  actions_sent frame=444  chefs=2 sent=2 idle=1 move=0 interact=0 pickup=1 dash=0 path=0 face=0 work=0 timed_out=0
 DEBUG plugin_ack chef=0 action=pickup ok=1 detail=ok
-INFO  actions_sent frame=351  chefs=2 sent=2 idle=1 move=0 interact=0 pickup=0 dash=1 timed_out=0
+INFO  actions_sent frame=351  chefs=2 sent=2 idle=1 move=0 interact=0 pickup=0 dash=1 path=0 face=0 work=0 timed_out=0
 DEBUG plugin_ack chef=0 action=dash ok=1 detail=ok
 
 # 插件侧（游戏日志 BepInEx/LogOutput.log）
@@ -99,7 +103,17 @@ action: 厨师位 1 去 (11.4,-4.6)
 action: 移动中 厨师位 1 位置=(11.4,-1.7) 距目标=3.0 寻路=路点 1/3 剩余 3.0 路点坐标=(11.4,-2.3)
 action: 厨师位 1 按 pickup
 action: 厨师位 1 按 dash
+action: 厨师位 1 path seq=7 路点数=4
+action: 厨师位 1 path 到达终点 (12.0,6.0) seq=7，用时 1.8 秒
+ack: action=path chef=0 seq=7 ok=True detail=path 到达终点 (12.0,6.0) seq=7，用时 1.8 秒
+action: 厨师位 1 work 按住 cutting_board_0（直到下一条动作）
+action: 厨师位 1 work 松开（收到 stop）
 ```
+
+`path` completion measures the chef's actual world position against the final navd cell waypoint
+(≤ 0.3 m); turn-corner skipping remains ≤ 0.15 m. This is distinct from interaction geometry:
+the kitchen map's nearest reachable stand cell must be within 1.2 m of the station, and the path
+must not substitute the station center for that cell.
 
 `action: 厨师位 1` 里的"1"是**日志给人看的**编号（槽号 + 1）；协议与状态文件里是 0 基的 `chef_id`。
 
@@ -117,3 +131,4 @@ action: 厨师位 1 按 dash
 | `Navigation.cs` | 0.6 米格上的 A*、路点跟随、卡住处理 |
 | `VirtualPad.cs` / `LogicalInput.cs` | 设备层虚拟手柄 / 逻辑层注入 |
 | `Commands.cs` / `Diag.cs` / `Fallbacks.cs` | 调试指令通道 / 诊断开关 / 兜底集中处 |
+| `ManualLog.cs` | 手动局的观察记录（`manual_log=true`）：A/X 按下与松开、手持物与内容、砧板/锅/盘子/盘堆变化 |

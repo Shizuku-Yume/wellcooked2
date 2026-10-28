@@ -15,9 +15,21 @@
       "type": "number",
       "description": "游戏内已进行秒数。"
     },
+    "game_time_ms": {
+      "type": "integer",
+      "description": "游戏内已进行毫秒数（暂停时不走）；Linux 侧唯一的计时来源。"
+    },
     "score": {
       "type": "number",
       "description": "当前分数。"
+    },
+    "round_time_left": {
+      "type": "number",
+      "description": "本局剩余秒数（ServerRoundTimer.m_timeLeft）；读不到时省略。"
+    },
+    "round_time_limit": {
+      "type": "number",
+      "description": "本局时长上限（ServerRoundTimer.m_timeLimit）；读不到时省略。"
     },
     "chefs": {
       "type": "array",
@@ -35,16 +47,32 @@
           "position": {
             "type": "object",
             "required": ["x", "y"],
-            "properties": {
-              "x": { "type": "number" },
-              "y": { "type": "number" }
-            }
+            "properties": { "x": { "type": "number" }, "y": { "type": "number" } }
           },
           "holding": {
             "type": ["string", "null"],
             "description": "手上的东西；null 表示空手。"
           },
-          "state": {
+          "holding_contents": {
+            "type": "array",
+            "maxItems": 8,
+            "items": { "type": "string" },
+            "description": "手持物里递归展开的内容名（盘上是哪道菜、锅里是什么），编码见 $defs.contents；空手或读不到时省略。"
+          },
+          "facing": {
+            "type": "number",
+            "description": "朝向（弧度）。"
+          },
+          "facing_pos": {
+          "type": "object",
+          "required": ["x", "y"],
+          "description": "游戏自己选中的交互对象（InteractWithItemHelper.GetFacingGridOccupant）的世界坐标；宏只在它等于目标工位时才按 A。缺失 = 老插件，退回按厨师朝向判断。",
+          "properties": {
+            "x": { "type": "number" },
+            "y": { "type": "number" }
+          }
+        },
+        "state": {
             "type": "string",
             "description": "取自游戏，例如 moving / idle。"
           }
@@ -63,6 +91,10 @@
             "description": "例如 salad；玩家还没拿到订单时 StateReader 发 null。"
           },
           "time_remaining": { "type": "number" },
+          "score": {
+            "type": "integer",
+            "description": "游戏给这单的分（RecipeListEntry.m_scoreForMeal）；读不到时省略。"
+          },
           "ingredients": {
             "type": "array",
             "maxItems": 8,
@@ -71,27 +103,118 @@
         }
       }
     },
+    "order_results": {
+      "type": "array",
+      "maxItems": 32,
+      "description": "最近结束的订单（旧→新），插件每帧重发同一份环形快照；消费者按 seq 去重。",
+      "items": {
+        "type": "object",
+        "required": ["seq", "id", "outcome"],
+        "properties": {
+          "seq": {
+            "type": "integer",
+            "description": "插件进程内单调递增，重启后从 1 重来；比上一条小说明插件重启过。"
+          },
+          "id": { "type": "string", "description": "订单 id，与 orders[].id 同一套。" },
+          "recipe": { "type": ["string", "null"] },
+          "outcome": {
+            "enum": ["delivered", "expired", "failed"],
+            "description": "delivered = 送对菜并加分；expired = 超时消失；failed = 送错菜被拒。"
+          },
+          "score": {
+            "type": "integer",
+            "description": "这单的分；0 与没上报用『字段是否存在』区分。"
+          },
+          "game_time_ms": {
+            "type": "integer",
+            "description": "结果发生的游戏时刻。"
+          }
+        }
+      }
+    },
     "resources": {
       "type": "object",
-      "maxProperties": 48,
-      "description": "键是动态的：pot_N、cutting_board_N、plate_stack，以及将来新增的键。认不出的键必须原样保留，不能因此拒绝整条消息。",
+      "maxProperties": 96,
+      "description": "键是动态的：pot_N、cutting_board_N、plate_stack、dirty_plates、sink_N、counter_N、container_N、carried_N，以及将来新增的键。认不出的键必须原样保留，不能因此拒绝整条消息。",
       "additionalProperties": { "$ref": "#/$defs/resource" },
       "propertyNames": {
-        "description": "约定：pot_<N> / cutting_board_<N> / plate_stack。",
+        "description": "约定：pot_<N> / cutting_board_<N> / sink_<N> / counter_<N> / container_<N> / carried_<chef_id> / plate_stack / dirty_plates。",
         "pattern": "^[a-z][a-z0-9_]*$"
       }
     }
   },
   "$defs": {
+    "contents": {
+      "type": "array",
+      "maxItems": 8,
+      "items": { "type": "string" },
+      "description": "容器/盘子递归展开后的内容名，深度优先。叶子取 IngredientAssembledNode.m_ingriedientOrderNode.name；外面套了 CookedCompositeAssembledNode 的叶子写成 cooked:<name>；组合节点本身不单列。"
+    },
     "resource": {
       "type": "object",
-      "description": "一个工位的状态。五个字段都可缺；has_time_left / has_chef_id / has_count 让 Bridge 区分『0』与『没上报』。",
+      "description": "一个工位的状态。所有字段都可缺；has_time_left / has_chef_id / has_count / has_progress / has_cooked / has_burning / has_burn_in / has_fire 在 C 侧区分『0』与『没上报』。state 是汇总字符串（burning > cooked > cooking > free），烹饪事实以 cooked/burning 布尔为准。",
       "properties": {
-        "state": { "type": "string", "description": "free / occupied …" },
-        "content": { "type": ["string", "null"], "description": "锅里在煮什么。" },
-        "time_left": { "type": "number", "description": "剩余烹饪时间。" },
-        "chef_id": { "type": "integer", "description": "占用该工位的厨师。" },
-        "count": { "type": "integer", "minimum": 0, "description": "盘子数量（plate_stack）。" }
+        "kind": {
+          "type": "string",
+          "description": "cooker / board / plate_stack / dirty_plates / sink / counter / container / carried。有它时以它为准，键名前缀只是约定。"
+        },
+        "pos": {
+          "type": "object",
+          "required": ["x", "y"],
+          "description": "工位/物品的世界坐标（游戏 x/z 平面）；厨师手上的容器给厨师位置。",
+          "properties": { "x": { "type": "number" }, "y": { "type": "number" } }
+        },
+        "state": {
+          "type": "string",
+          "description": "free / empty / occupied / cooking / cooked / burning / washing / carried。"
+        },
+        "item": {
+          "type": ["string", "null"],
+          "description": "工位上那个物体 / 容器自己的名字，例如 utensil_pot_01、Tortilla、equipment_plate_01。"
+        },
+        "content": {
+          "type": ["string", "null"],
+          "description": "contents 的兼容拼串形式（\"a+b\"），超过 C 侧 32 字节会截断；新代码读 contents。"
+        },
+        "contents": { "$ref": "#/$defs/contents" },
+        "time_left": {
+          "type": "number",
+          "description": "灶台当前烹饪阶段还剩多少秒（熟之前 / 烧焦之前）；不适用时省略。"
+        },
+        "progress": {
+          "type": "number",
+          "description": "切菜/烹饪/洗盘进度（0..1）。"
+        },
+        "chef_id": {
+          "type": "integer",
+          "description": "占用/手持该资源的厨师；carried_<N> 上必填，其余未知时省略。"
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "计数类资源的数量（plate_stack / dirty_plates / sink 上的盘子）。"
+        },
+        "step": {
+          "type": "string",
+          "description": "灶台的烹饪类型，Pot / FryingPan / DeepFatFryer；非灶台或空灶台省略。"
+        },
+        "cooked": {
+          "type": "boolean",
+          "description": "熟过（游戏 IsCooked / 烹饪进度 >= 烹饪时长）。烧焦的锅仍然 cooked=true；与 burning 分开报。"
+        },
+        "burning": {
+          "type": "boolean",
+          "description": "已烧焦（游戏 IsBurning：烹饪进度 > 2 × 烹饪时长）。可与 cooked 同时为 true。"
+        },
+        "burn_in": {
+          "type": "number",
+          "minimum": 0,
+          "description": "距烧焦还有多少秒（只在 cooked && !burning 时给）；熟到烧焦的窗口里倒锅用它。"
+        },
+        "fire": {
+          "type": "boolean",
+          "description": "这个工位/物体正在着火（ClientFlammable.OnFire）。火会蔓延；为 true 时调度侧应先灭火或放弃该工位。"
+        }
       }
     }
   }

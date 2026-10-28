@@ -159,6 +159,32 @@ static int64_t real_ms(void)
     return (int64_t)ts.tv_sec * 1000 + (int64_t)(ts.tv_nsec / 1000000L);
 }
 
+int kos_instance_suffix(int instance, char *buf, size_t len)
+{
+    if (buf == NULL || len == 0)
+        return KOS_ERR_INVAL;
+    if (instance < 0) {
+        buf[0] = '\0';
+        return KOS_OK;
+    }
+    if (snprintf(buf, len, "_%d", instance) >= (int)len)
+        return KOS_ERR_RANGE;
+    return KOS_OK;
+}
+
+int kos_name_instance(const char *base, int instance, char *buf, size_t len)
+{
+    if (base == NULL || buf == NULL || len == 0)
+        return KOS_ERR_INVAL;
+    if (instance < 0) {
+        copy_str(buf, len, base);
+        return KOS_OK;
+    }
+    if (snprintf(buf, len, "%s_%d", base, instance) >= (int)len)
+        return KOS_ERR_RANGE;
+    return KOS_OK;
+}
+
 /* sem_timedwait 只认 CLOCK_REALTIME 的绝对时刻，所以每次等待都要从"现在"换算。 */
 static void realtime_after(int timeout_ms, struct timespec *abs)
 {
@@ -425,7 +451,14 @@ int kos_shm_slot_publish(kos_shm *shm, uint32_t slot, const kos_input_action *ac
 
     if (!s || !action)
         return (action == NULL) ? KOS_ERR_INVAL : KOS_ERR_RANGE;
-    if (action->kind < (int32_t)KOS_ACTION_NONE || action->kind > (int32_t)KOS_ACTION_DASH)
+    if (action->kind < (int32_t)KOS_ACTION_NONE || action->kind > (int32_t)KOS_ACTION_WORK)
+        return KOS_ERR_INVAL;
+    /* The payload crosses a process boundary. A target name without a NUL can
+     * make the Bridge's strlen read past kos_input_action, so reject it here
+     * (and check it once more on the read side). */
+    if (memchr(action->target_object, '\0', sizeof action->target_object) == NULL)
+        return KOS_ERR_INVAL;
+    if (action->waypoint_count > KOS_MAX_WAYPOINTS)
         return KOS_ERR_INVAL;
 
     publish = seqlock_begin(&s->seq);
@@ -1149,7 +1182,7 @@ int kos_shm_unlink(const kos_shm_opts *opts, kos_error *err)
 
 /* ================================================================ 杂项 */
 
-static const char *const action_names[] = {"none", "move", "stop", "interact", "pickup", "dash"};
+static const char *const action_names[] = {"none", "move", "stop", "interact", "pickup", "dash", "path", "face", "work"};
 
 #define KOS_ACTION_NAME_COUNT ((int)(sizeof action_names / sizeof action_names[0]))
 

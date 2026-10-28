@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Text;
 using BepInEx.Logging;
 using HarmonyLib;
@@ -39,14 +40,41 @@ namespace WellCooked
         private static float _nextFrontendPress;
         private static bool _frontendHeld;
 
-        /// <summary>`work=auto` 时不再随便挑工位，改由工序状态机（`WorkOrder`）决定去哪、按不按交互。</summary>
-        private static bool _workMode;
+        /// <summary>`work=auto`：系统控制。只执行 Bridge 下发的动作，本地工序替身与来回走都不跑。</summary>
+        private static bool _workAuto;
+        /// <summary>`work=local`：旧的插件内工序状态机（`WorkOrder`），只用于没有 Bridge 的演示。</summary>
+        private static bool _workLocal;
+
+        // 多实例小窗口：配置 `window=640x360` 与 `window_pos=x,y`。注册表里存着全屏，
+        // 命令行参数又盖不过它，所以分辨率必须在游戏进程内用 Screen.SetResolution 改。
+        private static int _windowWidth;
+        private static int _windowHeight;
+        private static int _windowX = int.MinValue;
+        private static int _windowY;
+        private static bool _windowAppliedLogged;
+        private static bool _windowMismatchLogged;
+        private static bool _windowPositionFailed;
+        private static float _windowWarnAt;
+        private static float _nextWindowAttempt;
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetActiveWindow();
+
+        [DllImport("user32.dll")]
+        private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int x,
+                                                int y, int cx, int cy, uint flags);
         private static int _arrivals;
         private static int _retargets;
 
         private static readonly List<int> Slots = new List<int> { 0, 1 };
         private static readonly List<PlayerInputLookup.Player> LogicalPlayers = new List<PlayerInputLookup.Player>();
         private static bool _frontendPress;
+
+        /// <summary>`slots=none`：不占位、不注入。手动局（任务 09 P0 第 1 步）用它把输入全部交给本地设备。</summary>
+        public static bool OccupiesNoSlots
+        {
+            get { return Slots.Count == 0; }
+        }
 
         private sealed class Owned
         {
@@ -96,6 +124,22 @@ namespace WellCooked
                     var value = trimmed.Substring(equals + 1).Trim();
                     if (key == "slots")
                     {
+                        if (value == "none" || value == "off" || value == "0")
+                        {
+                            // 手动局（任务 09 P0 第 1 步）：一个位都不占，厨师全交给本地输入。
+                            // 已经挂上的虚拟手柄没法在运行中解绑，所以改这一项要重开游戏。
+                            if (Slots.Count > 0)
+                            {
+                                Slots.Clear();
+                                _log.LogInfo("takeover: 占位改成 none（不占位，全部玩家位交给本地输入）");
+                                if (OwnedPads.Count > 0 || PendingPads.Count > 0)
+                                {
+                                    _log.LogWarning("takeover: 已有虚拟手柄不会在运行中释放，重开游戏后才完全不占位");
+                                }
+                            }
+                            continue;
+                        }
+
                         var parsed = new List<int>();
                         foreach (var part in value.Split(','))
                         {
@@ -117,7 +161,16 @@ namespace WellCooked
                     }
                     else if (key == "work")
                     {
-                        _workMode = value == "auto";
+                        bool auto = value == "auto";
+                        bool local = value == "local";
+                        if (auto != _workAuto || local != _workLocal)
+                        {
+                            _workAuto = auto;
+                            _workLocal = local;
+                            _log.LogInfo("takeover: 工作模式 " + (value.Length == 0 ? "off" : value)
+                                         + (_workAuto ? "（系统控制：只执行 Bridge 动作）"
+                                                      : _workLocal ? "（插件内工序替身）" : "（最小走位策略）"));
+                        }
                     }
                     else if (key == "diag" || key == "trace")
                     {
@@ -129,6 +182,17 @@ namespace WellCooked
                             _log.LogInfo("takeover: 诊断输出 " + (on ? "开" : "关"));
                         }
                     }
+                    else if (key == "manual_log")
+                    {
+                        // 人手动打一局时的观察记录（任务 09 P0 第 1 步）：按 A/X、手持物、工位内容。
+                        // 与 diag 分开：diag 是每帧过程行，手动局只要这几类结果行。
+                        bool on = value == "true" || value == "1" || value == "yes";
+                        if (on != ManualLog.Enabled)
+                        {
+                            ManualLog.Set(on);
+                            _log.LogInfo("takeover: 手动记录 " + (on ? "开" : "关"));
+                        }
+                    }
                     else if (key == "frontend_press")
                     {
                         bool press = value == "true" || value == "1" || value == "yes";
@@ -138,7 +202,17 @@ namespace WellCooked
                             _log.LogInfo("takeover: 前端按键 " + (press ? "开" : "关"));
                         }
                     }
+                    else if (key == "window")
+                    {
+                        ParseWindow(value);
+                    }
+                    else if (key == "window_pos")
+                    {
+                        ParseWindowPosition(value);
+                    }
                 }
+
+                ApplyWindow();
             }
             catch (Exception e)
             {
@@ -146,9 +220,147 @@ namespace WellCooked
             }
         }
 
+        /// <summary>`window=640x360`；`window=full`/`off` 表示不改分辨率。</summary>
+        private static void ParseWindow(string value)
+        {
+            if (value == "full" || value == "off" || value == "0")
+            {
+                _windowWidth = 0;
+                _windowHeight = 0;
+                _windowAppliedLogged = false;
+                _windowMismatchLogged = false;
+                _windowWarnAt = 0f;
+                return;
+            }
+
+            int at = value.IndexOf('x');
+            int width;
+            int height;
+            if (at > 0
+                && int.TryParse(value.Substring(0, at), out width)
+                && int.TryParse(value.Substring(at + 1), out height)
+                && width >= 320 && height >= 180)
+            {
+                _windowWidth = width;
+                _windowHeight = height;
+                _windowAppliedLogged = false;
+                _windowMismatchLogged = false;
+                _windowWarnAt = 0f;
+            }
+        }
+
+        private static void ParseWindowPosition(string value)
+        {
+            int comma = value.IndexOf(',');
+            int x;
+            int y;
+            if (comma > 0
+                && int.TryParse(value.Substring(0, comma), out x)
+                && int.TryParse(value.Substring(comma + 1), out y))
+            {
+                _windowX = x;
+                _windowY = y;
+                _windowPositionFailed = false;
+            }
+        }
+
+        /// <summary>
+        /// 每 5 秒的配置读取之后调一次。游戏切场景或恢复全屏时可能把窗口改回去，
+        /// 所以尺寸不符就再设一次；位置只试一次，失败也不刷屏。
+        /// </summary>
+        private static void ApplyWindow()
+        {
+            if (_windowWidth <= 0 || _windowHeight <= 0)
+            {
+                return;
+            }
+
+            float now = Time.realtimeSinceStartup;
+            float positionDueAt = _nextWindowAttempt;
+            if (Screen.width != _windowWidth || Screen.height != _windowHeight || Screen.fullScreen)
+            {
+                try
+                {
+                    Screen.SetResolution(_windowWidth, _windowHeight, false);
+                }
+                catch (Exception e)
+                {
+                    if (!_windowMismatchLogged)
+                    {
+                        _windowMismatchLogged = true;
+                        _log.LogWarning("takeover: Screen.SetResolution(" + _windowWidth + "x"
+                                        + _windowHeight + ") 失败: " + e.Message);
+                    }
+                    return;
+                }
+            }
+
+            if (Screen.width == _windowWidth && Screen.height == _windowHeight)
+            {
+                _windowWarnAt = 0f;
+                if (!_windowAppliedLogged)
+                {
+                    _windowAppliedLogged = true;
+                    _log.LogInfo("takeover: 窗口 = " + Screen.width + "x" + Screen.height
+                                 + "（全屏=" + Screen.fullScreen + "）");
+                }
+            }
+            else if (!_windowMismatchLogged)
+            {
+                // 第一次请求后给游戏 10 秒；一直没生效才留一条证据，方便回到
+                // "改前缀注册表"的兜底方案，也不让每 5 秒刷一行。
+                if (_windowWarnAt <= 0f)
+                {
+                    _windowWarnAt = now + 10f;
+                }
+                else if (now >= _windowWarnAt)
+                {
+                    _windowMismatchLogged = true;
+                    _log.LogWarning("takeover: 请求窗口 " + _windowWidth + "x" + _windowHeight
+                                    + "，当前仍为 " + Screen.width + "x" + Screen.height
+                                    + "（可能被注册表的全屏记录盖住）");
+                }
+            }
+            _nextWindowAttempt = now + 5f;
+
+            if (_windowX == int.MinValue || _windowPositionFailed || now < positionDueAt)
+            {
+                return;
+            }
+            try
+            {
+                IntPtr hwnd = GetActiveWindow();
+                if (hwnd == IntPtr.Zero)
+                {
+                    _windowPositionFailed = true;
+                    _log.LogWarning("takeover: 拿不到游戏窗口句柄，window_pos 忽略");
+                    return;
+                }
+                const uint SWP_NOSIZE = 0x0001;
+                const uint SWP_NOZORDER = 0x0004;
+                const uint SWP_NOACTIVATE = 0x0010;
+                if (!SetWindowPos(hwnd, IntPtr.Zero, _windowX, _windowY, 0, 0,
+                                  SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE))
+                {
+                    _windowPositionFailed = true;
+                    _log.LogWarning("takeover: SetWindowPos(" + _windowX + "," + _windowY + ") 失败");
+                }
+                else
+                {
+                    _log.LogInfo("takeover: 窗口位置 = " + _windowX + "," + _windowY);
+                }
+            }
+            catch (Exception e)
+            {
+                _windowPositionFailed = true;
+                _log.LogWarning("takeover: window_pos 失败: " + e.Message);
+            }
+        }
+
         public static void Install(ManualLogSource log)
         {
             _log = log;
+            ReadConfig();
 
             var update = AccessTools.Method(typeof(PlayerInputLookup), "Update", Type.EmptyTypes);
             if (update == null)
@@ -160,7 +372,8 @@ namespace WellCooked
             var postfix = new HarmonyMethod(typeof(Takeover).GetMethod(
                 nameof(Tick), BindingFlags.Static | BindingFlags.NonPublic));
             new Harmony("wellcooked.takeover").Patch(update, postfix: postfix);
-            _log.LogInfo("takeover: 每帧检查已挂上，占位 " + string.Join(",", Slots.ConvertAll(x => (x + 1).ToString()).ToArray()));
+            _log.LogInfo("takeover: 每帧检查已挂上，占位 "
+                         + (Slots.Count == 0 ? "none" : string.Join(",", Slots.ConvertAll(x => (x + 1).ToString()).ToArray())));
         }
 
         private static void Tick()
@@ -169,6 +382,7 @@ namespace WellCooked
             Commands.Tick();
             WorldState.Tick(now);
             LinkRunner.Tick(now);
+            ManualLog.Tick(now);
 
             // 驱动必须**每帧**给方向：原来整个 Step 被 0.5 秒的检查间隔卡住，
             // 一秒只决策 2 次，而路点间隔 0.6 米、厨师一秒能走 3 米——一帧就冲过路点，
@@ -211,6 +425,8 @@ namespace WellCooked
 
             ReadConfig();
 
+            // A pulse only targets pads that have not yet joined. Once the game accepts a pad,
+            // release its A button and leave it alone so the same pulse cannot join another slot.
             // 设备一直挂；但**前端里不抢着占位**：游戏的"按 A 加入"靠 GetEngagementPad
             // 找一个还没占位、刚按下的 pad（反编译证据 StartScreenFlow.CheckForEngagement），
             // 我们提前占满会让标题画面永远等不到，卡死在那儿。
@@ -254,18 +470,17 @@ namespace WellCooked
             _nextFrontendPress = now + 2f;
             _frontendHeld = !_frontendHeld;
             int count = 0;
-            foreach (var owned in OwnedPads)
-            {
-                owned.Pad.Want(_frontendHeld, false, Vector2.zero);
-                count++;
-            }
 
             foreach (var pad in PendingPads)
             {
                 pad.Want(_frontendHeld, false, Vector2.zero);
                 count++;
             }
-
+            foreach (var owned in OwnedPads)
+            {
+                owned.Pad.Want(false, false, Vector2.zero);
+                count++;
+            }
             _log.LogInfo("takeover: 前端 A " + (_frontendHeld ? "按下" : "松开") + "（" + count + " 个手柄）");
         }
 
@@ -299,7 +514,7 @@ namespace WellCooked
         {
             foreach (var owned in OwnedPads)
             {
-                if (owned.Slot == slot)
+                if (owned.Pad.Slot == slot)
                 {
                     return true;
                 }
@@ -346,6 +561,7 @@ namespace WellCooked
                 // 游戏自己已经把这只手柄加入了（pad 号即玩家位号）
                 if (manager.GetUser((EngagementSlot)padNumber) != null)
                 {
+                    pad.Want(false, false, Vector2.zero);
                     OwnedPads.Add(new Owned
                     {
                         Slot = padNumber,
@@ -354,7 +570,8 @@ namespace WellCooked
                         ChefName = SlotName(padNumber)
                     });
                     PendingPads.RemoveAt(i);
-                    _log.LogInfo("takeover: 游戏已自己加入 pad " + padNumber + " → 玩家位 " + (padNumber + 1));
+                    _log.LogInfo("takeover: 游戏已自己加入 pad " + padNumber + " → 配置玩家位 " +
+                                 (pad.Slot + 1) + "（实际玩家位 " + (padNumber + 1) + "）");
                     continue;
                 }
 
@@ -661,11 +878,20 @@ namespace WellCooked
         /// </summary>
         private static void Drive(float now)
         {
+            if (!StateFrame.RoundRunning())
+            {
+                return;
+            }
             float elapsed = now - _drivingSince;
             bool action = elapsed % ActionPeriod < ActionLength;
             ScanChefPositions(now);
 
-            if (_workMode)
+            if (_workAuto)
+            {
+                DriveSystem(now);
+                return;
+            }
+            if (_workLocal)
             {
                 DriveWorkOrder(now);
                 return;
@@ -772,8 +998,41 @@ namespace WellCooked
         }
 
         /// <summary>
-        /// 工序模式：目标与交互都听 `WorkOrder` 的（任务 09）。走位仍然交给 `Navigation`。
-        /// 这里不做任何"该做什么"的判断，只把状态机的决定喂成输入。
+        /// 系统控制：所有输入只来自 Bridge 下发的动作。没收到过动作的玩家位保持原地不动，
+        /// 不用本地工序状态机或最小走位策略补位（任务 09：替身逻辑在 `work=auto` 下关闭）。
+        /// </summary>
+        private static void DriveSystem(float now)
+        {
+            foreach (var owned in OwnedPads)
+            {
+                Vector2 position;
+                if (!TryPosition(owned.Slot, out position))
+                {
+                    continue;
+                }
+
+                if (ActionDriver.Drive(owned.Slot, owned.Pad, position, now))
+                {
+                    continue;
+                }
+
+                // 只归零设备层。不能给自有玩家位写逻辑层：SetButtons 会把逻辑层置成 Active，
+                // 之后一直盖住设备层的轴，ActionDriver.Feed 只写设备层的 path 就全被归零
+                // （2026-10-26 `_3` 四人实机：4 人整局停在出生格）。
+                owned.Pad.Want(false, false, Vector2.zero);
+            }
+
+            if (now >= _nextDriveLog)
+            {
+                _nextDriveLog = now + 2f;
+                Diag.Trace("takeover: 系统控制中 玩家位=" + OwnedPads.Count
+                           + " 已接管=" + ActionDriver.OwnedCount);
+            }
+        }
+
+        /// <summary>
+        /// 工序模式：目标与交互都听 `WorkOrder` 的（`work=local`，只用于无 Bridge 的演示）。
+        /// 走位仍然交给 `Navigation`。这里不做任何"该做什么"的判断，只把状态机的决定喂成输入。
         /// </summary>
         private static void DriveWorkOrder(float now)
         {
@@ -1010,6 +1269,11 @@ namespace WellCooked
             player = provider.GetID();
             return true;
         }
+        public static bool TryChefOf(int slot, out PlayerControls chef)
+        {
+            return ChefControllers.TryGetValue(slot, out chef) && chef != null;
+        }
+
 
         private static bool TryPosition(int playerIndex, out Vector2 position)
         {

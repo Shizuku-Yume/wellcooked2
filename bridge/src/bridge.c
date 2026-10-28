@@ -6,8 +6,8 @@
  * state the plugin reports into /kitchenos_state, turns every state_update into
  * one frame, waits (with an upper bound) for the N Chef Workers to publish their
  * input slots, aggregates those slots into `action` messages and sends them
- * back. Choosing who cooks what is the Scheduler's job; planning a path is a
- * Worker's job.
+ * back. Choosing who cooks what is the Scheduler's job; planning a path is navd's
+ * job (the Workers only publish target slots and follow released waypoints).
  *
  * Two invariants shape the whole file:
  *
@@ -51,6 +51,7 @@
 #include <kitchenos/net.h>
 #include <kitchenos/protocol.h>
 #include <kitchenos/shm.h>
+#include <kitchenos/state.h>
 
 /* ============================================================== 常量 */
 
@@ -108,6 +109,10 @@ typedef struct {
     int input_grace_ms; /* 槽多久没新版本才算"这一格缺席"（默认见 DEFAULT_INPUT_GRACE_MS） */
     int heartbeat_timeout_ms; /* 0 disables the plugin liveness check */
     int heartbeat_interval_ms;
+    /* The Supervisor's heartbeat pipe (spec: os-core W4). 0 = standalone run. */
+    int supervisor_fd;
+    int supervisor_heartbeat_ms;
+    int64_t last_supervisor_beat_ms;
     long max_frames; /* > 0: exit 0 after this many dispatched frames */
     int verbose;
 
@@ -161,60 +166,6 @@ static int64_t now_ms(void)
         return 0;
     }
     return (int64_t)ts.tv_sec * 1000 + (int64_t)(ts.tv_nsec / 1000000L);
-}
-
-/* Bounded string copy that always NUL-terminates. The shm layout uses fixed
- * char arrays, and a frame from the game may carry arbitrarily long strings, so
- * truncation here is normal and must not be a buffer overrun. */
-static void copy_str(char *dst, size_t cap, const char *src)
-{
-    size_t i = 0;
-
-    if (cap == 0) {
-        return;
-    }
-    if (src != NULL) {
-        while (i + 1 < cap && src[i] != '\0') {
-            dst[i] = src[i];
-            i++;
-        }
-    }
-    dst[i] = '\0';
-}
-
-static int double_is_finite(double v)
-{
-    /* Deliberately not isfinite(): that is a macro from math.h and pulls the
-     * -lm question into a program that otherwise needs no math library. */
-    return v == v && v <= 1.0e308 && v >= -1.0e308;
-}
-
-static int64_t double_to_ll(double v)
-{
-    if (!double_is_finite(v)) {
-        return 0;
-    }
-    if (v >= 9.0e18) {
-        return INT64_MAX;
-    }
-    if (v <= -9.0e18) {
-        return INT64_MIN;
-    }
-    return (int64_t)(v < 0 ? v - 0.5 : v + 0.5);
-}
-
-static float double_to_float(double v)
-{
-    if (!double_is_finite(v)) {
-        return 0.0f;
-    }
-    if (v >= 3.0e38) {
-        return 3.0e38f;
-    }
-    if (v <= -3.0e38) {
-        return -3.0e38f;
-    }
-    return (float)v;
 }
 
 static const char *net_error_text(const bridge *b)
@@ -290,6 +241,7 @@ static void print_usage(FILE *out)
             "                        [--chefs N] [--state-name NAME] [--sem-name NAME]\n"
             "                        [--log FILE] [--frame-timeout-ms M]\n"
             "                        [--heartbeat-timeout-ms M] [--heartbeat-interval-ms M]\n"
+            "                        [--supervisor-fd N] [--supervisor-heartbeat-ms M]\n"
             "                        [--max-frames N] [--verbose] [--help] [--version]\n");
 }
 
@@ -323,6 +275,9 @@ static void print_help(void)
            "                          插件失联，暂停下发).\n"
            "  --heartbeat-interval-ms M  send a heartbeat every M ms, 0 disables\n"
            "                          (default %d).\n"
+           "  --supervisor-fd N       write one byte to the Supervisor's heartbeat pipe\n"
+           "                          every --supervisor-heartbeat-ms (default: none).\n"
+           "  --supervisor-heartbeat-ms M  Supervisor heartbeat interval (default 0).\n"
            "  --max-frames N          exit 0 after N dispatched frames (deterministic\n"
            "                          runs); 0 = run until signalled (default).\n"
            "  --verbose               log DEBUG events (per-frame state_update, acks).\n"
@@ -386,6 +341,8 @@ static int parse_args(int argc, char **argv, bridge *b)
     b->input_grace_ms = DEFAULT_INPUT_GRACE_MS;
     b->heartbeat_timeout_ms = DEFAULT_HEARTBEAT_TIMEOUT_MS;
     b->heartbeat_interval_ms = DEFAULT_HEARTBEAT_INTERVAL_MS;
+    b->supervisor_fd = -1;
+    b->supervisor_heartbeat_ms = 0;
     b->max_frames = 0;
     b->verbose = 0;
 
@@ -498,6 +455,18 @@ static int parse_args(int argc, char **argv, bridge *b)
                 return ARG_ERR;
             }
             b->heartbeat_interval_ms = (int)number;
+        } else if (strcmp(name, "--supervisor-fd") == 0) {
+            const char *v = take_value(value, argc, argv, &i);
+            if (parse_long(v, 0, 65535, &number) != 0) {
+                return ARG_ERR;
+            }
+            b->supervisor_fd = (int)number;
+        } else if (strcmp(name, "--supervisor-heartbeat-ms") == 0) {
+            const char *v = take_value(value, argc, argv, &i);
+            if (parse_long(v, 0, 3600000, &number) != 0) {
+                return ARG_ERR;
+            }
+            b->supervisor_heartbeat_ms = (int)number;
         } else if (strcmp(name, "--max-frames") == 0) {
             const char *v = take_value(value, argc, argv, &i);
             if (parse_long(v, 0, 1000000000L, &number) != 0) {
@@ -525,77 +494,14 @@ static int parse_args(int argc, char **argv, bridge *b)
  * caps differ on purpose: the protocol tolerates whatever the game sends, the
  * shared layout is fixed. Everything past the layout's cap is dropped, and the
  * counts are what readers use, so a truncated snapshot stays self-consistent.
+ *
+ * The mapping itself lives in state.c so tests can link it without this
+ * daemon's main().
  */
-static void world_from_state_update(const proto_state_update *up, kos_world_state *world)
+static void world_from_state_update(const proto_state_update *up, kos_world_state *world,
+                                    kos_log *log)
 {
-    size_t chefs;
-    size_t orders;
-    size_t resources;
-    size_t i;
-    size_t k;
-
-    kos_world_state_reset(world);
-    world->score = double_to_ll(up->score);
-    world->game_time = double_to_ll(up->game_time);
-
-    chefs = up->chef_count;
-    if (chefs > KOS_SHM_MAX_CHEFS) {
-        chefs = KOS_SHM_MAX_CHEFS;
-    }
-    world->chef_count = (uint32_t)chefs;
-    for (i = 0; i < chefs; i++) {
-        const proto_chef *src = &up->chefs[i];
-        kos_chef *dst = &world->chefs[i];
-
-        dst->id = (int32_t)src->id;
-        dst->x = double_to_float(src->x);
-        dst->y = double_to_float(src->y);
-        copy_str(dst->holding, sizeof dst->holding, src->holding);
-        copy_str(dst->state, sizeof dst->state, src->state);
-    }
-
-    orders = up->order_count;
-    if (orders > KOS_SHM_MAX_ORDERS) {
-        orders = KOS_SHM_MAX_ORDERS;
-    }
-    world->order_count = (uint32_t)orders;
-    for (i = 0; i < orders; i++) {
-        const proto_order *src = &up->orders[i];
-        kos_order *dst = &world->orders[i];
-
-        copy_str(dst->id, sizeof dst->id, src->id);
-        copy_str(dst->recipe, sizeof dst->recipe, src->recipe);
-        dst->time_remaining = (int32_t)double_to_ll(src->time_remaining);
-        k = src->ingredient_count;
-        if (k > KOS_SHM_MAX_ORDER_INGREDIENTS) {
-            k = KOS_SHM_MAX_ORDER_INGREDIENTS;
-        }
-        dst->ingredient_count = (int32_t)k;
-        for (size_t j = 0; j < k; j++) {
-            copy_str(dst->ingredients[j], sizeof dst->ingredients[j], src->ingredients[j]);
-        }
-    }
-
-    /* resources are keyed by name on the wire (pot_0, cutting_board_1,
-     * plate_stack, and whatever the game grows later); the layout keeps the key
-     * verbatim in `name` and classifies by prefix only, so an unknown key is
-     * carried through instead of rejected. */
-    resources = up->resource_count;
-    if (resources > KOS_SHM_MAX_RESOURCES) {
-        resources = KOS_SHM_MAX_RESOURCES;
-    }
-    world->resource_count = (uint32_t)resources;
-    for (i = 0; i < resources; i++) {
-        const proto_resource *src = &up->resources[i];
-        kos_resource *dst = &world->resources[i];
-
-        copy_str(dst->name, sizeof dst->name, src->key);
-        copy_str(dst->state, sizeof dst->state, src->state);
-        copy_str(dst->content, sizeof dst->content, src->content);
-        dst->time_left = src->has_time_left ? double_to_float(src->time_left) : 0.0f;
-        dst->chef_id = src->has_chef_id ? (int32_t)src->chef_id : -1;
-        dst->count = src->has_count ? (int32_t)src->count : 0;
-    }
+    kos_state_from_update_logged(up, world, log);
 }
 
 /* ======================================================== 帧屏障 */
@@ -692,9 +598,14 @@ static void format_chef_list(uint64_t mask, int chefs, char *out, size_t cap)
 static int build_action_from_slot(int chef, const kos_input_action *action,
                                   char *out, size_t cap, size_t *len)
 {
+    /* A corrupt slot may omit the terminator; `strlen` on it would read past the
+     * payload and leak/crash. Treat that like an unusable action. */
+    if (memchr(action->target_object, '\0', sizeof action->target_object) == NULL)
+        return PROTO_ERR_RANGE;
+
     switch (action->kind) {
     case KOS_ACTION_MOVE:
-        if (!double_is_finite(action->target_x) || !double_is_finite(action->target_y)) {
+        if (!kos_state_double_is_finite(action->target_x) || !kos_state_double_is_finite(action->target_y)) {
             return PROTO_ERR_RANGE; /* no usable target: fall back to idle */
         }
         return protocol_build_action_move(chef, action->target_x, action->target_y,
@@ -703,11 +614,53 @@ static int build_action_from_slot(int chef, const kos_input_action *action,
         if (action->target_object[0] == '\0') {
             return PROTO_ERR_MISSING; /* interact with nothing is not a message */
         }
-        return protocol_build_action_interact(chef, action->target_object, out, cap, len);
+        {
+            int has_target = kos_state_double_is_finite(action->target_x)
+                             && kos_state_double_is_finite(action->target_y);
+            return protocol_build_action_interact(chef, action->target_object, has_target,
+                                                  action->target_x, action->target_y,
+                                                  out, cap, len);
+        }
     case KOS_ACTION_PICKUP:
         return protocol_build_action_pickup(chef, out, cap, len);
     case KOS_ACTION_DASH:
         return protocol_build_action_dash(chef, out, cap, len);
+    case KOS_ACTION_PATH: {
+        proto_waypoint wps[PROTO_MAX_WAYPOINTS];
+        size_t count = action->waypoint_count;
+        if (count == 0 || count > PROTO_MAX_WAYPOINTS) {
+            return PROTO_ERR_RANGE;
+        }
+        for (size_t w = 0; w < count; w++) {
+            if (!kos_state_double_is_finite(action->waypoints[w].x)
+                || !kos_state_double_is_finite(action->waypoints[w].y)) {
+                return PROTO_ERR_RANGE;
+            }
+            wps[w].x = action->waypoints[w].x;
+            wps[w].y = action->waypoints[w].y;
+        }
+        return protocol_build_action_path(chef, (long long)action->seq, wps, count, out, cap, len);
+    }
+    case KOS_ACTION_FACE: {
+        /* target_object 优先：Worker 只能用一个空串表示"没有具名目标"，
+         * 坐标 0,0 是个合法位置，不能拿它当"没给坐标"。 */
+        int has_target = 0;
+        if (action->target_object[0] == '\0'
+            && kos_state_double_is_finite(action->target_x) && kos_state_double_is_finite(action->target_y)) {
+            has_target = 1;
+        }
+        if (!has_target && action->target_object[0] == '\0') {
+            return PROTO_ERR_MISSING;
+        }
+        return protocol_build_action_face(chef, has_target, action->target_x, action->target_y,
+                                          action->target_object, out, cap, len);
+    }
+    case KOS_ACTION_WORK: {
+        if (action->target_object[0] == '\0') {
+            return PROTO_ERR_MISSING;
+        }
+        return protocol_build_action_work(chef, action->target_object, out, cap, len);
+    }
     case KOS_ACTION_STOP:
     case KOS_ACTION_NONE:
         return PROTO_ERR_TYPE; /* the idle path: the caller sends `stop` itself */
@@ -731,6 +684,9 @@ static void dispatch_pending(bridge *b, uint64_t missing, int timed_out)
     int interacted = 0;
     int picked_up = 0;
     int dashed = 0;
+    int pathed = 0;
+    int faced = 0;
+    int worked = 0;
     int idle = 0;
     int sent = 0;
     int k;
@@ -783,6 +739,12 @@ static void dispatch_pending(bridge *b, uint64_t missing, int timed_out)
                 picked_up++;
             } else if (action.kind == KOS_ACTION_DASH) {
                 dashed++;
+            } else if (action.kind == KOS_ACTION_PATH) {
+                pathed++;
+            } else if (action.kind == KOS_ACTION_FACE) {
+                faced++;
+            } else if (action.kind == KOS_ACTION_WORK) {
+                worked++;
             }
         }
         if (built != PROTO_OK) {
@@ -809,9 +771,9 @@ static void dispatch_pending(bridge *b, uint64_t missing, int timed_out)
     }
     kos_log_info(b->log, "actions_sent",
                  "frame=%" PRIu64 " chefs=%d sent=%d idle=%d move=%d interact=%d "
-                 "pickup=%d dash=%d timed_out=%d",
+                 "pickup=%d dash=%d path=%d face=%d work=%d timed_out=%d",
                  b->pending_frame, b->chefs, sent, idle, moved, interacted, picked_up, dashed,
-                 timed_out);
+                 pathed, faced, worked, timed_out);
 
     b->pending = 0;
     b->frames_dispatched++;
@@ -882,7 +844,7 @@ static void on_state_update(bridge *b, const proto_state_update *up, const proto
     kos_world_state world;
     int64_t now;
 
-    world_from_state_update(up, &world);
+    world_from_state_update(up, &world, b->log);
     if (kos_shm_world_write(b->shm, &world) != KOS_OK) {
         kos_log_warn(b->log, "frame_error", "stage=shm_world_write frame=%" PRId64
                                             " state=%s",
@@ -907,9 +869,11 @@ static void on_state_update(bridge *b, const proto_state_update *up, const proto
 
     kos_log_debug(b->log, "state_update",
                   "frame=%" PRId64 " chefs=%zu orders=%zu resources=%zu score=%" PRId64
-                  " game_time=%" PRId64 " dropped=%zu truncated=%zu pending=%d",
+                  " game_time=%" PRId64 " game_time_ms=%" PRId64
+                  " dropped=%zu truncated=%zu pending=%d",
                   b->frames, up->chef_count, up->order_count, up->resource_count,
-                  double_to_ll(up->score), double_to_ll(up->game_time),
+                  kos_state_double_to_ll(up->score), kos_state_double_to_ll(up->game_time),
+                  (int64_t)up->game_time_ms,
                   diag != NULL ? diag->dropped_items : 0,
                   diag != NULL ? diag->truncated_strings : 0, b->pending);
 
@@ -918,7 +882,7 @@ static void on_state_update(bridge *b, const proto_state_update *up, const proto
                      "frames=%" PRId64 " chefs=%zu orders=%zu score=%" PRId64
                      " game_time=%" PRId64 " paused=%d",
                      b->frames, up->chef_count, up->order_count,
-                     double_to_ll(up->score), double_to_ll(up->game_time), b->paused);
+                     kos_state_double_to_ll(up->score), kos_state_double_to_ll(up->game_time), b->paused);
     }
 }
 
@@ -988,8 +952,19 @@ static void handle_message(bridge *b, const char *buf, size_t len)
     case PROTO_MSG_STATE_UPDATE:
         rc = protocol_parse_state_update(root, &state_update, &diag);
         if (rc != PROTO_OK) {
-            kos_log_warn(b->log, "parse_error", "type=state_update reason=%s",
-                         protocol_strerror(rc));
+            /* The one missing field the whole Linux side times on deserves a
+             * message a person can act on: the generic "required field is
+             * missing" does not say which field, and its usual cause is an
+             * old plugin build. */
+            if (rc == PROTO_ERR_MISSING && json_object_get(root, "game_time_ms") == NULL) {
+                kos_log_warn(b->log, "parse_error",
+                             "type=state_update reason=missing game_time_ms (required since "
+                             "shm version %u) dropped=1",
+                             (unsigned)KOS_SHM_VERSION);
+            } else {
+                kos_log_warn(b->log, "parse_error", "type=state_update reason=%s",
+                             protocol_strerror(rc));
+            }
             break;
         }
         on_state_update(b, &state_update, &diag);
@@ -1064,9 +1039,15 @@ static void handle_message(bridge *b, const char *buf, size_t len)
         }
         /* The plugin acks every action; a nack is its business, not an error
          * for us, so this never escalates past DEBUG. */
-        kos_log_debug(b->log, "plugin_ack",
-                      "chef=%" PRId64 " action=%s ok=%d detail=%s",
-                      (int64_t)ack.chef_id, ack.action, ack.ok, ack.detail);
+        if (ack.has_seq) {
+            kos_log_debug(b->log, "plugin_ack",
+                          "chef=%" PRId64 " action=%s ok=%d seq=%" PRId64 " detail=%s",
+                          (int64_t)ack.chef_id, ack.action, ack.ok, (int64_t)ack.seq, ack.detail);
+        } else {
+            kos_log_debug(b->log, "plugin_ack",
+                          "chef=%" PRId64 " action=%s ok=%d detail=%s",
+                          (int64_t)ack.chef_id, ack.action, ack.ok, ack.detail);
+        }
         break;
     }
 
@@ -1332,9 +1313,40 @@ static int open_link(bridge *b)
     return 0;
 }
 
+/*
+ * One byte per interval tells the Supervisor this process is still running its loop.
+ * A broken pipe means the Supervisor is gone; the Bridge then exits like any other
+ * child instead of becoming an orphan holding /kitchenos_state. Only active when the
+ * Supervisor passed the fd, so a standalone `kitchenos-bridge` is unchanged.
+ */
+static void beat_supervisor(bridge *b)
+{
+    char byte = '.';
+    int64_t now;
+    ssize_t n;
+
+    if (b->supervisor_fd < 0 || b->supervisor_heartbeat_ms <= 0) {
+        return;
+    }
+    now = now_ms();
+    if (now - b->last_supervisor_beat_ms < b->supervisor_heartbeat_ms) {
+        return;
+    }
+    n = write(b->supervisor_fd, &byte, 1);
+    b->last_supervisor_beat_ms = now;
+    if (n == 1 || (n < 0 && errno == EAGAIN)) {
+        return;
+    }
+    kos_log_warn(b->log, "supervisor_gone", "fd=%d error=%s", b->supervisor_fd,
+                 strerror(errno));
+    b->stop_reason = "supervisor_gone";
+    g_stop = 1;
+}
+
 static void run_loop(bridge *b)
 {
     b->link_state = KOS_NET_DOWN; /* the first real transition logs link_up */
+    b->last_supervisor_beat_ms = now_ms();
 
     while (!g_stop) {
         int timeout = next_wakeup_ms(b);
@@ -1377,6 +1389,7 @@ static void run_loop(bridge *b)
         }
 
         service_pending_frame(b);
+        beat_supervisor(b);
     }
 }
 

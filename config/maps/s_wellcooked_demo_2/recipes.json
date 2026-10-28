@@ -1,0 +1,245 @@
+{
+  "nodes": [
+    {
+      "id": "assemble:Chicken_Burrito",
+      "op": "assemble",
+      "label": "Chicken_Burrito",
+      "resource": "plate_stack",
+      "duration": 1.0
+    },
+    {
+      "id": "assemble:Sushi_PlainFish",
+      "op": "assemble",
+      "label": "Sushi_PlainFish",
+      "resource": "plate_stack",
+      "duration": 1.0
+    },
+    {
+      "id": "assemble:Sushi_PlainPrawn",
+      "op": "assemble",
+      "label": "Sushi_PlainPrawn",
+      "resource": "plate_stack",
+      "duration": 1.0
+    },
+    {
+      "id": "cook:BoiledRice",
+      "op": "cook",
+      "label": "BoiledRice",
+      "resource": "cooker",
+      "duration": 5.0
+    },
+    {
+      "id": "cook:FriedChicken",
+      "op": "cook",
+      "label": "FriedChicken",
+      "resource": "cooker",
+      "duration": 5.0
+    },
+    {
+      "id": "deliver:Chicken_Burrito",
+      "op": "deliver",
+      "label": "Chicken_Burrito",
+      "resource": "serving",
+      "duration": 1.0
+    },
+    {
+      "id": "deliver:Sushi_PlainFish",
+      "op": "deliver",
+      "label": "Sushi_PlainFish",
+      "resource": "serving",
+      "duration": 1.0
+    },
+    {
+      "id": "deliver:Sushi_PlainPrawn",
+      "op": "deliver",
+      "label": "Sushi_PlainPrawn",
+      "resource": "serving",
+      "duration": 1.0
+    },
+    {
+      "id": "fetch:BurritoChicken",
+      "op": "fetch",
+      "label": "BurritoChicken",
+      "resource": "dispenser",
+      "duration": 1.0,
+      "ingredient": "burritochicken",
+      "workable": true
+    },
+    {
+      "id": "fetch:Rice",
+      "op": "fetch",
+      "label": "Rice",
+      "resource": "dispenser",
+      "duration": 1.0,
+      "ingredient": "rice",
+      "workable": false
+    },
+    {
+      "id": "fetch:SushiFish",
+      "op": "fetch",
+      "label": "SushiFish",
+      "resource": "dispenser",
+      "duration": 1.0,
+      "ingredient": "sushifish",
+      "workable": true
+    },
+    {
+      "id": "fetch:SushiPrawn",
+      "op": "fetch",
+      "label": "SushiPrawn",
+      "resource": "dispenser",
+      "duration": 1.0,
+      "ingredient": "sushiprawn",
+      "workable": true
+    },
+    {
+      "id": "fetch:Tortilla",
+      "op": "fetch",
+      "label": "Tortilla",
+      "resource": "dispenser",
+      "duration": 1.0,
+      "ingredient": "tortilla",
+      "workable": false
+    },
+    {
+      "id": "plate:Chicken_Burrito",
+      "op": "plate",
+      "label": "Chicken_Burrito",
+      "resource": "plate_stack",
+      "duration": 2.0
+    },
+    {
+      "id": "plate:Sushi_PlainFish",
+      "op": "plate",
+      "label": "Sushi_PlainFish",
+      "resource": "plate_stack",
+      "duration": 2.0
+    },
+    {
+      "id": "plate:Sushi_PlainPrawn",
+      "op": "plate",
+      "label": "Sushi_PlainPrawn",
+      "resource": "plate_stack",
+      "duration": 2.0
+    }
+  ],
+  "edges": [
+    [
+      "assemble:Chicken_Burrito",
+      "plate:Chicken_Burrito"
+    ],
+    [
+      "assemble:Sushi_PlainFish",
+      "plate:Sushi_PlainFish"
+    ],
+    [
+      "assemble:Sushi_PlainPrawn",
+      "plate:Sushi_PlainPrawn"
+    ],
+    [
+      "cook:BoiledRice",
+      "assemble:Chicken_Burrito"
+    ],
+    [
+      "cook:FriedChicken",
+      "assemble:Chicken_Burrito"
+    ],
+    [
+      "fetch:BurritoChicken",
+      "cook:FriedChicken"
+    ],
+    [
+      "fetch:Rice",
+      "cook:BoiledRice"
+    ],
+    [
+      "fetch:SushiFish",
+      "assemble:Sushi_PlainFish"
+    ],
+    [
+      "fetch:SushiPrawn",
+      "assemble:Sushi_PlainPrawn"
+    ],
+    [
+      "fetch:Tortilla",
+      "assemble:Chicken_Burrito"
+    ],
+    [
+      "plate:Chicken_Burrito",
+      "deliver:Chicken_Burrito"
+    ],
+    [
+      "plate:Sushi_PlainFish",
+      "deliver:Sushi_PlainFish"
+    ],
+    [
+      "plate:Sushi_PlainPrawn",
+      "deliver:Sushi_PlainPrawn"
+    ]
+  ],
+  "dishes": [
+    {
+      "dish": "Chicken_Burrito",
+      "score": 80,
+      "root": "assemble:Chicken_Burrito",
+      "nodes": [
+        "fetch:BurritoChicken",
+        "fetch:Rice",
+        "fetch:Tortilla",
+        "cook:BoiledRice",
+        "cook:FriedChicken",
+        "assemble:Chicken_Burrito",
+        "plate:Chicken_Burrito",
+        "deliver:Chicken_Burrito"
+      ]
+    },
+    {
+      "dish": "Sushi_PlainFish",
+      "score": 20,
+      "root": "assemble:Sushi_PlainFish",
+      "nodes": [
+        "fetch:SushiFish",
+        "assemble:Sushi_PlainFish",
+        "plate:Sushi_PlainFish",
+        "deliver:Sushi_PlainFish"
+      ]
+    },
+    {
+      "dish": "Sushi_PlainPrawn",
+      "score": 20,
+      "root": "assemble:Sushi_PlainPrawn",
+      "nodes": [
+        "fetch:SushiPrawn",
+        "assemble:Sushi_PlainPrawn",
+        "plate:Sushi_PlainPrawn",
+        "deliver:Sushi_PlainPrawn"
+      ]
+    }
+  ],
+  "durations": {
+    "source": "plan-§6.5-default（未实测；任务 12 拿到真实进度后再改）",
+    "seconds": {
+      "fetch": 1.0,
+      "cook": 5.0,
+      "mix": 5.0,
+      "assemble": 1.0,
+      "plate": 2.0,
+      "deliver": 1.0
+    }
+  },
+  "notes": [
+    "节点 id = 工序:游戏里的节点名，两道菜共用同一中间产物时只有一个节点",
+    "工时是方案 §6.5 的默认值，不是实测值",
+    "菜谱树里没有\"切\"这道工序：`fetch` 节点带 `workable`（料箱 prefab 上有没有 WorkableItem）作为事实，",
+    "要不要切由游戏决定，本文件不替它下结论（早先按 WorkableItem 自动插 chop 节点会给出多余的工序）"
+  ],
+  "scene": "s_wellcooked_demo_2",
+  "generated": {
+    "at": "2026-10-25T13:58:47+0800",
+    "state_t": 41.08,
+    "sources": [
+      "wellcooked-state.json",
+      "wellcooked-terrain.json"
+    ]
+  }
+}

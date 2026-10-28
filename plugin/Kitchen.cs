@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Reflection;
 using UnityEngine;
@@ -41,12 +42,382 @@ namespace WellCooked
         }
 
         /// <summary>厨师面前那个占位物体（`InteractWithItemHelper.GetFacingGridOccupant`），没查到返回 null。</summary>
-        private static Component FacingOccupant(PlayerControls chef)
+        public static Component FacingOccupant(PlayerControls chef)
         {
             ResolveLookups();
             return _facingLookup == null
                 ? null
                 : _facingLookup.Invoke(null, new object[] { chef.transform, -1 }) as Component;
+        }
+
+        /// <summary>砧板的名字判定。`StateFrame` 的资源编号与动作目标的解析必须用同一条规则。</summary>
+        public static bool IsChoppingBoard(string name)
+        {
+            return !string.IsNullOrEmpty(name)
+                   && (name.IndexOf("Chop", StringComparison.OrdinalIgnoreCase) >= 0
+                       || name.IndexOf("Cut", StringComparison.OrdinalIgnoreCase) >= 0);
+        }
+
+        /// <summary>
+        /// 普通台面（卷饼当容器的地方）：名字是 `countertop_*` 且不是砧板。
+        /// 与 `scripts/export-kitchen.py` 的 `is_plain_counter` 同一条规则。
+        /// 组件是 `ClientAttachStation`：游戏 `MultiplayerController` 给每个带
+        /// `AttachStation` 的物体加一对 `ServerAttachStation`/`ClientAttachStation`
+        /// （`AddSynchronisedType(typeof(AttachStation), ...)`），`AttachStation` 就是
+        /// "能放东西的表面"。实机对象名见 `logs/manual/20261027-022317/manual.log`
+        /// （`面前=「countertop_01_standard_wood」`，玉米饼放在 (0.60,-6.00) 那张）。
+        /// </summary>
+        public static bool IsPlainCounter(string name)
+        {
+            return !string.IsNullOrEmpty(name)
+                   && name.IndexOf("countertop", StringComparison.OrdinalIgnoreCase) >= 0
+                   && !IsChoppingBoard(name);
+        }
+
+        /// <summary>
+        /// 场上所有砧板，顺序就是 `cutting_board_&lt;N&gt;` 的编号顺序（`FindAll` 的返回顺序）。
+        /// 动作目标的 `cutting_board_N` 与状态上报必须指向同一块板。
+        /// </summary>
+        public static List<Station> ChoppingBoards()
+        {
+            var result = new List<Station>();
+            foreach (var component in WorldState.FindAll("ClientWorkstation"))
+            {
+                var unity = component as Component;
+                if (unity == null || !IsChoppingBoard(unity.gameObject.name))
+                {
+                    continue;
+                }
+
+                var p = unity.transform.position;
+                result.Add(new Station
+                {
+                    Type = "ChoppingBoard",
+                    Name = unity.gameObject.name,
+                    Position = new Vector2(p.x, p.z),
+                    Component = unity
+                });
+            }
+
+            // 编号必须与 export-kitchen.py 的 `board-<N>` 一致（kind, x, z, name 排序），
+            // 否则 `cutting_board_2` 在 state_update 与 face.target_object 里会指不同的板。
+            result.Sort(delegate(Station a, Station b)
+            {
+                int byX = a.Position.x.CompareTo(b.Position.x);
+                if (byX != 0)
+                {
+                    return byX;
+                }
+                int byZ = a.Position.y.CompareTo(b.Position.y);
+                if (byZ != 0)
+                {
+                    return byZ;
+                }
+                return string.CompareOrdinal(a.Name, b.Name);
+            });
+            return result;
+        }
+
+        /// <summary>
+        /// 锅的处理器按位置排序（x 优先、再 z），与 `state_update` 的 `pot_&lt;N&gt;` 编号一致。
+        /// 返回的 Value 是 `ServerCookingHandler`，`Component` 是它交出的 CookingHandler。
+        /// </summary>
+        public static List<KeyValuePair<Vector2, object>> SortedCookingHandlers()
+        {
+            var getHandlers = WorldState.StaticMethod("ServerCookingHandler", "GetCookingHandlers");
+            var raw = getHandlers == null ? null : getHandlers.Invoke(null, null);
+            var sorted = new List<KeyValuePair<Vector2, object>>();
+            if (raw == null)
+            {
+                return sorted;
+            }
+
+            foreach (var handler in (IEnumerable)raw)
+            {
+                if (handler == null)
+                {
+                    continue;
+                }
+
+                var component = handler as Component
+                                ?? WorldState.Get(handler, "GetCookingHandler") as Component;
+                if (component == null)
+                {
+                    continue;
+                }
+
+                var p = component.transform.position;
+                sorted.Add(new KeyValuePair<Vector2, object>(new Vector2(p.x, p.z), handler));
+            }
+
+            sorted.Sort(delegate(KeyValuePair<Vector2, object> a, KeyValuePair<Vector2, object> b)
+            {
+                int byX = a.Key.x.CompareTo(b.Key.x);
+                return byX != 0 ? byX : a.Key.y.CompareTo(b.Key.y);
+            });
+            return sorted;
+        }
+
+        /// <summary>
+        /// 灶台（`ClientCookingStation`）按位置排序，顺序就是 `pot_&lt;N&gt;` 的编号。
+        /// 与 `ServerCookingHandler` 的静态表不同，灶台本身一直在，空灶台也能报到，
+        /// 所以 `pot_N` 不会随"锅里有料"变化（任务 09 G1）。Value 是灶台组件，
+        /// 它身上的 `m_itemPot` 是当前那口锅（空灶台为 null）。
+        /// </summary>
+        public static List<Station> SortedCookingStations()
+        {
+            var result = new List<Station>();
+            foreach (var found in WorldState.FindAll("ClientCookingStation"))
+            {
+                var unity = found as Component;
+                if (unity == null)
+                {
+                    continue;
+                }
+
+                var p = unity.transform.position;
+                result.Add(new Station
+                {
+                    Type = "CookingStation",
+                    Name = unity.gameObject.name,
+                    Position = new Vector2(p.x, p.z),
+                    Component = unity
+                });
+            }
+
+            result.Sort(delegate(Station a, Station b)
+            {
+                int byX = a.Position.x.CompareTo(b.Position.x);
+                if (byX != 0)
+                {
+                    return byX;
+                }
+                int byZ = a.Position.y.CompareTo(b.Position.y);
+                if (byZ != 0)
+                {
+                    return byZ;
+                }
+                return string.CompareOrdinal(a.Name, b.Name);
+            });
+            return result;
+        }
+
+        /// <summary>
+        /// 把一个 `AssembledDefinitionNode` 递归展开成叶子名（任务 09 G3/G4）。
+        /// 组合节点只展开 `m_composition`；叶子取 `IngredientAssembledNode.m_ingriedientOrderNode.name`。
+        /// 外面套了 `CookedCompositeAssembledNode` 的叶子写成 `cooked:&lt;name&gt;`，
+        /// 否则分不清生鸡与熟鸡。盘子的 `GetOrderComposition()` 与容器的 `GetContents()`
+        /// 用的都是这一套，两处必须一致。
+        /// </summary>
+        public static List<string> NodeLeaves(object node)
+        {
+            var result = new List<string>();
+            CollectNodeLeaves(node, "", result, 0);
+            return result;
+        }
+
+        private static void CollectNodeLeaves(object node, string prefix, List<string> result, int depth)
+        {
+            if (node == null || depth > 4)
+            {
+                return;
+            }
+
+            string typeName = node.GetType().Name;
+            bool cooked = typeName == "CookedCompositeAssembledNode";
+            string childPrefix = cooked ? prefix + "cooked:" : prefix;
+
+            // 只有组合节点才有 m_composition；叶子（IngredientAssembledNode）上查它会在
+            // WorldState 的反射未命中日志里留一行，白白让人以为名字失效了。
+            var children = typeName.IndexOf("CompositeAssembledNode", StringComparison.Ordinal) >= 0
+                ? WorldState.Get(node, "m_composition") as IEnumerable
+                : null;
+            if (children != null)
+            {
+                bool any = false;
+                foreach (var child in children)
+                {
+                    any = true;
+                    CollectNodeLeaves(child, childPrefix, result, depth + 1);
+                }
+                if (any)
+                {
+                    return;
+                }
+            }
+
+            var ingredient = WorldState.Get(node, "m_ingriedientOrderNode") as UnityEngine.Object;
+            if (ingredient != null && !string.IsNullOrEmpty(ingredient.name))
+            {
+                result.Add(childPrefix + ingredient.name);
+                return;
+            }
+
+            var unity = node as UnityEngine.Object;
+            if (unity != null && !string.IsNullOrEmpty(unity.name))
+            {
+                result.Add(childPrefix + unity.name);
+                return;
+            }
+
+            result.Add(childPrefix + node.GetType().Name);
+        }
+
+        /// <summary>
+        /// 这个物体/工位现在是否在着火。游戏里火挂在 `ClientFlammable` 上（decompiled
+        /// `ClientFlammable.OnFire()` 返回 `m_fireEffect != null`），料箱、台面、锅都可能
+        /// 带这个组件；火会沿 `Flammable.m_fireSpreadRadius` 蔓延到相邻台面（实机 _3
+        /// 烧起来的锅把旁边的台面点着了）。没有这个组件 = 不可燃 = 没着火。
+        /// </summary>
+        public static bool IsOnFire(GameObject gameObject)
+        {
+            if (gameObject == null)
+            {
+                return false;
+            }
+            var flammable = gameObject.GetComponent("ClientFlammable");
+            if (flammable == null)
+            {
+                return false;
+            }
+            return WorldState.Invoke(flammable, "OnFire") is bool on && on;
+        }
+
+        /// <summary>
+        /// 一个物体"里面是什么"：盘子优先用 `ClientPlate.GetOrderComposition()`，
+        /// 容器用 `ClientIngredientContainer.GetContents()`，都不是就把它自己当成内容。
+        /// 返回空列表表示"是个空容器"，不会退回物体名（Tortilla 的名字不是它的内容）。
+        /// </summary>
+        public static List<string> ItemContents(GameObject gameObject)
+        {
+            var result = new List<string>();
+            if (gameObject == null)
+            {
+                return result;
+            }
+
+            var plate = gameObject.GetComponent("ClientPlate");
+            if (plate != null)
+            {
+                var composition = WorldState.Invoke(plate, "GetOrderComposition");
+                if (composition != null)
+                {
+                    result = NodeLeaves(composition);
+                    if (result.Count > 0)
+                    {
+                        return result;
+                    }
+                }
+            }
+
+            var container = gameObject.GetComponent("ClientIngredientContainer");
+            if (container != null)
+            {
+                var contents = WorldState.Invoke(container, "GetContents") as IEnumerable;
+                if (contents != null)
+                {
+                    foreach (var node in contents)
+                    {
+                        result.AddRange(NodeLeaves(node));
+                    }
+                    return result;
+                }
+            }
+
+            result.Add(gameObject.name);
+            return result;
+        }
+
+        /// <summary>
+        /// 把 `state_update` 的资源键（`cutting_board_2`、`pot_0`、`plate_stack`、
+        /// `dirty_plates`、`sink_1`）解析成世界坐标。插件收到的 `face.target_object`
+        /// 用的就是这套键，所以编号必须与 `StateFrame` 的上报顺序完全一致。
+        /// 认不出的键最后按 GameObject 名字找一次；找不到返回 false。
+        /// </summary>
+        public static bool TryStationPosition(string key, out Vector2 position)
+        {
+            position = Vector2.zero;
+            if (string.IsNullOrEmpty(key))
+            {
+                return false;
+            }
+
+            if (key == "plate_stack" || key == "dirty_plates")
+            {
+                string type = key == "plate_stack" ? "ClientCleanPlateStack" : "ClientDirtyPlateStack";
+                foreach (var found in WorldState.FindAll(type))
+                {
+                    var unity = found as Component;
+                    if (unity != null)
+                    {
+                        position = new Vector2(unity.transform.position.x, unity.transform.position.z);
+                        return true;
+                    }
+                }
+                return false;
+            }
+
+            int index;
+            if (TrySuffixIndex(key, "cutting_board_", out index))
+            {
+                var boards = ChoppingBoards();
+                if (index >= 0 && index < boards.Count)
+                {
+                    position = boards[index].Position;
+                    return true;
+                }
+                return false;
+            }
+
+            if (TrySuffixIndex(key, "pot_", out index))
+            {
+                var stations = SortedCookingStations();
+                if (index >= 0 && index < stations.Count)
+                {
+                    position = stations[index].Position;
+                    return true;
+                }
+                return false;
+            }
+
+            if (TrySuffixIndex(key, "sink_", out index))
+            {
+                int at = 0;
+                foreach (var found in WorldState.FindAll("ClientWashingStation"))
+                {
+                    var unity = found as Component;
+                    if (unity == null)
+                    {
+                        continue;
+                    }
+                    if (at == index)
+                    {
+                        position = new Vector2(unity.transform.position.x,
+                                               unity.transform.position.z);
+                        return true;
+                    }
+                    at++;
+                }
+                return false;
+            }
+
+            var obj = GameObject.Find(key);
+            if (obj == null)
+            {
+                return false;
+            }
+            position = new Vector2(obj.transform.position.x, obj.transform.position.z);
+            return true;
+        }
+
+        private static bool TrySuffixIndex(string key, string prefix, out int index)
+        {
+            index = -1;
+            if (!key.StartsWith(prefix, StringComparison.Ordinal))
+            {
+                return false;
+            }
+            return int.TryParse(key.Substring(prefix.Length), out index);
         }
 
         /// <summary>
@@ -360,26 +731,128 @@ namespace WellCooked
                 return false;
             }
 
-            var progressValue = WorldState.Get(workableItem, "m_progress");
-            var subValue = WorldState.Get(workableItem, "m_subProgress");
-            int progress = progressValue is int p0 ? p0 : 0;
-            int sub = subValue is int s0 ? s0 : 0;
-
+            int progress = 0;
+            int sub = 0;
             int stages = 0;
-            var workable = WorldState.Get(workableItem, "m_workable");
-            if (workable != null)
+            double normalised = WorkableProgress(attached.gameObject, out finished, out progress,
+                                                 out sub, out stages);
+            description = "阶段 " + progress + "/" + Mathf.Max(stages - 1, 1)
+                          + " 子进度 " + sub + (finished ? " 已切好" : "");
+            if (normalised < 0.0)
             {
-                var stagesValue = WorldState.Get(workable, "m_stages");
-                if (stagesValue is int stagesInt)
+                description += " 进度?";
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// 加工进度，0..1；读不到阶段数返回 -1（调用方省略字段，别用 0 假装"还没开始"）。
+        ///
+        /// 取值必须和游戏自己的进度条一致：`ClientWorkableItem.UpdateProgressVisuals`
+        /// 用的是 `(m_progress * m_chopsPerSlice + m_subProgress) / (m_chopsPerSlice * m_stages - 1)`。
+        /// 实机 `_3`（logs/manual/20261027-022317/manual.log:116 起）里 `m_progress`
+        /// 整段切菜都是 0、只有 `m_subProgress` 在走；只算 `m_progress / (m_stages-1)`
+        /// 会把整段加工都报成 0，run_chop 只能等超时（worker-0.log:21）。
+        ///
+        /// 切完那一刻游戏把板上 prefab 换成 `Chopped…`/`Diced…`，新 prefab 上没有
+        /// `ClientWorkableItem`，这里按"成品前缀 + 没有可加工组件"报 1：那是可确定的
+        /// 完成事实，不是猜测。**只有这一份实现**：手动局日志（`WorkState`）与
+        /// `state_update` 的砧板进度共用它。
+        /// </summary>
+        public static double WorkableProgress(GameObject item, out bool finished)
+        {
+            int progress;
+            int sub;
+            int stages;
+            return WorkableProgress(item, out finished, out progress, out sub, out stages);
+        }
+
+        /// <summary>游戏里切/搅完的 prefab 名一律带这个前缀（ChoppedSushiPrawn、DicedMeat）。</summary>
+        private static readonly string[] ProcessedPrefixes = { "Chopped", "Diced" };
+
+        private static bool IsProcessedName(GameObject item)
+        {
+            string name = item == null ? null : item.name;
+            if (string.IsNullOrEmpty(name))
+            {
+                return false;
+            }
+            // 前缀不够：鸡肉切完叫 BurritoChoppedChicken（实机 20261027-141553 清理时拿起的就是它），
+            // 只认前缀时进度一直报 -1，切完了也等到超时。
+            for (int i = 0; i < ProcessedPrefixes.Length; i++)
+            {
+                if (name.IndexOf(ProcessedPrefixes[i], StringComparison.OrdinalIgnoreCase) >= 0)
                 {
-                    stages = stagesInt;
+                    return true;
                 }
+            }
+            return false;
+        }
+
+        private static double WorkableProgress(GameObject item, out bool finished, out int progress,
+                                               out int sub, out int stages)
+        {
+            finished = false;
+            progress = 0;
+            sub = 0;
+            stages = 0;
+            if (item == null)
+            {
+                return -1.0;
+            }
+
+            var workableItem = item.GetComponent("ClientWorkableItem");
+            if (workableItem == null)
+            {
+                // 换过 prefab 的成品没有工作组件；名字已说明它切好了。
+                if (IsProcessedName(item))
+                {
+                    finished = true;
+                    return 1.0;
+                }
+                return -1.0;
+            }
+
+            if (WorldState.Get(workableItem, "m_progress") is int p)
+            {
+                progress = p;
+            }
+            if (WorldState.Get(workableItem, "m_subProgress") is int s)
+            {
+                sub = s;
+            }
+
+            // m_stages 在 WorkableItem（ClientWorkableItem.m_workable）上，默认 8；
+            // m_chopsPerSlice 在客户端组件上（由玩家人数算出，1 人局会 > 1）。
+            int chopsPerSlice = 1;
+            var workable = WorldState.Get(workableItem, "m_workable");
+            if (workable != null && WorldState.Get(workable, "m_stages") is int stagesInt)
+            {
+                stages = stagesInt;
+            }
+            if (WorldState.Get(workableItem, "m_chopsPerSlice") is int chopsInt && chopsInt > 0)
+            {
+                chopsPerSlice = chopsInt;
             }
 
             finished = WorldState.Get(workableItem, "HasFinished") is bool done && done;
-            description = "阶段 " + progress + "/" + Mathf.Max(stages - 1, 1)
-                          + " 子进度 " + sub + (finished ? " 已切好" : "");
-            return true;
+            if (finished)
+            {
+                return 1.0;
+            }
+
+            int span = chopsPerSlice * stages - 1;
+            if (stages < 2 || span <= 0)
+            {
+                return -1.0; // 阶段数读不到：宁可省略，也不能把原始阶段数钳成 1
+            }
+
+            double value = (double)(progress * chopsPerSlice + sub) / span;
+            if (value < 0.0)
+            {
+                return 0.0;
+            }
+            return value > 1.0 ? 1.0 : value;
         }
 
         /// <summary>

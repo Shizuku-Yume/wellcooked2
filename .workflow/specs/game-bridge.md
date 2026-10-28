@@ -12,7 +12,7 @@
 - 启动游戏后，游戏内的插件自动连上 Linux 侧的 Bridge；游戏重启后插件自己重连，不需要重启 Bridge。
 - 游戏每帧上报世界状态：厨师位置与手持物、订单列表与剩余时间、厨具（锅、砧板、盘子）状态、当前得分。Bridge 解析后写日志。
 - Bridge 能下发动作指令（移动到坐标、交互、抓取/放下、投掷），游戏里对应厨师按指令行动。
-- 两名虚拟玩家能加入本地合作局，由指令驱动完成订单并正常得分。
+- 四名虚拟玩家能加入本地合作局，由指令驱动完成订单并正常得分。
 - 用户自己导航进关卡：插件在关卡加载前把空着的玩家位用虚拟手柄占上（用户占着的那位不动），进关卡后自动接管我们那几名厨师。第一条策略是最小策略（来回走 + 周期按交互键），调度算法接在同一个驱动点上。
 - 任一侧断开，另一侧靠心跳超时发现并记日志，不静默失效。
 
@@ -22,7 +22,7 @@
 
 - **游戏插件（C#，BepInEx 5.4.x + Harmony 2）** — 跑在游戏进程内，负责状态读取、输入注入、TCP 客户端。它不做任何调度决策，只执行"某厨师做某动作"。工程放 `plugin/`，构建产物拷进游戏目录的 `BepInEx/plugins/`。输入注入分两层（`decisions.md: 2026-10-15 - 输入注入改走逻辑层`）：**关卡内的动作**走逻辑层 —— 替换 `PlayerControls.ControlScheme` 的 `m_pickupButton`/`m_worksurfaceUseButton`/`m_dashButton`/`m_moveX`/`m_moveY`（自实现 `ILogicalButton`/`ILogicalValue`，按 `CanButtonBePressed()` 门控）；**前端的"按 A 加入"**走设备层 —— 进程内建一个 `InControl.InputDevice`（`AddControl` 注册控制项）用 `InputManager.AttachDevice` 挂上，每帧设置按键状态（spike game-bridge/06 实测的是这一层，见 Notes）。
 - **数据面（世界状态）** — 插件每 0.5 秒读一次并写 `BepInEx/wellcooked-state.json`：厨师坐标/朝向/手持物（`PlayerControls` + `PlayerIDProvider` + `ServerPlayerAttachmentCarrier.InspectCarriedItem()`）、锅的进度与烧焦（`ServerCookingHandler.GetCookingHandlers()`）、订单（`ServerKitchenFlowControllerBase.GetMonitorForTeam` → `ServerTeamMonitor.OrdersController` → `ActiveRecipes`）、得分（`GetPoints`）、回合计时（`RoundTimer.TimeElapsed` + `m_timeLimit`）。取不到的字段进 `missing`。这是调度算法的输入面；发给 Linux 侧（TCP 上报）归任务 03。
-- **状态语义（踩过的坑，写下来省得再查）** — 回合计时 `RoundTimer` **在第一个订单交付前不走**（游戏设计，用户 2026-10-14 确认）：开局 `elapsed=0`、`left` 恒等于满额。所以 `timer` 不能当"回合已开始"的信号，开局阶段的截止期判断只能用订单自己的 `remaining`/`lifetime`。另外厨师坐标取水平面 `(x,z)`（`y` 是高度，恒为 0）。可走区域**按 0.6 米格做物理采样**（每格要求脚下有地面、且以厨师碰撞体半径在腰间查一圈没东西；相邻两格之间也要能过；只保留最大连通块）：任务 08 实测过两条更省事的路都不行——`PlayerControls.GroundLayer` 向下打射线会因为台面碰撞体不在那一层而穿到台面底下的地板，把台面算成可走；游戏自己的导航（`GridNavSpace`/`GridManager.GetGridOccupant`）格子是 1.2 米，而台面/工作台摆在 0.6 米的格子上，粗一半的网格表示不出中间的障碍，厨师会卡在两格正中间。**游戏失焦会把本地输入全丢掉**（`PlayerControls.cs:455`、`LogicalButtonBase.cs:76`、`LogicalPCEngagementButton.cs:23`、`LogicalPadValue.cs:26` 都卡在 `Application.isFocused`），插件必须把 `Application.isFocused` 补成恒真、并让 `InGamePauseMenu.OnApplicationFocus(false)` 不再暂停游戏，否则答辩/评测时 Supervisor 在终端、游戏在后台，整个实验会停摆（实测：失焦时 4 名厨师 12 秒坐标不动、两张相隔 2.5 秒的截图 0 像素差）。
+- **状态语义（踩过的坑，写下来省得再查）** — 回合计时 `RoundTimer` **在第一个订单交付前不走**（游戏设计，用户 2026-10-14 确认）：开局 `elapsed=0`、`left` 恒等于满额。所以 `timer` 不能当"回合已开始"的信号，开局阶段的截止期判断只能用订单自己的 `remaining`/`lifetime`。另外厨师坐标取水平面 `(x,z)`（`y` 是高度，恒为 0）。可走区域**按 0.6 米格做物理采样**（每格要求脚下有地面、且以厨师碰撞体半径在腰间查一圈没东西；相邻两格之间也要能过；保留所有含厨师的连通块（没有厨师时按工位锚点），其余口袋丢掉）：任务 08 实测过两条更省事的路都不行——`PlayerControls.GroundLayer` 向下打射线会因为台面碰撞体不在那一层而穿到台面底下的地板，把台面算成可走；游戏自己的导航（`GridNavSpace`/`GridManager.GetGridOccupant`）格子是 1.2 米，而台面/工作台摆在 0.6 米的格子上，粗一半的网格表示不出中间的障碍，厨师会卡在两格正中间。**游戏失焦会把本地输入全丢掉**（`PlayerControls.cs:455`、`LogicalButtonBase.cs:76`、`LogicalPCEngagementButton.cs:23`、`LogicalPadValue.cs:26` 都卡在 `Application.isFocused`），插件必须把 `Application.isFocused` 补成恒真、并让 `InGamePauseMenu.OnApplicationFocus(false)` 不再暂停游戏，否则答辩/评测时 Supervisor 在终端、游戏在后台，整个实验会停摆（实测：失焦时 4 名厨师 12 秒坐标不动、两张相隔 2.5 秒的截图 0 像素差）。
 - **接管时机** — 插件每 0.5 秒检查一次：玩家位空着就用虚拟手柄占上（`PCPlayerManager.EngagePadToSlot`，protected，反射调；pad 号靠 `PCPadInputProvider.GetActionSet` 反查），所以关卡是按多人加载的；场景里一出现本地厨师控制器（`PlayerControls`）就开始驱动，离开关卡就停止并清掉按键状态。用户自己占着的那一位不动。
 - **Bridge（C11，Linux）** — TCP 服务端，唯一连接游戏的进程。解析上报、写日志、回发控制指令；后续版本把世界状态写进共享内存供 Scheduler 和 Worker 读。源码放 `bridge/`。
 - **协议（`protocol/`）** — JSON 行协议，四种消息 `state_update`、`action`、`heartbeat`、`config`，字段按方案 §5.2。schema、示例和字段含义落在 `protocol/protocol.md`，两侧各自实现序列化（方案 §5.3）。
@@ -61,7 +61,7 @@ Wine 默认优先加载自带的 `winhttp`，BepInEx 的 doorstop 就不会被�
 - **W3.** Bridge 没启动时启动游戏，插件日志显示重连；随后启动 Bridge，5 秒内建立连接（`bridge.log` 出现 `client connected`）。
 - **W4.** 游戏里跑一局，`bridge.log` 收到 `state_update`，其中 `score` 与画面得分一致，`chefs` 数量与场上厨师数一致（人工比对）。
 - **W5.** 通过 Bridge 发一条 `action` 让 0 号厨师移动到指定坐标，游戏里该厨师到达目标附近（一格以内）。
-- **W6.** 两名虚拟玩家进入同一局，用固定动作序列完成 3 个订单，游戏得分为正。
+- **W6.** 四名虚拟玩家进入同一局，完成 3 个订单，游戏得分为正（decisions.md: 2026-10-26 - 实机控制按 4 个厨师验收）。
 - **W7.** `kill` 掉 Bridge，游戏不崩溃，插件继续重连；重启 Bridge 后连接恢复。
 
 测试层次：W1、W2 只能靠日志证据（插件无法单测）；W3、W4 用脚本假客户端和真实游戏各跑一次；W5、W6 只能实测（游戏行为没有可断言的单元）；W7 用真实游戏加 `kill`。Bridge 侧的协议解析做单元测试（`tests/` 里放 `state_update` 样本，断言字段解析），因为协议错误最容易到联调才暴露。

@@ -21,6 +21,8 @@ cd bridge && make test-san   # 同上，带 ASan/UBSan；对象写 build/san/，
 python3 tools/fake_plugin.py --scenario happy
 bash tools/run-bridge-scenarios.sh        # 全部场景
 bash tools/run-real-game.sh               # 真游戏 W8 验收（需要人进关卡）
+STRATEGY=sjf TASK_POLICY=cp DISPATCH=flexible bash tools/run-real-game.sh   # 指定订单/工序/派工策略
+python3 tools/webui/server.py --port 8765 # 浏览器控制台 http://127.0.0.1:8765/：开局、实时看板、切策略、kill Scheduler、结果对比（只听 127.0.0.1，无鉴权）
 
 # Windows 侧插件
 dotnet build plugin/WellCooked.Plugin/WellCooked.Plugin.csproj -c Debug
@@ -38,6 +40,20 @@ bash scripts/build-plugin.sh           # dotnet build plugin/ 并拷进 BepInEx/
 bash scripts/run-game.sh               # steam -applaunch 728880
 grep -E 'BepInEx 5|WellCooked\.Smoke|smoke patch alive' "$GAME_DIR/BepInEx/LogOutput.log"   # 验证
 ```
+
+多实例批跑（真实游戏；与其它通道共用游戏时先拿 `/tmp/wellcooked-game.lock`，多开期间一直持有）：
+
+```sh
+python3 tools/instances.py up 3          # 3 个 640x360 实例；目录 ~/.cache/wellcooked/inst/1..3
+python3 tools/instances.py status        # 游戏/Supervisor、场景、厨师数、得分
+python3 tools/batch.py experiments/policies.tsv --instances 3 --out results.csv
+python3 tools/instances.py down          # 关游戏与进程树；锁由上一步取锁的人放
+```
+
+每个实例有自己的 `Overcooked2_Data` 符号链接、`BepInEx/LogOutput.log`、端口 `14455+k` 和
+`Supervisor --instance k` 进程树；mq/shm/信号量/导航表名字带 `_k` 后缀。批跑清单是 CSV/TSV
+（`scene,strategy,nav,dispatch,orders,seed`），每局进关、等回合计时归零、从插件状态取分；
+实例掉线会重启并把那一局重排。`--window full` 用全尺寸窗口做同局对照。
 
 本机环境（bridge effort 那台）：WSL2 发行版 Ubuntu 26.04，已装 gcc / make / python3；
 **没有 cmake 和 gdb**。仓库在 Windows 盘，WSL 内是 `/mnt/d`（9p 文件系统），因此进程间共享
@@ -64,8 +80,9 @@ bash scripts/dev-cycle.sh 20 s_sushi_1_1   # 第二参数是要进的关卡（�
 ```sh
 printf 'work=auto\nslots=1,2\ndiag=true\n' > "$GAME_DIR/BepInEx/wellcooked-takeover.txt"
 # work=auto   工序模式：按订单自动做菜（默认关；关着是"来回走 + 周期按交互"的最小策略）
-# slots=1,2   要占的玩家位（1 基）
+# slots=1,2   要占的玩家位（1 基）；slots=none 一个位都不占，厨师全交给本地输入（手动打一局用）
 # diag=true   过程行（每帧/每 2 秒的位置、路点、手柄状态、寻路记下的边）——默认关，只留结果行
+# manual_log=true  手动局观察行：A/X 按下与松开、手持物、工位内容变化——默认关
 # frontend_press=true  虚拟手柄在前端也按 A（进关卡要用；它会抢菜单导航，所以默认关）
 # bridge=127.0.0.1:14455  连 Bridge 上报世界状态（默认就开着；写 bridge=off 关掉）
 # state_ms=0  上报间隔毫秒；0 = 每帧（默认，协议与 spec 要求每帧）
@@ -76,8 +93,10 @@ printf 'work=auto\nslots=1,2\ndiag=true\n' > "$GAME_DIR/BepInEx/wellcooked-takeo
 3 秒 connect 等待（日志里有重试次数）。`state_ms` 这一版不做范围钳制：`0` 每帧、正数就是毫秒间隔。桥侧用 `bash tools/run-bridge-scenarios.sh` 不用游戏就能验协议，
 进关卡验真机用 `bash tools/run-real-game.sh`（它自己起 Bridge 并判定 hello/state_update 条数）。
 
-`diag` 是任务 10 收敛出来的唯一诊断开关（`plugin/Diag.cs`）：**结果行**（工序每步的开始/结果、失败原因、
+`diag` 是过程行的唯一开关（`plugin/Diag.cs`）：**结果行**（工序每步的开始/结果、失败原因、
 指令执行）不受它管；**过程行**默认不打 —— 收敛前"每帧一行"的代码散在三处、各判各的标志。
+手动打一局另开 `manual_log`（`plugin/ManualLog.cs`）：它只打 A/X 边沿、手持物与工位内容变化，
+属于结果型的观察行，不跟 `diag` 的每帧过程行走同一个开关。
 
 进关卡与调试（游戏跑起来后，往 `$GAME_DIR/BepInEx/wellcooked-command.txt` 写一行，1 秒内执行并删文件）：
 
@@ -128,17 +147,20 @@ bash scripts/eval-levels.sh s_wellcooked_demo_1                  # 主连通块�
 ```sh
 printf 'menu=1\n' > "$GAME_DIR/BepInEx/wellcooked-command.txt"   # 进关卡后发一次：导出这一关的菜谱表
 python3 scripts/export-kitchen.py                      # 读 state/terrain/menu → config/kitchen.json + config/recipes.json
+python3 scripts/export-kitchen.py --map-dir config/maps  # 按场景写 config/maps/<scene>/{kitchen,recipes}.json（四张演示地图）
 python3 scripts/export-kitchen.py --out /tmp/k.json --out-recipes /tmp/r.json   # 换输出位置（同一份输入两次输出字节相同）
 ```
 
 `config/kitchen.json` 里：`stations[]` 是工位（`kind` 归类、`id` 稳定、`pos` 是水平面 (x,z)、料箱带 `gives`
-与它那个 prefab 的组件名），`grid.cells` 是 0.6 米采样的可走格，`grid.mask` 是每格的邻居掩码
+与它那个 prefab 的组件名、`cook_steps` 是这个料能进的烹饪类型；锅类容器和它所在的 cooker 带 `step`，即那口锅的烹饪类型，如 `Pot`/`FryingPan`/`DeepFatFryer`），`grid.cells` 是 0.6 米采样的可走格，`grid.mask` 是每格的邻居掩码
 （`edge_bits` 说明位含义，掩码对称）。
-`config/recipes.json` 里：`nodes[]` 是工序（`op` 取 fetch/cook/mix/assemble/plate/deliver，带资源类型与工时），
+`config/recipes.json` 里：`nodes[]` 是工序（`op` 取 fetch/cook/mix/assemble/plate/deliver，带资源类型与工时；`cook` 节点带 `step`，Scheduler 只把它派到 `step` 相同的 cooker），
 `edges[]` 是"子 → 父"的前置依赖，`dishes[]` 每道菜的工序顺序（拓扑序）；节点 id 是 `工序:游戏里的节点名`，
 两道菜共用同一中间产物时只有一个节点。工时目前是方案 §6.5 的默认值，文件里写了来源。
 仓库里的 `config/kitchen.example.json` 与 `config/recipes.example.json` 是 `s_city_h5` 的实测导出
-（20 个工位 / 546 格 / 4 道菜 / 20 个工序节点），Scheduler 与模拟器可以直接拿它们离线开发。
+（20 个工位 / 546 格 / 4 道菜 / 20 个工序节点），Scheduler 与离线上界脚本可以直接拿它们离线开发。
+四张演示地图的导出在 `config/maps/s_wellcooked_demo_<N>/`，`--kitchen` / `--recipes` 指过去即可加载；
+`bridge/tests/test_map_configs.c` 在 `make test` 里逐个读这四个目录。
 
 注意两点：`load` 只换场景，**菜谱要新进程才刷新**；`load` 前要等虚拟手柄被游戏自己加入，否则没有厨师，
 地形采样会退化成兜底半径（连通性数字不可信）。
@@ -183,7 +205,7 @@ Workflow files live where CONVENTIONS §2 says.
 - **不用线程替代进程**。Worker 必须是独立进程，否则展示不了进程控制和进程间通信。
 - **不让 Bridge 解释调度策略**。策略属于 Scheduler；Bridge 只搬状态、汇总输入、下发动作。
 - **不在插件里做调度**。插件是执行器，收到什么动作就做什么动作。
-- 不把离散事件模拟器当演示主平台：它只用于策略预筛，可随时裁剪。
+- 不写离散事件模拟器：批量实验多开真游戏实例（decisions.md: 2026-10-25 - 批量实验用多开游戏实例，不写模拟器）。
 - Windows 侧不放监督进程；守护进程必须是完整 Linux daemon（fork/setsid/umask/chdir/dup2）。
 - 不提交游戏 DLL 和二进制文件（§11.6）。
 

@@ -1,6 +1,7 @@
 using System;
 using System.Text;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Reflection;
 using BepInEx;
@@ -24,6 +25,12 @@ namespace WellCooked
     ///   engage=1         标题画面：直接替我们的占位完成"加入"（等价于按 A）
     ///   dump=&lt;类型名&gt;    把这个类型的所有方法签名打到日志
     ///   pause=1          打当前暂停状态（TimeManager 各层）
+    ///   action=&lt;JSON&gt;    把一行 action 按线上格式交给 ActionDriver（见 LinkRunner.HandleAction）
+    ///   path_act=…/face_act=…/work_act=…   动作调试的简写
+    ///   action_test=1    在已占的玩家位上自测"同 seq 追加"与"work 按到下一条动作"，
+    ///                    结果写 `action_selftest PASS/FAIL ...`；不需要 Bridge
+    ///   state=1          把当前 `state_update` 的完整 JSON 打进日志（核对 facing/progress 等字段）
+    ///   pause_game=1/0   走游戏的 TimeManager.SetPaused(Main)，真正冻结游戏时钟
     /// </summary>
     public static class Commands
     {
@@ -76,6 +83,19 @@ namespace WellCooked
                 var line = raw.Trim();
                 if (line.Length == 0 || line[0] == '#')
                 {
+                    continue;
+                }
+
+                if (line[0] == '{')
+                {
+                    try
+                    {
+                        RunActionJson(line);
+                    }
+                    catch (Exception e)
+                    {
+                        _log.LogError("指令 JSON 失败: " + e);
+                    }
                     continue;
                 }
 
@@ -150,9 +170,283 @@ namespace WellCooked
                 case "pause":
                     DumpPause();
                     break;
+                case "action":
+                    RunActionJson(value);
+                    break;
+                case "path_act":
+                    RunPathAct(value);
+                    break;
+                case "face_act":
+                    RunFaceAct(value);
+                    break;
+                case "work_act":
+                    RunWorkAct(value);
+                    break;
+                case "action_test":
+                    ActionSelftest();
+                    break;
+                case "state":
+                    _log.LogInfo("state_frame: " + StateFrame.Build(Time.realtimeSinceStartup));
+                    break;
+                case "pause_game":
+                    SetGamePaused(value == "1" || value == "true");
+                    break;
                 default:
                     _log.LogWarning("指令: 不认识 " + key);
                     break;
+            }
+        }
+
+        private static void RunActionJson(string json)
+        {
+            var m = UnityEngine.JsonUtility.FromJson<InboundMessage>(json);
+            if (m != null)
+            {
+                LinkRunner.HandleAction(m, json);
+            }
+        }
+
+        private static void RunPathAct(string value)
+        {
+            var parts = value.Split(':');
+            if (parts.Length < 2)
+            {
+                _log.LogWarning("指令: path_act 格式 chef_id:x1,y1;x2,y2...[:seq]");
+                return;
+            }
+            int chefId = int.Parse(parts[0]);
+            var wpCoords = parts[1].Split(';');
+            var wps = new List<Vec2>();
+            foreach (var coord in wpCoords)
+            {
+                var xy = coord.Split(',');
+                if (xy.Length == 2)
+                {
+                    wps.Add(new Vec2 { x = float.Parse(xy[0], CultureInfo.InvariantCulture), y = float.Parse(xy[1], CultureInfo.InvariantCulture) });
+                }
+            }
+            long seq = parts.Length > 2 ? long.Parse(parts[2]) : 1L;
+            var m = new InboundMessage
+            {
+                type = MsgType.Action,
+                chef_id = chefId,
+                action = MsgType.Path,
+                seq = seq,
+                waypoints = wps.ToArray()
+            };
+            LinkRunner.HandleAction(m, null);
+        }
+
+        private static void RunFaceAct(string value)
+        {
+            var parts = value.Split(':');
+            if (parts.Length < 2)
+            {
+                _log.LogWarning("指令: face_act 格式 chef_id:x,y 或 chef_id:target_object");
+                return;
+            }
+            int chefId = int.Parse(parts[0]);
+            var xy = parts[1].Split(',');
+            var m = new InboundMessage
+            {
+                type = MsgType.Action,
+                chef_id = chefId,
+                action = MsgType.Face
+            };
+            float x, y;
+            if (xy.Length == 2 && float.TryParse(xy[0], NumberStyles.Float, CultureInfo.InvariantCulture, out x)
+                && float.TryParse(xy[1], NumberStyles.Float, CultureInfo.InvariantCulture, out y))
+            {
+                m.target = new Vec2 { x = x, y = y };
+            }
+            else
+            {
+                m.target_object = parts[1];
+            }
+            LinkRunner.HandleAction(m, null);
+        }
+
+        private static void RunWorkAct(string value)
+        {
+            var parts = value.Split(':');
+            if (parts.Length < 2)
+            {
+                _log.LogWarning("指令: work_act 格式 chef_id:target_object");
+                return;
+            }
+            int chefId = int.Parse(parts[0]);
+            var m = new InboundMessage
+            {
+                type = MsgType.Action,
+                chef_id = chefId,
+                action = MsgType.Work,
+                target_object = parts[1]
+            };
+            LinkRunner.HandleAction(m, null);
+        }
+
+        /// <summary>
+        /// 动作执行器的行为自测（不依赖 Bridge，也不需要真人操作）：在已占的玩家位上
+        /// 直接调用 `ActionDriver.Handle`，回读登记状态。覆盖两条只有插件侧才有的语义：
+        /// 同 seq 的 path 只追加路点、work 一直按到收到下一条动作。
+        /// </summary>
+        private static void ActionSelftest()
+        {
+            int slot = -1;
+            PlayerControls chef = null;
+            for (int i = 0; i < 8; i++)
+            {
+                PlayerControls candidate;
+                if (Takeover.IsOwnedSlot(i) && Takeover.TryChefOf(i, out candidate))
+                {
+                    slot = i;
+                    chef = candidate;
+                    break;
+                }
+            }
+            if (slot < 0 || chef == null)
+            {
+                _log.LogWarning("action_selftest: 没有已占的玩家位与厨师，跳过");
+                return;
+            }
+
+            var failures = new List<string>();
+            Vector3 raw = chef.transform.position;
+            var p = new Vector2(raw.x, raw.z);
+
+            Func<int, Vec2> at = offset => new Vec2 { x = p.x + offset * 0.01f, y = p.y };
+
+            ActionDriver.Handle(new InboundMessage
+            {
+                type = MsgType.Action,
+                chef_id = slot,
+                action = MsgType.Path,
+                seq = 90210L,
+                waypoints = new[] { at(0) }
+            });
+            string state = ActionDriver.DebugState(slot);
+            if (!state.Contains("seq=90210") || !state.Contains("waypoints=1"))
+            {
+                failures.Add("首个 path 未登记: " + state);
+            }
+
+            // 同一 seq 的第二条消息带两项（旧项 + 新项）：只应追加到 2，而不是重置。
+            ActionDriver.Handle(new InboundMessage
+            {
+                type = MsgType.Action,
+                chef_id = slot,
+                action = MsgType.Path,
+                seq = 90210L,
+                waypoints = new[] { at(0), at(1) }
+            });
+            state = ActionDriver.DebugState(slot);
+            if (!state.Contains("waypoints=2"))
+            {
+                failures.Add("同 seq 追加失败: " + state);
+            }
+
+            // 重复发送同一条（桥每帧重发）不应继续追加。
+            ActionDriver.Handle(new InboundMessage
+            {
+                type = MsgType.Action,
+                chef_id = slot,
+                action = MsgType.Path,
+                seq = 90210L,
+                waypoints = new[] { at(0), at(1) }
+            });
+            state = ActionDriver.DebugState(slot);
+            if (!state.Contains("waypoints=2"))
+            {
+                failures.Add("重复的同 seq 消息被当成新路点: " + state);
+            }
+
+            // 新 seq 重置队列。
+            ActionDriver.Handle(new InboundMessage
+            {
+                type = MsgType.Action,
+                chef_id = slot,
+                action = MsgType.Path,
+                seq = 90211L,
+                waypoints = new[] { at(0) }
+            });
+            state = ActionDriver.DebugState(slot);
+            if (!state.Contains("seq=90211") || !state.Contains("waypoints=1"))
+            {
+                failures.Add("新 seq 未重置 path: " + state);
+            }
+
+            // 负数 seq 与超过 8 个路点必须被拒。
+            if (ActionDriver.Handle(new InboundMessage
+            {
+                type = MsgType.Action,
+                chef_id = slot,
+                action = MsgType.Path,
+                seq = -1L,
+                waypoints = new[] { at(0) }
+            }) == null)
+            {
+                failures.Add("负数 seq 被接受");
+            }
+            var tooMany = new Vec2[9];
+            for (int i = 0; i < tooMany.Length; i++)
+            {
+                tooMany[i] = at(i);
+            }
+            if (ActionDriver.Handle(new InboundMessage
+            {
+                type = MsgType.Action,
+                chef_id = slot,
+                action = MsgType.Path,
+                seq = 90212L,
+                waypoints = tooMany
+            }) == null)
+            {
+                failures.Add("9 个路点被接受");
+            }
+
+            // work 一直按着，直到下一条动作。
+            ActionDriver.Handle(new InboundMessage
+            {
+                type = MsgType.Action,
+                chef_id = slot,
+                action = MsgType.Work,
+                target_object = "cutting_board_0"
+            });
+            state = ActionDriver.DebugState(slot);
+            if (!state.StartsWith("work", StringComparison.Ordinal))
+            {
+                failures.Add("work 未登记: " + state);
+            }
+            ActionDriver.Handle(new InboundMessage
+            {
+                type = MsgType.Action,
+                chef_id = slot,
+                action = MsgType.Work,
+                target_object = "cutting_board_0"
+            });
+            if (!ActionDriver.DebugState(slot).StartsWith("work", StringComparison.Ordinal))
+            {
+                failures.Add("重复的 work 把按住的键松开了");
+            }
+            ActionDriver.Handle(new InboundMessage
+            {
+                type = MsgType.Action,
+                chef_id = slot,
+                action = "stop"
+            });
+            if (ActionDriver.DebugState(slot) != "none")
+            {
+                failures.Add("stop 之后 work 仍在: " + ActionDriver.DebugState(slot));
+            }
+
+            if (failures.Count == 0)
+            {
+                _log.LogInfo("action_selftest PASS 玩家位=" + (slot + 1)
+                             + " 同seq追加=ok work按住=ok 拒绝非法path=ok");
+            }
+            else
+            {
+                _log.LogWarning("action_selftest FAIL " + string.Join("；", failures.ToArray()));
             }
         }
 
@@ -637,8 +931,40 @@ namespace WellCooked
             foreach (var crate in Kitchen.Crates())
             {
                 _log.LogInfo("指令: 料箱 " + crate.Name + " 给=" + crate.Gives
-                             + " (" + crate.Position.x.ToString("F1") + "," + crate.Position.y.ToString("F1") + ")");
+                             + " (" + crate.Position.x.ToString("F2") + "," + crate.Position.y.ToString("F2") + ") "
+                             + GameCellNeighbours(crate.Position));
             }
+        }
+
+        /// <summary>
+        /// 工位所在的游戏格（1.2 米那套）、格心、本格占位物体，以及四个邻格的格心/占位/能不能站。
+        /// 交互只认"站在空邻格、朝着工位格"，站位点必须落在这些邻格里。
+        /// </summary>
+        private static string GameCellNeighbours(Vector2 station)
+        {
+            int ix, iz;
+            Vector2 centre;
+            if (!WorldState.GameCellOf(station, out ix, out iz) || !WorldState.GameCellPosition(ix, iz, out centre))
+            {
+                return "游戏格=?";
+            }
+            var own = WorldState.GameCellOccupant(ix, iz);
+            var text = "游戏格=(" + ix + "," + iz + ") 格心=(" + centre.x.ToString("F2") + "," + centre.y.ToString("F2")
+                       + ") 本格=「" + (own == null ? "" : own.name) + "」";
+            var offsets = new[] { new[] { 1, 0 }, new[] { -1, 0 }, new[] { 0, 1 }, new[] { 0, -1 } };
+            foreach (var o in offsets)
+            {
+                Vector2 p;
+                if (!WorldState.GameCellPosition(ix + o[0], iz + o[1], out p))
+                {
+                    continue;
+                }
+                var occupant = WorldState.GameCellOccupant(ix + o[0], iz + o[1]);
+                text += " [" + o[0] + "," + o[1] + "]=(" + p.x.ToString("F2") + "," + p.y.ToString("F2") + ")"
+                        + (occupant == null ? "空" : "「" + occupant.name + "」")
+                        + (WorldState.IsWalkablePoint(p.x, p.y) ? "可站" : "不可站");
+            }
+            return text;
         }
 
         /// <summary>scan=关键字：列出物体名或组件类型名含这个关键字的对象（找料箱/工位用）。</summary>
@@ -781,6 +1107,42 @@ namespace WellCooked
             {
                 _log.LogInfo("     " + method.Name + "(" + Describe(method.GetParameters()) + ") → "
                              + (method.ReturnType == null ? "?" : method.ReturnType.Name));
+            }
+        }
+
+        /// <summary>
+        /// 走游戏自己的暂停机制（`TimeManager.SetPaused(PauseLayer.Main, …)`），
+        /// 用于验证 `game_time_ms` 在暂停时不走。`Time.timeScale` 会被 TimeManager
+        /// 每帧覆盖，所以不能靠它。
+        /// </summary>
+        private static void SetGamePaused(bool paused)
+        {
+            var type = AccessTools.TypeByName("TimeManager");
+            if (type == null)
+            {
+                _log.LogWarning("指令: 找不到 TimeManager");
+                return;
+            }
+
+            var field = type.GetField("s_timeManager", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+            object manager = field != null ? field.GetValue(null) : null;
+            var layerType = AccessTools.TypeByName("TimeManager+PauseLayer");
+            var setPaused = type.GetMethod("SetPaused", BindingFlags.Public | BindingFlags.Instance);
+            if (manager == null || layerType == null || setPaused == null)
+            {
+                _log.LogWarning("指令: TimeManager 暂停接口不可用");
+                return;
+            }
+
+            object layer = Enum.Parse(layerType, "Main");
+            try
+            {
+                setPaused.Invoke(manager, new[] { layer, (object)paused, (object)"WellCooked.Verify" });
+                _log.LogInfo("指令: pause_game=" + (paused ? "1" : "0") + " 已调用 TimeManager.SetPaused(Main)");
+            }
+            catch (Exception e)
+            {
+                _log.LogWarning("指令: pause_game 调用失败 " + e.Message);
             }
         }
 

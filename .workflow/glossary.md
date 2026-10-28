@@ -51,5 +51,32 @@ competing names, omit the line rather than inventing fake synonyms.
 - **Bridge**: Linux 侧唯一连接游戏的进程，TCP 服务端，负责状态转发和输入汇总。
 - **Supervisor**: 守护进程，fork/exec 启动子进程、收心跳、按退避策略重启。
 - **Scheduler**: 调度决策进程，维护订单队列和资源锁表，用 POSIX 消息队列派发任务。
-- **Chef Worker**: 每个厨师一个进程，做寻路和动作分解，把结果写进输入槽。
-- **策略（Strategy）**: 订单级（FCFS/SJF/EDF/HRRN）或工序级（列表调度、关键路径优先）的调度算法。
+- **Chef Worker**: 每个厨师一个进程，做动作分解（宏动作），把结果写进输入槽；路径由 `navd` 规划。
+- **策略（Strategy）**: 订单级（FCFS/EDF/LLF/HRRN）或工序级（列表调度、关键路径优先）的
+  调度算法。LLF 按松弛（截止期 − 现在 − 剩余工时）从紧到松，HRRN 按响应比
+  `(等待 + 估计工时) / 估计工时` 从高到低；并列时都退化为 FCFS。
+- **站位格（stand cell）**: 厨师操作某个工位时必须站的可走格，取工位每个方向（+x/-x/+z/-z）
+  最近的一个，加载 `config/maps/<scene>/kitchen.json` 时算出，见
+  `.workflow/specs/kitchen-control.md`。工位本身在台面里，没有自己的可走格。
+  _Avoid_: 工位坐标（那是工位本身的位置，不可走）。
+- **距离场（distance field）**: 从某个工位全部站位格出发的 BFS 步数表（`uint16`，不可达为
+  `UINT16_MAX`），`navd` 用它给候选格排序，Scheduler 用它估路程代价；不含避让等待。
+- **派工代价（assignment cost）**: 一个 (空闲厨师, 就绪工序) 配对的标量分数：路程与工时
+  加成，剩余关键路径与订单紧迫度减分，分区模式再加跨区惩罚。多个空闲厨师用匈牙利算法取
+  总代价最小的配对；各加权分量写进 `decisions.jsonl`。
+- **洗盘工序（wash）**: Scheduler 在干净盘 ≤ 1 且有脏盘时合成的维护工序，不属于订单，和
+  订单工序走同一个候选列表与资源租约。_Avoid_: 把 wash 当成一张订单（会污染订单级 metrics）。
+- **navd**: Supervisor 下的走位进程，统一为所有厨师规划路径（PIBT，或对照基线 `pa`），
+  通过共享内存导航表 `/kitchenos_nav` 与 Worker 交换目标和计划。
+- **PIBT**: Priority Inheritance with Backtracking。每一步按优先级给每个厨师挑下一格，挡路的人
+  继承优先级先让开，让不开就回退换格；换目标后步数 + 紧迫度是优先级，`pinned` 与已到站的
+  目标厨师是固定障碍。_Avoid_: 死锁退让（PIBT 不靠事后检测死锁）。
+- **执行依赖图（action dependency graph）**: `navd` 放行路点的依据：某格的下一位使用者要等
+  上一位实际离开该格才放行，厨师快慢不一时也不会同格。
+- **游戏实例（instance）**: 一个独立目录里启动的 Overcooked2 进程，配一棵 `--instance k` 的
+  Linux 进程树，端口 `14455 + k`，IPC 名字带 `_<k>` 后缀。
+- **宏动作（macro action）**: Worker 执行一道工序时的一步高层动作（goto/pickup/drop/chop/
+  start_cook/wait_ready/wash/deliver），按世界状态判断完成，日志前缀 `macro_`。
+  _Avoid_: 原子动作（那是线上的 `step/face/work/interact`）。
+- **分区流水线（zoned pipeline）**: 每个厨师只在 `zones.json` 指定的区域内派工，跨区靠交接
+  台面传递半成品的调度模式；与"灵活派工"对比。

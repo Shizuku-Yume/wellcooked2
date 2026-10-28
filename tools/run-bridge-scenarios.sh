@@ -24,11 +24,19 @@ LOGDIR=${KITCHENOS_LOG_DIR:-$ROOT/logs}
 PREFIX=kitchenos_c04
 RUN_ID=${KITCHENOS_RUN_ID:-$$}
 SCENARIOS=(happy one-slot no-heartbeat bad-frames connect-mode reconnect-storm
-           silent-connect data-shapes second-peer pickup-dash input-grace)
+           silent-connect data-shapes second-peer pickup-dash path-face-work
+           input-grace os-loop round-start os-resources nav-corridor nav-stuck nav-crash
+           nav-ring macro
+           demo3-rules demo3-sushi-1chef demo3-4chef-5dish
+           demo3-regress-goto-drift demo3-regress-grid-offset
+           demo3-regress-double-pick demo3-regress-empty-pots
+           demo3-regress-plate-stack-count demo3-regress-cooker-type
+           demo3-regress-deliver-expired)
 SCEN_TIMEOUT=90
 STRICT=0
 ALLOW_SKIP=0
 RETRY_KILLED=1
+NAV=pibt
 ONLY=()
 LISTEN_PORT=""
 CONNECT_PORT=""
@@ -50,6 +58,7 @@ usage() {
   --connect-port P   固定 connect 模式端口（默认优先 14455，被占则换空闲端口）
   --run-id ID        shm/sem/日志名的运行标识（默认本脚本 pid；同机并发跑要各不相同）
   --retry-killed N   场景被外部信号杀掉（不是超时、不是断言失败）时自动重跑几次（默认 1）
+  --nav pibt|pa      走位算法，透传给 fake_plugin/navd（默认 pibt；pa 是对照基线）
   --list             只列出场景名
   -h, --help         显示本帮助
 EOF
@@ -75,6 +84,8 @@ while [ $# -gt 0 ]; do
         --run-id=*) RUN_ID=${1#*=}; shift ;;
         --retry-killed) RETRY_KILLED=${2:-1}; shift 2 ;;
         --retry-killed=*) RETRY_KILLED=${1#*=}; shift ;;
+        --nav) NAV=${2:-}; shift 2 ;;
+        --nav=*) NAV=${1#*=}; shift ;;
         --strict) STRICT=1; shift ;;
         --allow-skip) ALLOW_SKIP=1; shift ;;
         --list) printf '%s\n' "${SCENARIOS[@]}"; exit 0 ;;
@@ -96,6 +107,11 @@ if [ ${#ONLY[@]} -gt 0 ]; then
 else
     SELECTED=("${SCENARIOS[@]}")
 fi
+
+case "$NAV" in
+    pibt|pa) ;;
+    *) echo "未知走位算法: $NAV（可选: pibt pa）" >&2; exit 2 ;;
+esac
 
 for name in "${SELECTED[@]}"; do
     found=0
@@ -137,6 +153,7 @@ echo "bridge:      $BRIDGE"
 echo "logs:        $LOGDIR"
 echo "run-id:      $RUN_ID (shm/sem/日志名都带它，多实例并行互不干扰)"
 echo "scenarios:   ${SELECTED[*]}"
+echo "nav:         $NAV"
 echo
 
 declare -a RESULTS=()
@@ -181,14 +198,28 @@ final_cleanup() {
 }
 trap final_cleanup EXIT
 
+# 单个场景的上限：demo3 的 4 人 5 菜要跑满 120 s 局时（game_time 由状态帧推进，
+# 墙钟会略慢于游戏时钟），其余用 --timeout。
+scenario_limit() {
+    case "$1" in
+        demo3-4chef-5dish) echo 240 ;;
+        demo3-sushi-1chef) echo 120 ;;
+        demo3-regress-*) echo 120 ;;
+        demo3-rules) echo 90 ;;
+        *) echo "$SCEN_TIMEOUT" ;;
+    esac
+}
+
 run_one() {
     local name=$1
+    local limit
+    limit=$(scenario_limit "$name")
     # 前导 '/' 与 shm.h 的默认名 "/kitchenos_state" 一致；glibc 只接受单个前导斜杠
     local state="/${PREFIX}_${RUN_ID}_${name}"
     local sem="${state}_ready"
     local log="$LOGDIR/bridge-${RUN_ID}-${name}.log"
     local out="$LOGDIR/scenario-${RUN_ID}-${name}.out"
-    local extra=()
+    local extra=(--nav "$NAV")
     [ "$STRICT" -eq 1 ] && extra+=(--strict)
     [ -n "$LISTEN_PORT" ] && extra+=(--listen-port "$LISTEN_PORT")
     [ -n "$CONNECT_PORT" ] && extra+=(--connect-port "$CONNECT_PORT")
@@ -203,7 +234,7 @@ run_one() {
         : >"$log" 2>/dev/null || true
         start=$SECONDS
         ## fake_plugin.py 自己判定成败；timeout 只是不让缺 Bridge 的运行挂死在这里
-        timeout --signal=TERM --kill-after=5 "${SCEN_TIMEOUT}s" \
+        timeout --signal=TERM --kill-after=5 "${limit}s" \
             "$PY" "$ROOT/tools/fake_plugin.py" \
             --scenario "$name" \
             --bridge "$BRIDGE" \
@@ -219,15 +250,15 @@ run_one() {
         # timeout 自己收到 SIGTERM/SIGKILL 时也退出 124/137（本机实测），所以
         # "rc=124 却远没跑满上限"同样不是场景挂死，而是外部信号打到了 timeout
         # 或场景进程上（另一个 runner 的无锚点 pkill、OOM）—— 和上一段区别开，
-        # 只影响结论怎么写，不影响判定：真正的超时一定跑满 SCEN_TIMEOUT。
+        # 只影响结论怎么写，不影响判定：真正的超时一定跑满 limit。
         interrupted=0
         if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then
-            [ "$elapsed" -lt "$((SCEN_TIMEOUT - 5))" ] && interrupted=1
+            [ "$elapsed" -lt "$((limit - 5))" ] && interrupted=1
         fi
         # 被外部信号打死（别的 agent 的 pkill 横扫、手动 kill）既不是超时也不是
         # 断言结论，直接当 FAIL 会冤枉 Bridge；重跑一次，并把这件事说出来。
         if { [ "$signal" -gt 0 ] || [ "$interrupted" -eq 1 ]; } \
-           && [ "$elapsed" -lt "$SCEN_TIMEOUT" ] \
+           && [ "$elapsed" -lt "$limit" ] \
            && [ "$attempt" -le "$RETRY_KILLED" ]; then
             echo "    注意: 第 ${attempt} 次跑到 ${elapsed}s 时被外部打断" \
                  "（rc=$rc signal=$signal，不是超时、也不是断言失败），重跑"
@@ -255,13 +286,13 @@ run_one() {
             ;;
         124|137)
             if [ "$interrupted" -eq 1 ]; then
-                echo "FAIL $name (${elapsed}s) — rc=$rc 且远未跑满 ${SCEN_TIMEOUT}s：" \
+                echo "FAIL $name (${elapsed}s) — rc=$rc 且远未跑满 ${limit}s：" \
                      "外部信号打到了 timeout/场景进程上（不是场景超时）" >&2
                 RESULTS+=("FAIL $name (killed)")
                 FAILED=$((FAILED + 1))
                 FAILED_NAMES+=("$name(killed)")
             else
-                echo "FAIL $name (${elapsed}s) — 超时 ${SCEN_TIMEOUT}s 未结束（timeout 杀掉）" >&2
+                echo "FAIL $name (${elapsed}s) — 超时 ${limit}s 未结束（timeout 杀掉）" >&2
                 RESULTS+=("FAIL $name (timeout)")
                 FAILED=$((FAILED + 1))
                 FAILED_NAMES+=("$name(timeout)")

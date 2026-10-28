@@ -168,30 +168,97 @@ static int get_req_bool(const json_value *object, const char *key, int *dst)
     return map_status(json_object_get_bool(object, key, dst));
 }
 
+/* Optional boolean: absent or null leaves *dst untouched and returns PROTO_OK;
+ * a present member of the wrong type is an error, never a silent false. */
+static int get_opt_bool(const json_value *object, const char *key, int *dst)
+{
+    int rc = json_object_get_bool(object, key, dst);
+
+    if (rc == JSON_ERR_MISSING || json_is_null(json_object_get(object, key)))
+        return PROTO_OK;
+    return map_status(rc);
+}
+
+/* Optional string-array member (`contents`, `holding_contents`): absent or JSON
+ * null means "nothing to say" and leaves the count at 0; a present member of the
+ * wrong type is still an error. Entries that are not strings are dropped and
+ * counted, and anything past `max` is dropped and counted once. */
+static int get_str_array(const json_value *object, const char *key,
+                         char dst[][PROTO_KEY_MAX], size_t max, size_t *count,
+                         proto_diag *diag)
+{
+    const json_value *array = NULL;
+    size_t total;
+    size_t i;
+    int rc = json_object_get_array(object, key, &array);
+
+    *count = 0;
+    if (rc == JSON_ERR_MISSING || json_is_null(json_object_get(object, key)))
+        return PROTO_OK;
+    if (rc != JSON_OK)
+        return PROTO_ERR_RANGE;
+
+    total = json_array_size(array);
+    for (i = 0; i < total; i++) {
+        const json_value *item = json_array_get(array, i);
+        const char *text = json_string_value(item);
+
+        if (text == NULL) {
+            if (diag != NULL)
+                diag->dropped_items++;
+            continue;
+        }
+        if (*count >= max) {
+            if (diag != NULL)
+                diag->dropped_items += total - i;
+            break;
+        }
+        copy_str(dst[*count], PROTO_KEY_MAX, text, json_string_length(item), diag);
+        (*count)++;
+    }
+    return PROTO_OK;
+}
+
 /* "pot_7" -> POT/7, "cutting_board_0" -> CUTTING_BOARD/0, "plate_stack" ->
- * PLATE_STACK. Anything else is kept as an unknown resource rather than dropped:
- * the game may grow new station kinds and the bridge must survive that. */
+ * PLATE_STACK, "carried_2" -> CARRIED/2. Anything else is kept as an unknown
+ * resource rather than dropped: the game may grow new station kinds and the
+ * bridge must survive that. */
 static proto_resource_kind classify_key(const char *key, int *index)
 {
-    static const char pot[] = "pot_";
-    static const char board[] = "cutting_board_";
+    static const struct {
+        const char *prefix;
+        proto_resource_kind kind;
+    } table[] = {
+        { "pot_", PROTO_RES_POT },
+        { "cutting_board_", PROTO_RES_CUTTING_BOARD },
+        { "sink_", PROTO_RES_SINK },
+        { "counter_", PROTO_RES_COUNTER },
+        { "container_", PROTO_RES_CONTAINER },
+        { "carried_", PROTO_RES_CARRIED }
+    };
     const char *digits = NULL;
+    proto_resource_kind kind = PROTO_RES_UNKNOWN;
     const char *p;
+    size_t i;
     int value = 0;
 
     *index = -1;
     if (strcmp(key, "plate_stack") == 0)
         return PROTO_RES_PLATE_STACK;
-    if (strncmp(key, board, sizeof board - 1) == 0) {
-        digits = key + (sizeof board - 1);
-    } else if (strncmp(key, pot, sizeof pot - 1) == 0) {
-        digits = key + (sizeof pot - 1);
-    } else {
-        return PROTO_RES_UNKNOWN;
-    }
+    if (strcmp(key, "dirty_plates") == 0)
+        return PROTO_RES_DIRTY_PLATES;
 
-    if (*digits == '\0')
+    for (i = 0; i < sizeof table / sizeof table[0]; i++) {
+        size_t len = strlen(table[i].prefix);
+        if (strncmp(key, table[i].prefix, len) == 0) {
+            kind = table[i].kind;
+            digits = key + len;
+            break;
+        }
+    }
+    if (digits == NULL || *digits == '\0')
         return PROTO_RES_UNKNOWN;
+
     for (p = digits; *p != '\0'; p++) {
         if (*p < '0' || *p > '9')
             return PROTO_RES_UNKNOWN;
@@ -199,7 +266,7 @@ static proto_resource_kind classify_key(const char *key, int *index)
             value = value * 10 + (*p - '0');
     }
     *index = value;
-    return digits == key + (sizeof board - 1) ? PROTO_RES_CUTTING_BOARD : PROTO_RES_POT;
+    return kind;
 }
 
 proto_msg_type protocol_message_type(const json_value *root)
@@ -231,6 +298,7 @@ static int parse_chefs(const json_value *root, proto_state_update *out, proto_di
         const json_value *entry = json_array_get(chefs, i);
         const json_value *position = NULL;
         const json_value *holding;
+        const json_value *facing;
         proto_chef *chef;
         long long id = 0;
 
@@ -263,6 +331,27 @@ static int parse_chefs(const json_value *root, proto_state_update *out, proto_di
             if (rc != PROTO_OK)
                 return rc;
         }
+        rc = get_num(entry, "facing", &chef->facing);
+        if (rc != PROTO_OK)
+            return rc;
+
+        if (json_object_get(entry, "facing_reported") != NULL) {
+            rc = get_opt_bool(entry, "facing_reported", &chef->facing_reported);
+            if (rc != PROTO_OK)
+                return rc;
+        }
+        facing = json_object_get(entry, "facing_pos");
+        if (facing != NULL && json_typeof(facing) != JSON_NULL) {
+            if (json_typeof(facing) != JSON_OBJECT)
+                return PROTO_ERR_RANGE;
+            rc = get_num(facing, "x", &chef->facing_x);
+            if (rc != PROTO_OK)
+                return rc;
+            rc = get_num(facing, "y", &chef->facing_y);
+            if (rc != PROTO_OK)
+                return rc;
+            chef->has_facing_target = 1;
+        }
 
         /* `holding` is a string when the chef carries something and JSON null
          * otherwise; both describe a usable chef, so null stays as "". */
@@ -273,6 +362,10 @@ static int parse_chefs(const json_value *root, proto_state_update *out, proto_di
                 return rc;
         }
         rc = get_str(entry, "state", chef->state, sizeof chef->state, diag);
+        if (rc != PROTO_OK)
+            return rc;
+        rc = get_str_array(entry, "holding_contents", chef->holding_contents,
+                           PROTO_MAX_CONTENTS, &chef->holding_content_count, diag);
         if (rc != PROTO_OK)
             return rc;
 
@@ -324,6 +417,12 @@ static int parse_orders(const json_value *root, proto_state_update *out, proto_d
         rc = get_num(entry, "time_remaining", &order->time_remaining);
         if (rc != PROTO_OK)
             return rc;
+        if (json_object_get(entry, "score") != NULL) {
+            rc = get_int(entry, "score", &order->score);
+            if (rc != PROTO_OK)
+                return rc;
+            order->has_score = 1;
+        }
 
         rc = json_object_get_array(entry, "ingredients", &ingredients);
         if (rc == JSON_OK) {
@@ -372,6 +471,7 @@ static int parse_resources(const json_value *root, proto_state_update *out,
     for (i = 0; i < total; i++) {
         const char *key = json_object_key_at(resources, i);
         const json_value *entry = json_object_value_at(resources, i);
+        const json_value *pos;
         proto_resource *res;
 
         if (json_typeof(entry) != JSON_OBJECT) {
@@ -417,8 +517,144 @@ static int parse_resources(const json_value *root, proto_state_update *out,
             res->count = count;
             res->has_count = 1;
         }
+        if (json_object_get(entry, "progress") != NULL) {
+            rc = get_num(entry, "progress", &res->progress);
+            if (rc != PROTO_OK)
+                return rc;
+            /* 0..1 是契约（schema minimum/maximum）；越界值来自对端 bug，
+             * 不能写进 shm 让调度侧当成“已完成”或负进度。 */
+            if (res->progress < 0.0 || res->progress > 1.0)
+                return PROTO_ERR_RANGE;
+            res->has_progress = 1;
+        }
+
+        /* ---- state audit G1–G6 ---- */
+        rc = get_str(entry, "kind", res->kind_name, sizeof res->kind_name, diag);
+        if (rc != PROTO_OK)
+            return rc;
+        rc = get_str(entry, "item", res->item, sizeof res->item, diag);
+        if (rc != PROTO_OK)
+            return rc;
+        rc = get_str(entry, "step", res->step, sizeof res->step, diag);
+        if (rc != PROTO_OK)
+            return rc;
+
+        /* `pos` is how the worker finds a station without trusting enumeration
+         * order (G1). A half-written position is a sender bug: refuse it rather
+         * than pretend the station sits at (0,0). */
+        pos = json_object_get(entry, "pos");
+        if (pos != NULL && json_typeof(pos) != JSON_NULL) {
+            if (json_typeof(pos) != JSON_OBJECT)
+                return PROTO_ERR_RANGE;
+            if (json_object_get(pos, "x") == NULL || json_object_get(pos, "y") == NULL)
+                return PROTO_ERR_RANGE;
+            rc = get_num(pos, "x", &res->x);
+            if (rc != PROTO_OK)
+                return rc;
+            rc = get_num(pos, "y", &res->y);
+            if (rc != PROTO_OK)
+                return rc;
+            res->has_pos = 1;
+        }
+
+        rc = get_str_array(entry, "contents", res->contents, PROTO_MAX_CONTENTS,
+                           &res->content_count, diag);
+        if (rc != PROTO_OK)
+            return rc;
+
+        /* Cooking flags (KOS_SHM_VERSION 3): `state` collapses cooked+burning into
+         * one string, so the pour gate reads these instead. */
+        if (json_object_get(entry, "cooked") != NULL) {
+            rc = get_opt_bool(entry, "cooked", &res->cooked);
+            if (rc != PROTO_OK)
+                return rc;
+            res->has_cooked = 1;
+        }
+        if (json_object_get(entry, "burning") != NULL) {
+            rc = get_opt_bool(entry, "burning", &res->burning);
+            if (rc != PROTO_OK)
+                return rc;
+            res->has_burning = 1;
+        }
+        if (json_object_get(entry, "burn_in") != NULL) {
+            rc = get_num(entry, "burn_in", &res->burn_in);
+            if (rc != PROTO_OK)
+                return rc;
+            if (res->burn_in < 0.0)
+                return PROTO_ERR_RANGE;
+            res->has_burn_in = 1;
+        }
+        if (json_object_get(entry, "fire") != NULL) {
+            rc = get_opt_bool(entry, "fire", &res->fire);
+            if (rc != PROTO_OK)
+                return rc;
+            res->has_fire = 1;
+        }
 
         out->resource_count++;
+    }
+    return PROTO_OK;
+}
+
+/* Finished orders (G9). The plugin resends its whole bounded ring every frame,
+ * so an entry is dropped, not the message, when it lacks the three fields that
+ * make it usable: seq, id, outcome. */
+static int parse_order_results(const json_value *root, proto_state_update *out,
+                               proto_diag *diag)
+{
+    const json_value *results = NULL;
+    size_t total;
+    size_t i;
+    int rc = json_object_get_array(root, "order_results", &results);
+
+    if (rc == JSON_ERR_MISSING)
+        return PROTO_OK;
+    if (rc != JSON_OK)
+        return PROTO_ERR_RANGE;
+
+    total = json_array_size(results);
+    for (i = 0; i < total; i++) {
+        const json_value *entry = json_array_get(results, i);
+        const char *id;
+        const char *outcome;
+        size_t id_len;
+        size_t outcome_len;
+        long long seq = 0;
+        proto_order_result *result;
+
+        if (json_typeof(entry) != JSON_OBJECT ||
+            json_object_get_int(entry, "seq", &seq) != JSON_OK ||
+            json_object_get_string(entry, "id", &id, &id_len) != JSON_OK ||
+            json_object_get_string(entry, "outcome", &outcome, &outcome_len) != JSON_OK) {
+            if (diag != NULL)
+                diag->dropped_items++;
+            continue;
+        }
+        if (out->order_result_count >= PROTO_MAX_ORDER_RESULTS) {
+            if (diag != NULL)
+                diag->dropped_items += total - i;
+            break;
+        }
+
+        result = &out->order_results[out->order_result_count];
+        memset(result, 0, sizeof *result);
+        result->seq = seq;
+        copy_str(result->id, sizeof result->id, id, id_len, diag);
+        copy_str(result->outcome, sizeof result->outcome, outcome, outcome_len, diag);
+        rc = get_str(entry, "recipe", result->recipe, sizeof result->recipe, diag);
+        if (rc != PROTO_OK)
+            return rc;
+        if (json_object_get(entry, "score") != NULL) {
+            rc = get_int(entry, "score", &result->score);
+            if (rc != PROTO_OK)
+                return rc;
+            result->has_score = 1;
+        }
+        rc = get_int(entry, "game_time_ms", &result->game_time_ms);
+        if (rc != PROTO_OK)
+            return rc;
+
+        out->order_result_count++;
     }
     return PROTO_OK;
 }
@@ -442,14 +678,35 @@ int protocol_parse_state_update(const json_value *root, proto_state_update *out,
     rc = get_num(root, "game_time", &out->game_time);
     if (rc != PROTO_OK)
         return rc;
+    rc = get_req_int(root, "game_time_ms", &out->game_time_ms);
+    if (rc != PROTO_OK)
+        return rc;
+    if (out->game_time_ms < 0)
+        return PROTO_ERR_RANGE;
     rc = get_num(root, "score", &out->score);
     if (rc != PROTO_OK)
         return rc;
+
+    /* The round clock is one datum with two numbers: report neither rather than
+     * a left value without its limit. */
+    if (json_object_get(root, "round_time_left") != NULL ||
+        json_object_get(root, "round_time_limit") != NULL) {
+        rc = get_num(root, "round_time_left", &out->round_time_left);
+        if (rc != PROTO_OK)
+            return rc;
+        rc = get_num(root, "round_time_limit", &out->round_time_limit);
+        if (rc != PROTO_OK)
+            return rc;
+        out->has_round_time = 1;
+    }
 
     rc = parse_chefs(root, out, diag);
     if (rc != PROTO_OK)
         return rc;
     rc = parse_orders(root, out, diag);
+    if (rc != PROTO_OK)
+        return rc;
+    rc = parse_order_results(root, out, diag);
     if (rc != PROTO_OK)
         return rc;
     return parse_resources(root, out, diag);
@@ -540,6 +797,12 @@ int protocol_parse_ack(const json_value *root, proto_ack *out, proto_diag *diag)
     rc = get_req_bool(root, "ok", &out->ok);
     if (rc != PROTO_OK)
         return rc;
+    if (json_object_get(root, "seq") != NULL) {
+        rc = get_int(root, "seq", &out->seq);
+        if (rc != PROTO_OK)
+            return rc;
+        out->has_seq = 1;
+    }
     return get_str(root, "detail", out->detail, sizeof out->detail, diag);
 }
 
@@ -663,7 +926,48 @@ int protocol_parse_action(const json_value *root, proto_action *out, proto_diag 
     rc = get_str(root, "button", out->button, sizeof out->button, diag);
     if (rc != PROTO_OK)
         return rc;
-    return get_num(root, "hold_ms", &out->hold_ms);
+    rc = get_num(root, "hold_ms", &out->hold_ms);
+    if (rc != PROTO_OK)
+        return rc;
+
+    if (strcmp(out->action, PROTO_ACTION_PATH) == 0) {
+        const json_value *waypoints = NULL;
+        size_t total, i;
+        rc = get_req_int(root, "seq", &out->seq);
+        if (rc != PROTO_OK)
+            return rc;
+        if (out->seq < 0)
+            return PROTO_ERR_RANGE;
+        rc = json_object_get_array(root, "waypoints", &waypoints);
+        if (rc != JSON_OK)
+            return PROTO_ERR_MISSING;
+        total = json_array_size(waypoints);
+        if (total < 1 || total > PROTO_MAX_WAYPOINTS)
+            return PROTO_ERR_RANGE;
+        for (i = 0; i < total; i++) {
+            const json_value *wp = json_array_get(waypoints, i);
+            if (json_typeof(wp) != JSON_OBJECT)
+                return PROTO_ERR_RANGE;
+            rc = get_num(wp, "x", &out->waypoints[i].x);
+            if (rc != PROTO_OK)
+                return rc;
+            rc = get_num(wp, "y", &out->waypoints[i].y);
+            if (rc != PROTO_OK)
+                return rc;
+        }
+        out->waypoint_count = total;
+    } else if (strcmp(out->action, PROTO_ACTION_MOVE) == 0) {
+        if (!out->has_target)
+            return PROTO_ERR_MISSING;
+    } else if (strcmp(out->action, PROTO_ACTION_INTERACT) == 0 ||
+               strcmp(out->action, PROTO_ACTION_WORK) == 0) {
+        if (out->target_object[0] == '\0')
+            return PROTO_ERR_MISSING;
+    } else if (strcmp(out->action, PROTO_ACTION_FACE) == 0) {
+        if (!out->has_target && out->target_object[0] == '\0')
+            return PROTO_ERR_MISSING;
+    }
+    return PROTO_OK;
 }
 
 /* ------------------------------------------------------------------ */
@@ -819,6 +1123,7 @@ int protocol_build_action_dash(long long chef_id, char *out, size_t cap, size_t 
 }
 
 int protocol_build_action_interact(long long chef_id, const char *target_object,
+                                   int has_target, double x, double y,
                                    char *out, size_t cap, size_t *out_len)
 {
     json_writer w;
@@ -833,6 +1138,107 @@ int protocol_build_action_interact(long long chef_id, const char *target_object,
     json_writer_string(&w, PROTO_ACTION_INTERACT);
     json_writer_key(&w, "target_object");
     json_writer_string(&w, target_object == NULL ? "" : target_object);
+    if (has_target) {
+        /* 站点坐标：插件认不出 target_object 时按它判断是否已朝向目标。 */
+        json_writer_key(&w, "target");
+        json_writer_object_begin(&w);
+        json_writer_key(&w, "x");
+        json_writer_double(&w, x);
+        json_writer_key(&w, "y");
+        json_writer_double(&w, y);
+        json_writer_object_end(&w);
+    }
+    json_writer_object_end(&w);
+    return w_done(&w, out_len);
+}
+
+int protocol_build_action_path(long long chef_id, long long seq,
+                               const proto_waypoint *waypoints, size_t waypoint_count,
+                               char *out, size_t cap, size_t *out_len)
+{
+    json_writer w;
+    size_t i;
+
+    if (waypoints == NULL || waypoint_count == 0 || waypoint_count > PROTO_MAX_WAYPOINTS
+        || seq < 0)
+        return PROTO_ERR_RANGE;
+
+    json_writer_init(&w, out, cap);
+    json_writer_object_begin(&w);
+    json_writer_key(&w, "type");
+    json_writer_string(&w, PROTO_TYPE_ACTION);
+    json_writer_key(&w, "chef_id");
+    json_writer_int(&w, chef_id);
+    json_writer_key(&w, "action");
+    json_writer_string(&w, PROTO_ACTION_PATH);
+    json_writer_key(&w, "seq");
+    json_writer_int(&w, seq);
+    json_writer_key(&w, "waypoints");
+    json_writer_array_begin(&w);
+    for (i = 0; i < waypoint_count; i++) {
+        json_writer_object_begin(&w);
+        json_writer_key(&w, "x");
+        json_writer_double(&w, waypoints[i].x);
+        json_writer_key(&w, "y");
+        json_writer_double(&w, waypoints[i].y);
+        json_writer_object_end(&w);
+    }
+    json_writer_array_end(&w);
+    json_writer_object_end(&w);
+    return w_done(&w, out_len);
+}
+
+int protocol_build_action_face(long long chef_id, int has_target, double x, double y,
+                               const char *target_object, char *out, size_t cap, size_t *out_len)
+{
+    json_writer w;
+
+    if (!has_target && (target_object == NULL || target_object[0] == '\0'))
+        return PROTO_ERR_MISSING;
+
+    json_writer_init(&w, out, cap);
+    json_writer_object_begin(&w);
+    json_writer_key(&w, "type");
+    json_writer_string(&w, PROTO_TYPE_ACTION);
+    json_writer_key(&w, "chef_id");
+    json_writer_int(&w, chef_id);
+    json_writer_key(&w, "action");
+    json_writer_string(&w, PROTO_ACTION_FACE);
+    if (has_target) {
+        json_writer_key(&w, "target");
+        json_writer_object_begin(&w);
+        json_writer_key(&w, "x");
+        json_writer_double(&w, x);
+        json_writer_key(&w, "y");
+        json_writer_double(&w, y);
+        json_writer_object_end(&w);
+    }
+    if (target_object != NULL && target_object[0] != '\0') {
+        json_writer_key(&w, "target_object");
+        json_writer_string(&w, target_object);
+    }
+    json_writer_object_end(&w);
+    return w_done(&w, out_len);
+}
+
+int protocol_build_action_work(long long chef_id, const char *target_object,
+                               char *out, size_t cap, size_t *out_len)
+{
+    json_writer w;
+
+    if (target_object == NULL || target_object[0] == '\0')
+        return PROTO_ERR_MISSING;
+
+    json_writer_init(&w, out, cap);
+    json_writer_object_begin(&w);
+    json_writer_key(&w, "type");
+    json_writer_string(&w, PROTO_TYPE_ACTION);
+    json_writer_key(&w, "chef_id");
+    json_writer_int(&w, chef_id);
+    json_writer_key(&w, "action");
+    json_writer_string(&w, PROTO_ACTION_WORK);
+    json_writer_key(&w, "target_object");
+    json_writer_string(&w, target_object);
     json_writer_object_end(&w);
     return w_done(&w, out_len);
 }

@@ -38,6 +38,15 @@ namespace WellCooked
         {
             _log = log;
 
+            // 手动局（slots=none）：一个玩家位都不归我们，逻辑层补丁会让 GetValue/GetButton
+            // 变成我们的包装对象；即使 Active=false 会透传，也没必要碰游戏原生的输入对象。
+            // 直接不装补丁，游戏拿到的就是原生 ILogicalValue/ILogicalButton。
+            if (Takeover.OccupiesNoSlots)
+            {
+                _log.LogInfo("logical: slots=none，不安装逻辑层注入（所有玩家用游戏原生输入）");
+                return;
+            }
+
             // 关键：从插件加载起就把四个玩家的包装准备好。
             // 游戏在关卡加载时会把 GetValue/GetButton 返回的对象缓存进玩家的控制映射，
             // 那一次调用如果发生在"我们开始驱动"之前，缓存到的就是原对象，之后再补也没用。
@@ -296,16 +305,26 @@ namespace WellCooked
 
             public void ClaimPressEvent()
             {
+                if (!_drive.Active)
+                {
+                    _inner.ClaimPressEvent();
+                    return;
+                }
+
                 _claimed = true;
             }
 
             public bool HasUnclaimedReleaseEvent()
             {
-                return false;
+                return _drive.Active ? false : _inner.HasUnclaimedReleaseEvent();
             }
 
             public void ClaimReleaseEvent()
             {
+                if (!_drive.Active)
+                {
+                    _inner.ClaimReleaseEvent();
+                }
             }
 
             public float GetHeldTimeLength()

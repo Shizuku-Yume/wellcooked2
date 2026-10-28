@@ -31,25 +31,49 @@ namespace WellCooked
     {
         private const float ArriveRadius = 0.5f;      // 一格（0.6 米）以内算到了
         private const float MoveTimeout = 10f;        // 一次 move 最多走这么久（任务清单定的默认）
+        private const float PathEndpointTolerance = 0.3f; // nav waypoint must be reached within 0.3 m
+        private const float PathCornerTolerance = 0.15f; // turn corners may be skipped within 0.15 m
+        private const float FaceAngleTolerance = 15f;    // 朝向误差 < 15°
+        private const float FaceStickMagnitude = 0.35f;  // 转身脉冲幅度：避免平移冲出 0.3m 站位
+        private const float FacePulseDuration = 0.06f;   // 每次转身脉冲时长
+        private const float FacePulseInterval = 0.25f;   // 转身脉冲间隔
         private const float PulseSeconds = 0.25f;     // 按键按下去多久（游戏只认边沿）
         private const float PulseInterval = 0.6f;     // 一次动作没做出效果时，隔多久再按一次
         private const int KeyPulses = 2;              // 按键类按几次算"做过了"（游戏只认边沿，按一次可能被吃掉）
+        // 桥对一步按键会连发 KOS_WORKER_INTERACT_WINDOW_MS（bridge/src/worker_timing.h，1 秒）。
+        // 这段时间里上一条按键已经做完再收到同类按键，是同一步的重发，不是新的一步。
+        private const float ResendWindow = 1.0f;
 
         private sealed class Command
         {
             public string Kind;
             public Vector2 Target;
+            public string TargetObject;
+            public bool HasTarget;   // interact：桥附带了站点坐标（Target）
             public float Deadline;
             public int Pulses;   // 按键类按了几次
             public float PulseUntil;
             public float NextPulseAt;
+            public float TurnUntil;   // interact 没对准目标时的转向摇杆脉冲截止时刻
+            public float NextTurnAt;
             public float StartedAt;
-            public bool Done;   // move 走完/超时了：留着这条（同一条指令别重复登记），但不再驱动
+            public bool Done;   // 走完/超时了：留着这条，但不再驱动
+            public string HeldAtFirstPulse; // 按键类：第一下按下时手上是什么
+            public float DoneAt;            // 按键类：哪一刻做完的（游戏时钟）
+
+            // path 专用
+            public long Seq;
+            public List<Vector2> Waypoints;
+            public int WaypointIndex;
+            public int PathDirection = -1;
         }
 
         private static ManualLogSource _log;
         private static readonly Dictionary<int, Command> Commands = new Dictionary<int, Command>();
         private static readonly HashSet<int> Owned = new HashSet<int>();
+        // 每个厨师最近一次真正按下交互键的时刻（游戏时钟）与那时手上的东西。
+        private static readonly Dictionary<int, float> LastPressAt = new Dictionary<int, float>();
+        private static readonly Dictionary<int, string> LastPressHeld = new Dictionary<int, string>();
 
         /// <summary>有厨师被动作指令接管了（`Takeover` 据此跳过本地驱动）。</summary>
         public static bool AnyOwned
@@ -60,6 +84,11 @@ namespace WellCooked
         public static bool Owns(int slot)
         {
             return Owned.Contains(slot);
+        }
+
+        public static int OwnedCount
+        {
+            get { return Owned.Count; }
         }
 
         public static void Install(ManualLogSource log)
@@ -97,8 +126,17 @@ namespace WellCooked
                 return "玩家位 " + m.chef_id + " 不在我们占的位里";
             }
 
-            float now = Time.realtimeSinceStartup;
+            float wall = Time.realtimeSinceStartup;
+            float now = GameClock(wall);
             string kind = m.action.Trim().ToLowerInvariant();
+
+            Command active;
+            if (Commands.TryGetValue(m.chef_id, out active) && active.Kind == "work"
+                && kind != "work")
+            {
+                // work 的结束条件只有"收到下一条动作"；把这句话写进日志，实机验收才看得见。
+                _log.LogInfo("action: 厨师位 " + (m.chef_id + 1) + " work 松开（收到 " + kind + "）");
+            }
 
             if (kind == "stop")
             {
@@ -112,6 +150,10 @@ namespace WellCooked
                 if (m.target == null)
                 {
                     return "move 缺 target";
+                }
+                if (!IsFinite(m.target.x) || !IsFinite(m.target.y))
+                {
+                    return "move 的 target 不是有限数";
                 }
 
                 Owned.Add(m.chef_id);
@@ -151,10 +193,231 @@ namespace WellCooked
                     return null;
                 }
 
-                command = new Command { Kind = kind, StartedAt = now };
+                if (command != null && command.Kind == kind && command.Done && now - command.DoneAt < ResendWindow)
+                {
+                    // 刚做完又收到同类按键：是桥同一步的重发。再登记就是第 3 下，
+                    // 会把刚拿起的东西放回去（实测 `_3`：拿起→放回→再拿起）。
+                    return null;
+                }
+                float lastPress;
+                string lastHeld;
+                if (kind == "interact" && LastPressAt.TryGetValue(m.chef_id, out lastPress)
+                    && now - lastPress < ResendWindow
+                    && LastPressHeld.TryGetValue(m.chef_id, out lastHeld)
+                    && HeldOf(m.chef_id) != lastHeld)
+                {
+                    // 上一下刚生效（手上的东西变了），桥的世界状态还没跟上又发来 interact：
+                    // 再按就把刚放下的东西拿回来（实机 _3：玉米饼放下又被拿回手里，
+                    // 后面拿着饼去端米饭锅，锅留在灶上烧糊）。
+                    return null;
+                }
+
+                command = new Command { Kind = kind, StartedAt = now, TargetObject = m.target_object };
+                // 桥给 interact 附带站点坐标：认不出 target_object 时按坐标判断朝向。
+                if (m.target != null && IsFinite(m.target.x) && IsFinite(m.target.y))
+                {
+                    command.Target = new Vector2(m.target.x, m.target.y);
+                    command.HasTarget = true;
+                }
                 Commands[m.chef_id] = command;
                 command.NextPulseAt = 0f; // 立刻按第一下
                 command.Deadline = now + MoveTimeout;
+                return null;
+            }
+
+            if (kind == "path")
+            {
+                if (m.waypoints == null || m.waypoints.Length == 0)
+                {
+                    return "path 缺 waypoints";
+                }
+                if (m.waypoints.Length > 8)
+                {
+                    return "path 路点数超过 8（收到 " + m.waypoints.Length + "）";
+                }
+                if (m.seq < 0)
+                {
+                    return "path 的 seq 不能为负";
+                }
+                for (int i = 0; i < m.waypoints.Length; i++)
+                {
+                    if (!IsFinite(m.waypoints[i].x) || !IsFinite(m.waypoints[i].y))
+                    {
+                        return "path 的路点不是有限数";
+                    }
+                }
+
+                Owned.Add(m.chef_id);
+                var newWps = new List<Vector2>(m.waypoints.Length);
+                for (int i = 0; i < m.waypoints.Length; i++)
+                {
+                    newWps.Add(new Vector2(m.waypoints[i].x, m.waypoints[i].y));
+                }
+
+                PlayerControls chef;
+                Vector2 pos = Vector2.zero;
+                bool hasPos = Takeover.TryChefOf(m.chef_id, out chef) && chef != null;
+                if (hasPos)
+                {
+                    pos = new Vector2(chef.transform.position.x, chef.transform.position.z);
+                }
+
+                Command previous;
+                bool hasPreviousPath = Commands.TryGetValue(m.chef_id, out previous) && previous.Kind == "path";
+                int inheritedDirection = -1;
+                bool sameGoal = hasPreviousPath && previous.Waypoints != null && previous.Waypoints.Count > 0
+                    && Vector2.Distance(previous.Waypoints[previous.Waypoints.Count - 1], newWps[newWps.Count - 1]) <= 0.01f;
+                if (sameGoal)
+                {
+                    inheritedDirection = previous.PathDirection;
+                    int existingCount = previous.Waypoints.Count;
+                    int matchIndex = -1;
+                    if (previous.WaypointIndex >= 0 && previous.WaypointIndex < previous.Waypoints.Count)
+                    {
+                        Vector2 prevTarget = previous.Waypoints[previous.WaypointIndex];
+                        for (int i = 0; i < newWps.Count; i++)
+                        {
+                            if (Vector2.Distance(newWps[i], prevTarget) <= 0.01f)
+                            {
+                                matchIndex = i;
+                                break;
+                            }
+                        }
+                    }
+                    if (matchIndex < 0) matchIndex = 0;
+                    if (hasPos) matchIndex = ForwardWaypoint(newWps, pos, matchIndex);
+                    LogPathSelection(m, chef, pos, hasPos, newWps, matchIndex, "updated");
+                    previous.Waypoints = newWps;
+                    previous.Seq = m.seq;
+                    previous.PathDirection = inheritedDirection;
+                    previous.WaypointIndex = matchIndex;
+                    previous.Done = false;
+                    int remaining = previous.Waypoints.Count - previous.WaypointIndex;
+                    previous.Deadline = now + Math.Max(MoveTimeout, remaining * 2.0f);
+                    if (newWps.Count != existingCount)
+                    {
+                        _log.LogInfo("action: 厨师位 " + (m.chef_id + 1) + " path seq="
+                                     + m.seq + " 更新路点 " + existingCount + "→"
+                                     + newWps.Count + " idx=" + matchIndex);
+                    }
+                    return null;
+                }
+
+                int startIdx = hasPos ? ForwardWaypoint(newWps, pos, 0) : 0;
+                LogPathSelection(m, chef, pos, hasPos, newWps, startIdx, "new");
+                Commands[m.chef_id] = new Command
+                {
+                    Kind = "path",
+                    Seq = m.seq,
+                    Waypoints = newWps,
+                    WaypointIndex = startIdx,
+                    PathDirection = inheritedDirection,
+                    StartedAt = now,
+                    Deadline = now + Math.Max(MoveTimeout, newWps.Count * 2.0f)
+                };
+
+                return null;
+            }
+
+            if (kind == "face")
+            {
+                Command previous;
+                bool hasPrevious = Commands.TryGetValue(m.chef_id, out previous);
+                if (!string.IsNullOrEmpty(m.target_object)
+                    && hasPrevious && previous.Kind == "face"
+                    && previous.TargetObject == m.target_object)
+                {
+                    if (previous.Done)
+                    {
+                        previous.Done = false;
+                        previous.StartedAt = now;
+                        previous.Deadline = now + 4f;
+                        previous.NextPulseAt = 0f;
+                    }
+                    return null;
+                }
+
+                Vector2 target = Vector2.zero;
+                bool hasTarget = false;
+                if (!string.IsNullOrEmpty(m.target_object))
+                {
+                    Vector2 station;
+                    if (Kitchen.TryStationPosition(m.target_object, out station))
+                    {
+                        target = station;
+                        hasTarget = true;
+                    }
+                }
+                if (!hasTarget && m.target != null)
+                {
+                    target = new Vector2(m.target.x, m.target.y);
+                    hasTarget = true;
+                }
+
+                if (!hasTarget)
+                {
+                    return "face 缺 target 或找不到 target_object";
+                }
+                if (!IsFinite(target.x) || !IsFinite(target.y))
+                {
+                    return "face 的目标不是有限数";
+                }
+
+                Owned.Add(m.chef_id);
+                if (hasPrevious && previous.Kind == "face"
+                    && Vector2.Distance(previous.Target, target) <= 0.01f)
+                {
+                    if (previous.Done)
+                    {
+                        previous.Done = false;
+                        previous.StartedAt = now;
+                        previous.Deadline = now + 4f;
+                        previous.NextPulseAt = 0f;
+                    }
+                    return null;
+                }
+
+                Commands[m.chef_id] = new Command
+                {
+                    Kind = "face",
+                    Target = target,
+                    TargetObject = m.target_object,
+                    StartedAt = now,
+                    Deadline = now + 4f
+                };
+                _log.LogInfo("action: 厨师位 " + (m.chef_id + 1) + " face 转向 ("
+                             + target.x.ToString("F1") + "," + target.y.ToString("F1") + ")"
+                             + (string.IsNullOrEmpty(m.target_object) ? "" : " " + m.target_object));
+                return null;
+            }
+
+            if (kind == "work")
+            {
+                if (string.IsNullOrEmpty(m.target_object))
+                {
+                    return "work 缺 target_object";
+                }
+
+                Owned.Add(m.chef_id);
+                Command previous;
+                if (Commands.TryGetValue(m.chef_id, out previous) && previous.Kind == "work")
+                {
+                    if (previous.TargetObject == m.target_object)
+                    {
+                        return null; // 桥每帧重发同一条
+                    }
+                    _log.LogInfo("action: 厨师位 " + (m.chef_id + 1) + " work 换目标 "
+                                 + (previous.TargetObject ?? "") + "→" + m.target_object);
+                }
+
+                Commands[m.chef_id] = new Command
+                {
+                    Kind = "work",
+                    TargetObject = m.target_object,
+                    StartedAt = now
+                };
+                _log.LogInfo("action: 厨师位 " + (m.chef_id + 1) + " work 按住 "
+                             + (m.target_object ?? "") + "（直到下一条动作）");
                 return null;
             }
 
@@ -168,12 +431,34 @@ namespace WellCooked
         /// </summary>
         public static bool Drive(int slot, VirtualPad pad, Vector2 position, float now)
         {
+            float clock = GameClock(now);
             if (!Owned.Contains(slot))
             {
                 return false;
             }
 
             Command command;
+            if (Commands.TryGetValue(slot, out command) && command.Kind == "face" && command.Done)
+            {
+                PlayerControls chefObj;
+                if (Takeover.TryChefOf(slot, out chefObj) && chefObj != null)
+                {
+                    Vector2 d = command.Target - position;
+                    if (d.sqrMagnitude > 0.0001f)
+                    {
+                        Vector2 fwd = new Vector2(chefObj.transform.forward.x, chefObj.transform.forward.z).normalized;
+                        float curAngle = Vector2.Angle(fwd, d.normalized);
+                        if (curAngle >= FaceAngleTolerance)
+                        {
+                            command.Done = false;
+                            command.StartedAt = now;
+                            command.Deadline = now + 4f;
+                            command.NextPulseAt = 0f;
+                        }
+                    }
+                }
+            }
+
             if (!Commands.TryGetValue(slot, out command) || command.Done)
             {
                 // 归属还在、当前没有活着的命令：站住不动（stop/到达/超时之后就是这个状态）
@@ -188,7 +473,7 @@ namespace WellCooked
                 {
                     string arrived = "到达 (" + command.Target.x.ToString("F1") + ","
                                      + command.Target.y.ToString("F1") + ")，用时 "
-                                     + (now - command.StartedAt).ToString("F1") + " 秒";
+                                     + (clock - command.StartedAt).ToString("F1") + " 秒";
                     _log.LogInfo("action: 厨师位 " + (slot + 1) + " " + arrived);
                     Report(slot, "move", true, arrived);
                     command.Done = true;
@@ -196,7 +481,7 @@ namespace WellCooked
                     return true;
                 }
 
-                if (now > command.Deadline)
+                if (clock > command.Deadline)
                 {
                     string failed = "超时 " + MoveTimeout.ToString("F0") + " 秒，还差 "
                                     + distance.ToString("F1") + " 米";
@@ -220,26 +505,208 @@ namespace WellCooked
                 return true;
             }
 
+            if (command.Kind == "path")
+            {
+                if (command.Waypoints == null || command.Waypoints.Count == 0)
+                {
+                    command.Done = true;
+                    Feed(slot, pad, Vector2.zero, false, false, false);
+                    return true;
+                }
+
+                int idx = command.WaypointIndex;
+                if (idx >= command.Waypoints.Count)
+                {
+                    idx = command.Waypoints.Count - 1;
+                }
+                int startedAt = idx;
+                Vector2 currentTarget = command.Waypoints[idx];
+                float dist = Vector2.Distance(position, currentTarget);
+
+                while (idx < command.Waypoints.Count - 1)
+                {
+                    currentTarget = command.Waypoints[idx];
+                    Vector2 segment = command.Waypoints[idx + 1] - currentTarget;
+                    Vector2 offset = position - currentTarget;
+                    bool reached = Vector2.Distance(position, currentTarget) <= PathCornerTolerance;
+                    float lengthSquared = segment.sqrMagnitude;
+                    bool passed = lengthSquared > 0.0001f
+                        && Vector2.Dot(offset, segment) / lengthSquared >= 1f;
+                    if (!reached && !passed) break;
+                    idx++;
+                    command.WaypointIndex = idx;
+                    currentTarget = command.Waypoints[idx];
+                    dist = Vector2.Distance(position, currentTarget);
+                }
+
+                if (idx != startedAt)
+                {
+                    // 实机验收看"连续走、没有中途停顿"就靠这些带时间戳的切换行。
+                    Diag.Trace("action: path 路点切换 厨师位 " + (slot + 1) + " "
+                               + (startedAt + 1) + "→" + (idx + 1) + "/"
+                               + command.Waypoints.Count + " seq=" + command.Seq
+                               + " t=" + now.ToString("F2"));
+                }
+
+                if (idx == command.Waypoints.Count - 1 &&
+                    PathArrival.IsWithinTolerance(position.x, position.y,
+                                                  currentTarget.x, currentTarget.y,
+                                                  PathEndpointTolerance))
+                {
+                    string arrived = "path 到达终点 (" + currentTarget.x.ToString("F1") + "," + currentTarget.y.ToString("F1")
+                                     + ") seq=" + command.Seq + "，用时 " + (clock - command.StartedAt).ToString("F1") + " 秒";
+                    _log.LogInfo("action: 厨师位 " + (slot + 1) + " " + arrived);
+                    Report(slot, "path", true, arrived, command.Seq);
+                    command.Done = true;
+                    Feed(slot, pad, Vector2.zero, false, false, false);
+                    return true;
+                }
+
+                if (clock > command.Deadline)
+                {
+                    string late = "path 超时，距第 " + (idx + 1) + " 个路点还差 " + dist.ToString("F1") + " 米 seq=" + command.Seq;
+                    _log.LogWarning("action: 厨师位 " + (slot + 1) + " " + late);
+                    Report(slot, "path", false, late, command.Seq);
+                    command.Done = true;
+                    Feed(slot, pad, Vector2.zero, false, false, false);
+                    return true;
+                }
+
+                Vector2 dir = PathDirection(currentTarget - position, command, position, currentTarget, slot);
+                Feed(slot, pad, dir, false, false, false);
+                return true;
+            }
+
+            if (command.Kind == "face")
+            {
+                // 游戏网格只有四个邻格：斜着朝向时选中的是砧板、按切却不进度（实机 20261027-234924
+                // 鸡肉朝 (0.71,0.71) 切 146 次无进度）。转到最近的坐标轴方向。
+                Vector2 dir = CardinalDirection(command.Target - position);
+                PlayerControls chef;
+                float angle = 180f;
+                bool hasChef = Takeover.TryChefOf(slot, out chef) && chef != null;
+                if (hasChef)
+                {
+                    if (dir == Vector2.zero)
+                    {
+                        angle = 0f; // 目标就在脚下：没有"朝哪"的问题
+                    }
+                    else
+                    {
+                        Vector2 currentForward = new Vector2(chef.transform.forward.x,
+                                                             chef.transform.forward.z).normalized;
+                        angle = Vector2.Angle(currentForward, dir);
+                    }
+                }
+
+                if (angle < FaceAngleTolerance)
+                {
+                    string done = "face 对准 误差=" + angle.ToString("F1") + "°";
+                    _log.LogInfo("action: 厨师位 " + (slot + 1) + " " + done);
+                    Report(slot, "face", true, done);
+                    command.Done = true;
+                    Feed(slot, pad, Vector2.zero, false, false, false);
+                    return true;
+                }
+
+                if (clock > command.Deadline)
+                {
+                    string late = "face 超时 误差=" + angle.ToString("F1") + "°";
+                    _log.LogWarning("action: 厨师位 " + (slot + 1) + " " + late);
+                    Report(slot, "face", false, late);
+                    command.Done = true;
+                    Feed(slot, pad, Vector2.zero, false, false, false);
+                    return true;
+                }
+
+                // 转身要短促：用较小摇杆幅度与短脉冲，避免平移冲出 0.3m 站位。
+                if (now >= command.NextPulseAt)
+                {
+                    command.NextPulseAt = now + FacePulseInterval;
+                    command.PulseUntil = now + FacePulseDuration;
+                }
+                bool pulsing = hasChef && now < command.PulseUntil;
+                Feed(slot, pad, pulsing ? (dir * FaceStickMagnitude) : Vector2.zero, false, false, false);
+                return true;
+            }
+
+            if (command.Kind == "work")
+            {
+                // 按住加工键直到下一条动作
+                Feed(slot, pad, Vector2.zero, false, false, true);
+                return true;
+            }
+
             // 按键类：按下 PulseSeconds，之后松开；再隔 PulseInterval 按一次（游戏只认边沿，
             // 一次按键可能被帧边界吃掉）。按满 KeyPulses 次并松开就算做完，回一条结局 ack ——
             // 按键没有"到没到位"这种可观测的结局，能报的就是"按了几次"，效果看后续 state_update。
             bool pressed = now < command.PulseUntil;
             if (!pressed && command.Pulses < KeyPulses && now >= command.NextPulseAt)
             {
+                string held = HeldOf(slot);
+                if (command.Pulses == 0)
+                {
+                    command.HeldAtFirstPulse = held;
+                }
+                else if (held != command.HeldAtFirstPulse)
+                {
+                    // 第一下已经生效（手上的东西变了）：补按的第二下会把它撤回（拿起又放下），不按。
+                    _log.LogInfo("action: 厨师位 " + (slot + 1) + " " + command.Kind + " 第一下已生效（手上「"
+                                 + command.HeldAtFirstPulse + "」→「" + held + "」），不再补按");
+                    command.Pulses = KeyPulses;
+                }
+            }
+
+            // 按之前核对"面前是不是目标工位"：游戏按朝向在邻格里挑交互对象，桥那边用的是
+            // 上一帧的世界状态，站位格两侧都有工位时（`_3`：出料口在 -z、灶台在 +z）
+            // 朝向一偏就按到隔壁 —— 实测空手按出料口拿起了灶台上的空锅，之后一直端着锅走。
+            // 没对准就不按，用短促摇杆脉冲转向目标，等下一帧再核对。
+            Vector2 aimDir;
+            if (!pressed && command.Pulses < KeyPulses && now >= command.NextPulseAt
+                && command.Kind == "interact" && !AimedAtTarget(slot, command, position, out aimDir))
+            {
+                if (clock > command.Deadline)
+                {
+                    string late = "超时 " + MoveTimeout.ToString("F0") + " 秒，没能对准「" + command.TargetObject + "」";
+                    _log.LogWarning("action: 厨师位 " + (slot + 1) + " interact " + late);
+                    Report(slot, command.Kind, false, late);
+                    command.Done = true;
+                    command.DoneAt = clock;
+                    Feed(slot, pad, Vector2.zero, false, false, false);
+                    return true;
+                }
+                if (now >= command.NextTurnAt)
+                {
+                    command.TurnUntil = now + FacePulseDuration;
+                    command.NextTurnAt = now + FacePulseInterval;
+                    _log.LogInfo("action: 厨师位 " + (slot + 1) + " interact 面前不是「" + command.TargetObject
+                                 + "」，先转向再按 " + PoseSummary(slot, position));
+                }
+                Feed(slot, pad, now < command.TurnUntil ? aimDir * FaceStickMagnitude : Vector2.zero, false, false, false);
+                return true;
+            }
+
+            if (!pressed && command.Pulses < KeyPulses && now >= command.NextPulseAt)
+            {
                 command.PulseUntil = now + PulseSeconds;
                 command.NextPulseAt = now + PulseInterval;
                 command.Pulses++;
                 pressed = true;
+                LastPressAt[slot] = clock;
+                LastPressHeld[slot] = HeldOf(slot);
+                // 按键有没有效果要看"面前是谁、手上是什么"：游戏按厨师所在格的邻格里朝向最对齐的
+                // 那一格判定交互对象，按错格子时 ack 照样 ok，只有这一行能看出来。
                 _log.LogInfo("action: 厨师位 " + (slot + 1) + " 按 " + command.Kind
-                             + (command.Pulses > 1 ? "（再按一次）" : ""));
+                             + (command.Pulses > 1 ? "（再按一次）" : "") + " " + PoseSummary(slot, position));
             }
 
-            if (now > command.Deadline)
+            if (clock > command.Deadline)
             {
                 string late = "超时 " + MoveTimeout.ToString("F0") + " 秒，按键没走完";
                 _log.LogWarning("action: 厨师位 " + (slot + 1) + " " + command.Kind + " " + late);
                 Report(slot, command.Kind, false, late);
                 command.Done = true;
+                command.DoneAt = clock;
                 Feed(slot, pad, Vector2.zero, false, false, false);
                 return true;
             }
@@ -247,8 +714,11 @@ namespace WellCooked
             if (command.Pulses >= KeyPulses && !pressed)
             {
                 string done = "已按键 " + command.Pulses + " 次";
+                _log.LogInfo("action: 厨师位 " + (slot + 1) + " " + command.Kind + " 按完 "
+                             + PoseSummary(slot, position));
                 Report(slot, command.Kind, true, done);
                 command.Done = true;
+                command.DoneAt = clock;
                 Feed(slot, pad, Vector2.zero, false, false, false);
                 return true;
             }
@@ -259,11 +729,190 @@ namespace WellCooked
             return true;
         }
 
-        /// <summary>把一条动作的结局回给 Bridge（第二次 ack）。</summary>
-        private static void Report(int slot, string action, bool ok, string detail)
+        /// <summary>厨师手上是什么（拿不到厨师时返回空串）。</summary>
+        private static string HeldOf(int slot)
         {
-            LinkRunner.ReportAction(action, slot, ok, detail);
+            PlayerControls chef;
+            return Takeover.TryChefOf(slot, out chef) ? Kitchen.HeldSummary(chef) : "";
         }
+
+        /// <summary>
+        /// 厨师面前的占位物体是不是 `command.TargetObject` 那个工位。认不出目标的位置时不拦
+        /// （返回 true），只拦"认得出目标、而面前是别的东西或什么都没有"。`dir` 是转向目标的方向。
+        /// </summary>
+        private static bool AimedAtTarget(int slot, Command command, Vector2 position, out Vector2 dir)
+        {
+            dir = Vector2.zero;
+            Vector2 station = Vector2.zero;
+            PlayerControls chef;
+            bool named = !string.IsNullOrEmpty(command.TargetObject)
+                         && Kitchen.TryStationPosition(command.TargetObject, out station);
+            bool known = named;
+            if (!known && command.HasTarget)
+            {
+                station = command.Target;
+                known = true;
+            }
+            if (!known || !Takeover.TryChefOf(slot, out chef) || chef == null)
+            {
+                return true;
+            }
+            dir = CardinalDirection(station - position);
+            if (dir == Vector2.zero)
+            {
+                return true; // 目标就在脚下：没法再转，照常按
+            }
+            Vector2 facing;
+            bool hasFacing = Kitchen.FacingObjectPosition(chef, out facing);
+            if (hasFacing && (facing - station).sqrMagnitude < 0.6f * 0.6f)
+            {
+                // 选中了目标但斜着朝：按键可能不生效，先正对坐标轴再按。
+                Vector2 forward = new Vector2(chef.transform.forward.x, chef.transform.forward.z).normalized;
+                return Vector2.Angle(forward, dir) < FaceAngleTolerance;
+            }
+            if (!named && !hasFacing)
+            {
+                // 只有坐标的目标（出餐口等）不是网格占位物体，面前总是「空」；转向交给桥的
+                // face。这里只拦"面前是别的物体"（如对着别人的灶按，拿走平底锅）。
+                return true;
+            }
+            return false;
+        }
+
+        /// <summary>离 `delta` 最近的坐标轴单位方向（±x 或 ±z）；零向量返回零。</summary>
+        private static Vector2 CardinalDirection(Vector2 delta)
+        {
+            if (delta.sqrMagnitude <= 0.0001f)
+            {
+                return Vector2.zero;
+            }
+            if (Mathf.Abs(delta.x) >= Mathf.Abs(delta.y))
+            {
+                return new Vector2(Mathf.Sign(delta.x), 0f);
+            }
+            return new Vector2(0f, Mathf.Sign(delta.y));
+        }
+
+        /// <summary>厨师位置、朝向、面前的占位物体、手上的东西（按键诊断用）。</summary>
+        private static string PoseSummary(int slot, Vector2 position)
+        {
+            PlayerControls chef;
+            if (!Takeover.TryChefOf(slot, out chef))
+            {
+                return "位置=(" + position.x.ToString("F2") + "," + position.y.ToString("F2") + ") 厨师=缺";
+            }
+            var forward = chef.transform.forward;
+            return "位置=(" + position.x.ToString("F2") + "," + position.y.ToString("F2")
+                   + ") 朝向=(" + forward.x.ToString("F2") + "," + forward.z.ToString("F2")
+                   + ") 面前=「" + Kitchen.FacingObjectName(chef) + "」 手上=「" + Kitchen.HeldSummary(chef) + "」 "
+                   + GameCellSummary(position);
+        }
+
+        /// <summary>
+        /// 游戏 1.2 米网格上：厨师所在格、本格占位物体、四个邻格的占位物体。
+        /// `GetFacingGridOccupant` 在本格有占位物体时直接跳过，只看邻格 —— 这一段能看出是哪种情况。
+        /// </summary>
+        private static string GameCellSummary(Vector2 position)
+        {
+            int ix, iz;
+            if (!WorldState.GameCellOf(position, out ix, out iz))
+            {
+                return "游戏格=?";
+            }
+            return "游戏格=(" + ix + "," + iz + ") 本格=「" + OccupantName(ix, iz)
+                   + "」 +x=「" + OccupantName(ix + 1, iz) + "」 -x=「" + OccupantName(ix - 1, iz)
+                   + "」 +z=「" + OccupantName(ix, iz + 1) + "」 -z=「" + OccupantName(ix, iz - 1) + "」";
+        }
+
+        private static string OccupantName(int ix, int iz)
+        {
+            var occupant = WorldState.GameCellOccupant(ix, iz);
+            return occupant == null ? "" : occupant.name;
+        }
+
+        private static bool IsFinite(float value)
+        {
+            return !float.IsNaN(value) && !float.IsInfinity(value);
+        }
+
+        /// <summary>游戏时钟（秒）；关卡计时还没初始化时退回墙钟，避免 0 秒永远不超时。</summary>
+        private static float GameClock(float wallNow)
+        {
+            float game = StateFrame.GameTime();
+            return game > 0f ? game : wallNow;
+        }
+
+        /// <summary>
+        /// 当前登记的动作摘要（`wellcooked-command.txt` 的 `action_test=1` 用它回读
+        /// "同 seq 是否只追加"与"work 是否还按着"）。不是调度路径的一部分。
+        /// </summary>
+        public static string DebugState(int slot)
+        {
+            Command command;
+            if (!Commands.TryGetValue(slot, out command))
+            {
+                return "none";
+            }
+            if (command.Kind == "path")
+            {
+                return "path seq=" + command.Seq + " waypoints="
+                       + (command.Waypoints == null ? 0 : command.Waypoints.Count)
+                       + " index=" + command.WaypointIndex + " done=" + command.Done;
+            }
+            return command.Kind + " done=" + command.Done;
+        }
+
+        /// <summary>把一条动作的结局回给 Bridge（第二次 ack）。`seq` 只对 path 有意义。</summary>
+        private static void Report(int slot, string action, bool ok, string detail, long seq = -1)
+        {
+            LinkRunner.ReportAction(action, slot, ok, detail, seq);
+        }
+
+        private static void LogPathSelection(InboundMessage message, PlayerControls chef, Vector2 position,
+                                             bool hasPosition, List<Vector2> waypoints, int index, string kind)
+        {
+            Vector3 facing = hasPosition ? chef.transform.forward : Vector3.zero;
+            var parts = new List<string>(waypoints.Count);
+            for (int i = 0; i < waypoints.Count; i++)
+            {
+                parts.Add("(" + waypoints[i].x.ToString("F2") + "," + waypoints[i].y.ToString("F2") + ")");
+            }
+            _log.LogInfo("action: path " + kind + " chef=" + (message.chef_id + 1)
+                         + " pos=(" + position.x.ToString("F2") + "," + position.y.ToString("F2") + ")"
+                         + " forward=(" + facing.x.ToString("F2") + "," + facing.z.ToString("F2") + ")"
+                         + " seq=" + message.seq + " start=" + index + " waypoints=[" + string.Join(",", parts.ToArray()) + "]");
+        }
+
+        private static int ForwardWaypoint(List<Vector2> waypoints, Vector2 position, int index)
+        {
+            return PathArrival.ForwardWaypointIndex(waypoints, position, index, PathCornerTolerance);
+        }
+
+
+        private static Vector2 PathDirection(Vector2 offset, Command command, Vector2 position,
+                                             Vector2 target, int slot)
+        {
+            if (offset.sqrMagnitude <= 0.16f) return offset.normalized;
+            int oldDirection = command.PathDirection;
+            int direction = PathSteering.Quantize(offset.x, offset.y, oldDirection, offset.magnitude);
+            if (oldDirection >= 0 && direction >= 0)
+            {
+                int difference = Math.Abs(direction - oldDirection);
+                difference = Math.Min(difference, 8 - difference);
+                if (difference * 45 >= 135)
+                {
+                    _log.LogInfo("action: path direction-change chef=" + (slot + 1)
+                                 + " pos=(" + position.x.ToString("F2") + "," + position.y.ToString("F2") + ")"
+                                 + " target=(" + target.x.ToString("F2") + "," + target.y.ToString("F2") + ")"
+                                 + " direction=" + oldDirection + "->" + direction);
+                }
+            }
+            if (direction < 0) return Vector2.zero;
+            float angle = direction * 45f * Mathf.Deg2Rad;
+            return new Vector2(Mathf.Cos(angle), Mathf.Sin(angle));
+        }
+
+
 
         /// <summary>
         /// 两手同时写：我们占的虚拟手柄（设备层）+ 逻辑层（按厨师自己的游戏玩家号）。
@@ -272,15 +921,22 @@ namespace WellCooked
         private static void Feed(int slot, VirtualPad pad, Vector2 direction,
                                  bool pickup, bool dash, bool work)
         {
+            // 设备层和逻辑层对竖轴的方向相反（2026-10-25 s_city_h5：逻辑层喂 +y 时厨师
+            // 向 -z 走）。设备层与 Takeover 的本地驱动走同一条路，必须喂世界方向；
+            // 逻辑层才翻转。
             if (pad != null)
             {
+                // 只写设备层：逻辑层对"已经由我们手柄占住的玩家位"会把设备层的轴覆盖成
+                // 零/反方向（实测厨师坐标完全不动）。这也与 Takeover 本地驱动一致。
                 pad.Want(pickup, dash, work, direction);
+                return;
             }
 
             PlayerInputLookup.Player player;
             if (Takeover.TryPlayerOf(slot, out player))
             {
-                LogicalInput.SetButtons(player, direction, pickup, dash, work);
+                var stick = new Vector2(direction.x, -direction.y);
+                LogicalInput.SetButtons(player, stick, pickup, dash, work);
             }
         }
     }

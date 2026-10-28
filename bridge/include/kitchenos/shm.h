@@ -51,14 +51,25 @@
 #define KOS_SHM_MAX_CHEFS 8
 #define KOS_SHM_MAX_ORDERS 16
 #define KOS_SHM_MAX_ORDER_INGREDIENTS 6
-#define KOS_SHM_MAX_RESOURCES 32
+/*
+ * 资源从 32 升到 48，再升到 96：锅/砧板/盘堆之外还要报台面上的容器、地板上的散件和
+ * 厨师手上的锅（任务 09 状态审计 G1/G5）。协议（protocol/protocol.md §3.1 与
+ * PROTO_MAX_RESOURCES）本来就允许 96 个键，而插件按 cookers → boards → plate_stack →
+ * dirty_plates → sinks → counters → carried → containers 的顺序上报：上限比协议小时
+ * 先被截断的正是 carried_<M>，调度侧就看不到"锅在谁手上"。两边取同一个数。
+ */
+#define KOS_SHM_MAX_RESOURCES 96
+/* 一个容器/盘子里递归展开后的内容名（卷饼最多 2 样）。 */
+#define KOS_SHM_MAX_CONTENTS 4
+/* 最近结束的订单结果（交付/过期/失败），插件是环形快照，桥按 seq 去重。 */
+#define KOS_SHM_MAX_ORDER_RESULTS 16
 
 /* 定长字符串带宽（含结尾 NUL）。名字类字段用插件上报的原样短名，
  * 例如 "tomato"、"order_003"、"pot_0"、"cutting_board_1"。 */
 #define KOS_SHM_NAME_MAX 32    /* 厨师手上物品、订单 id/recipe、资源名、目标物 */
 #define KOS_SHM_STATE_MAX 24   /* "idle"/"moving"/"cooking"/"burning" 之类 */
 #define KOS_SHM_CONTENT_MAX 32 /* 锅里/板上的内容，插件用 "a+b" 拼串 */
-#define KOS_SHM_INGREDIENT_MAX 24 /* 单个食材名 */
+#define KOS_SHM_INGREDIENT_MAX 32 /* 单个食材名；"cooked:" 前缀后仍放得下 21 字符的料名 */
 
 /* 对象名、信号量名、目录名的缓冲区长度（Linux 名字上限 255）。 */
 #define KOS_SHM_PATH_MAX 256
@@ -68,7 +79,12 @@
 /* "KOS1"：段头第一个字段。用可读魔数是为了 `xxd /dev/shm/kitchenos_state`
  * 时一眼能看出这是不是我们的段。 */
 #define KOS_SHM_MAGIC 0x4b4f5331u
-#define KOS_SHM_VERSION 1u
+/* 2：资源加 kind/pos/item/contents[]/step，厨师加手持内容，订单加 score，
+ * 世界状态加回合剩余与订单结果表（任务 09 G1–G9）。旧读者会因版本不符拒绝挂接。
+ * 3：资源上限 48 → 96（与协议一致，carried_* 不再被截断），资源加 cooked/burning/
+ * burn_in/fire —— 熟与烧焦必须同时可见，否则调度侧分不清"刚熟还能倒"和"已经烧起来"。
+ * 4：厨师加游戏选中的交互对象（facing_*），宏只在它指向目标工位时才按键。 */
+#define KOS_SHM_VERSION 4u
 
 #define KOS_SHM_DEFAULT_NAME "/kitchenos_state"
 #define KOS_SHM_DEFAULT_SEM_NAME "/kitchenos_input_ready"
@@ -123,20 +139,30 @@ int kos_error_format(const kos_error *err, char *buf, size_t len);
 const char *kos_strerror(int code);
 
 /* ========================================================== 动作与槽 */
+#define KOS_MAX_WAYPOINTS 8
+
+typedef struct {
+    float x;
+    float y;
+} kos_waypoint;
+
 
 /* 输入动作种类。字符串名字由 kos_action_kind_name() 给出，与插件协议里的 action 取值同名：
- * move / stop / interact / pickup / dash 五个都上线（protocol/protocol.md §3.6 +
- * protocol/schema/action.schema.json），bridge.c 的 build_action_from_slot() 各有一个构造器，
- * 所以 Worker 往槽里写什么，插件就收到什么。NONE 不是动作，是"这个 Worker 本帧没话说"，
- * Bridge 按 idle 的 stop 处理。插件的 press/release/tap 不在这里 —— 要按帧调度原始按键时，
- * 再同时扩这个枚举与线上枚举。 */
+ * move / stop / interact / pickup / dash / path / face / work 八个都上线
+ * （protocol/protocol.md §3.6 + protocol/schema/action.schema.json），bridge.c 的
+ * build_action_from_slot() 各有一个构造器，所以 Worker 往槽里写什么，插件就收到什么。
+ * NONE 不是动作，是"这个 Worker 本帧没话说"，Bridge 按 idle 的 stop 处理。
+ * 插件的 press/release/tap 不在这里 —— 要按帧调度原始按键时，再同时扩这个枚举与线上枚举。 */
 typedef enum {
     KOS_ACTION_NONE = 0,
     KOS_ACTION_MOVE = 1,
     KOS_ACTION_STOP = 2,
     KOS_ACTION_INTERACT = 3,
     KOS_ACTION_PICKUP = 4,
-    KOS_ACTION_DASH = 5
+    KOS_ACTION_DASH = 5,
+    KOS_ACTION_PATH = 6,
+    KOS_ACTION_FACE = 7,
+    KOS_ACTION_WORK = 8
 } kos_action_kind;
 
 typedef struct {
@@ -146,6 +172,10 @@ typedef struct {
     float target_x;
     float target_y;
     char target_object[KOS_SHM_NAME_MAX];  /* 交互目标，如 "pot_0"；空串表示无 */
+    uint32_t waypoint_count;
+    uint32_t reserved0;
+    uint64_t seq;
+    kos_waypoint waypoints[KOS_MAX_WAYPOINTS];
     uint32_t checksum; /* 写者填的载荷校验，消费者只读，见 kos_action_checksum() */
     uint32_t reserved;
 } kos_input_action;
@@ -168,8 +198,20 @@ typedef struct {
     int32_t id;
     float x;
     float y;
+    float facing; /* 朝向（弧度） */
     char holding[KOS_SHM_NAME_MAX]; /* 手上物品名；空串 = 空手 */
     char state[KOS_SHM_STATE_MAX];  /* 插件给的 "idle"/"moving" 等 */
+    /* 手持物里递归展开的内容（盘上是哪道菜、锅里煮的是什么），编码见 kos_resource.contents。 */
+    int32_t holding_content_count;
+    char holding_contents[KOS_SHM_MAX_CONTENTS][KOS_SHM_INGREDIENT_MAX];
+    /* ---- KOS_SHM_VERSION 4：游戏自己选中的交互对象 ----
+     * 插件按 `InteractWithItemHelper.GetFacingGridOccupant` 取"厨师面前那一格上的
+     * 物体"，报它的名字与位置。坐标是权威判据：厨师站在哪个格子、朝哪边，都不如
+     * "游戏按 A 会作用到谁"直接。名字只进日志。 */
+    int32_t facing_reported;        /* 1 = 插件做过这次查询（空面前也报） */
+    int32_t has_facing_target;      /* 1 = facing_x/facing_y 有效 */
+    float facing_x;
+    float facing_y;
 } kos_chef;
 
 typedef struct {
@@ -178,35 +220,83 @@ typedef struct {
     int32_t time_remaining;       /* 剩余秒数，0 = 无/已过期 */
     int32_t ingredient_count;     /* 下面 ingredients[] 里有效的前 N 项 */
     char ingredients[KOS_SHM_MAX_ORDER_INGREDIENTS][KOS_SHM_INGREDIENT_MAX];
+    int32_t score;                /* 游戏给这单的分（RecipeListEntry.m_scoreForMeal），0 = 没上报 */
 } kos_order;
 
 typedef struct {
     char name[KOS_SHM_NAME_MAX];       /* "pot_0"、"cutting_board_1"、"plate_stack" */
     char state[KOS_SHM_STATE_MAX];     /* "free"/"occupied"/"cooking"/"cooked"/"burning" */
-    char content[KOS_SHM_CONTENT_MAX]; /* 内容物，插件用 "a+b" 拼串 */
+    char content[KOS_SHM_CONTENT_MAX]; /* 内容物，插件用 "a+b" 拼串（contents[] 的兼容形式） */
     float time_left;                   /* 烹饪剩余秒；不适用时为 0 */
-    int32_t chef_id;                   /* 占用者厨师号，-1 = 无人/未知 */
+    float progress;                    /* 切菜/烹饪/洗盘进度（0..1）；不适用时为 0 */
+    int32_t chef_id;                   /* 占用/手持该资源的厨师号，-1 = 无人/未知 */
     int32_t count;                     /* 计数类资源（plate_stack）的数量 */
+    /* ---- 任务 09 状态审计新增（KOS_SHM_VERSION 2） ---- */
+    char kind[KOS_SHM_NAME_MAX];       /* "cooker"/"board"/"plate_stack"/…，权威于键名前缀 */
+    float pos_x;                       /* 工位/物品的世界坐标（游戏 x/z 平面） */
+    float pos_y;
+    int32_t has_pos;                   /* 1 = pos_* 有效；插件读不到位置时为 0 */
+    char item[KOS_SHM_NAME_MAX];       /* 工位上/手里那个物体名，如 "Tortilla"、"utensil_pot_01" */
+    char step[KOS_SHM_NAME_MAX];       /* 灶台的烹饪类型，如 "Pot"/"FryingPan"；非灶台为空串 */
+    int32_t content_count;             /* 下面 contents[] 里有效的前 N 项 */
+    /* 递归展开的内容名，深度优先；"cooked:<name>" 表示这层叶子外面还套了烹饪节点。 */
+    char contents[KOS_SHM_MAX_CONTENTS][KOS_SHM_INGREDIENT_MAX];
+    /* ---- 任务 09 修复（KOS_SHM_VERSION 3） ----
+     * 烹饪的三个状态必须同时可见：`state` 只有一个字符串，`burning` 会盖掉
+     * `cooked`，调度侧就分不清"刚熟、还能倒"和"已经烧起来"。实机 _3 的锅在
+     * 24.0 秒时 cooked=true 且 burning=true（final-state.json），需要的是
+     * "熟过、正在烧"这两个事实分开报。 */
+    int32_t has_cooked;                /* 1 = cooked 有效 */
+    int32_t cooked;                    /* 熟过（游戏 IsCooked / progress >= 烹饪时长） */
+    int32_t has_burning;               /* 1 = burning 有效 */
+    int32_t burning;                   /* 已烧焦（游戏 IsBurning） */
+    float burn_in;                     /* 距烧焦还有多少秒（cooked 且未 burning 时有意义） */
+    int32_t has_burn_in;
+    int32_t has_fire;                  /* 1 = fire 有效 */
+    int32_t fire;                      /* 这个工位/物体正在着火（ClientFlammable.OnFire） */
 } kos_resource;
+
+/*
+ * 一条订单结果。插件把最近结束的订单放在环形快照里每帧重发，桥整份替换；
+ * 消费者按 seq 去重（seq 在插件进程内单调递增，重启后从 1 重新开始）。
+ */
+typedef struct {
+    int64_t seq;
+    char id[KOS_SHM_NAME_MAX];    /* "order_003" */
+    char recipe[KOS_SHM_NAME_MAX];
+    char outcome[KOS_SHM_STATE_MAX]; /* "delivered"/"expired"/"failed" */
+    int32_t score;                /* 游戏给这单的分；0 = 没读到 */
+    int32_t has_score;
+    int64_t game_time_ms;         /* 结果发生的游戏时刻 */
+} kos_order_result;
 
 /* 显式 padding：让字段偏移不依赖编译器的隐式对齐，跨编译单元读同一段才稳定。
  * 这些字节无意义，任何人都不该读它们。 */
 typedef struct {
     int64_t score;
-    int64_t game_time; /* 本局已进行秒数 */
-    uint32_t chef_count;
+    int64_t game_time;    /* 本局已进行秒数 */
+    int64_t game_time_ms; /* 本局已进行毫秒数（暂停不走） */
+    /* 回合剩余与上限（G8）：插件读 ServerRoundTimer.m_timeLeft / m_timeLimit。 */
+    float round_time_left;
+    float round_time_limit;
+    int32_t has_round_time; /* 1 = 上面两个字段有效 */
     uint32_t reserved0;
+    uint32_t chef_count;
+    uint32_t reserved1;
     kos_chef chefs[KOS_SHM_MAX_CHEFS];
     uint32_t order_count;
-    uint32_t reserved1;
+    uint32_t reserved2;
     kos_order orders[KOS_SHM_MAX_ORDERS];
     uint32_t resource_count;
-    uint32_t reserved2;
+    uint32_t reserved3;
     kos_resource resources[KOS_SHM_MAX_RESOURCES];
+    uint32_t order_result_count;
+    uint32_t reserved4;
+    kos_order_result order_results[KOS_SHM_MAX_ORDER_RESULTS];
     /* 下面两个字段由写者填、读者用来自证，业务代码不要读： */
     uint64_t write_seq; /* 发布这份快照时的 seqlock 序号（必为偶数） */
     uint32_t checksum;  /* 本结构 checksum 字段之前所有字节的 FNV-1a */
-    uint32_t reserved3;
+    uint32_t reserved5;
 } kos_world_state;
 
 /* ============================================================== 段布局 */
@@ -236,8 +326,17 @@ typedef struct {
 } kos_shm_segment;
 
 /* 段大小上限的编译期自检：共享内存段是整块映射的，长到几十 KB 就该重新想布局，
- * 而不是默默让每个读者每帧多拷几十 KB。 */
-typedef char kos_shm_segment_size_ok[(sizeof(kos_shm_segment) <= 16384) ? 1 : -1];
+ * 而不是默默让每个读者每帧多拷几十 KB。
+ *
+ * 2026-10-27 从 16 KiB 提到 32 KiB：任务 09 G1–G9 要给每个资源带上 kind/pos/item/
+ * 递归内容、给厨师带手持内容、给世界状态带订单结果表，当前 48 资源时整段 25 KB。
+ * 5 个读者 × 60 帧/秒 ≈ 8 MB/s 的顺序拷贝，相比一次 recv 的系统调用可以忽略；
+ * 再往上加字段前先算这笔账，别让它悄悄涨到几百 KB。
+ *
+ * 2026-10-27 再从 32 KiB 提到 64 KiB：资源上限 48 → 96（与协议的 96 个键一致，
+ * carried_<M> 不再被截断），kos_resource 约 0.5 KB，整段约 50 KB。这是一次
+ * 有意的"数量"增长而不是"每帧多算"，拷贝带宽仍是同一个量级。 */
+typedef char kos_shm_segment_size_ok[(sizeof(kos_shm_segment) <= 65536) ? 1 : -1];
 
 /* ============================================================== 句柄 */
 
@@ -390,6 +489,15 @@ int kos_shm_wait_frame_after(kos_shm *shm, uint64_t *last_frame, uint32_t chef_c
                              int timeout_ms, uint64_t *missing_mask);
 
 /* ================================================================ 杂项 */
+
+/*
+ * 多实例后缀。`--instance k` 的多开实例给所有 IPC 名字加 `_k`；不给（KOS_INSTANCE_NONE）
+ * 时后缀为空，名字与单实例时代完全一致。导航表另有自己的派生规则，但同样以这份
+ * 后缀为基础。名字太长返回 KOS_ERR_RANGE。
+ */
+#define KOS_INSTANCE_NONE (-1)
+int kos_instance_suffix(int instance, char *buf, size_t len);
+int kos_name_instance(const char *base, int instance, char *buf, size_t len);
 
 /* 动作种类 ←→ 协议里的动作名（"move"/"stop"/...）。未知名字返回 -1。 */
 const char *kos_action_kind_name(int kind);
