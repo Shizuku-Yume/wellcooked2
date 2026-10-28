@@ -1429,16 +1429,24 @@ static int open_queues(scheduler *s)
         kos_log_error(s->rt.log, "mq_name_failed", "instance=%d", s->rt.opts.instance);
         return -1;
     }
-    kos_error_clear(&err);
-    rc = kos_mq_unlink_all(s->rt.opts.chefs, s->rt.opts.instance, &err);
-    if (rc != KOS_OK) {
-        char text[256];
+    /*
+     * 第一次启动清掉上一局残留的队列再建。Supervisor 重新拉起（generation > 1）时不能删：
+     * Worker 手里还开着旧队列的描述符，删了再建等于换了一条 Worker 永远读不到的新队列
+     * （实机 20261028-133741：kill -9 后派了 16 个任务，Worker 一个都没收到）。
+     */
+    if (s->rt.opts.generation <= 1) {
+        kos_error_clear(&err);
+        rc = kos_mq_unlink_all(s->rt.opts.chefs, s->rt.opts.instance, &err);
+        if (rc != KOS_OK) {
+            char text[256];
 
-        error_text(&err, text, sizeof text);
-        kos_log_warn(s->rt.log, "mq_stale_cleanup_failed", "error=%s", text);
+            error_text(&err, text, sizeof text);
+            kos_log_warn(s->rt.log, "mq_stale_cleanup_failed", "error=%s", text);
+        }
     }
     kos_error_clear(&err);
-    if (kos_mq_create(events_name, KOS_MQ_MAX_MESSAGES, &err) != KOS_OK) {
+    rc = kos_mq_create(events_name, KOS_MQ_MAX_MESSAGES, &err);
+    if (rc != KOS_OK && !(rc == KOS_ERR_EXISTS && s->rt.opts.generation > 1)) {
         char text[256];
 
         error_text(&err, text, sizeof text);
@@ -1452,7 +1460,8 @@ static int open_queues(scheduler *s)
             return -1;
         }
         kos_error_clear(&err);
-        if (kos_mq_create(name, KOS_MQ_MAX_MESSAGES, &err) != KOS_OK) {
+        rc = kos_mq_create(name, KOS_MQ_MAX_MESSAGES, &err);
+        if (rc != KOS_OK && !(rc == KOS_ERR_EXISTS && s->rt.opts.generation > 1)) {
             char text[256];
 
             error_text(&err, text, sizeof text);
@@ -5559,7 +5568,9 @@ static int scheduler_main(scheduler *s, const kos_child_opts *opts)
         return 1;
     }
     s->started_ms = now_ms();
-    s->next_task_id = 0;
+    /* 重启后队列沿用，里面可能还有上一任的 DONE/FAILED；按代错开 id，旧事件只会落到
+     * event_unknown_task，不会被当成新任务的结果。 */
+    s->next_task_id = opts->generation > 1 ? (uint64_t)(opts->generation - 1) << 32 : 0;
 
     {
         kos_policy_kind kind;
