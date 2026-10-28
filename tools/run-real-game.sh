@@ -17,10 +17,14 @@
 #   BUNDLE_REF=origin/main  git ref for the PR42 level bundles (or BUNDLE_SRC=dir)
 #   BUILD_PLUGIN=0          do not build; use SOURCE_ROOT's existing DLL
 #   BUILD_BRIDGE=0          do not build; use SOURCE_ROOT's existing bridge/build
-#   REUSE_GAME=1            keep an already-running game instead of relaunching
+#   REUSE_GAME=1            reuse the game a KEEP_GAME=1 run left open when it still fits:
+#                           same CHEFS, same game pids, same plugin DLL and level bundles,
+#                           state still ticking; otherwise stop it and relaunch
 #   EXPORT=1                menu=1 + scripts/export-kitchen.py --map-dir MAP_DIR
 #   MAP_DIR=...             default <this repo>/config/maps
-#   KEEP_GAME=1             do not stop the game at the end (lock stays held)
+#   KEEP_GAME=1             do not stop the game after a finished (or console-stopped) round;
+#                           the lock stays held and the next REUSE_GAME=1 run loads its
+#                           scene in the same game, skipping launch and pad joining
 #   DIAG=1                  plugin diag=true
 #   GAME_SECONDS=240        hard cap after the Supervisor starts
 #   WAIT_SECONDS=240        launch/load/pad timeout
@@ -86,6 +90,12 @@ GAME_STARTED=0
 CLEANED=0
 FAIL_REASON=""
 SUMMARY_RC=0
+REUSED=0
+GAME_READY=0
+REUSE_WHY=""
+LAUNCH_LOG=""
+# KEEP_GAME=1 留下的游戏的记录：厨师数、游戏 pid、插件与关卡包的 sha256、启动段日志。
+KEPT="${KEPT:-$LOCK.kept}"
 STARTED_AT="$(date +%Y%m%d-%H%M%S)"
 SLOTS="$(seq -s, 1 "$CHEFS")"
 
@@ -193,7 +203,10 @@ restore_configs() {
     local name
     [ -n "$BACKUP_DIR" ] && [ -d "$BACKUP_DIR" ] || return 0
     for name in wellcooked-takeover.txt wellcooked-orders.json wellcooked-command.txt; do
-        if [ -f "$BACKUP_DIR/$name" ]; then
+        if [ "$name" = wellcooked-takeover.txt ] && keeping_game; then
+            # 留着的游戏下一局还要用：保持占位与 auto，前端别按 A。
+            write_takeover false
+        elif [ -f "$BACKUP_DIR/$name" ]; then
             cp -p "$BACKUP_DIR/$name" "$GAME_DIR/BepInEx/$name"
         else
             rm -f "$GAME_DIR/BepInEx/$name"
@@ -250,17 +263,83 @@ stop_game() {
     say "game: stopped"
 }
 
+game_pids() { pgrep -f 'Overcooked2\.exe' 2>/dev/null | sort -n | tr '\n' ' ' || true; }
+
+sha_of() { sha256sum "$1" 2>/dev/null | cut -d' ' -f1; }
+
+deploy_bundles() {
+    local bundle
+    mkdir -p "$DEST_LEVEL"
+    for bundle in "$SCENE" info_wellcooked_demo; do
+        if [ -f "$DEST_LEVEL/$bundle" ]; then
+            cp -p "$DEST_LEVEL/$bundle" "$RT/bundles.previous/$bundle"
+        fi
+        cp -p "$BUNDLE_TMP/$bundle" "$DEST_LEVEL/$bundle"
+    done
+    say "deploy: bundles $SCENE info_wellcooked_demo ($BUNDLE_REF)"
+}
+
+kept_get() { sed -n "s/^$1=//p" "$KEPT" 2>/dev/null | head -n 1; }
+
+# 留着的游戏还能不能直接开下一局：同一个游戏进程、同样多的厨师已加入、插件和关卡包没变、
+# 插件还在写 state。任一不满足就重开游戏（换插件/关卡包不能在游戏运行中做）。
+reuse_check() {
+    local pids age bundle
+    pids="$(game_pids)"
+    [ -n "$pids" ] || { REUSE_WHY="game not running"; return 1; }
+    [ -f "$KEPT" ] || { REUSE_WHY="no kept-game record"; return 1; }
+    [ "$(kept_get pids)" = "$pids" ] || { REUSE_WHY="game pids changed"; return 1; }
+    [ "$(kept_get chefs)" = "$CHEFS" ] || { REUSE_WHY="kept game has $(kept_get chefs) chefs, want $CHEFS"; return 1; }
+    [ "$(kept_get plugin)" = "$(sha_of "$PLUGIN_DLL")" ] || { REUSE_WHY="plugin DLL changed"; return 1; }
+    for bundle in "$SCENE" info_wellcooked_demo; do
+        [ "$(sha_of "$DEST_LEVEL/$bundle")" = "$(sha_of "$BUNDLE_TMP/$bundle")" ] \
+            || { REUSE_WHY="level bundle $bundle differs from the deployed one"; return 1; }
+    done
+    [ -f "$(kept_get launch_log)" ] || { REUSE_WHY="launch log missing"; return 1; }
+    age=$(( $(date +%s) - $(stat -c %Y "$STATE" 2>/dev/null || echo 0) ))
+    [ "$age" -le 5 ] || { REUSE_WHY="state.json not updated for ${age}s"; return 1; }
+    return 0
+}
+
+write_kept() {
+    {
+        printf 'chefs=%s\n' "$CHEFS"
+        printf 'pids=%s\n' "$(game_pids)"
+        printf 'plugin=%s\n' "$(sha_of "$DEST_PLUGIN")"
+        printf 'launch_log=%s\n' "$LAUNCH_LOG"
+    } > "$KEPT"
+    say "game: kept running for the next REUSE_GAME=1 run ($KEPT)"
+}
+
+# KEEP_GAME=1 时留不留游戏：本局把它带到了就绪（占满位），或本局还没碰游戏、上一局留下的记录还在。
+keeping_game() {
+    [ "$KEEP_GAME" = 1 ] && [ -n "$(game_pids)" ] || return 1
+    [ "$GAME_READY" = 1 ] || { [ "$GAME_STARTED" = 0 ] && [ -f "$KEPT" ]; }
+}
+
+# 收尾：留游戏就连锁一起留（下一局同 LOCK_OWNER 可重入）；否则照旧关游戏、放锁。
+finish_game() {
+    if keeping_game; then
+        [ "$GAME_READY" = 1 ] && write_kept
+        say "lock: retained because KEEP_GAME=1"
+        LOCK_HELD=0
+        return 0
+    fi
+    if [ "$GAME_STARTED" = 1 ]; then
+        stop_game
+    fi
+    rm -f "$KEPT"
+    release_lock
+}
+
 cleanup() {
     [ "$CLEANED" = 1 ] && return 0
     CLEANED=1
     set +e
     stop_supervisor
     stop_monitor
-    if [ "$GAME_STARTED" = 1 ] && [ "$KEEP_GAME" != 1 ]; then
-        stop_game
-    fi
     restore_configs
-    release_lock
+    finish_game
 }
 trap cleanup EXIT
 trap 'FAIL_REASON="interrupted"; exit 130' INT TERM
@@ -367,7 +446,10 @@ wait_load_stable() {
     wait_start=$SECONDS
     streak=0
     while [ "$SECONDS" -lt "$deadline" ]; do
-        if ! log_since | grep -aFq "指令: 已请求加载 $SCENE"; then
+        # 复用的游戏里上一局的 state 场景名一样；要等插件在这次 load 之后重新接管厨师，
+        # 且计时还有剩余（上一局结束时 left=0），才算新的一局。
+        if ! log_since | awk -v s="指令: 已请求加载 $SCENE" \
+                'index($0, s) { l = 1 } l && /开始接管驱动/ { f = 1 } END { exit !f }'; then
             sleep 1
             continue
         fi
@@ -377,7 +459,8 @@ wait_load_stable() {
         mtime="$(state_mtime_ns)"
         read -r scene chefs stations left elapsed round <<<"$(state_probe)"
         if [ "$mtime" -gt "$before" ] && [ "$scene" = "$SCENE" ] \
-           && [ "$chefs" -eq "$CHEFS" ] && [ "$stations" -gt 0 ]; then
+           && [ "$chefs" -eq "$CHEFS" ] && [ "$stations" -gt 0 ] \
+           && awk -v x="$left" 'BEGIN { exit !(x + 0 > 1) }'; then
             streak=$((streak + 1))
             if [ "$streak" -ge 5 ]; then
                 say "state: stable 5s scene=$SCENE chefs=$chefs stations=$stations"
@@ -463,12 +546,8 @@ mkdir -p "$RT/logs" "$RT/runs" "$RT/bundles.previous"
 say "run: $RT"
 say "runtime: $RT"
 
-# Stop leftovers only after owning the lock.  The fixture/recording game is
-# stopped as well unless REUSE_GAME=1.
-if [ "$REUSE_GAME" != 1 ]; then
-    say "game: stopping any previous Overcooked2 before a fresh launch"
-    stop_game
-fi
+# Stop leftovers only after owning the lock.  Whether the game itself is stopped
+# is decided after the build: a kept game is reused only when it still fits.
 pkill -TERM -f "$BRIDGE_BIN_DIR/kitchenos-" 2>/dev/null || true
 sleep 2
 pkill -KILL -f "$BRIDGE_BIN_DIR/kitchenos-" 2>/dev/null || true
@@ -477,15 +556,12 @@ if ss -ltn 2>/dev/null | grep -q ":${PORT}\b"; then
 fi
 
 backup_configs
-if [ -f "$LOG" ]; then
-    mv "$LOG" "$RT/LogOutput.previous.log"
-fi
-LOG_OFFSET=0
 
-# Deploy the plugin and the two files for this scene.
+# Build only; deploying waits until we know whether a kept game is reused (a
+# loaded plugin DLL must not be overwritten under the running game).
 if [ "$BUILD_PLUGIN" = 1 ]; then
     say "build: plugin"
-    ( cd "$SOURCE_ROOT" && GAME_DIR="$GAME_DIR" bash scripts/build-plugin.sh ) \
+    ( cd "$SOURCE_ROOT" && GAME_DIR="$GAME_DIR" DEPLOY=0 bash scripts/build-plugin.sh ) \
         >"$RT/build-plugin.log" 2>&1 || die "plugin build failed (see $RT/build-plugin.log)"
     PLUGIN_DLL="$SOURCE_ROOT/plugin/bin/Release/net35/WellCooked.Smoke.dll"
 fi
@@ -495,9 +571,6 @@ if [ "$BUILD_PLUGIN" = 0 ] && [ "$SOURCE_ROOT" = "$ROOT" ] && [ "$PLUGIN_DLL" = 
         die "BUILD_PLUGIN=0 使用了过期插件；先 BUILD_PLUGIN=1 重新编译"
     fi
 fi
-mkdir -p "$(dirname "$DEST_PLUGIN")"
-cp -p "$PLUGIN_DLL" "$DEST_PLUGIN"
-say "deploy: plugin $(basename "$PLUGIN_DLL")"
 
 if [ "$BUILD_BRIDGE" = 1 ]; then
     say "build: bridge"
@@ -520,25 +593,32 @@ else
         git -C "$SOURCE_ROOT" show "$BUNDLE_REF:levels/wellcooked_demo/$bundle"             > "$BUNDLE_TMP/$bundle" 2>/dev/null             || die "cannot read $BUNDLE_REF:levels/wellcooked_demo/$bundle"
     done
 fi
-mkdir -p "$DEST_LEVEL"
-for bundle in "$SCENE" info_wellcooked_demo; do
-    if [ -f "$DEST_LEVEL/$bundle" ]; then
-        cp -p "$DEST_LEVEL/$bundle" "$RT/bundles.previous/$bundle"
-    fi
-    cp -p "$BUNDLE_TMP/$bundle" "$DEST_LEVEL/$bundle"
-done
-say "deploy: bundles $SCENE info_wellcooked_demo ($BUNDLE_REF)"
 
-write_takeover true
 rm -f "$COMMAND"
-
-# Launch (or reuse) and wait for the plugin.
-if [ "$REUSE_GAME" = 1 ] && pgrep -f 'Overcooked2\.exe' >/dev/null 2>&1; then
-    say "game: reusing running Overcooked2"
+if [ "$REUSE_GAME" = 1 ] && reuse_check; then
+    say "game: reusing kept Overcooked2 (pids $(game_pids)); skipping launch and pad joining"
+    REUSED=1
+    LAUNCH_LOG="$(kept_get launch_log)"
     GAME_STARTED=1
+    GAME_READY=1
     LOG_OFFSET="$(stat -c %s "$LOG" 2>/dev/null || printf '0')"
-    wait_plugin || die "plugin not ready in the reused game"
+    printf '%s\n' "$(seq 1 "$CHEFS")" > "$RT/pads-joined.txt"
+    write_takeover false
 else
+    [ "$REUSE_GAME" = 1 ] && say "game: kept game not reusable ($REUSE_WHY); relaunching"
+    say "game: stopping any previous Overcooked2 before a fresh launch"
+    stop_game
+    rm -f "$KEPT"
+    mkdir -p "$(dirname "$DEST_PLUGIN")"
+    cp -p "$PLUGIN_DLL" "$DEST_PLUGIN"
+    say "deploy: plugin $(basename "$PLUGIN_DLL")"
+    deploy_bundles
+    if [ -f "$LOG" ]; then
+        mv "$LOG" "$RT/LogOutput.previous.log"
+    fi
+    LOG_OFFSET=0
+    write_takeover true
+
     GAME_STARTED=1
     launch_game 1
     if ! wait_plugin; then
@@ -549,13 +629,17 @@ else
         launch_game 2
         wait_plugin || die "plugin not ready after two launches"
     fi
-fi
 
-# Exactly CHEFS pads join.  Pad-to-slot mapping is read from the log, so reverse
-# joining order is accepted as long as every configured slot appears once.
-wait_pads || die "only joined slots: $(cat "$RT/pads-joined.txt" 2>/dev/null || echo none)"
-write_takeover false
-wait_frontend_off
+    # Exactly CHEFS pads join.  Pad-to-slot mapping is read from the log, so reverse
+    # joining order is accepted as long as every configured slot appears once.
+    wait_pads || die "only joined slots: $(cat "$RT/pads-joined.txt" 2>/dev/null || echo none)"
+    write_takeover false
+    wait_frontend_off
+    GAME_READY=1
+    # 复用的局插件日志里没有占位/工作模式行；把启动段存下来给后面每一局的汇总用。
+    LAUNCH_LOG="$RT/LogOutput.launch.log"
+    log_slice_to "$LAUNCH_LOG"
+fi
 
 start_supervisor() {
     say "supervisor: starting"
@@ -667,18 +751,15 @@ say "round: $end_reason"
 stop_supervisor
 stop_monitor
 collect_logs
+if [ "$REUSED" = 1 ]; then
+    # 汇总要的占位/工作模式行在开游戏那一局的启动段里。
+    cat "$LAUNCH_LOG" "$RT/LogOutput.run.log" > "$RT/LogOutput.run.log.tmp" 2>/dev/null \
+        && mv "$RT/LogOutput.run.log.tmp" "$RT/LogOutput.run.log"
+fi
 
-if [ "$KEEP_GAME" != 1 ]; then
-    stop_game
-    cp -p "$LOG" "$RT/LogOutput.full.log" 2>/dev/null || true
-fi
 restore_configs
-if [ "$KEEP_GAME" = 1 ]; then
-    say "lock: retained because KEEP_GAME=1"
-    LOCK_HELD=0
-else
-    release_lock
-fi
+finish_game
+cp -p "$LOG" "$RT/LogOutput.full.log" 2>/dev/null || true
 CLEANED=1
 trap - EXIT INT TERM
 

@@ -235,6 +235,7 @@ $("run-form").addEventListener("submit", (ev) => {
   ev.preventDefault();
   const d = Object.fromEntries(new FormData(ev.target));
   d.chefs = Number(d.chefs); d.game_seconds = Number(d.game_seconds);
+  d.continuous = ev.target.elements.continuous.checked;
   lifetimes.clear();
   act(() => api("POST", "/api/run", d), "已开局，游戏窗口会自己弹出");
 });

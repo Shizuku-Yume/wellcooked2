@@ -868,6 +868,8 @@ namespace WellCooked
             }
 
             LogicalInput.Clear();
+            ActionDriver.ResetLevel();
+            OrderResults.ResetLevel();
 
             _log.LogInfo("takeover: 离开关卡，停止驱动");
         }

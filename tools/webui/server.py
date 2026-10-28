@@ -126,7 +126,10 @@ class App:
             env.update({"SCENE": params["scene"], "CHEFS": str(params["chefs"]),
                         "STRATEGY": params["strategy"], "TASK_POLICY": params["task_policy"],
                         "DISPATCH": params["dispatch"],
-                        "GAME_SECONDS": str(params["game_seconds"])})
+                        "GAME_SECONDS": str(params["game_seconds"]),
+                        # 连续验收：本局结束不关游戏；下一局能复用就直接在同一个游戏里进关卡。
+                        "KEEP_GAME": "1" if params["continuous"] else "0",
+                        "REUSE_GAME": "1" if params["continuous"] else "0"})
             self.output.clear()
             self.notes.clear()
             self.rt = None
@@ -136,8 +139,9 @@ class App:
                                          stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                          stderr=subprocess.STDOUT)
             threading.Thread(target=self._watch, args=(self.proc,), daemon=True).start()
-            self.note("开局：%s %d 人 order=%s task=%s" % (
-                params["scene"], params["chefs"], params["strategy"], params["task_policy"]))
+            self.note("开局：%s %d 人 order=%s task=%s%s" % (
+                params["scene"], params["chefs"], params["strategy"], params["task_policy"],
+                "（连续验收，结束后保留游戏）" if params["continuous"] else ""))
             return True
 
     def _watch(self, proc):
@@ -398,6 +402,7 @@ class Handler(BaseHTTPRequestHandler):
                 "task_policy": str(data.get("task_policy", "cost")).lower(),
                 "dispatch": str(data.get("dispatch", "flexible")).lower(),
                 "game_seconds": int(data.get("game_seconds", 240)),
+                "continuous": data.get("continuous") in (True, "1", "on", "true"),
             }
         except (TypeError, ValueError):
             return self.send_json(400, {"error": "参数类型不对"})

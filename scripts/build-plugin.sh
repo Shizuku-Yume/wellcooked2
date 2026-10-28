@@ -4,6 +4,7 @@
 # 用法: bash scripts/build-plugin.sh
 #   GAME_DIR   游戏目录
 #   DOTNET     dotnet 可执行文件，默认 ~/.dotnet/dotnet（本机只有用户级安装）
+#   DEPLOY=0   只编译不拷：游戏开着时覆盖已加载的 DLL 不安全，由调用方比对后决定
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -29,5 +30,7 @@ fi
 
 "$DOTNET" build "$ROOT/plugin/${PLUGIN}.csproj" -c Release -p:GameDir="$GAME" "$@"
 
-mkdir -p "$GAME/BepInEx/plugins"
-cp -v "$ROOT/plugin/bin/Release/net35/${PLUGIN}.dll" "$GAME/BepInEx/plugins/"
+if [ "${DEPLOY:-1}" = 1 ]; then
+    mkdir -p "$GAME/BepInEx/plugins"
+    cp -v "$ROOT/plugin/bin/Release/net35/${PLUGIN}.dll" "$GAME/BepInEx/plugins/"
+fi

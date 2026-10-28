@@ -1659,7 +1659,9 @@ namespace WellCooked
 
         private static object GameGridManager()
         {
-            if (_gameGridManager != null)
+            // 同一个游戏进程里重进关卡后旧网格已被 Unity 销毁；C# 引用不为 null，要用 Unity 的 == 判定。
+            var cached = _gameGridManager as UnityEngine.Object;
+            if (cached != null)
             {
                 return _gameGridManager;
             }

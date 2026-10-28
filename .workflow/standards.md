@@ -22,7 +22,8 @@ python3 tools/fake_plugin.py --scenario happy
 bash tools/run-bridge-scenarios.sh        # 全部场景
 bash tools/run-real-game.sh               # 真游戏 W8 验收（需要人进关卡）
 STRATEGY=sjf TASK_POLICY=cp DISPATCH=flexible bash tools/run-real-game.sh   # 指定订单/工序/派工策略
-python3 tools/webui/server.py --port 8765 # 浏览器控制台 http://127.0.0.1:8765/：开局、实时看板、切策略、kill Scheduler、结果对比（只听 127.0.0.1，无鉴权）
+KEEP_GAME=1 REUSE_GAME=1 bash tools/run-real-game.sh   # 连续验收：结束后保留游戏；下一局人数/插件/bundle 没变就复用，不再重启游戏和接手柄
+python3 tools/webui/server.py --port 8765 # 浏览器控制台 http://127.0.0.1:8765/：开局（可勾"连续验收"）、实时看板、切策略、kill Scheduler、结果对比（只听 127.0.0.1，无鉴权）
 
 # Windows 侧插件
 dotnet build plugin/WellCooked.Plugin/WellCooked.Plugin.csproj -c Debug

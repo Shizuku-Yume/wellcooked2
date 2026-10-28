@@ -94,6 +94,19 @@ namespace WellCooked
                 WorldState.WarnOnce("订单结果: 打补丁失败: " + e.Message);
             }
         }
+        /// <summary>
+        /// 重开后订单 ID 会复用；保留上一局的 delivered 结果会让 Bridge 把同 ID 新订单误判为已交付。
+        /// 保留递增序号，只清掉上一局的结果记录。
+        /// </summary>
+        public static void ResetLevel()
+        {
+            lock (Gate)
+            {
+                Array.Clear(Ring, 0, Ring.Length);
+                _count = 0;
+                _next = 0;
+            }
+        }
 
         /// <summary>把最近的结果按"旧 → 新"写进 `order_results`。</summary>
         public static void AppendTo(JsonBuilder b)
