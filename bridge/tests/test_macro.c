@@ -1837,13 +1837,14 @@ static void test_timeouts(const kos_kitchen *kitchen, const char *dispenser,
     chef = chef_at_station(&world, kitchen, dispenser);
     expect(build(&macro, kitchen, "fetch", "fetch:Carrot", dispenser, "o1", 1000) == 0,
            "goto 超时场景计划建成");
+    chef->x += 3.0f; /* 人还在路上，离站位格远：不触发"已在站位格上"的到站兜底 */
     game_ms = 2000;
     rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
     expect(rc == 0 && out.action == KOS_MACRO_ACT_NAVIGATE, "goto 未到达时发 navigate");
     game_ms += 5000;
     rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
     expect(rc == 0 && out.action == KOS_MACRO_ACT_NAVIGATE, "6 s 余量内仍在走，不判超时");
-    game_ms += 2000;
+    game_ms += 4000; /* 人离站 3 m，距离×2 多出约 1 s，再等 4 s 必过期限 */
     rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
     expect(rc == -1 && strstr(kos_macro_fail_detail(&macro), "macro=goto") != NULL,
            "goto 超时失败");
@@ -1859,6 +1860,7 @@ static void test_timeouts(const kos_kitchen *kitchen, const char *dispenser,
 
         expect(build(&macro, kitchen, "fetch", "fetch:Carrot", dispenser, "o1", 1000) == 0,
                "距离未知场景计划建成");
+        chef->x += 3.0f;
         game_ms = 1000;
         rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
         expect(rc == 0 && out.action == KOS_MACRO_ACT_NAVIGATE, "未知距离时先发 navigate");
@@ -1886,7 +1888,7 @@ static void test_timeouts(const kos_kitchen *kitchen, const char *dispenser,
     rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
     expect(rc == 0 && macro.step_index == 1, "转过去后 goto 完成，不要求重新到站");
 
-    /* chop 的工时超时：工时 1 s + 3 s。板上放的是该节点的产物名（G13 内容核对
+    /* chop 的工时超时：工时 1 s + 6 s。板上放的是该节点的产物名（G13 内容核对
      * 通过），进度一直不涨，等的就是超时。 */
     base_world(&world);
     chef = chef_at_station(&world, kitchen, board_id);
@@ -1901,11 +1903,11 @@ static void test_timeouts(const kos_kitchen *kitchen, const char *dispenser,
     (void)kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out); /* drop */
     game_ms += 16;
     (void)kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out); /* chop 开始 */
-    game_ms += 4001;
+    game_ms += 7001;
     rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
     expect(rc == -1 && strstr(kos_macro_fail_detail(&macro), "macro=chop") != NULL &&
                strstr(kos_macro_fail_detail(&macro), "timeout") != NULL,
-           "chop 工时 + 3 s 后超时失败");
+           "chop 工时 + 6 s 后超时失败");
 }
 
 
@@ -2109,6 +2111,43 @@ static void test_serving_facing_fallback(const kos_kitchen *kitchen, const char 
     rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
     expect(rc == 0 && out.action == KOS_MACRO_ACT_INTERACT,
            "(d) plate_stack drop 发出 INTERACT");
+
+    /* (e) 出菜口：游戏报了面前目标但不是出菜口（实机 20261027-200237 worker-0.log:166），
+     * 几何朝向对着出菜口时仍要发出 INTERACT。 */
+    base_world(&world);
+    chef = chef_at_station(&world, kitchen, serving);
+    chef->facing_reported = 1;
+    chef->has_facing_target = 1;
+    chef->facing_x = kitchen->stations[kos_kitchen_station_index(kitchen, serving)].x + 1.2f;
+    chef->facing_y = kitchen->stations[kos_kitchen_station_index(kitchen, serving)].z;
+    snprintf(chef->holding, sizeof chef->holding, "Dish");
+    (void)add_order(&world, "o-serve");
+    expect(build(&macro, kitchen, "deliver", "deliver:Dish", serving, "o-serve", 1000) == 0,
+           "(e) serving deliver 计划建成");
+    macro.step_index = 1;
+    macro.step_started = 0;
+    game_ms = 2000;
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    expect(rc == 0 && out.action == KOS_MACRO_ACT_INTERACT,
+           "(e) serving 目标对不上时按几何朝向发出 INTERACT");
+
+    /* (f) 对照组：counter 报了别的目标，绝不按键。 */
+    base_world(&world);
+    chef = chef_at_station(&world, kitchen, counter);
+    chef->facing_reported = 1;
+    chef->has_facing_target = 1;
+    chef->facing_x = kitchen->stations[kos_kitchen_station_index(kitchen, counter)].x + 1.2f;
+    chef->facing_y = kitchen->stations[kos_kitchen_station_index(kitchen, counter)].z;
+    snprintf(chef->holding, sizeof chef->holding, "Dish");
+    (void)add_order(&world, "o-serve");
+    expect(build(&macro, kitchen, "deliver", "deliver:Dish", counter, "o-serve", 1000) == 0,
+           "(f) counter deliver 计划建成");
+    macro.step_index = 1;
+    macro.step_started = 0;
+    game_ms = 2000;
+    rc = kos_macro_advance(&macro, kitchen, &world, 0, 0, game_ms, &out);
+    expect(rc == 0 && out.action != KOS_MACRO_ACT_INTERACT,
+           "(f) counter 目标对不上不发出 INTERACT");
 }
 
 int main(void)

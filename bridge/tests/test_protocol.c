@@ -795,7 +795,8 @@ static void test_actions(void)
     }
 
     /* §5.2 「控制指令」sample 2. */
-    CHECK_INT(protocol_build_action_interact(1, "cutting_board_0", buf, sizeof buf, &len),
+    CHECK_INT(protocol_build_action_interact(1, "cutting_board_0", 0, 0.0, 0.0, buf, sizeof buf,
+                                             &len),
               PROTO_OK);
     CHECK_STR(buf, "{\"type\":\"action\",\"chef_id\":1,\"action\":\"interact\","
                    "\"target_object\":\"cutting_board_0\"}");

@@ -32,6 +32,7 @@
 #include <kitchenos/zones.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <math.h>
 #include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -62,6 +63,13 @@
 #define SCHED_HOLDING_LOSS_MS 1000
 /* 放下工序的工时估计（goto + 一次交互），只用于派工代价。 */
 #define SCHED_PUTDOWN_MS 1500
+/* 更早订单剩余关键路径超过这个值就不再按开工顺序挡后面订单的 deliver。 */
+#define SCHED_DELIVERY_WAIT_MAX_MS 6000
+/* 料备齐后为了按序交付最多等这么久，超时就乱序装盘出餐（宁可断小费也不让人端着料干站）。 */
+#define SCHED_DELIVERY_HOLD_MAX_MS 8000
+/* 派工代价里倒料按这么长的关键路径算（秒，再 ×2），必须压过锅链上游 fetch/cut 的
+ * 约 14.7 s 加路程差：锅熟后 12 s 就焦。 */
+#define SCHED_POUR_CRITICAL_S 30.0
 
 enum {
     SCHED_OUTCOME_UNKNOWN = 0,
@@ -193,6 +201,7 @@ typedef struct {
     int64_t worker_restarts;
     int blocked_hold[KOS_SHM_MAX_CHEFS]; /* 报过 BLOCKED 的厨师先不接新活 */
     int hold_stuck[KOS_SHM_MAX_CHEFS];   /* 手里那件东西没人要、也没台面可放 */
+    int putdown_skip[KOS_SHM_MAX_CHEFS]; /* 上次放下失败的台面工位下标 + 1；0 = 无 */
     char metrics_path[KOS_DAEMON_PATH_MAX + 48];
     uint64_t next_task_id;
     int64_t started_ms;
@@ -636,6 +645,62 @@ static int op_leaves_item_in_hand(const char *op)
            strcmp(op, "pickup") == 0 || strcmp(op, "plate") == 0;
 }
 
+static const kos_chef *world_chef(const kos_world_state *world, int chef);
+
+/*
+ * 手上端着装有这道 pour 原料的锅的厨师（插件的 carried_<chefId>），没有返回 -1。
+ * 只看容器内容：锅名会随 prefab 变，内容才是这道工序要的东西。
+ */
+static int pour_pot_carrier(const scheduler *s, const kos_recipe_node *node)
+{
+    const char *want = node->ingredient;
+    int i;
+
+    if (!s->world_valid) {
+        return -1;
+    }
+    if (want[0] == '\0') {
+        const char *colon = strchr(node->id, ':');
+
+        want = colon != NULL ? colon + 1 : "";
+    }
+    if (want[0] == '\0') {
+        return -1;
+    }
+    for (i = 0; i < (int)s->world.resource_count; i++) {
+        const kos_resource *res = &s->world.resources[i];
+        int chef;
+        int k;
+
+        if (strncmp(res->name, "carried_", 8) != 0) {
+            continue;
+        }
+        chef = atoi(res->name + 8);
+        if (chef < 0 || chef >= s->rt.opts.chefs) {
+            continue;
+        }
+        /* 只认锅：端着的玉米饼/盘子里也有 cooked:Rice（实机 20261028-022924 把卷饼
+         * 当成米锅，pour:Rice 派给拿卷饼的人连失败 5 次）。 */
+        {
+            const kos_chef *holder = world_chef(&s->world, chef);
+
+            if (holder == NULL || !(kos_kitchen_name_matches("pot", holder->holding) ||
+                                    kos_kitchen_name_matches("pan", holder->holding))) {
+                continue;
+            }
+        }
+        if (res->content[0] != '\0' && kos_kitchen_name_matches(want, res->content)) {
+            return chef;
+        }
+        for (k = 0; k < (int)res->content_count && k < KOS_SHM_MAX_CONTENTS; k++) {
+            if (kos_kitchen_name_matches(want, res->contents[k])) {
+                return chef;
+            }
+        }
+    }
+    return -1;
+}
+
 /*
  * 手里拿着这道工序原料的厨师：某个已完成的子工序把产物留在了他手上，后继只能由他做，
  * 换成空手的人去 drop/deliver 会空等到超时（_3 实测 deliver 被派给没端盘子的人）。
@@ -667,6 +732,25 @@ static int task_holder_chef(const scheduler *s, const sched_order *order, int ta
             return -1;
         }
         holder = child->chef_id;
+    }
+    /* 失败回队过的工序：宏第一步已把手里的东西放到工位上（装盘放到盘堆、切菜放到
+     * 砧板），持有者空手了就不再绑定他——否则空手的他接不了、别人也接不了，整单
+     * 卡死（实机 20261028-014743：order_001 装盘重试永不派出，后续订单全部停摆）。 */
+    if (holder >= 0 && order->tasks[task_index].fail_count > 0 && s->world_valid) {
+        const kos_chef *chef = world_chef(&s->world, holder);
+
+        if (chef != NULL && chef->holding[0] == '\0') {
+            return -1;
+        }
+    }
+    /* 倒料端着锅走到一半被 navd 判卡住（实机 20261028-020415 order_003 pour:Rice）：
+     * 锅在他手上、灶上空了，别人端不到锅，只能由他接着倒。 */
+    if (holder < 0 && strcmp(s->recipes.nodes[node_index].op, "pour") == 0) {
+        int carrier = pour_pot_carrier(s, &s->recipes.nodes[node_index]);
+
+        if (carrier >= 0) {
+            return carrier;
+        }
     }
     return holder;
 }
@@ -794,13 +878,19 @@ static int chef_can_take_task(const kos_world_state *world, int chef, const char
         }
         return !op_consumes_holding(op);
     }
+    /* 端着源锅的人续做 pour（task_holder_chef 把 holder 设成了他）。 */
+    if (strcmp(op, "pour") == 0) {
+        return holder == chef;
+    }
     /* 热菜装盘原料在灶上（holder < 0），手上拿着别的东西的厨师不能接装盘 */
     if (holder < 0 && strcmp(op, "plate") == 0) {
         return 0;
     }
     /* holder < 0 说明图上没有唯一持有者（deliver 只有盘子、或两个子工序在两个人手里）：
-     * 这时允许手上有东西的厨师去试，内容核对会把放错的料判成 content-mismatch。 */
-    return op_consumes_holding(op) && (holder < 0 || holder == chef);
+     * 这时允许手上有东西的厨师去试，内容核对会把放错的料判成 content-mismatch。
+     * 但手里拿着另一道待派工序原料的人（bound）不能去：实机 20261028-064643 厨师 0
+     * 端着切好的虾被派去切鸡肉，把虾放上 board-0 后两单都卡死（order_006 item-lost）。 */
+    return op_consumes_holding(op) && (holder == chef || (holder < 0 && !bound));
 }
 
 /*
@@ -1533,16 +1623,118 @@ static int counter_station_index(const kos_kitchen *kitchen)
     return -1;
 }
 
+/* 台面格上还摆着别的工位（盘堆、水槽……）时，往上放东西会落进那个工位：
+ * 实机 20261028-030252 把没人要的鱼放到 counter-18，等于盖在了干净盘堆顶上的盘子里，
+ * 后面的装盘全部失败。 */
+static int counter_shares_cell(const kos_kitchen *kitchen, int counter)
+{
+    const kos_station *st = &kitchen->stations[counter];
+    int i;
+
+    for (i = 0; i < kitchen->station_count; i++) {
+        const kos_station *other = &kitchen->stations[i];
+
+        if (i == counter || kos_kitchen_name_matches("counter", other->kind)) {
+            continue;
+        }
+        if (fabsf(other->x - st->x) < 0.1f && fabsf(other->z - st->z) < 0.1f) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/* 台面上已经摆着东西（玉米饼、盘子……）或者有活跃订单的 place 工序把它当容器：
+ * 往上放手里的料要么被拒，要么混进别人的卷饼。实机 20261028-043613 worker-0
+ * 在摆着 Tortilla 的 counter-13/counter-9 之间来回放 ChoppedMushroom 失败 16 次。 */
+static int counter_occupied(const scheduler *s, int counter)
+{
+    const kos_station *st = &s->kitchen.stations[counter];
+    int i;
+    int j;
+
+    if (s->world_valid) {
+        for (i = 0; i < (int)s->world.resource_count && i < KOS_SHM_MAX_RESOURCES; i++) {
+            const kos_resource *r = &s->world.resources[i];
+
+            if (!r->has_pos || fabsf(r->pos_x - st->x) >= 0.3f ||
+                fabsf(r->pos_y - st->z) >= 0.3f) {
+                continue;
+            }
+            if (r->item[0] != '\0' || r->content[0] != '\0' || r->content_count > 0 ||
+                (r->kind[0] != '\0' && strcmp(r->kind, st->kind) != 0)) {
+                return 1;
+            }
+        }
+    }
+    for (i = 0; i < s->order_count; i++) {
+        const sched_order *order = &s->orders[i];
+
+        if (order->status != KOS_ORDER_ACTIVE) {
+            continue;
+        }
+        for (j = 0; j < order->task_count; j++) {
+            const sched_task *task = &order->tasks[j];
+
+            if (task->state != TASK_PENDING && task->station_id[0] != '\0' &&
+                strcmp(task->station_id, st->id) == 0 &&
+                strcmp(s->recipes.nodes[task->node_index].op, "place") == 0) {
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
+/* 离厨师最近的台面（跳过上次放失败的那个）。只有一个台面或拿不到厨师位置时
+ * 退回第一个台面。 */
+static int counter_station_near(scheduler *s, int chef)
+{
+    const kos_chef *c = world_chef(&s->world, chef);
+    int skip = (chef >= 0 && chef < KOS_SHM_MAX_CHEFS) ? s->putdown_skip[chef] - 1 : -1;
+    int best = -1;
+    float best_d = 0.0f;
+    int i;
+
+    if (c == NULL) {
+        return counter_station_index(&s->kitchen);
+    }
+    for (i = 0; i < s->kitchen.station_count; i++) {
+        const kos_station *st = &s->kitchen.stations[i];
+        float dx, dz, d;
+
+        if (i == skip || !kos_kitchen_name_matches("counter", st->kind) ||
+            counter_shares_cell(&s->kitchen, i) || counter_occupied(s, i)) {
+            continue;
+        }
+        dx = st->x - c->x;
+        dz = st->z - c->y;
+        d = dx * dx + dz * dz;
+        if (best < 0 || d < best_d) {
+            best = i;
+            best_d = d;
+        }
+    }
+    return best >= 0 ? best : counter_station_index(&s->kitchen);
+}
+
 /* 把手上没人要的东西放下。没有普通台面工位（kitchen.json 目前不导出 Counter）时
  * 只能记 orphaned，等工位表补上后这条路径才有地方放。 */
 static void queue_putdown(scheduler *s, int chef, const char *item, const char *reason,
                           int64_t now)
 {
-    int station = counter_station_index(&s->kitchen);
+    int station = counter_station_near(s, chef);
     json_writer w;
     char line[SCHED_LINE_MAX];
     const char *event_name;
 
+    if (s->putdown.state != 0 && s->putdown.chef_id == chef) {
+        /* 同一厨师的同一件手持物已经在放下队列里。salvage_expired_holdings 会对
+         * 他做过的每道 fetch/cut/plate 各调一次（实机 20261027-200237
+         * scheduler.log:58-60）：第二次不能把他记成 hold_stuck，否则他被摘出空闲表、
+         * 自己那条放下工序永远派不出去，放下槽位也一直占着。 */
+        return;
+    }
     if (station < 0 || s->putdown.state != 0) {
         event_name = "hold_orphaned";
         if (chef >= 0 && chef < KOS_SHM_MAX_CHEFS) {
@@ -1738,6 +1930,11 @@ static void salvage_chef_holding(scheduler *s, int chef, const char *reason, int
     }
     state = world_chef(&s->world, chef);
     if (state == NULL || state->holding[0] == '\0') {
+        return;
+    }
+    /* 手上的东西属于另一张活跃订单（实机 20261027-220205：order_004 失败时把
+     * chef0 给 order_005 拿的 Rice 放下了，order_005 随即 holding-lost）。 */
+    if (chef_holding_for_active_order(s, chef)) {
         return;
     }
     if (try_adopt_holding(s, chef, reason, now)) {
@@ -2042,10 +2239,21 @@ static int macro_fail_disposition(const char *detail)
     if (strstr(detail, "source-gone") != NULL || strstr(detail, "content-gone") != NULL) {
         return SCHED_FAIL_REQUEUE;
     }
+    /* 派到时厨师手上还有东西（上一单的盘子/原料没放下）：换个人再派，不是这道菜做不了。
+     * 实机 20261027-232216 order_004/005 的 fetch:Rice 因此直接判单失败，米饭锅烧糊。 */
+    if (strstr(detail, "hand-occupied") != NULL) {
+        return SCHED_FAIL_REQUEUE;
+    }
     /* 到站后等到超时：实机 20261027-190659 里 chop/drop 超时多半是焦点或板上残留这类瞬时状态
      * （scheduler.log:80/88/351 三单因此直接判死，锅留在火上烧糊）。按重试走退避，
      * 连续 SCHED_TASK_MAX_RETRIES 次才判这道菜失败。 */
     if (strstr(detail, "timeout") != NULL) {
+        return SCHED_FAIL_REQUEUE;
+    }
+    /* 到站但游戏选中的交互对象一直不是目标（另一个厨师挡在面前、站位格选错）：
+     * 和超时一样是瞬时状态。实机 20261027-200237 scheduler.log:55 出菜口
+     * deliver 因 focus 直接判单失败，厨师端着菜站到收工。 */
+    if (strstr(detail, " focus ") != NULL) {
         return SCHED_FAIL_REQUEUE;
     }
     return SCHED_FAIL_ORDER;
@@ -2110,6 +2318,17 @@ static void handle_worker_event(scheduler *s, const kos_mq_msg *msg)
             json_writer_key(&w, "item");
             json_writer_string(&w, s->putdown.item);
             event_end(s, &w);
+            if (msg->chef_id >= 0 && msg->chef_id < KOS_SHM_MAX_CHEFS) {
+                if (msg->event == KOS_EVT_DONE) {
+                    s->putdown_skip[msg->chef_id] = 0;
+                } else {
+                    /* 放失败了东西还在手上（实机 20261027-212429：锅放不到远处的
+                     * counter-0，之后再没人管，端着空锅走一整局）。记下失败的台面，
+                     * 交给 hold-stuck-retry 换最近的另一个台面重排；手空了自然解除。 */
+                    s->putdown_skip[msg->chef_id] = s->putdown.station_index + 1;
+                    s->hold_stuck[msg->chef_id] = 1;
+                }
+            }
             memset(&s->putdown, 0, sizeof s->putdown);
         }
         return;
@@ -2263,6 +2482,14 @@ static void handle_worker_event(scheduler *s, const kos_mq_msg *msg)
                 task->fail_count++;
                 if (task->fail_count < SCHED_TASK_MAX_RETRIES) {
                     task_requeue(s, order_index, task_index, "macro-failed");
+                    /* 手上有东西接不了：下一轮换个空手的人。 */
+                    if (strstr(msg->detail, "hand-occupied") != NULL) {
+                        task->avoid_chef = msg->chef_id;
+                    }
+                    /* 台面放不下（上面还躺着失败订单留下的玉米饼）：重派换一张。 */
+                    if (strcmp(op, "place") == 0) {
+                        task->station_id[0] = '\0';
+                    }
                     task->not_before_ms =
                         now + (int64_t)task->fail_count * SCHED_TASK_RETRY_BACKOFF_MS;
                     kos_log_info(s->rt.log, "task_retry_backoff",
@@ -2520,6 +2747,54 @@ static int board_station_reserved(const scheduler *s, const char *station_id)
     return 0;
 }
 
+/* 盘堆一次只给一个装盘厨师用：两个人同时到盘堆放料/取盘会互相抢盘子、在站位格撞在一起
+ * （实机 _3：两个装盘任务同时到 plate_stack-0，都卡住）。失败回队、等重试的装盘也占着：
+ * 它的料已经放在盘堆上，别人此时来装盘会撞上还站在那儿的厨师（20261027-232216）。
+ * 装好盘、还没出餐的那单也占着：盘堆到出菜口是一条单行道，像栈一样后进的人
+ * 会把先进的人堵在里面（实机 20261028-063515 装盘与出餐对头卡死）。
+ * `self` 是正在问的那道工序，自己不挡自己。 */
+static int plate_station_reserved(const scheduler *s, const char *station_id,
+                                  const sched_task *self)
+{
+    int i;
+    int j;
+
+    for (i = 0; i < s->order_count; i++) {
+        const sched_order *order = &s->orders[i];
+
+        if (order->status != KOS_ORDER_ACTIVE) {
+            continue;
+        }
+        int plated = 0;
+        int delivered = 1;
+
+        for (j = 0; j < order->task_count; j++) {
+            const sched_task *task = &order->tasks[j];
+            const kos_recipe_node *node = &s->recipes.nodes[task->node_index];
+            int holds = task->state == TASK_RUNNING ||
+                        (task->state == TASK_PENDING && task->fail_count > 0);
+
+            if (strcmp(node->op, "plate") == 0 && task->station_id[0] != '\0' &&
+                strcmp(task->station_id, station_id) == 0) {
+                if (task != self && holds) {
+                    return 1;
+                }
+                if (task->state == TASK_DONE) {
+                    plated = 1;
+                }
+            }
+            if (strcmp(node->op, "deliver") == 0 && task->state != TASK_DONE &&
+                task->state != TASK_FAILED) {
+                delivered = 0;
+            }
+        }
+        if (plated && !delivered) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
 static int pick_board_station(const scheduler *s, const char *kind, unsigned salt,
                               int *index)
 {
@@ -2548,6 +2823,36 @@ static int pick_board_station(const scheduler *s, const char *kind, unsigned sal
         return KOS_OK;
     }
     return KOS_ERR_EMPTY;
+}
+
+/* 切失败回队的 cut：原料已经放在上次那块板上（世界状态 occupied+item），
+ * world_station_busy 会让它永远选不到板而 resource_wait（实机 20261027-234924 切鸡肉 2042 次）。
+ * 板上正是这道工序的料、且没别的切/搅工序在跑，就钉回那块板：drop 手空跳过，直接 chop。 */
+static int cut_retry_station(const scheduler *s, const sched_task *task,
+                             const kos_recipe_node *node, int *index)
+{
+    const kos_resource *resource;
+    int idx;
+
+    const char *want = node->ingredient[0] != '\0' ? node->ingredient : node->label;
+
+    /* recipes.json 的 cut 节点不带 ingredient，原料名就是 label（cut:BurritoChicken）。
+     * 旧代码只认 ingredient，这条重试复用从来没生效过。 */
+    if (task->fail_count <= 0 || task->station_id[0] == '\0' || want[0] == '\0') {
+        return KOS_ERR_EMPTY;
+    }
+    idx = kos_kitchen_station_index(&s->kitchen, task->station_id);
+    if (idx < 0 || strcmp(s->kitchen.stations[idx].kind, node->resource) != 0 ||
+        board_station_reserved(s, task->station_id)) {
+        return KOS_ERR_EMPTY;
+    }
+    resource = station_world_resource(s, task->station_id);
+    if (resource == NULL ||
+        !(sched_name_eq(resource->item, want) || sched_name_eq(resource->content, want))) {
+        return KOS_ERR_EMPTY;
+    }
+    *index = idx;
+    return KOS_OK;
 }
 
 static int cooker_station_reserved(const scheduler *s, const char *station_id)
@@ -2897,6 +3202,14 @@ static int place_station_index(const scheduler *s, int order_index, int task_ind
             }
         }
     }
+    /* 世界里已经放着东西的台面也跳过：失败订单的玉米饼不会自己消失，
+     * 实机 20261027-220205 order_004 往 counter-16 放了三次都放不下。 */
+    for (i = 0; i < s->kitchen.station_count && i < KOS_KITCHEN_MAX_STATIONS; i++) {
+        if (!busy[i] && strcmp(s->kitchen.stations[i].kind, "counter") == 0 &&
+            world_station_busy(s, s->kitchen.stations[i].id)) {
+            busy[i] = 1;
+        }
+    }
     step_count = dish_cook_steps(&s->recipes, &s->recipes.dishes[order->dish_index], steps,
                                  (int)(sizeof steps / sizeof steps[0]));
     return kos_kitchen_pick_counter(&s->kitchen, steps, step_count, busy, station_out);
@@ -3046,8 +3359,9 @@ static int64_t order_remaining_critical_ms(const scheduler *s, const sched_order
 }
 
 /*
- * 小费倍率要求按开工顺序交付：开工更早的订单还没做完时，后面订单的 deliver 不进
- * 就绪队列。失败/完成的更早订单不再挡路。
+ * 小费倍率要求按开工顺序交付：开工更早的订单快做完时，后面订单不开始装盘
+ * （装了盘就直接出餐，见 task_dispatch_ready）。失败/完成的更早订单不再挡路；
+ * 剩余关键路径还很长（卡住或刚开工）的更早订单也不挡，免得端着料干等。
  */
 static int order_delivery_allowed(const scheduler *s, const sched_order *order)
 {
@@ -3063,7 +3377,40 @@ static int order_delivery_allowed(const scheduler *s, const sched_order *order)
             earlier->open_seq <= 0) {
             continue;
         }
-        if (earlier->open_seq < order->open_seq && !order_has_done_all(earlier)) {
+        if (earlier->open_seq < order->open_seq && !order_has_done_all(earlier) &&
+            order_remaining_critical_ms(s, earlier) <= SCHED_DELIVERY_WAIT_MAX_MS) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+/*
+ * 交付顺序闸门的上游版：更早的订单快做完（会挡装盘）、而这一单剩下的关键路径比它
+ * 还短时，先别取新料——取了也只能端着等。实机 20261028-074032：order_007/008 的
+ * 鱼和虾切好后被前面三单卷饼挡着装盘，两个厨师各端着 41 s 什么也干不了。
+ * 只拦 fetch（开一条新料链）；已经在手里的料照常往下做。
+ */
+static int order_start_allowed(const scheduler *s, const sched_order *order)
+{
+    int64_t mine;
+    int i;
+
+    if (order->open_seq <= 0) {
+        return 1;
+    }
+    mine = order_remaining_critical_ms(s, order);
+    for (i = 0; i < s->order_count; i++) {
+        const sched_order *earlier = &s->orders[i];
+        int64_t theirs;
+
+        if (earlier == order || earlier->status != KOS_ORDER_ACTIVE || !earlier->opened ||
+            earlier->open_seq <= 0 || earlier->open_seq >= order->open_seq ||
+            order_has_done_all(earlier)) {
+            continue;
+        }
+        theirs = order_remaining_critical_ms(s, earlier);
+        if (theirs <= SCHED_DELIVERY_WAIT_MAX_MS && mine < theirs) {
             return 0;
         }
     }
@@ -3096,6 +3443,9 @@ static int task_station_index(const scheduler *s, int order_index, int task_inde
     }
     if (strcmp(node->op, "cut") == 0 || strcmp(node->op, "mix") == 0) {
         /* 砧板/搅拌台和灶一样要占住：同一轮里两条 cut 不能都挑 board-1。 */
+        if (cut_retry_station(s, &order->tasks[task_index], node, station_out) == KOS_OK) {
+            return KOS_OK;
+        }
         return pick_board_station(s, node->resource,
                                   (unsigned)(order_index * KOS_RECIPE_MAX_DISH_NODES +
                                              task_index),
@@ -3133,6 +3483,21 @@ static int task_station_index(const scheduler *s, int order_index, int task_inde
                                     station_out);
 }
 
+/* 装盘工位被另一个装盘任务占着（运行中或失败待重试）时，这一轮不派（下轮再试）。 */
+static int task_station_index_checked(const scheduler *s, int order_index, int task_index,
+                                      int *station_out)
+{
+    const sched_task *task = &s->orders[order_index].tasks[task_index];
+    const kos_recipe_node *node = &s->recipes.nodes[task->node_index];
+    int rc = task_station_index(s, order_index, task_index, station_out);
+
+    if (rc == KOS_OK && strcmp(node->op, "plate") == 0 &&
+        plate_station_reserved(s, s->kitchen.stations[*station_out].id, task)) {
+        return KOS_ERR_EMPTY;
+    }
+    return rc;
+}
+
 /*
  * 至少有一个空闲厨师能从自己的格子走到该工位。厨师格未知（还没有世界状态）时按
  * 可达处理：那时所有路程都是 0，交给后面的派工流程。互不相通的厨房条带之间
@@ -3153,11 +3518,116 @@ static int station_reachable(const scheduler *s, int station, const int *chef_ce
     return 0;
 }
 
+/* 锅链上的 fetch/cut/mix 往上找它最终喂给的那道 cook；没有（不在锅链）返回 -1。 */
+static int pot_chain_cook_task(const scheduler *s, const sched_order *order, int task_index)
+{
+    int node = order->tasks[task_index].node_index;
+    int hops;
+
+    for (hops = 0; hops < s->recipes.node_count; hops++) {
+        int edge;
+        int parent = -1;
+
+        if (strcmp(s->recipes.nodes[node].op, "cook") == 0) {
+            return order_task_by_node(order, node);
+        }
+        for (edge = 0; edge < s->recipes.edge_count; edge++) {
+            int to = s->recipes.edges[edge].to;
+
+            if (s->recipes.edges[edge].from == node && to >= 0 &&
+                to < s->recipes.node_count && s->pot_chain[to]) {
+                parent = to;
+                break;
+            }
+        }
+        if (parent < 0) {
+            return -1;
+        }
+        node = parent;
+    }
+    return -1;
+}
+
+/* 这道还没下锅的 cook 有没有上游已经开工（料在路上/在手里/在板上）。 */
+static int pot_chain_cook_committed(const scheduler *s, const sched_order *order,
+                                    int cook_task)
+{
+    int k;
+
+    if (order->tasks[cook_task].state != TASK_PENDING) {
+        return 0;
+    }
+    for (k = 0; k < order->task_count; k++) {
+        const sched_task *task = &order->tasks[k];
+
+        if (k == cook_task || !s->pot_chain[task->node_index] ||
+            (task->state != TASK_RUNNING && task->state != TASK_DONE)) {
+            continue;
+        }
+        if (pot_chain_cook_task(s, order, k) == cook_task) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
 /*
- * 倒料要等源锅真的煮熟：cook 任务在 start_cook 就 DONE，这时锅里还在煮；
- * 端起来就倒会把生料倒进卷饼（sim demo3 复现）。世界状态里没有 pot 字段
- * （老 Bridge）时不拦，交给宏自己等。
+ * 锅链开新料的闸：已经在路上的锅链料（上游开工、还没下锅）每份都要一口空灶，
+ * 空灶不够就不再开新的。实机 20261028-071415：灶上全是熟/糊锅等空手倒料，三个厨师
+ * 却各自端着生蘑菇/肉/米等灶，没人腾得出手倒，环形等待。这道 cook 自己已经有料
+ * 在路上（同一锅的第二份料）不拦。老 Bridge（无世界状态）不拦。
  */
+static int pot_chain_start_allowed(const scheduler *s, const sched_order *order,
+                                   int task_index)
+{
+    const kos_recipe_node *cook_node;
+    int cook_task;
+    int free_cookers = 0;
+    int committed = 0;
+    int i;
+    int j;
+
+    if (!s->world_valid || !s->pot_chain[order->tasks[task_index].node_index]) {
+        return 1;
+    }
+    cook_task = pot_chain_cook_task(s, order, task_index);
+    if (cook_task < 0 || cook_task == task_index ||
+        order->tasks[cook_task].state != TASK_PENDING ||
+        pot_chain_cook_committed(s, order, cook_task)) {
+        return 1;
+    }
+    cook_node = &s->recipes.nodes[order->tasks[cook_task].node_index];
+    for (i = 0; i < s->kitchen.station_count; i++) {
+        const kos_station *station = &s->kitchen.stations[i];
+
+        if (strcmp(station->kind, cook_node->resource) == 0 &&
+            cooker_step_matches(station, cook_node->step) &&
+            !cooker_station_reserved(s, station->id) &&
+            !world_station_busy(s, station->id)) {
+            free_cookers++;
+        }
+    }
+    for (i = 0; i < s->order_count; i++) {
+        const sched_order *other = &s->orders[i];
+
+        if (other->status != KOS_ORDER_ACTIVE || !other->opened) {
+            continue;
+        }
+        for (j = 0; j < other->task_count; j++) {
+            const kos_recipe_node *node = &s->recipes.nodes[other->tasks[j].node_index];
+
+            if (strcmp(node->op, "cook") == 0 &&
+                strcmp(node->resource, cook_node->resource) == 0 &&
+                (node->step[0] == '\0' || cook_node->step[0] == '\0' ||
+                 strcmp(node->step, cook_node->step) == 0) &&
+                pot_chain_cook_committed(s, other, j)) {
+                committed++;
+            }
+        }
+    }
+    return committed < free_cookers;
+}
+
 static int pour_pot_ready(const scheduler *s, const sched_order *order, int task_index)
 {
     const kos_resource *resource;
@@ -3170,12 +3640,18 @@ static int pour_pot_ready(const scheduler *s, const sched_order *order, int task
     if (cook_task < 0 || order->tasks[cook_task].station_id[0] == '\0') {
         return 1; /* 让派发路径报 pour_source_missing，而不是永远卡在就绪外 */
     }
+    /* 锅已端在某人手上（倒料走到一半被卡住回队）：灶位此时报空，按灶位状态会永远
+     * 不就绪；锅里有这味料就交给持锅人续做（task_holder_chef 绑定他）。 */
+    if (pour_pot_carrier(s, &s->recipes.nodes[order->tasks[task_index].node_index]) >= 0) {
+        return 1;
+    }
     resource = station_world_resource(s, order->tasks[cook_task].station_id);
     if (resource == NULL || resource->state[0] == '\0') {
         return 1;
     }
     return strcmp(resource->state, "cooked") == 0;
 }
+
 
 static int task_dispatch_ready(const scheduler *s, const sched_order *order, int task_index,
                                int64_t now)
@@ -3195,8 +3671,30 @@ static int task_dispatch_ready(const scheduler *s, const sched_order *order, int
     if (strcmp(node->op, "pour") == 0 && !pour_pot_ready(s, order, task_index)) {
         return 0;
     }
-    if (strcmp(node->op, "deliver") == 0 && !order_delivery_allowed(s, order)) {
-        return 0;
+    /* 交付顺序闸门卡在装盘，不卡交付：装好盘的人必须立刻出餐，端着成品停在盘堆
+     * 站位格会把装盘/出餐那条单行道堵死（实机 20261028-063515：order_007 装好盘
+     * 等 order_006，厨师 0 停在盘堆前，厨师 1 装盘 goto 超时 10.3 s + 7.1 s）。
+     * 料备齐后最多等 SCHED_DELIVERY_HOLD_MAX_MS：前面卷饼的剩余关键路径不算等锅/
+     * 等人倒料，实机 20261028-080123 一个厨师端着切好的鱼等了 56 s，丢的产能比
+     * 小费倍率值钱。 */
+    if (strcmp(node->op, "plate") == 0 && !order_delivery_allowed(s, order)) {
+        int64_t ready_ms = 0;
+        int e;
+
+        for (e = 0; e < s->recipes.edge_count; e++) {
+            int child_task;
+
+            if (s->recipes.edges[e].to != task->node_index) {
+                continue;
+            }
+            child_task = order_task_by_node(order, s->recipes.edges[e].from);
+            if (child_task >= 0 && order->tasks[child_task].done_ms > ready_ms) {
+                ready_ms = order->tasks[child_task].done_ms;
+            }
+        }
+        if (ready_ms == 0 || now - ready_ms < SCHED_DELIVERY_HOLD_MAX_MS) {
+            return 0;
+        }
     }
     return 1;
 }
@@ -3267,7 +3765,7 @@ static int opened_ready_count(scheduler *s, int64_t now, const int *idle,
             if (!task_dispatch_ready(s, order, j, now)) {
                 continue;
             }
-            if (task_station_index(s, i, j, &station) != KOS_OK) {
+            if (task_station_index_checked(s, i, j, &station) != KOS_OK) {
                 continue;
             }
             if (s->zoned && s->zones.from_file) {
@@ -3373,7 +3871,7 @@ static int open_next_order(scheduler *s, int64_t now, const int *chef_cells,
             if (!task_dispatch_ready(s, candidate, j, now)) {
                 continue;
             }
-            station_rc = task_station_index(s, i, j, &station);
+            station_rc = task_station_index_checked(s, i, j, &station);
             if (station_rc == KOS_ERR_EMPTY) {
                 /* A known resource is temporarily unavailable; keep the order waiting. */
                 has_feasible = 1;
@@ -3488,10 +3986,14 @@ static int build_candidates(scheduler *s, int64_t now, const int *chef_cells,
             now < order->arrival_ms) {
             continue;
         }
+        /* Iterate pour tasks first: cooked food can burn while ordinary ready work waits. */
         for (j = 0; j < order->task_count; j++) {
             sched_task *task = &order->tasks[j];
             int station;
 
+            if (strcmp(s->recipes.nodes[task->node_index].op, "pour") != 0) {
+                continue;
+            }
             if (!task_dispatch_ready(s, order, j, now)) {
                 continue;
             }
@@ -3502,7 +4004,55 @@ static int build_candidates(scheduler *s, int64_t now, const int *chef_cells,
                 return n;
             }
             {
-                int station_rc = task_station_index(s, i, j, &station);
+                int station_rc = task_station_index_checked(s, i, j, &station);
+                if (station_rc == KOS_ERR_EMPTY) {
+                    mark_resource_wait(s, -1, order, task,
+                                       &s->recipes.nodes[task->node_index]);
+                    kos_log_debug(s->rt.log, "cooker_station_wait", "order=%s node=%s",
+                                  order->id, s->recipes.nodes[task->node_index].id);
+                    continue;
+                }
+                if (station_rc != KOS_OK) {
+                    fail_task_no_station(s, order, j, now);
+                    break;
+                }
+            }
+            if (!station_reachable(s, station, chef_cells, chef_count)) {
+                kos_log_debug(s->rt.log, "task_station_unreachable",
+                              "order=%s node=%s station=%d idle=%d chef_cells=%d,%d",
+                              order->id, s->recipes.nodes[task->node_index].id, station,
+                              chef_count, chef_count > 0 ? chef_cells[0] : -1,
+                              chef_count > 1 ? chef_cells[1] : -1);
+                continue;
+            }
+            out[n].order_index = i;
+            out[n].task_index = j;
+            out[n].node_index = task->node_index;
+            out[n].station_index = station;
+            n++;
+        }
+        for (j = 0; j < order->task_count; j++) {
+            sched_task *task = &order->tasks[j];
+            int station;
+            if (strcmp(s->recipes.nodes[task->node_index].op, "pour") == 0 ||
+                !task_dispatch_ready(s, order, j, now)) {
+                continue;
+            }
+            if (!pot_chain_start_allowed(s, order, j)) {
+                continue;
+            }
+            if (strcmp(s->recipes.nodes[task->node_index].op, "fetch") == 0 &&
+                !order_start_allowed(s, order)) {
+                continue;
+            }
+            if (task->ready_since_ms == 0) {
+                task->ready_since_ms = now;
+            }
+            if (n >= cap) {
+                return n;
+            }
+            {
+                int station_rc = task_station_index_checked(s, i, j, &station);
                 if (station_rc == KOS_ERR_EMPTY) {
                     /* 灶/板都被占着：这也是资源竞争，要进 waits 统计（OS 课设证据）。 */
                     mark_resource_wait(s, -1, order, task,
@@ -3757,7 +4307,10 @@ static void reconcile_holding_loss(scheduler *s, int64_t now)
             int64_t done_ms;
             int holder;
 
-            if (task->state != TASK_PENDING) {
+            /* 失败回队过的工序：宏的第一步就是把手里的东西放到工位上（装盘先放到盘堆、
+             * 切菜先放到砧板），之后超时空手是正常的，东西在工位上，重试会接着做。
+             * 实机 20261027-232216：装盘取盘超时一次就被判 holding-lost，整单判死。 */
+            if (task->state != TASK_PENDING || task->fail_count > 0) {
                 continue;
             }
             holder = task_holder_chef(s, order, j);
@@ -3847,6 +4400,14 @@ static void dispatch_ready(scheduler *s, int64_t now)
                        try_adopt_holding(s, i, "hold-stuck", now)) {
                 /* 新开了一张同菜的订单，手里的东西有用了。 */
                 s->hold_stuck[i] = 0;
+            } else if (s->world_valid && stuck != NULL && s->putdown.state == 0 &&
+                       counter_station_index(&s->kitchen) >= 0) {
+                /* 当初放下槽位被别人占着才记的 orphaned：槽位空了就重新排队，
+                 * 不然这个厨师拿着东西永远站着（实机 20261027-200237 的 Tortilla）。 */
+                queue_putdown(s, i, stuck->holding, "hold-stuck-retry", now);
+                if (s->hold_stuck[i]) {
+                    continue;
+                }
             } else {
                 continue;
             }
@@ -3883,29 +4444,44 @@ static void dispatch_ready(scheduler *s, int64_t now)
     if (cand_count == 0) {
         return;
     }
-    /* 按 kind 预扣本轮可用令牌，避免把两个厨师派给同一个只剩一个令牌的资源。 */
+    /* A cook reservation is intentionally held until its pour/plate releases it.  Do not
+     * pre-filter later non-cook work by the same kind: pour needs the held source cooker,
+     * while pickup/plate/deliver use other resources.  The real acquire below is authoritative. */
     for (i = 0; i < cand_count; i++) {
         const char *kind = candidate_resource(s, &all[i]);
-        int k = -1;
-        int value = 0;
+        const kos_recipe_node *node = all[i].order_index >= 0
+                                          ? &s->recipes.nodes[all[i].node_index]
+                                          : NULL;
 
-        for (j = 0; j < kind_n; j++) {
-            if (strcmp(kind_names[j], kind) == 0) {
-                k = j;
-                break;
-            }
-        }
-        if (k < 0) {
-            k = kind_n++;
-            copy_str(kind_names[k], sizeof kind_names[k], kind);
-            if (kos_resource_value(&s->resources, kind, &value) != KOS_OK) {
-                value = KOS_SHM_MAX_CHEFS;
-            }
-            kind_free[k] = value;
-        }
-        if (kind_free[k] > 0) {
-            kind_free[k]--;
+        if (node != NULL && (strcmp(node->op, "pour") == 0 ||
+                             strcmp(node->op, "pickup") == 0 ||
+                             strcmp(node->op, "plate") == 0 ||
+                             strcmp(node->op, "deliver") == 0)) {
             pool[pool_count++] = all[i];
+            continue;
+        }
+        {
+            int k = -1;
+            int value = 0;
+
+            for (j = 0; j < kind_n; j++) {
+                if (strcmp(kind_names[j], kind) == 0) {
+                    k = j;
+                    break;
+                }
+            }
+            if (k < 0) {
+                k = kind_n++;
+                copy_str(kind_names[k], sizeof kind_names[k], kind);
+                if (kos_resource_value(&s->resources, kind, &value) != KOS_OK) {
+                    value = KOS_SHM_MAX_CHEFS;
+                }
+                kind_free[k] = value;
+            }
+            if (kind_free[k] > 0) {
+                kind_free[k]--;
+                pool[pool_count++] = all[i];
+            }
         }
     }
     if (pool_count == 0) {
@@ -3990,6 +4566,13 @@ static void dispatch_ready(scheduler *s, int64_t now)
                     1000.0;
                 term->urgency = urgency[pool[j].order_index];
                 term->critical_x2 = s->pot_chain[pool[j].node_index] ? 1 : 0;
+                if (strcmp(s->recipes.nodes[pool[j].node_index].op, "pour") == 0) {
+                    /* 倒料只剩 0.8 s 关键路径，按原式会输给锅链上游的 fetch/cut
+                     * （×2 后约 −13）：实机 20261028-042654 熟锅等了 10 s 才派、
+                     * 烧焦起火。锅熟后 12 s 就焦，倒料按锅链最高优先级算。 */
+                    term->critical_s = SCHED_POUR_CRITICAL_S;
+                    term->critical_x2 = 1;
+                }
                 if (s->orders[pool[j].order_index].tasks[pool[j].task_index].avoid_chef == chef) {
                     term->unreachable = 1;
                 }
@@ -4099,6 +4682,8 @@ static void dispatch_ready(scheduler *s, int64_t now)
             if (strcmp(node->op, "cook") == 0) {
                 repick_rc = pick_cooker_station(s, node->resource, node->step, salt,
                                                 &repick);
+            } else if (cut_retry_station(s, task, node, &repick) == KOS_OK) {
+                repick_rc = KOS_OK;
             } else {
                 repick_rc = pick_board_station(s, node->resource, salt, &repick);
             }

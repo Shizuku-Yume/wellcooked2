@@ -591,7 +591,10 @@ while [ "$SECONDS" -lt "$deadline" ]; do
     if [ "$scene" = "$SCENE" ] && [ "$elapsed" != "0" ] && [ "$elapsed" != "0.0" ]; then
         round_started=1
     fi
-    if [ "$round_started" = 1 ] && [ "$scene" != "$SCENE" ]; then
+    # 插件用 File.WriteAllText 非原子写 state；读到半截文件时 state_probe 给出 "?"，
+    # 不能当成换场景（实机 20261028-070912 在 elapsed=40s 被误判 scene-changed 提前收工）。
+    if [ "$round_started" = 1 ] && [ "$scene" != "?" ] && [ -n "$scene" ] &&
+        [ "$scene" != "$SCENE" ]; then
         end_reason="scene-changed"
         break
     fi

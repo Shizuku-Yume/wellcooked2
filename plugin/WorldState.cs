@@ -80,9 +80,10 @@ namespace WellCooked
             int chefCount = AppendChefs(json);
             AppendKitchen(json, missing);
             AppendCooking(json, missing);
-            int stationCount = AppendMap(json, missing);
+            int fixedStations;
+            int stationCount = AppendMap(json, missing, out fixedStations);
             GridAlign.Apply();
-            DumpTerrainOnce(stationCount);
+            DumpTerrainOnce(fixedStations);
 
             json.Append(",\"missing\":[");
             for (int i = 0; i < missing.Count; i++)
@@ -325,15 +326,28 @@ namespace WellCooked
         };
 
         /// <summary>
+        /// 开局后还会被拿起、生成、销毁的物品类型（盘子、锅、容器、盘堆）。它们照常导出，
+        /// 但不算进地形重采的工位数：数量一变就在主线程整张网格重采约 3 秒，
+        /// 实测开局约 10 秒时 96→97 触发重采，游戏在倒计时 1:51 卡住。
+        /// </summary>
+        private static readonly HashSet<string> MovableStationTypes = new HashSet<string>
+        {
+            "ClientPlate", "ClientCookableContainer", "ClientCookablePreparationContainer",
+            "ClientIngredientContainer", "ClientTrayIngredientContainer",
+            "ClientCleanPlateStack", "ClientDirtyPlateStack"
+        };
+
+        /// <summary>
         /// 地图上的工位与物品：砧板/锅/盘子/水槽/加热台/传送带各自的位置和内容物。
         /// 内容是 `ClientIngredientContainer.GetContents()` 给出的物品节点，位置取组件自己的 transform。
         /// 调度要用它做资源预订（谁占了哪口锅、哪块砧板上有东西）。
         /// </summary>
-        private static int AppendMap(StringBuilder json, List<string> missing)
+        private static int AppendMap(StringBuilder json, List<string> missing, out int fixedCount)
         {
             json.Append(",\"stations\":[");
             bool first = true;
             int count = 0;
+            fixedCount = 0;
             foreach (var typeName in StationTypes)
             {
                 var found = FindAll(typeName);
@@ -369,6 +383,10 @@ namespace WellCooked
 
                     first = false;
                     count++;
+                    if (!MovableStationTypes.Contains(typeName))
+                    {
+                        fixedCount++;
+                    }
                     var p = unity.transform.position;
                     json.Append("{\"type\":\"").Append(typeName)
                         .Append("\",\"name\":\"").Append(Clean(unity.gameObject.name))

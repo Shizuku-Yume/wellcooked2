@@ -134,6 +134,21 @@ int main(void)
         expect(arrived == 0, "离开后 0.40m 未重新进 0.3m 不算到站");
     }
 
+    /* 3. 双厨师互卡仲裁：只让低优先级、未 pinned/未到站者让路。 */
+    expect(kos_nav_should_yield_pair(1, 1, 0, 0, 0, 0, 3, 5, 0, 1) == 1,
+           "互卡时低优先级厨师让路");
+    expect(kos_nav_should_yield_pair(1, 1, 0, 0, 0, 0, 5, 3, 0, 1) == 0,
+           "互卡时高优先级厨师不让路");
+    expect(kos_nav_should_yield_pair(1, 1, 0, 0, 0, 0, 3, 3, 0, 1) == 0,
+           "同优先级时低 chef_id 保持通行");
+    expect(kos_nav_should_yield_pair(1, 1, 1, 0, 0, 0, 3, 5, 0, 1) == 0,
+           "pinned 厨师不触发让路");
+    expect(kos_nav_should_yield_pair(1, 1, 0, 0, 1, 0, 3, 5, 0, 1) == 0,
+           "到站厨师不触发让路");
+    expect(kos_nav_should_yield_pair(1, 0, 0, 0, 0, 0, 3, 5, 0, 1) == 0,
+           "单方卡住不触发让路");
+ 
     printf("[test_navd_plan] 检查 %d 项，失败 %d 项\n", g_checks, g_failures);
+
     return g_failures == 0 ? 0 : 1;
 }

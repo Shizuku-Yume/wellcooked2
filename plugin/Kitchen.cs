@@ -777,9 +777,11 @@ namespace WellCooked
             {
                 return false;
             }
+            // 前缀不够：鸡肉切完叫 BurritoChoppedChicken（实机 20261027-141553 清理时拿起的就是它），
+            // 只认前缀时进度一直报 -1，切完了也等到超时。
             for (int i = 0; i < ProcessedPrefixes.Length; i++)
             {
-                if (name.StartsWith(ProcessedPrefixes[i], StringComparison.OrdinalIgnoreCase))
+                if (name.IndexOf(ProcessedPrefixes[i], StringComparison.OrdinalIgnoreCase) >= 0)
                 {
                     return true;
                 }

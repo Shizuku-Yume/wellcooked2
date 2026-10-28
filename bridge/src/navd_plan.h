@@ -70,4 +70,24 @@ static inline int kos_nav_goal_hysteresis(int was_arrived, float min_stand_dist)
     return min_stand_dist <= eps;
 }
 
+/*
+ * 双厨师同时无进度时，只让优先级较低的一方重新规划。调用方已通过实际
+ * 位置/计划筛选候选；这里只负责稳定、无状态的仲裁，不改变目标和 pinned。
+ */
+static inline int kos_nav_should_yield_pair(int self_stuck, int other_stuck,
+                                            int self_pinned, int other_pinned,
+                                            int self_arrived, int other_arrived,
+                                            int self_priority, int other_priority,
+                                            int self_chef_id, int other_chef_id)
+{
+    if (!self_stuck || !other_stuck || self_pinned || other_pinned ||
+        self_arrived || other_arrived) {
+        return 0;
+    }
+    if (self_priority != other_priority) {
+        return self_priority < other_priority;
+    }
+    return self_chef_id > other_chef_id;
+}
+
 #endif /* KOS_NAVD_PLAN_H */

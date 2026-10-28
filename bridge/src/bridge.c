@@ -614,7 +614,13 @@ static int build_action_from_slot(int chef, const kos_input_action *action,
         if (action->target_object[0] == '\0') {
             return PROTO_ERR_MISSING; /* interact with nothing is not a message */
         }
-        return protocol_build_action_interact(chef, action->target_object, out, cap, len);
+        {
+            int has_target = kos_state_double_is_finite(action->target_x)
+                             && kos_state_double_is_finite(action->target_y);
+            return protocol_build_action_interact(chef, action->target_object, has_target,
+                                                  action->target_x, action->target_y,
+                                                  out, cap, len);
+        }
     case KOS_ACTION_PICKUP:
         return protocol_build_action_pickup(chef, out, cap, len);
     case KOS_ACTION_DASH:

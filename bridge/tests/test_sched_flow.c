@@ -647,6 +647,12 @@ static void test_station_timeout_requeues(void)
            "station_timeout_requeued");
     n = collect_tasks(taskss, 1, got, 1, 4000);
     expect(n == 1, "station_timeout_redispatched");
+    /* 到站后游戏选中的不是目标（出菜口 deliver，实机 20261027-200237）：同样回队。 */
+    expect(n == 1 && send_event(events, got[0].task_id, 0, KOS_EVT_FAILED,
+                                "macro=deliver wait=order-gone focus waited_ms=1564") == 0,
+           "focus_failure_sent");
+    n = collect_tasks(taskss, 1, got, 1, 6000);
+    expect(n == 1, "focus_failure_redispatched");
     events_text = read_events(&run, &len);
     expect(!contains(events_text, "\"event\":\"order_failed\"") &&
                !contains(events_text, "game-refused"),
@@ -919,6 +925,87 @@ static void test_putdown(void)
     free(events_text);
     n = collect_tasks(taskss, 1, got, 1, 500);
     expect(n == 0, "no_impossible_putdown_without_counter");
+    cleanup_run(&run, &shm, &events, 1);
+}
+
+/* 同一厨师做完 fetch 与 cut，端着切好的料去交付时订单被判失败（实机
+ * 20261027-200237 scheduler.log:55-60）。salvage 会对 fetch、cut 各调一次放下：
+ * 第二次不能把他记成 hold_stuck，放下工序必须派出去。 */
+static void test_putdown_after_two_hand_tasks(void)
+{
+    ksfx_run run;
+    kos_shm *shm = NULL;
+    kos_world_state world;
+    mqd_t events = (mqd_t)-1;
+    mqd_t taskss[KOS_SHM_MAX_CHEFS];
+    got_task got[2];
+    char kind_dispenser[64];
+    char kind_serving[64];
+    char text[2048];
+    char *events_text;
+    size_t len = 0;
+    int n;
+
+    printf("[test_sched_flow] 9b. 同一厨师两道手持工序后订单失败：只排一次放下且派得出去\n");
+    ksfx_scene_override = "s_wellcooked_demo_3";
+    if (ksfx_init_ex(&run, 0) != 0 || write_orders(&run) != 0) {
+        expect(0, "two_hand_fixture_init");
+        ksfx_cleanup(&run);
+        ksfx_scene_override = NULL;
+        return;
+    }
+    ksfx_scene_override = NULL;
+    snprintf(kind_dispenser, sizeof kind_dispenser, "zz%ld_dispenser", (long)getpid());
+    snprintf(kind_serving, sizeof kind_serving, "zz%ld_serving", (long)getpid());
+    n = snprintf(text, sizeof text,
+                 "{\"scene\":\"%s\",\"nodes\":["
+                 "{\"id\":\"fetch:SushiFish\",\"op\":\"fetch\",\"label\":\"SushiFish\","
+                 "\"resource\":\"%s\",\"ingredient\":\"sushifish\",\"duration\":0.1},"
+                 "{\"id\":\"cut:SushiFish\",\"op\":\"cut\",\"label\":\"SushiFish\","
+                 "\"resource\":\"board\",\"duration\":1.0},"
+                 "{\"id\":\"deliver:CutDish\",\"op\":\"deliver\",\"label\":\"CutDish\","
+                 "\"resource\":\"%s\",\"duration\":1.0}],"
+                 "\"edges\":[[\"fetch:SushiFish\",\"cut:SushiFish\"],"
+                 "[\"cut:SushiFish\",\"deliver:CutDish\"]],"
+                 "\"dishes\":[{\"dish\":\"CutDish\",\"score\":80,\"root\":\"deliver:CutDish\","
+                 "\"nodes\":[\"fetch:SushiFish\",\"cut:SushiFish\",\"deliver:CutDish\"]}]}\n",
+                 run.scene, kind_dispenser, kind_serving);
+    expect(n > 0 && ksfx_write_file(run.recipes_path, text, (size_t)n) == 0,
+           "two_hand_recipe_written");
+    expect(install_counter_zones(&run) == 0, "two_hand_counter_zone_written");
+    kos_world_state_reset(&world);
+    put_chef(&world, &run.kitchen, 0, 0, NULL, "dispenser");
+    put_order(&world, "w1", "CutDish", 80);
+    if (start_run_ex(&run, &shm, &events, taskss, 1, &world, "zoned") != 0) {
+        expect(0, "two_hand_scheduler_started");
+        cleanup_run(&run, &shm, &events, 1);
+        return;
+    }
+    n = collect_tasks(taskss, 1, got, 1, 3000);
+    expect(n == 1 && strcmp(got[0].op, "fetch") == 0, "two_hand_fetch_dispatched");
+    ksfx_copy(world.chefs[0].holding, sizeof world.chefs[0].holding, "SushiFish");
+    expect(world_write(shm, &world) == 0, "two_hand_fetch_holding_written");
+    expect(n == 1 && send_event(events, got[0].task_id, 0, KOS_EVT_DONE, "done") == 0,
+           "two_hand_fetch_done_sent");
+    n = collect_tasks(taskss, 1, got, 1, 3000);
+    expect(n == 1 && strcmp(got[0].op, "cut") == 0, "two_hand_cut_dispatched");
+    expect(n == 1 && send_event(events, got[0].task_id, 0, KOS_EVT_DONE, "done") == 0,
+           "two_hand_cut_done_sent");
+    n = collect_tasks(taskss, 1, got, 1, 3000);
+    expect(n == 1 && strcmp(got[0].op, "deliver") == 0, "two_hand_deliver_dispatched");
+    expect(n == 1 && send_event(events, got[0].task_id, 0, KOS_EVT_FAILED,
+                                "macro=deliver content-mismatch") == 0,
+           "two_hand_deliver_failed_sent");
+    expect(ksfx_wait_events(&run, "\"event\":\"putdown_queued\"", 2000, NULL, 0) == 0,
+           "two_hand_putdown_queued");
+    n = collect_tasks(taskss, 1, got, 1, 3000);
+    expect(n == 1 && strcmp(got[0].op, "assemble") == 0 &&
+               strcmp(got[0].node, "drop:SushiFish") == 0 && got[0].station[0] != '\0',
+           "two_hand_putdown_dispatched");
+    events_text = read_events(&run, &len);
+    expect(!contains(events_text, "\"event\":\"hold_orphaned\""),
+           "two_hand_not_orphaned_by_second_salvage");
+    free(events_text);
     cleanup_run(&run, &shm, &events, 1);
 }
 
@@ -1564,6 +1651,7 @@ int main(void)
     test_score_delta_expiry();
     test_expiry_adopts_item();
     test_putdown();
+    test_putdown_after_two_hand_tasks();
     test_score_fallback();
     test_holding_lost();
     test_recovery_adopts_holding();

@@ -1123,6 +1123,7 @@ int protocol_build_action_dash(long long chef_id, char *out, size_t cap, size_t 
 }
 
 int protocol_build_action_interact(long long chef_id, const char *target_object,
+                                   int has_target, double x, double y,
                                    char *out, size_t cap, size_t *out_len)
 {
     json_writer w;
@@ -1137,6 +1138,16 @@ int protocol_build_action_interact(long long chef_id, const char *target_object,
     json_writer_string(&w, PROTO_ACTION_INTERACT);
     json_writer_key(&w, "target_object");
     json_writer_string(&w, target_object == NULL ? "" : target_object);
+    if (has_target) {
+        /* 站点坐标：插件认不出 target_object 时按它判断是否已朝向目标。 */
+        json_writer_key(&w, "target");
+        json_writer_object_begin(&w);
+        json_writer_key(&w, "x");
+        json_writer_double(&w, x);
+        json_writer_key(&w, "y");
+        json_writer_double(&w, y);
+        json_writer_object_end(&w);
+    }
     json_writer_object_end(&w);
     return w_done(&w, out_len);
 }

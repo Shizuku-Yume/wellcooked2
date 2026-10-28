@@ -37,10 +37,16 @@
 
 /* 超时表：与 spec L2 的表格一一对应。 */
 #define MACRO_PICKUP_TIMEOUT_MS 1500
+/* 盘堆上取盘：实测放料后 1.0–1.3 s 盘子才到手，1.5 s 经常差一点超时（run 011629 worker-0:30）。 */
+#define MACRO_PLATE_PICKUP_TIMEOUT_MS 3000
 #define MACRO_DROP_TIMEOUT_MS 1500
 #define MACRO_START_TIMEOUT_MS 1500
-#define MACRO_DELIVER_TIMEOUT_MS 1500
-#define MACRO_CHOP_MARGIN_MS 3000
+/* Cutting can lose focus while another chef crosses the board; allow one re-focus cycle. */
+#define MACRO_CHOP_MARGIN_MS 6000
+/* 盘堆/出菜口几何兜底：厨师与工位在非朝向轴上的偏差上限（半格 0.6）。 */
+#define MACRO_GEOMETRIC_OFFAXIS_MAX 0.6f
+/* goto：navd 没报到站但人已在站位格附近，这么久后按到站处理。 */
+#define MACRO_GOTO_NEAR_FALLBACK_MS 1500
 #define MACRO_WASH_MARGIN_MS 3000
 #define MACRO_POUR_MARGIN_MS 3000
 /* 交付时盘子先消失、游戏的订单结果（order_results）与 m_activeOrders 移除都要晚
@@ -202,6 +208,7 @@ int kos_macro_plan_build_with_source(const kos_kitchen *kitchen, const char *op,
             (void)add_step(out, KOS_MACRO_PICKUP, source_station_id, "", duration_ms);
             (void)add_step(out, KOS_MACRO_GOTO, station_id, "", duration_ms);
             (void)add_step(out, KOS_MACRO_POUR, station_id, item, duration_ms);
+            /* Return to the exact source cooker, even if another cooker has the same kind. */
             (void)add_step(out, KOS_MACRO_GOTO, source_station_id, "", duration_ms);
             (void)add_step(out, KOS_MACRO_DROP, source_station_id, "", duration_ms);
         }
@@ -691,25 +698,37 @@ static int station_in_focus(const kos_kitchen *kitchen, const kos_macro_step *st
         return 0;
     }
     if (chef != NULL && chef->facing_reported) {
-        /* 新插件：没选中任何东西 = 眼前没有可交互对象，不能按键（几何朝向再对也不行）。 */
-        if (!chef->has_facing_target) {
-            /* 游戏对出菜口与盘堆从不上报面前目标（实机 20261027-190659 worker-0.log:142），
-             * 这两类退回几何朝向。 */
-            const char *kind = kitchen->stations[index].kind;
+        /* 游戏对出菜口与盘堆的面前目标不可靠：要么不报（实机 20261027-190659
+         * worker-0.log:142），要么报成旁边的台面（实机 20261027-200237 worker-0.log:166
+         * 转身 1.5 s 仍失焦）。这两类目标对不上时退回几何朝向。 */
+        const char *kind = kitchen->stations[index].kind;
+        int geometric_ok =
+            strcmp(kind, "serving") == 0 || strcmp(kind, "plate_stack") == 0 ||
+            (kind[0] == '\0' && (strncmp(step->station_id, "serving", 7) == 0 ||
+                                 strncmp(step->station_id, "plate_stack", 11) == 0));
 
-            if (strcmp(kind, "serving") == 0 || strcmp(kind, "plate_stack") == 0 ||
-                (kind[0] == '\0' && (strncmp(step->station_id, "serving", 7) == 0 ||
-                                     strncmp(step->station_id, "plate_stack", 11) == 0))) {
-                return facing_towards(kitchen, step, chef);
-            }
-            return 0;
-        }
-        {
+        if (chef->has_facing_target) {
             float dx = chef->facing_x - kitchen->stations[index].x;
             float dz = chef->facing_y - kitchen->stations[index].z;
 
-            return dx * dx + dz * dz <= MACRO_FOCUS_TOL * MACRO_FOCUS_TOL;
+            if (dx * dx + dz * dz <= MACRO_FOCUS_TOL * MACRO_FOCUS_TOL) {
+                /* 选中了也要正对：斜着朝向砧板时按切不进度（实机 20261027-234924 鸡肉
+                 * 朝 (0.71,0.71) 切 146 次无进度）。 */
+                return facing_towards(kitchen, step, chef);
+            }
         }
+        /* 其余工位：没选中或选中别的 = 按键会作用到错的对象，不能按。
+         * 几何兜底还要求站在相邻格：斜对角时只看朝向轴会对着空气按（实机
+         * 20261028-014743 盘堆 (3.0,1.2)、厨师 (4.06,0.20) 朝 -x 连按落空）。 */
+        if (geometric_ok && chef != NULL) {
+            float ax = fabsf(kitchen->stations[index].x - chef->x);
+            float az = fabsf(kitchen->stations[index].z - chef->y);
+
+            if ((ax < az ? ax : az) > MACRO_GEOMETRIC_OFFAXIS_MAX) {
+                return 0;
+            }
+        }
+        return geometric_ok ? facing_towards(kitchen, step, chef) : 0;
     }
     return facing_towards(kitchen, step, chef);
 }
@@ -727,14 +746,24 @@ static int ensure_focus(kos_macro *macro, const kos_kitchen *kitchen,
 
     if (station_in_focus(kitchen, step, chef)) {
         macro->focus_lost_since_ms = 0;
-    macro->saw_holding = chef != NULL && chef->holding[0] != '\0';
-    macro->pour_wait_since_ms = 0;
-    macro->pour_recovery = 0;
-    macro->pour_recovery_since_ms = 0;
         return 1;
     }
     if (macro->focus_lost_since_ms == 0) {
         macro->focus_lost_since_ms = game_ms;
+        /* 只在每次失焦开始记一条：实机 20261027-200237 出菜口 deliver 转身 1.5 s
+         * 仍判失焦，日志里看不到游戏到底选中了什么。 */
+        if (chef != NULL) {
+            int index = kos_kitchen_station_index(kitchen, step->station_id);
+
+            kos_log_info(macro->log, "macro_focus_lost",
+                         "chef=%d station=%s station_pos=(%.2f,%.2f) pos=(%.2f,%.2f) "
+                         "facing=%.2f reported=%d has_target=%d target=(%.2f,%.2f)",
+                         chef_id, step->station_id,
+                         index >= 0 ? kitchen->stations[index].x : 0.0f,
+                         index >= 0 ? kitchen->stations[index].z : 0.0f, chef->x, chef->y,
+                         chef->facing, chef->facing_reported, chef->has_facing_target,
+                         chef->facing_x, chef->facing_y);
+        }
     }
     out->action = game_ms - macro->focus_lost_since_ms >= MACRO_FOCUS_RETRY_MS
                       ? KOS_MACRO_ACT_NAVIGATE
@@ -759,6 +788,12 @@ static int facing_towards(const kos_kitchen *kitchen, const kos_macro_step *step
     dz = kitchen->stations[index].z - chef->y;
     if (dx * dx + dz * dz < 0.0001f) {
         return 1; /* 站在工位上：没有"朝哪"的问题，插件也按 0° 处理 */
+    }
+    /* 游戏网格只有四个邻格：期望朝向取离工位最近的坐标轴方向，与插件 face 一致。 */
+    if (fabsf(dx) >= fabsf(dz)) {
+        dz = 0.0f;
+    } else {
+        dx = 0.0f;
     }
     desired = atan2f(dx, dz);
     diff = chef->facing - desired;
@@ -958,6 +993,18 @@ static int step_init(kos_macro *macro, const kos_kitchen *kitchen,
                step->kind == KOS_MACRO_START_COOK ||
                step->kind == KOS_MACRO_DELIVER) {
         macro->deadline_ms = game_ms + MACRO_PICKUP_TIMEOUT_MS;
+        if (step->kind == KOS_MACRO_PICKUP &&
+            (strncmp(step->station_id, "plate_stack", 11) == 0 ||
+             kos_kitchen_name_matches("Plate", step->item))) {
+            macro->deadline_ms = game_ms + MACRO_PLATE_PICKUP_TIMEOUT_MS;
+        }
+        /* 倒完料把锅放回源灶：料已经进了玉米饼，这一步失败会让整道 pour 回队重做、
+         * 空锅留在手上。失焦后要能重新走一次位（实机 20261028-071415 1.5 s 就超时）。 */
+        if (step->kind == KOS_MACRO_DROP && macro->step_index > 0 &&
+            macro->step_index + 1 == macro->plan.step_count && macro->plan.step_count > 3 &&
+            macro->plan.steps[3].kind == KOS_MACRO_POUR) {
+            macro->deadline_ms = game_ms + MACRO_GOTO_DEFAULT_TIMEOUT_MS;
+        }
     } else if (step->kind == KOS_MACRO_CHOP) {
         macro->deadline_ms = game_ms + step->duration_ms + MACRO_CHOP_MARGIN_MS;
     } else if (step->kind == KOS_MACRO_POUR) {
@@ -968,10 +1015,12 @@ static int step_init(kos_macro *macro, const kos_kitchen *kitchen,
         macro->deadline_ms = game_ms + MACRO_PICKUP_TIMEOUT_MS;
     }
 
-    if (step->kind == KOS_MACRO_DELIVER) {
+    if (step->kind == KOS_MACRO_DELIVER || step->kind == KOS_MACRO_PICKUP) {
         if (chef != NULL) {
             copy_str(macro->entry_holding, sizeof macro->entry_holding, chef->holding);
         }
+    }
+    if (step->kind == KOS_MACRO_DELIVER) {
         /* G9：订单消失既可能是交付也可能是过期，只有游戏分数能分开。 */
         macro->score_base = world->score;
         macro->score_base_valid = 1;
@@ -1029,6 +1078,20 @@ static int run_goto(kos_macro *macro, const kos_kitchen *kitchen,
     /* 到站一次就算到站：转身时厨师会被推离格心超过 navd 的 0.3 m，navd 随即把
      * arrived 改回 moving（没有路点）。这时再回到 navigate，Worker 发的是 stop，
      * 插件里的 face 被冲掉，永远转不过去，最后 arrived+face 超时（实机 `_3`）。 */
+    /* navd 迟迟不报到站、人却已经站在目标工位的站位格上（实机 20261028-023839：
+     * 还锅回 cooker-2，人在 (1.82,-7.05)，navd 一直把目标给成 (2.4,-7.2) 来回拉，
+     * 6.9 s 后 arrived+face 超时）：站够一会儿就按到站处理，直接转身。 */
+    if (!nav_arrived && !macro->face_sent &&
+        game_ms - macro->step_start_ms >= MACRO_GOTO_NEAR_FALLBACK_MS) {
+        /* 只在有站位格数据的真实地图上兜底：合成测试厨房没有站位格，
+         * near_station_stand 恒为真，会把"还在走"误判成到站。 */
+        const kos_station_stands *stands =
+            kos_stand_cells(kitchen, kos_kitchen_station_index(kitchen, step->station_id));
+
+        if (stands != NULL && stands->count > 0 && near_station_stand(kitchen, step, chef)) {
+            nav_arrived = 1;
+        }
+    }
     if (!nav_arrived && !macro->face_sent) {
         out->action = KOS_MACRO_ACT_NAVIGATE;
         copy_str(out->target_object, sizeof out->target_object, step->station_id);
@@ -1091,9 +1154,11 @@ static int run_pickup(kos_macro *macro, const kos_kitchen *kitchen,
         got = holding_is(chef, step->item);
     } else if (macro->source_item[0] != '\0') {
         got = holding_is(chef, macro->source_item);
-    } else {
+    } else if (macro->entry_holding[0] == '\0') {
         got = holding;
     }
+    /* 进这一步时手上已经有东西（实机 _3：放下的玉米饼被补按拿回手里），"手上有东西"
+     * 不能算拿到了锅：会拿着饼去"倒米饭"，锅一直留在灶上烧糊。 */
     if (got) {
         return next_step(macro, out) == 1 ? 1 : 0;
     }
@@ -1120,6 +1185,12 @@ static int run_pickup(kos_macro *macro, const kos_kitchen *kitchen,
             if (!ready) {
                 if (macro->pour_wait_since_ms == 0) {
                     macro->pour_wait_since_ms = game_ms;
+                    kos_log_info(macro->log, "macro_pour_wait",
+                                 "chef=%d station=%s cooked=%d/%d burning=%d/%d fire=%d/%d "
+                                 "time_left=%.2f limit_ms=%lld",
+                                 chef_id, step->station_id, pot->has_cooked, pot->cooked,
+                                 pot->has_burning, pot->burning, pot->has_fire, pot->fire,
+                                 (double)pot->time_left, (long long)limit);
                 }
                 /* 等锅熟的时间不算进 pickup 的 1.5 s 超时：上限就是 time_left + 3 s。 */
                 if (macro->deadline_ms < macro->pour_wait_since_ms + limit) {
@@ -1168,6 +1239,15 @@ static int run_drop(kos_macro *macro, const kos_kitchen *kitchen,
     if (chef != NULL && chef->holding[0] == '\0') {
         return next_step(macro, out) == 1 ? 1 : 0;
     }
+    /* 装盘重试：上一轮盘子晚到手，已经端着盘了。再按一次会把盘放回去或卡住，
+     * 直接进下一步（取盘），由它确认手上就是要的东西。 */
+    if (chef != NULL && macro->step_index + 1 < macro->plan.step_count) {
+        const kos_macro_step *next = &macro->plan.steps[macro->step_index + 1];
+
+        if (next->kind == KOS_MACRO_PICKUP && holding_is(chef, next->item)) {
+            return next_step(macro, out) == 1 ? 1 : 0;
+        }
+    }
     if (!ensure_focus(macro, kitchen, world, chef_id, step, game_ms, out)) {
         if (game_ms >= macro->deadline_ms) {
             fail_step(macro, game_ms, "empty-hand", "focus");
@@ -1197,6 +1277,13 @@ static int run_chop(kos_macro *macro, const kos_kitchen *kitchen,
     }
     if (resource->content[0] != '\0') {
         macro->saw_content = 1;
+        /* 放下后状态帧可能还没带上板上的料，开机时 board_item_before 就是空的，
+         * 改名判据永远不成立（鸡肉切完改名 BurritoChoppedChicken、进度读不到）。
+         * 第一次看到的原料内容补记为改名前的名字。 */
+        if (macro->board_item_before[0] == '\0' && content_is_expected(resource, macro, step)) {
+            copy_str(macro->board_item_before, sizeof macro->board_item_before,
+                     resource->content);
+        }
         /* G13：板上不是这一步该放的东西（放错料/别人占着砧板）就立刻判工序不可行，
          * 不要等 progress 超时后把坏菜送到装盘才暴露。只核对第一次看到的内容：
          * 切完游戏会把板上物体换成 Chopped…/Diced…，那正是本步的产物。 */
@@ -1757,6 +1844,23 @@ int kos_macro_advance(kos_macro *macro, const kos_kitchen *kitchen,
     out->action = KOS_MACRO_ACT_STOP;
     if (macro->step_index >= macro->plan.step_count) {
         return 1;
+    }
+    /* 倒料续做：手上已经端着装有这味料的锅（上次走到一半被 navd 判卡住），
+     * 跳过"去源灶 + 端锅"，直接去容器那一步。 */
+    if (macro->step_index < 2 && macro->plan.step_count > 3 &&
+        macro->plan.steps[1].kind == KOS_MACRO_PICKUP &&
+        macro->plan.steps[3].kind == KOS_MACRO_POUR) {
+        const kos_resource *carried = find_carried_resource(world, chef_id);
+        const kos_chef *holder = find_chef(world, chef_id);
+        /* 只认锅/平底锅：手上的玉米饼里也有 cooked:Rice（实机 20261028-022924）。 */
+        int holding_pot = holder != NULL && (kos_kitchen_name_matches("pot", holder->holding) ||
+                                             kos_kitchen_name_matches("pan", holder->holding));
+
+        if (holding_pot && carried != NULL &&
+            resource_has_item(carried, macro->plan.steps[3].item)) {
+            macro->step_index = 2;
+            macro->step_started = 0;
+        }
     }
     if (!macro->step_started) {
         (void)step_init(macro, kitchen, world, chef_id, game_ms);
