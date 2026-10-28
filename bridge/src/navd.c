@@ -389,9 +389,16 @@ static int in_stands(const kos_kitchen *kitchen, int station_index, int cell)
     return 0;
 }
 
+/*
+ * 站位格按"从厨师当前格走过去的步数"挑最近的（绕开 pinned/已到站的人）。
+ * 以前用 kos_stand_distance(station, cell)，对站位格自身恒为 0，平手按格号取最小，
+ * 实机 20261028-030252 三个厨师都被派进 z=-7.2 那条单行死胡同，对头卡死。
+ */
 static int recompute_goal(navd *n, nav_agent *agent, const uint8_t *blocked)
 {
     const kos_station_stands *stands;
+    uint16_t from_dist[KOS_KITCHEN_MAX_CELLS];
+    int have_from = 0;
     int best = -1;
     uint16_t best_dist = KOS_STAND_UNREACHABLE;
     int i;
@@ -403,6 +410,11 @@ static int recompute_goal(navd *n, nav_agent *agent, const uint8_t *blocked)
         agent->goal_cell = agent->actual_cell;
         return 0;
     }
+    if (agent->actual_cell >= 0 && agent->actual_cell < n->kitchen.cell_count &&
+        kos_pibt_distance_blocked(&n->pibt, agent->actual_cell, blocked, from_dist,
+                                  KOS_KITCHEN_MAX_CELLS) == KOS_OK) {
+        have_from = 1;
+    }
     stands = kos_stand_cells(&n->kitchen, agent->station_index);
     if (stands != NULL) {
         for (i = 0; i < stands->count; i++) {
@@ -412,7 +424,8 @@ static int recompute_goal(navd *n, nav_agent *agent, const uint8_t *blocked)
             if (blocked != NULL && blocked[cell]) {
                 continue; /* 站位格被 pinned 的人占着：换下一个 */
             }
-            dist = kos_stand_distance(&n->kitchen, agent->station_index, cell);
+            dist = have_from ? from_dist[cell]
+                             : kos_stand_distance(&n->kitchen, agent->station_index, cell);
             if (dist == KOS_STAND_UNREACHABLE) {
                 continue;
             }
@@ -703,6 +716,55 @@ static void release_plans(navd *n)
     }
 }
 
+/* 双厨师同时无进度时，低优先级者清掉旧计划，让下一轮从实际格重新规划。 */
+static void yield_pairwise_deadlocks(navd *n)
+{
+    int i;
+    int j;
+
+    for (i = 0; i < n->chef_count; i++) {
+        nav_agent *self = &n->agents[i];
+
+        if (!self->has_target || self->pinned || self->stuck_count <= 0) {
+            continue;
+        }
+        for (j = i + 1; j < n->chef_count; j++) {
+            nav_agent *other = &n->agents[j];
+            int self_priority;
+            int other_priority;
+
+            if (!other->has_target || other->pinned || other->stuck_count <= 0) {
+                continue;
+            }
+            self_priority = (int)(n->step_counter - self->target_step) +
+                            (int)self->target.urgency;
+            other_priority = (int)(n->step_counter - other->target_step) +
+                             (int)other->target.urgency;
+            if (kos_nav_should_yield_pair(
+                    1, 1, self->pinned, other->pinned,
+                    player_at_goal(n, self), player_at_goal(n, other),
+                    self_priority, other_priority, self->chef_id, other->chef_id)) {
+                self->plan_len = 0;
+                self->released = 0;
+                self->executed = 0;
+                kos_log_warn(n->rt.log, "nav_yield",
+                             "chef=%d yielded_to=%d reason=simultaneous-stuck",
+                             self->chef_id, other->chef_id);
+            } else if (kos_nav_should_yield_pair(
+                           1, 1, other->pinned, self->pinned,
+                           player_at_goal(n, other), player_at_goal(n, self),
+                           other_priority, self_priority,
+                           other->chef_id, self->chef_id)) {
+                other->plan_len = 0;
+                other->released = 0;
+                other->executed = 0;
+                kos_log_warn(n->rt.log, "nav_yield",
+                             "chef=%d yielded_to=%d reason=simultaneous-stuck",
+                             other->chef_id, self->chef_id);
+            }
+        }
+    }
+}
 static int player_at_goal(navd *n, nav_agent *agent)
 {
     float dx;
@@ -999,6 +1061,15 @@ static void plan_and_publish(navd *n)
             status = KOS_NAV_MOVING;
         } else if (agent->plan_len > 0) {
             status = KOS_NAV_MOVING;
+        } else if (agent->has_target && agent->goal_cell >= 0 &&
+                   agent->goal_cell == agent->actual_cell) {
+            /* 已在站位格里但漂出了到站半径（转身/被挤）：goal 就是脚下格，规划为空，
+             * 旧逻辑报 moving+0 个路点，worker 只会 stop，等到 goto 超时（实机
+             * 20261028-044323 装盘 7.7–9.5 s arrived+face timeout）。给一个格心路点回正。 */
+            agent->plan[0] = agent->goal_cell;
+            agent->plan_len = 1;
+            agent->released = 1;
+            status = KOS_NAV_MOVING;
         } else {
             status = agent->has_target ? KOS_NAV_MOVING : KOS_NAV_IDLE;
         }
@@ -1043,6 +1114,7 @@ static void tick_planning(navd *n, const kos_world_state *world)
         detect_stuck(n);
         build_plans(n);
         release_plans(n);
+        yield_pairwise_deadlocks(n);
         plan_and_publish(n);
         record_planning_us(n, now_us() - started_us);
     }

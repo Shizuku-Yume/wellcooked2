@@ -347,7 +347,8 @@ namespace WellCooked
             // Unity 的 JsonUtility 没把嵌套的 target 对象填进来（实测：move 到了这里 target 是 null，
             // 于是每一条 move 都被拒）。参考实现（net46 那份）同样用它，但那条路从来没被真机跑过
             // —— bridge/05 的实机只跑过 stop/idle。这里对 move 自己从原文里取一次，别再指望它。
-            if (m.target == null && !string.IsNullOrEmpty(json) && (m.action == "move" || m.action == "face"))
+            if (m.target == null && !string.IsNullOrEmpty(json)
+                && (m.action == "move" || m.action == "face" || m.action == "interact"))
             {
                 Vec2 parsed;
                 if (TryReadTarget(json, out parsed))

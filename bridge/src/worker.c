@@ -25,6 +25,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -344,6 +345,18 @@ static void publish_macro_action(worker *w, const kos_macro_output *out,
             action.kind = KOS_ACTION_INTERACT;
         }
         copy_str(action.target_object, sizeof action.target_object, out->target_object);
+        /* 插件只认识少数几个场景对象名；把站点坐标一起发过去，插件按坐标判断
+         * 是否已朝向目标，避免对着别的工作台按键（实机 _3 拿走了别人的平底锅）。 */
+        {
+            const kos_station *st = kos_kitchen_station_by_id(&w->kitchen, out->target_object);
+            if (st != NULL) {
+                action.target_x = st->x;
+                action.target_y = st->z;
+            } else {
+                action.target_x = NAN;
+                action.target_y = NAN;
+            }
+        }
     }
     publish_action(w, &action);
 }
@@ -579,9 +592,9 @@ static int advance_macro(worker *w, const kos_world_state *world, int64_t game_m
             }
         }
     }
-    if (kos_worker_nav_should_replan(out->action, nav_arrived, w->pinned)) {
-        /* 宏认为还没到（离站位格太远/焦点不对），但 navd 还停在 ARRIVED 且 worker
-         * 把它 pin 住了：解 pin 并重写目标，navd 才会重新规划。 */
+    if (kos_worker_nav_should_replan(out->action, w->pinned)) {
+        /* 宏认为还没到（离站位格太远/焦点不对），但 worker 把它 pin 住了：
+         * 解 pin 并重写目标，navd 才会重新规划。 */
         w->pinned = 0;
         write_target(w, 1, 0);
         kos_log_info(w->rt.log, "nav_replan",
@@ -597,7 +610,11 @@ static int advance_macro(worker *w, const kos_world_state *world, int64_t game_m
         w->interact_until_game_ms = game_ms + WORKER_INTERACT_WINDOW_MS;
     }
 
-    if (w->macro.step_index == prev_index && nav_arrived && !w->pinned) {
+    /* 宏要求重新走位时不能马上又 pin 回去：navd 这一帧还报 ARRIVED，同一帧 unpin→pin
+     * 让它永远不重规划，厨师原地每 5 ms 打一条 nav_replan（实机 20261028-071415
+     * pour 回灶 drop 失焦 1.5 s 超时，空锅端到收工）。 */
+    if (w->macro.step_index == prev_index && nav_arrived && !w->pinned &&
+        out->action != KOS_MACRO_ACT_NAVIGATE) {
         w->pinned = 1;
         write_target(w, 1, 1);
     }

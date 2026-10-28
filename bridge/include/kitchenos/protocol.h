@@ -312,6 +312,7 @@ int protocol_build_action_move(long long chef_id, double x, double y,
 int protocol_build_action_stop(long long chef_id, char *out, size_t cap,
                                size_t *out_len);
 int protocol_build_action_interact(long long chef_id, const char *target_object,
+                                   int has_target, double x, double y,
                                    char *out, size_t cap, size_t *out_len);
 int protocol_build_action_pickup(long long chef_id, char *out, size_t cap,
                                  size_t *out_len);

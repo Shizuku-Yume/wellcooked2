@@ -49,10 +49,13 @@ namespace WellCooked
             public string Kind;
             public Vector2 Target;
             public string TargetObject;
+            public bool HasTarget;   // interact：桥附带了站点坐标（Target）
             public float Deadline;
             public int Pulses;   // 按键类按了几次
             public float PulseUntil;
             public float NextPulseAt;
+            public float TurnUntil;   // interact 没对准目标时的转向摇杆脉冲截止时刻
+            public float NextTurnAt;
             public float StartedAt;
             public bool Done;   // 走完/超时了：留着这条，但不再驱动
             public string HeldAtFirstPulse; // 按键类：第一下按下时手上是什么
@@ -68,6 +71,9 @@ namespace WellCooked
         private static ManualLogSource _log;
         private static readonly Dictionary<int, Command> Commands = new Dictionary<int, Command>();
         private static readonly HashSet<int> Owned = new HashSet<int>();
+        // 每个厨师最近一次真正按下交互键的时刻（游戏时钟）与那时手上的东西。
+        private static readonly Dictionary<int, float> LastPressAt = new Dictionary<int, float>();
+        private static readonly Dictionary<int, string> LastPressHeld = new Dictionary<int, string>();
 
         /// <summary>有厨师被动作指令接管了（`Takeover` 据此跳过本地驱动）。</summary>
         public static bool AnyOwned
@@ -193,8 +199,26 @@ namespace WellCooked
                     // 会把刚拿起的东西放回去（实测 `_3`：拿起→放回→再拿起）。
                     return null;
                 }
+                float lastPress;
+                string lastHeld;
+                if (kind == "interact" && LastPressAt.TryGetValue(m.chef_id, out lastPress)
+                    && now - lastPress < ResendWindow
+                    && LastPressHeld.TryGetValue(m.chef_id, out lastHeld)
+                    && HeldOf(m.chef_id) != lastHeld)
+                {
+                    // 上一下刚生效（手上的东西变了），桥的世界状态还没跟上又发来 interact：
+                    // 再按就把刚放下的东西拿回来（实机 _3：玉米饼放下又被拿回手里，
+                    // 后面拿着饼去端米饭锅，锅留在灶上烧糊）。
+                    return null;
+                }
 
-                command = new Command { Kind = kind, StartedAt = now };
+                command = new Command { Kind = kind, StartedAt = now, TargetObject = m.target_object };
+                // 桥给 interact 附带站点坐标：认不出 target_object 时按坐标判断朝向。
+                if (m.target != null && IsFinite(m.target.x) && IsFinite(m.target.y))
+                {
+                    command.Target = new Vector2(m.target.x, m.target.y);
+                    command.HasTarget = true;
+                }
                 Commands[m.chef_id] = command;
                 command.NextPulseAt = 0f; // 立刻按第一下
                 command.Deadline = now + MoveTimeout;
@@ -555,16 +579,9 @@ namespace WellCooked
 
             if (command.Kind == "face")
             {
-                Vector2 dir = command.Target - position;
-                if (dir.sqrMagnitude > 0.0001f)
-                {
-                    dir = dir.normalized;
-                }
-                else
-                {
-                    dir = Vector2.zero;
-                }
-
+                // 游戏网格只有四个邻格：斜着朝向时选中的是砧板、按切却不进度（实机 20261027-234924
+                // 鸡肉朝 (0.71,0.71) 切 146 次无进度）。转到最近的坐标轴方向。
+                Vector2 dir = CardinalDirection(command.Target - position);
                 PlayerControls chef;
                 float angle = 180f;
                 bool hasChef = Takeover.TryChefOf(slot, out chef) && chef != null;
@@ -640,12 +657,43 @@ namespace WellCooked
                 }
             }
 
+            // 按之前核对"面前是不是目标工位"：游戏按朝向在邻格里挑交互对象，桥那边用的是
+            // 上一帧的世界状态，站位格两侧都有工位时（`_3`：出料口在 -z、灶台在 +z）
+            // 朝向一偏就按到隔壁 —— 实测空手按出料口拿起了灶台上的空锅，之后一直端着锅走。
+            // 没对准就不按，用短促摇杆脉冲转向目标，等下一帧再核对。
+            Vector2 aimDir;
+            if (!pressed && command.Pulses < KeyPulses && now >= command.NextPulseAt
+                && command.Kind == "interact" && !AimedAtTarget(slot, command, position, out aimDir))
+            {
+                if (clock > command.Deadline)
+                {
+                    string late = "超时 " + MoveTimeout.ToString("F0") + " 秒，没能对准「" + command.TargetObject + "」";
+                    _log.LogWarning("action: 厨师位 " + (slot + 1) + " interact " + late);
+                    Report(slot, command.Kind, false, late);
+                    command.Done = true;
+                    command.DoneAt = clock;
+                    Feed(slot, pad, Vector2.zero, false, false, false);
+                    return true;
+                }
+                if (now >= command.NextTurnAt)
+                {
+                    command.TurnUntil = now + FacePulseDuration;
+                    command.NextTurnAt = now + FacePulseInterval;
+                    _log.LogInfo("action: 厨师位 " + (slot + 1) + " interact 面前不是「" + command.TargetObject
+                                 + "」，先转向再按 " + PoseSummary(slot, position));
+                }
+                Feed(slot, pad, now < command.TurnUntil ? aimDir * FaceStickMagnitude : Vector2.zero, false, false, false);
+                return true;
+            }
+
             if (!pressed && command.Pulses < KeyPulses && now >= command.NextPulseAt)
             {
                 command.PulseUntil = now + PulseSeconds;
                 command.NextPulseAt = now + PulseInterval;
                 command.Pulses++;
                 pressed = true;
+                LastPressAt[slot] = clock;
+                LastPressHeld[slot] = HeldOf(slot);
                 // 按键有没有效果要看"面前是谁、手上是什么"：游戏按厨师所在格的邻格里朝向最对齐的
                 // 那一格判定交互对象，按错格子时 ack 照样 ok，只有这一行能看出来。
                 _log.LogInfo("action: 厨师位 " + (slot + 1) + " 按 " + command.Kind
@@ -686,6 +734,63 @@ namespace WellCooked
         {
             PlayerControls chef;
             return Takeover.TryChefOf(slot, out chef) ? Kitchen.HeldSummary(chef) : "";
+        }
+
+        /// <summary>
+        /// 厨师面前的占位物体是不是 `command.TargetObject` 那个工位。认不出目标的位置时不拦
+        /// （返回 true），只拦"认得出目标、而面前是别的东西或什么都没有"。`dir` 是转向目标的方向。
+        /// </summary>
+        private static bool AimedAtTarget(int slot, Command command, Vector2 position, out Vector2 dir)
+        {
+            dir = Vector2.zero;
+            Vector2 station = Vector2.zero;
+            PlayerControls chef;
+            bool named = !string.IsNullOrEmpty(command.TargetObject)
+                         && Kitchen.TryStationPosition(command.TargetObject, out station);
+            bool known = named;
+            if (!known && command.HasTarget)
+            {
+                station = command.Target;
+                known = true;
+            }
+            if (!known || !Takeover.TryChefOf(slot, out chef) || chef == null)
+            {
+                return true;
+            }
+            dir = CardinalDirection(station - position);
+            if (dir == Vector2.zero)
+            {
+                return true; // 目标就在脚下：没法再转，照常按
+            }
+            Vector2 facing;
+            bool hasFacing = Kitchen.FacingObjectPosition(chef, out facing);
+            if (hasFacing && (facing - station).sqrMagnitude < 0.6f * 0.6f)
+            {
+                // 选中了目标但斜着朝：按键可能不生效，先正对坐标轴再按。
+                Vector2 forward = new Vector2(chef.transform.forward.x, chef.transform.forward.z).normalized;
+                return Vector2.Angle(forward, dir) < FaceAngleTolerance;
+            }
+            if (!named && !hasFacing)
+            {
+                // 只有坐标的目标（出餐口等）不是网格占位物体，面前总是「空」；转向交给桥的
+                // face。这里只拦"面前是别的物体"（如对着别人的灶按，拿走平底锅）。
+                return true;
+            }
+            return false;
+        }
+
+        /// <summary>离 `delta` 最近的坐标轴单位方向（±x 或 ±z）；零向量返回零。</summary>
+        private static Vector2 CardinalDirection(Vector2 delta)
+        {
+            if (delta.sqrMagnitude <= 0.0001f)
+            {
+                return Vector2.zero;
+            }
+            if (Mathf.Abs(delta.x) >= Mathf.Abs(delta.y))
+            {
+                return new Vector2(Mathf.Sign(delta.x), 0f);
+            }
+            return new Vector2(0f, Mathf.Sign(delta.y));
         }
 
         /// <summary>厨师位置、朝向、面前的占位物体、手上的东西（按键诊断用）。</summary>
