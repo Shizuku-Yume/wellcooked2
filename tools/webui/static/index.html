@@ -32,6 +32,7 @@
       <label>工序策略<select name="task_policy" class="sel-task"></select></label>
       <label>派工方式<select name="dispatch"><option value="flexible">flexible 自由</option><option value="zoned">zoned 分区</option></select></label>
       <label>时长上限（秒）<input name="game_seconds" type="number" min="30" max="600" value="240"></label>
+      <label class="check"><input name="continuous" type="checkbox" value="1"> 连续验收（本局结束后保留游戏，下一局直接在同一个游戏里开）</label>
       <div class="row">
         <button type="submit" class="btn go" id="btn-start">开始</button>
         <button type="button" class="btn stop" id="btn-stop">停止</button>

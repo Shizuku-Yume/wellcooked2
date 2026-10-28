@@ -110,6 +110,18 @@ namespace WellCooked
             Commands.Clear();
         }
 
+        /// <summary>
+        /// 离开关卡：丢掉按游戏时钟记的本局动作状态。同一个游戏进程里重进关卡时游戏时钟从 0 重来，
+        /// 旧的 DoneAt / LastPressAt 比新时钟大，`now - 上次` 是负数，所有 interact 都会被当成重发吞掉。
+        /// 归属（Owned）跟链路走，不在这里清。
+        /// </summary>
+        public static void ResetLevel()
+        {
+            Commands.Clear();
+            LastPressAt.Clear();
+            LastPressHeld.Clear();
+        }
+
         // ---------------- 入站消息 ----------------
 
         /// <summary>处理一条 `action`；返回 null 表示接受，非 null 是失败原因（会回进 ack）。</summary>
